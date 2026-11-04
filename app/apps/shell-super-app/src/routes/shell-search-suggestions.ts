@@ -8,7 +8,11 @@ import type { ShellSearchClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { shellSearchResultKey } from './shell-search-match.ts';
 import { shellSearchGroupOf, shellSearchGroupOrder, shellSearchResultTarget } from './shell-search-resource-types.ts';
-import type { ShellSearchGroupKey, ShellSearchLinkTarget } from './shell-search-resource-types.ts';
+import type {
+  ShellSearchGroupKey,
+  ShellSearchLinkTarget,
+  ShellSearchPresentationContext,
+} from './shell-search-resource-types.ts';
 
 type PartyRole = Extract<ShellSearchResult, { readonly kind: 'counterparty' }>['currentRoles'][number];
 
@@ -50,9 +54,12 @@ export type ShellSearchSuggestionsState =
 export const SUGGESTION_MINIMUM_QUERY_LENGTH = 2;
 const SUGGESTIONS_PER_GROUP = 5;
 
-const toSuggestion = (result: ShellSearchResult): ShellSearchSuggestion => {
+const toSuggestion = (
+  result: ShellSearchResult,
+  context: ShellSearchPresentationContext | undefined,
+): ShellSearchSuggestion => {
   const key = shellSearchResultKey(result);
-  const target = shellSearchResultTarget(result);
+  const target = shellSearchResultTarget(result, context);
   if (result.kind === 'counterparty') {
     return {
       archived: result.party.archived,
@@ -80,6 +87,7 @@ const toSuggestion = (result: ShellSearchResult): ShellSearchSuggestion => {
  */
 export const groupShellSearchResults = (
   results: readonly ShellSearchResult[],
+  context?: ShellSearchPresentationContext,
 ): readonly ShellSearchResultGroup<ShellSearchResult>[] => {
   const partiesWithRelationship = new Set(
     results.flatMap((result) => (result.kind === 'counterparty' ? [shellSearchResultKey(result.party)] : [])),
@@ -88,7 +96,7 @@ export const groupShellSearchResults = (
     (result) => result.kind !== 'party' || !partiesWithRelationship.has(shellSearchResultKey(result)),
   );
   return shellSearchGroupOrder.flatMap((key) => {
-    const items = visible.filter((result) => shellSearchGroupOf(result) === key);
+    const items = visible.filter((result) => shellSearchGroupOf(result, context) === key);
     return items.length === 0 ? [] : [{ items, key }];
   });
 };
@@ -97,10 +105,11 @@ export const groupShellSearchResults = (
 export const groupShellSearchSuggestions = (
   results: readonly ShellSearchResult[],
   perGroup = SUGGESTIONS_PER_GROUP,
+  context?: ShellSearchPresentationContext,
 ): readonly ShellSearchSuggestionGroup[] =>
-  groupShellSearchResults(results).map(({ items, key }) => ({
+  groupShellSearchResults(results, context).map(({ items, key }) => ({
     key,
-    suggestions: items.slice(0, perGroup).map(toSuggestion),
+    suggestions: items.slice(0, perGroup).map((result) => toSuggestion(result, context)),
     total: items.length,
   }));
 
@@ -125,7 +134,10 @@ const suggestionScopeKey = (compositionRevision: string | undefined, language: s
  * pause in typing, so a burst of keystrokes costs one search. A new composition revision or language is a different
  * scope: its answer is dropped before paint, and the request that belonged to the old scope is aborted.
  */
-export const useShellSearchSuggestions = (compositionRevision: string | undefined) => {
+export const useShellSearchSuggestions = (
+  compositionRevision: string | undefined,
+  context?: ShellSearchPresentationContext,
+) => {
   const { language } = useModernI18n();
   const scope = suggestionScopeKey(compositionRevision, language);
   const [scoped, setScoped] = useState<ScopedSuggestionState>(() => ({ scope, state: idleSuggestionsState }));
@@ -162,7 +174,7 @@ export const useShellSearchSuggestions = (compositionRevision: string | undefine
         Effect.match({
           onFailure: (error): ShellSearchSuggestionsState => ({ failure: error, query, status: 'unavailable' }),
           onSuccess: (response): ShellSearchSuggestionsState => ({
-            groups: groupShellSearchSuggestions(response.results),
+            groups: groupShellSearchSuggestions(response.results, SUGGESTIONS_PER_GROUP, context),
             partial: response.partial,
             query,
             status: 'ready',

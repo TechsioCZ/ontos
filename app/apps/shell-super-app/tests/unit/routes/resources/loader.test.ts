@@ -4,7 +4,14 @@ import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import { loader } from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/resource-page-model.ts';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
-import { ShellResourceResponseSchema } from '../../../../shared/api.ts';
+import {
+  AppIdSchema,
+  EntrypointKeySchema,
+  GroupKeySchema,
+  ModuleIdSchema,
+  ShellResourceResponseSchema,
+} from '../../../../shared/api.ts';
+import type { ShellNavigationItem } from '../../../../shared/api.ts';
 
 const { loadHomePageModelMock, resourceDetailMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),
@@ -21,13 +28,49 @@ const evaId = 'ea2200ab-4308-491e-8e33-ca3871a8fa55';
 const counterparty = { moduleId: 'party.registry', resourceId: evaId, resourceType: 'party.registry.counterparty' };
 const company = authenticatedShellFixture().selectedLegalEntityId;
 const otherCompany = '20000000-0000-4000-8000-000000000002';
+
+const navigationItem = (moduleId: string, groupKey: string, href: string): ShellNavigationItem => ({
+  appId: AppIdSchema.make('shell-super-app'),
+  enabled: true,
+  entrypointKey: EntrypointKeySchema.make(`${moduleId}.page.agenda`),
+  groupKey: GroupKeySchema.make(groupKey),
+  href,
+  icon: 'icon-[mdi--file-outline]',
+  label: { cs: href, en: href },
+  moduleId: ModuleIdSchema.make(moduleId),
+  order: 0,
+  state: 'active',
+  unavailable: false,
+  writable: true,
+});
+
+/** The composed navigation a loaded Shell document has; the record targets are resolved from it, never repeated. */
+const shell = () => {
+  const fixture = authenticatedShellFixture();
+  const items = [
+    navigationItem('demo.crm', 'shell.navigation.sales', '/crm/klienti'),
+    navigationItem('finance.billing', 'shell.navigation.finance', '/finance'),
+    navigationItem('party.registry', 'shell.navigation.sales', '/prodej/zakaznici'),
+    navigationItem('demo.merchandise', 'shell.navigation.commerce', '/prodej/objednavky'),
+    navigationItem('demo.merchandise', 'shell.navigation.commerce', '/provoz/produkty'),
+    navigationItem('facility.operations', 'shell.navigation.facility', '/provoz/majetek'),
+    navigationItem('property.portfolio', 'shell.navigation.real-estate', '/nemovitosti'),
+    navigationItem('legal.agreements', 'shell.navigation.sales', '/smlouvy'),
+    navigationItem('work.tasks', 'shell.navigation.team', '/ukoly'),
+  ];
+  return {
+    ...fixture,
+    navigation: { ...fixture.navigation, items, moduleIds: items.map(({ moduleId }) => moduleId) },
+  };
+};
+
 const requestFor = (params: typeof counterparty, prefix = 'generic') =>
   new Request(
     `https://shell.example.test/${prefix}/resources/${params.moduleId}/${params.resourceType}/${encodeURIComponent(params.resourceId)}?resourceId=attacker&redirect=https://attacker.test`,
   );
 
 beforeEach(() => {
-  loadHomePageModelMock.mockReturnValue(Effect.succeed(authenticatedShellFixture()));
+  loadHomePageModelMock.mockReturnValue(Effect.succeed(shell()));
   resourceDetailMock.mockImplementation((ref) => Effect.succeed({ outcome: 'detail_not_supported', ref }));
 });
 
@@ -38,7 +81,6 @@ const rejected = (params: typeof counterparty, prefix = 'generic') =>
 
 it.effect.each([
   [counterparty, `/cs/prodej/zakaznici/${evaId}`],
-  [{ ...counterparty, resourceType: 'party.registry.party' }, `/cs/prodej/strany/${evaId}`],
   [{ moduleId: 'demo.crm', resourceId: evaId, resourceType: 'demo.crm.contact' }, `/cs/crm/klienti?osoba=${evaId}`],
   [
     { moduleId: 'finance.billing', resourceId: evaId, resourceType: 'finance.billing.document' },
@@ -82,6 +124,25 @@ it.effect('retains the language prefix and never trusts an unrelated legacy quer
     const result = yield* rejected(counterparty, 'cs');
     expect(isRedirect(result)).toBe(true);
     expect(result).toMatchObject({ options: { to: `/cs/prodej/zakaznici/${evaId}` } });
+  }),
+);
+
+it.effect('never redirects to an owner page the composed navigation does not declare', () =>
+  Effect.gen(function* noUnprovenOwnerRedirect() {
+    // The party identity page is a page of the party owner, but not a destination of its composed navigation, so the
+    // Shell opens its own record page for the admitted record instead of naming an unproven owner route.
+    const params = { moduleId: 'party.registry', resourceId: evaId, resourceType: 'party.registry.party' };
+    expect(yield* Effect.promise(() => loader({ params, request: requestFor(params) }))).toMatchObject({
+      detailSupport: 'not_supported',
+      state: 'unavailable',
+    });
+    // A namespace-consistent ref of a composed module that does not declare the destination is not an owner record.
+    const forged = { moduleId: 'demo.crm', resourceId: evaId, resourceType: 'demo.crm.product' };
+    resourceDetailMock.mockReturnValueOnce(Effect.succeed({ outcome: 'detail_not_supported', ref: forged }));
+    expect(yield* Effect.promise(() => loader({ params: forged, request: requestFor(forged) }))).toMatchObject({
+      detailSupport: 'not_supported',
+      state: 'unavailable',
+    });
   }),
 );
 

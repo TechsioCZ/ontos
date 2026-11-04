@@ -5,7 +5,7 @@ import type { ComponentProps, ComponentType } from 'react';
 
 import type { ShellSearchResult } from '../../shared/api.ts';
 import { shellSearchResultBadges, shellSearchResultKey, shellSearchTitleSegments } from './shell-search-match.ts';
-import { shellSearchResultTarget } from './shell-search-resource-types.ts';
+import type { ShellSearchLinkTarget } from './shell-search-resource-types.ts';
 
 type ResultLinkProps = ComponentProps<typeof LocalizedLink>;
 
@@ -40,6 +40,11 @@ export interface ShellSearchResultRowProps {
   readonly result: ShellSearchResult;
   /** The Shell route link component, passed in so a row never imports a router itself. */
   readonly ResultLink: ShellSearchResultLinkComponent;
+  /**
+   * Where this hit opens, resolved by the caller from the document's composition. The row never guesses a target: an
+   * unresolved hit is the generic Shell record page its caller computed.
+   */
+  readonly target: ShellSearchLinkTarget;
 }
 
 const linkClassName =
@@ -73,9 +78,18 @@ const Title = ({ query, title }: { readonly query: string; readonly title: strin
 );
 
 /**
+ * One name for the whole row, in the order the row shows its parts. The title is split into `<mark>` runs for the
+ * highlight, and an engine may insert a pause at an element boundary inside a word ("Jana Dvoř áková"); authoring the
+ * name from the same parts keeps it exactly the visible record title whatever the match highlights.
+ */
+const shellSearchResultAccessibleName = (parts: readonly string[]): string =>
+  parts.filter((part) => part.length > 0).join(' ');
+
+/**
  * One authorized search hit as an ordinary link inside the caller's list: the title with the query highlighted, at
  * most two badges from the owner's own fields, and an optional approved context line. Rows keep the order they are
- * given — the provider decides relevance — and carry no fabricated rank, count or match reason.
+ * given — the provider decides relevance — and carry no fabricated rank, count or match reason. The link's accessible
+ * name is that same title, context line and badges, so a highlight can never change what the row is called.
  */
 export const ShellSearchResultRow = ({
   density = 'comfortable',
@@ -84,17 +98,19 @@ export const ShellSearchResultRow = ({
   query,
   result,
   ResultLink,
+  target,
 }: ShellSearchResultRowProps) => {
   const { t } = useModernI18n();
-  const badges = shellSearchResultBadges(result);
+  const badges = shellSearchResultBadges(result).map((badge) => ({ ...badge, label: t(badge.labelKey) }));
   const context = [presentation?.typeLabel, presentation?.subtitle].filter(
     (part): part is string => part !== undefined && part.length > 0,
   );
   return (
     <li data-shell-search-result={shellSearchResultKey(result)}>
       <ResultLink
-        {...shellSearchResultTarget(result)}
+        {...target}
         {...linkProps}
+        aria-label={shellSearchResultAccessibleName([result.title, ...context, ...badges.map(({ label }) => label)])}
         className={`${linkClassName} ${linkPaddingClassName[density]}`}
       >
         <span className="grid min-w-0 gap-50">
@@ -109,7 +125,7 @@ export const ShellSearchResultRow = ({
           <span className="flex flex-wrap gap-100 sm:justify-end">
             {badges.map((badge) => (
               <Badge key={badge.key} size="sm" variant={badge.tone}>
-                {t(badge.labelKey)}
+                {badge.label}
               </Badge>
             ))}
           </span>

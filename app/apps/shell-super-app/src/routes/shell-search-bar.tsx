@@ -213,6 +213,7 @@ export const ShellSearchBar = ({
                       query={suggestions.query}
                       result={suggestion.result}
                       ResultLink={SuggestionLink}
+                      target={suggestion.target}
                     />
                   ))}
                 </ul>

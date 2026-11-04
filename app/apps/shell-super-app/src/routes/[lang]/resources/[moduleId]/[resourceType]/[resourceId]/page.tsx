@@ -13,7 +13,7 @@ import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime
 import type { ShellNavigationItem } from '../../../../../../../shared/api.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
 import { buildShellNavigation, ShellRouteLink } from '../../../../../shell-frame.tsx';
-import { recordAgendaPaths } from '../../../../../shell-search-resource-types.ts';
+import { recordAgendaPaths, shellSearchPresentationContext } from '../../../../../shell-search-resource-types.ts';
 import { ShellStatusPanel, shellStatusTitleKey } from '../../../../../shell-status-panel.tsx';
 import { SignInRedirect } from '../../../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
@@ -249,7 +249,7 @@ const ResourcePage = () => {
     );
   }
   const recordRef = { moduleId, resourceId, resourceType };
-  const agendaPaths = recordAgendaPaths(recordRef);
+  const agendaPaths = recordAgendaPaths(recordRef, shellSearchPresentationContext(model.shell.navigation.items));
   // Only an admitted, authorized detail response proves the record and may render its title, fields or actions.
   // A search history title is navigation input, never evidence that a failed, missing or unsupported read found a record.
   const detailNotSupported = model.state === 'unavailable' && model.detailSupport === 'not_supported';

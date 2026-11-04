@@ -4,13 +4,56 @@ import { expect, test } from 'effect-rstest';
 import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/api.ts';
 import type { ShellSearchResult } from '../../shared/api.ts';
 import {
-  ownerRecordTarget,
-  recordAgendaPaths,
-  shellSearchGroupOf,
-  shellSearchLinkTarget,
-  shellSearchResultTarget,
+  ownerRecordTarget as ownerRecordTargetOf,
+  recordAgendaPaths as recordAgendaPathsOf,
+  shellSearchGroupOf as shellSearchGroupOfOf,
+  shellSearchLinkTarget as shellSearchLinkTargetOf,
+  shellSearchPresentationContext,
+  shellSearchResultTarget as shellSearchResultTargetOf,
 } from '../../src/routes/shell-search-resource-types.ts';
-import { groupShellSearchResults, groupShellSearchSuggestions } from '../../src/routes/shell-search-suggestions.ts';
+import {
+  groupShellSearchResults as groupShellSearchResultsOf,
+  groupShellSearchSuggestions as groupShellSearchSuggestionsOf,
+} from '../../src/routes/shell-search-suggestions.ts';
+
+/**
+ * The composed navigation the Shell receives for the demo document: it names every destination a record type opens,
+ * the section that settles names several owners share, and no destination a record type does not open.
+ */
+const presentation = shellSearchPresentationContext([
+  { groupKey: 'shell.navigation.finance', href: '/finance', moduleId: 'finance.billing' },
+  { groupKey: 'shell.navigation.sales', href: '/crm/klienti', moduleId: 'demo.crm' },
+  { groupKey: 'shell.navigation.sales', href: '/prodej/zakaznici', moduleId: 'party.registry' },
+  { groupKey: 'shell.navigation.sales', href: '/prodej/prilezitosti', moduleId: 'demo.sales-pipeline' },
+  { groupKey: 'shell.navigation.sales', href: '/smlouvy', moduleId: 'legal.agreements' },
+  { groupKey: 'shell.navigation.commerce', href: '/prodej/objednavky', moduleId: 'demo.merchandise' },
+  { groupKey: 'shell.navigation.commerce', href: '/provoz/produkty', moduleId: 'demo.merchandise' },
+  { groupKey: 'shell.navigation.commerce', href: '/prodej/eshopy', moduleId: 'commerce.market-catalog' },
+  { groupKey: 'shell.navigation.team', href: '/ukoly', moduleId: 'work.tasks' },
+  { groupKey: 'shell.navigation.real-estate', href: '/nemovitosti', moduleId: 'property.portfolio' },
+  { groupKey: 'shell.navigation.real-estate', href: '/najmy', moduleId: 'property.leasing' },
+  { groupKey: 'shell.navigation.facility', href: '/provoz/majetek', moduleId: 'facility.operations' },
+  { groupKey: 'shell.navigation.facility', href: '/provoz/bezpecnost', moduleId: 'facility.operations' },
+  { groupKey: 'shell.navigation.facility', href: '/provoz/meridla', moduleId: 'facility.operations' },
+  { groupKey: 'shell.navigation.facility', href: '/provoz/dokumenty', moduleId: 'facility.operations' },
+]);
+
+const ownerRecordTarget = (ref: Parameters<typeof ownerRecordTargetOf>[0], company: string | undefined) =>
+  ownerRecordTargetOf(ref, company, presentation);
+const recordAgendaPaths = (ref: Parameters<typeof recordAgendaPathsOf>[0]) => recordAgendaPathsOf(ref, presentation);
+const shellSearchGroupOf = (result: Parameters<typeof shellSearchGroupOfOf>[0]) =>
+  shellSearchGroupOfOf(result, presentation);
+const shellSearchLinkTarget = (
+  ref: Parameters<typeof shellSearchLinkTargetOf>[0],
+  title: string,
+  company: string | undefined,
+) => shellSearchLinkTargetOf(ref, title, company, presentation);
+const shellSearchResultTarget = (result: Parameters<typeof shellSearchResultTargetOf>[0]) =>
+  shellSearchResultTargetOf(result, presentation);
+const groupShellSearchResults = (results: Parameters<typeof groupShellSearchResultsOf>[0]) =>
+  groupShellSearchResultsOf(results, presentation);
+const groupShellSearchSuggestions = (results: Parameters<typeof groupShellSearchSuggestionsOf>[0], perGroup: number) =>
+  groupShellSearchSuggestionsOf(results, perGroup, presentation);
 
 const tenantId = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
 const selectedLegalEntityId = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0000-4000-8000-000000000201');
@@ -57,10 +100,9 @@ test('Eva Bílá opens her exact counterparty page, never a page selected by the
     params: { id: evaCounterpartyId },
     to: '/prodej/zakaznici/$id',
   });
-  expect(ownerRecordTarget(partyRef, selectedLegalEntityId)).toEqual({
-    params: { id: partyRef.resourceId },
-    to: '/prodej/strany/$id',
-  });
+  // The Party identity page is not a destination of the party owner's composed navigation, so the Shell cannot prove
+  // it and opens its own record page instead of naming an owner route the composition never declared.
+  expect(ownerRecordTarget(partyRef, selectedLegalEntityId)).toBeUndefined();
   expect(
     shellSearchResultTarget({
       archived: false,
@@ -69,7 +111,10 @@ test('Eva Bílá opens her exact counterparty page, never a page selected by the
       ref: partyRef,
       title: 'Eva Bílá',
     }),
-  ).toEqual({ params: { id: partyRef.resourceId }, to: '/prodej/strany/$id' });
+  ).toMatchObject({
+    params: { moduleId: 'party.registry', resourceId: partyRef.resourceId, resourceType: 'party.registry.party' },
+    to: '/resources/$moduleId/$resourceType/$resourceId',
+  });
   // Alias and archive state never replace a current owner ID with its Party ID or an old identity.
   expect(shellSearchResultTarget({ ...hit, party: { ...hit.party, archived: true } })).toEqual(
     shellSearchResultTarget(hit),
@@ -126,6 +171,93 @@ test.each(covered)('%s %s results form the %s group', (moduleId, resourceType, g
 test('a type the Shell does not know yet, or one claimed by another module, stays under other records', () => {
   expect(shellSearchGroupOf(resourceHit('inventory.stock', 'commerce.inventory.stock-item', 'Sklad'))).toBe('resource');
   expect(shellSearchGroupOf(resourceHit('demo.crm', 'finance.billing.invoice', 'Podvržená faktura'))).toBe('resource');
+});
+
+/** The Shell record page: the only target a hit whose owner and destination the composition cannot prove may open. */
+const expectNoOwnerTarget = (hit: ShellSearchResult) => {
+  expect(ownerRecordTarget(hit.ref, selectedLegalEntityId)).toBeUndefined();
+  expect(shellSearchResultTarget(hit)).toMatchObject({
+    params: { moduleId: hit.ref.moduleId, resourceId: hit.ref.resourceId, resourceType: hit.ref.resourceType },
+    to: '/resources/$moduleId/$resourceType/$resourceId',
+  });
+};
+
+test.each(['unknown.owner.product', 'unknown.owner.invoice', 'unknown.owner.counterparty', 'unknown.owner.client'])(
+  'a self-consistent owner outside this document (%s) never selects an owner route',
+  (resourceType) => {
+    const hit = resourceHit('unknown.owner', resourceType, 'Podvržený záznam');
+    expect(shellSearchGroupOf(hit)).toBe('resource');
+    expectNoOwnerTarget(hit);
+  },
+);
+
+test.each([
+  ['demo.crm', 'demo.crm.product'],
+  ['demo.crm', 'demo.crm.invoice'],
+  ['demo.crm', 'demo.crm.counterparty'],
+  ['demo.crm', 'demo.crm.party'],
+  ['finance.billing', 'finance.billing.product'],
+  ['work.tasks', 'work.tasks.invoice'],
+  ['facility.operations', 'facility.operations.invoice'],
+] as const)(
+  'a namespace-consistent owner %s that does not declare the destination of %s never claims it',
+  (moduleId, resourceType) => {
+    const hit = resourceHit(moduleId, resourceType, 'Podvržený záznam');
+    expect(shellSearchGroupOf(hit)).toBe('resource');
+    expectNoOwnerTarget(hit);
+  },
+);
+
+test('an ambiguous owner navigation never picks a page for a record type', () => {
+  const ambiguous = shellSearchPresentationContext([
+    { groupKey: 'shell.navigation.sales', href: '/crm/klienti', moduleId: 'demo.crm' },
+    { groupKey: 'shell.navigation.sales', href: '/crm/archiv/klienti', moduleId: 'demo.crm' },
+  ]);
+  const client = resourceHit('demo.crm', 'demo.crm.client', 'Strojírny Vysočina');
+  expect(shellSearchGroupOfOf(client, ambiguous)).toBe('resource');
+  expect(shellSearchResultTargetOf(client, ambiguous)).toMatchObject({
+    to: '/resources/$moduleId/$resourceType/$resourceId',
+  });
+});
+
+test('a same-suffix destination of another section never becomes the client agenda', () => {
+  const misleading = shellSearchPresentationContext([
+    { groupKey: 'shell.navigation.finance', href: '/finance/klienti', moduleId: 'finance.billing' },
+  ]);
+  const forged = resourceHit('finance.billing', 'finance.billing.client', 'Podvržený klient');
+  expect(shellSearchGroupOfOf(forged, misleading)).toBe('resource');
+  expect(shellSearchResultTargetOf(forged, misleading)).toMatchObject({
+    to: '/resources/$moduleId/$resourceType/$resourceId',
+  });
+});
+
+test('a document without a composition places every hit under other records', () => {
+  const client = resourceHit('demo.crm', 'demo.crm.client', 'Strojírny Vysočina');
+  expect(shellSearchGroupOfOf(client)).toBe('resource');
+  expect(shellSearchResultTargetOf(client)).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
+});
+
+test('a record type name shared by several owners is settled by the composed navigation section', () => {
+  const finance = resourceHit('finance.billing', 'finance.billing.document', 'Doklad');
+  const legal = resourceHit('legal.agreements', 'legal.agreements.document', 'Předávací protokol');
+  const facility = resourceHit('facility.operations', 'facility.operations.document', 'Revize');
+  expect([shellSearchGroupOf(finance), shellSearchGroupOf(legal), shellSearchGroupOf(facility)]).toEqual([
+    'financeDocument',
+    'legalDocument',
+    'facilityDocument',
+  ]);
+  // Without the document's composed navigation the Shell cannot place a shared name; it stays under other records.
+  expect(shellSearchGroupOfOf(finance)).toBe('resource');
+});
+
+test('an owner agenda resolved from navigation replaces a repeated owner route', () => {
+  const client = resourceHit('demo.crm', 'demo.crm.client', 'Strojírny Vysočina');
+  expect(shellSearchResultTarget(client)).toEqual({
+    search: { klient: client.ref.resourceId },
+    to: '/crm/klienti',
+  });
+  // A row without the document's navigation falls back to the Shell record page; that page redirects to the owner.
+  expect(shellSearchResultTargetOf(client)).toMatchObject({ to: '/resources/$moduleId/$resourceType/$resourceId' });
 });
 
 test('records with an owner page open there, by path segment or query parameter', () => {

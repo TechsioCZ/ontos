@@ -10,7 +10,7 @@ import { shellAuthenticationClientOptionsFromRequest } from '../../../../../shel
 import { loadHomePageModel, sessionEndedModel } from '../../../../home-page-model.ts';
 import { routeMeta } from '../../../../route.meta.ts';
 import { requireSignedIn } from '../../../../../sign-in-return.ts';
-import { ownerRecordTarget } from '../../../../../shell-search-resource-types.ts';
+import { ownerRecordTarget, shellSearchPresentationContext } from '../../../../../shell-search-resource-types.ts';
 import type { HomePageModel } from '../../../../home-page-model.ts';
 
 interface ResourceLoaderArguments {
@@ -65,7 +65,13 @@ export const loader = ({ params, request }: ResourceLoaderArguments): Promise<Re
                 resource.ref.moduleId === params.moduleId &&
                 resource.ref.resourceType === params.resourceType &&
                 resource.ref.resourceId === params.resourceId;
-              const target = sameRef ? ownerRecordTarget(resource.ref, shell.selectedLegalEntityId) : undefined;
+              const target = sameRef
+                ? ownerRecordTarget(
+                    resource.ref,
+                    shell.selectedLegalEntityId,
+                    shellSearchPresentationContext(shell.navigation.items),
+                  )
+                : undefined;
               if (target !== undefined) {
                 const prefix = new URL(request.url).pathname.split('/')[1] ?? '';
                 const language = Object.hasOwn(routeMeta.localisedPaths, prefix) ? prefix : 'cs';

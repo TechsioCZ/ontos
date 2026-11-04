@@ -325,6 +325,7 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
   await searchbox.fill('Unit 1');
   await searchbox.press('Enter');
   await expect(page).toHaveURL(/\/en\/search\?q=Unit%201$/u);
+  await expect(page.getByText('Nothing found for “Unit 1”.', { exact: true })).toBeVisible();
 
   const expectPersistentShell = async (path: string, status: string) => {
     await page.goto(path);
@@ -332,7 +333,9 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
     await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
     await expect(page.getByText(status)).toBeVisible();
   };
-  await expectPersistentShell('/en/search', 'No authorized results found.');
+  await expectPersistentShell('/en/search', 'Search clients, tasks, invoices, contracts…');
+  await expect(page.getByText('No authorized results found.', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Nothing found for “Unit 1”.', { exact: true })).toHaveCount(0);
   await expectPersistentShell('/en/modules/not-installed', 'This module is not available in the current context.');
   await expectPersistentShell(
     '/en/resources/not-installed/example/missing',

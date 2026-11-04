@@ -13,7 +13,11 @@ import {
   shellSearchGroupsOfFamily,
 } from '../../shell-search-match.ts';
 import type { ShellSearchFamilyKey } from '../../shell-search-match.ts';
-import { shellSearchGroupOf, shellSearchResourceTypesForGroups } from '../../shell-search-resource-types.ts';
+import {
+  shellSearchGroupOf,
+  shellSearchPresentationContext,
+  shellSearchResourceTypesForGroups,
+} from '../../shell-search-resource-types.ts';
 import type { ShellSearchGroupKey } from '../../shell-search-resource-types.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../shell-authentication-client-options.ts';
 import { loadHomePageModel, sessionEndedModel } from '../home-page-model.ts';
@@ -23,6 +27,8 @@ import type { HomePageModel } from '../home-page-model.ts';
 interface SearchLoaderArguments {
   readonly request: Request;
 }
+
+type ShellSearchContext = ReturnType<typeof shellSearchPresentationContext>;
 
 /** A record family that has at least one exact registered type in the current authorized answer. */
 export interface SearchFamilyAvailability {
@@ -95,10 +101,12 @@ const searchFromRequest = (request: Request): typeof SearchRouteSearch.Type => {
  * filter over an answer already received. A partial answer offers no filter; the next fresh query derives a new plan.
  */
 export const planShellSearchFilters = ({
+  context,
   partial,
   requestedFamilies,
   results,
 }: {
+  readonly context: ShellSearchContext;
   readonly partial: boolean;
   readonly requestedFamilies: readonly ShellSearchFamilyKey[];
   readonly results: readonly ShellSearchResult[];
@@ -109,7 +117,7 @@ export const planShellSearchFilters = ({
   }
   const groupsByFamily = new Map<ShellSearchFamilyKey, Set<ShellSearchGroupKey>>();
   for (const result of results) {
-    const group = shellSearchGroupOf(result);
+    const group = shellSearchGroupOf(result, context);
     const family = shellSearchFamilyOfGroup(group);
     const groups = groupsByFamily.get(family) ?? new Set<ShellSearchGroupKey>();
     groups.add(group);
@@ -119,7 +127,7 @@ export const planShellSearchFilters = ({
     (key): readonly SearchFamilyAvailability[] => {
       const observed = groupsByFamily.get(key);
       const groups = shellSearchGroupsOfFamily(key).filter((group) => observed?.has(group) === true);
-      const resourceTypes = shellSearchResourceTypesForGroups(groups);
+      const resourceTypes = shellSearchResourceTypesForGroups(groups, results, context);
       return resourceTypes === undefined || resourceTypes.length === 0 ? [] : [{ groups, key }];
     },
   );
@@ -128,7 +136,7 @@ export const planShellSearchFilters = ({
   if (selectedFamilies.length === 0) {
     return { availableFamilies, selectedFamilies: [] };
   }
-  const registered = shellSearchResourceTypesForGroups(shellSearchGroupsOfFamilies(selectedFamilies));
+  const registered = shellSearchResourceTypesForGroups(shellSearchGroupsOfFamilies(selectedFamilies), results, context);
   if (registered === undefined) {
     return { availableFamilies, selectedFamilies: [] };
   }
@@ -162,6 +170,7 @@ const searchWithFilters = ({
   searchResources({ compositionRevision, query }, options).pipe(
     Effect.flatMap((unfiltered) => {
       const plan = planShellSearchFilters({
+        context: shellSearchPresentationContext(shell.navigation.items),
         partial: unfiltered.partial,
         requestedFamilies,
         results: unfiltered.results,
