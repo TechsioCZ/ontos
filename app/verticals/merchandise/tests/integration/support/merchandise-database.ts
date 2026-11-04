@@ -190,6 +190,7 @@ export const catalogInput = {
       categoryId: 'r',
       categoryPathIds: ['r'],
       currentPriceMinor: 30,
+      featuredPosition: 1,
       id: 'p3',
       lowStockThreshold: 1,
       name: 'Matice',

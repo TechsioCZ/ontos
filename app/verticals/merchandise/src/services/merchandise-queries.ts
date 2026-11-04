@@ -181,7 +181,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
       head:
         input.catalogHead === true
           ? sql<StorefrontHeadEncoded | null>`(select json_build_object(
-            'revision', ${catalogHeads.revision}, 'homepageFeaturedProductIds', ${catalogHeads.homepageFeaturedProductIds})
+            'revision', ${catalogHeads.revision}, 'homepageFeaturedProductIds', ${featuredProductIdsOf(scope)})
           from ${catalogHeads} where ${whereScope(catalogHeads, scope)}
             and (${catalogHeads.bootstrapCheckpoint} is null
               or ${catalogHeads.bootstrapCheckpoint}->>'status' = 'VERIFIED'))`.as('head')
@@ -452,6 +452,17 @@ const labelFilter = (label: NonNullable<StorefrontCatalogQuery['label']>) => {
   }
   return eq(products.isNew, true);
 };
+/**
+ * Homepage featured products, in order: the products' own featured positions (`featured_position`, set by
+ * UpdateProduct), limited to what the storefront shows. The one source of the homepage order; no separate list.
+ */
+const featuredProductIdsOf = (
+  scope: StoreScope,
+) => sql`(select coalesce(array_agg(f.id order by f.featured_position asc, f.ordinal asc), '{}'::text[])
+  from ${products} f
+  where f.tenant_id = ${scope.tenantId}::uuid and f.legal_entity_id = ${scope.legalEntityId}::uuid
+    and f.featured_position is not null and f.archived = false and f.active = true and f.published = true)`;
+
 const storefrontBaseOrder = (catalog: StorefrontCatalogQuery, featuredIds: SQL): SQL[] => {
   if (catalog.productIds !== undefined) {
     return [sql`array_position(${textArray(catalog.productIds)}, ${products.id})`];
@@ -1067,8 +1078,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
 ) {
   const { offer, pricing } = input.market ?? NO_CATALOG_MARKET;
   const catalog = catalogInCzk(input.query, pricing);
-  const featuredIds = sql`((select h.homepage_featured_product_ids from ${catalogHeads} h
-    where h.tenant_id = ${scope.tenantId}::uuid and h.legal_entity_id = ${scope.legalEntityId}::uuid))::text[]`;
+  const featuredIds = sql`${featuredProductIdsOf(scope)}::text[]`;
   const categoryId = catalog.categorySlug === undefined ? undefined : categoryIdBySlug(db, scope, catalog.categorySlug);
   const words = wordsOf(catalog.q);
   const needle = normalizeSearchText(catalog.q ?? '');

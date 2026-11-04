@@ -361,6 +361,18 @@ it.live('lists featured products in homepage order followed by recommended ones'
   ),
 );
 
+it.live('takes the homepage order from the products featured positions, not from a stored list', () =>
+  withMerchandise(decodeState({ ...catalogInput, homepageFeaturedProductIds: ['p1'] }), (fixture) =>
+    Effect.gen(function* featuredFromPositions() {
+      // The stored list names p1 only, but p3 holds the first featured position; the homepage follows the positions.
+      expect(yield* idsOf(fixture, { featured: true })).toEqual(['p3', 'p1']);
+      const result = yield* catalogPage(fixture, { featured: true, fields: 'card' });
+      // The head lists only products with a featured position; recommended ones follow in the listing, not in the list.
+      expect(result.head).toEqual({ homepageFeaturedProductIds: ['p3'], revision: fixture.revision });
+    }),
+  ),
+);
+
 it.live('filters by label', () =>
   onCatalog((fixture) =>
     Effect.gen(function* catalogReadCase4() {
