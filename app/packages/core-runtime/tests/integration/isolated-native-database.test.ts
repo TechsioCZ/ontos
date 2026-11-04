@@ -672,6 +672,7 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
           'observe',
           'observeRetainedOriginal',
           'publishReplacement',
+          'renewObservation',
           'seal',
         ]);
         expect(yield* fixture.composition.observe()).toEqual({
