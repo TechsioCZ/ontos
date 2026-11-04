@@ -107,53 +107,6 @@ jobs:
           path: ${{ runner.temp }}/zerops-delivery/plan.json
           retention-days: 30
 
-  # Stage credentials that cross services. It runs on every push, not only when the plan selects a service, because a
-  # rotated secret must reach its service and restart it even when no code changed. The deploy waits for it.
-  rotate:
-    name: Sync stage credentials
-    if: github.ref == 'refs/heads/demo/sales-crm'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read
-    environment:
-      name: stage-edge
-      deployment: false
-    env:
-      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
-      ZEROPS_APP_SERVICE_ID: ${{ vars.ZEROPS_APP_SERVICE_ID }}
-      ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
-      ZEROPS_SPICEDB_SERVICE_ID: ${{ vars.ZEROPS_SPICEDB_SERVICE_ID }}
-      ZEROPS_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_STOREFRONT_SERVICE_ID }}
-      ZEROPS_SHOP_STOREFRONT_SERVICE_ID: ${{ vars.ZEROPS_SHOP_STOREFRONT_SERVICE_ID }}
-      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
-      # Services to restart even when their variables are unchanged, as a space-separated list (for example after a
-      # failed restart). Unset in normal pushes.
-      FORCE_RESTART: ${{ vars.STAGE_CREDENTIAL_RESTART }}
-      DEMO_IMMUTABLE_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
-      ROTATED_SPICEDB_PRESHARED_KEY: ${{ secrets.ROTATED_SPICEDB_PRESHARED_KEY }}
-      ROTATED_SPICEDB_DATABASE_PASSWORD: ${{ secrets.ROTATED_SPICEDB_DATABASE_PASSWORD }}
-      ROTATED_PARTY_REGISTRY_DB_PASSWORD: ${{ secrets.ROTATED_PARTY_REGISTRY_DB_PASSWORD }}
-      ROTATED_PARTY_REGISTRY_WORKER_DB_PASSWORD: ${{ secrets.ROTATED_PARTY_REGISTRY_WORKER_DB_PASSWORD }}
-      ROTATED_SHELL_GATEWAY_ISSUER_DB_PASSWORD: ${{ secrets.ROTATED_SHELL_GATEWAY_ISSUER_DB_PASSWORD }}
-      ROTATED_AKROS_STOREFRONT_API_KEY: ${{ secrets.ROTATED_AKROS_STOREFRONT_API_KEY }}
-      ROTATED_SHOP_AKROS_STOREFRONT_API_KEY: ${{ secrets.ROTATED_SHOP_AKROS_STOREFRONT_API_KEY }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install zcli for the restarts
-        run: |
-          npm install --global @zerops/zcli@1.1.0 >/dev/null
-          zcli login "$ZEROPS_TOKEN" >/dev/null
-
-      - name: Sync changed stage credentials and restart the services they feed
-        run: bash app/scripts/zerops/sync-stage-credentials.sh
-
   # The units build on GitHub runners, a shard each, in parallel: the Zerops build container holds only two unit
   # builds at a time. A unit whose committed inputs are unchanged reuses its last build from the Actions cache
   # (scripts/zerops/build-app.sh), and Zerops then keeps every unit the push carries.
@@ -232,9 +185,9 @@ jobs:
 
   deploy:
     name: Build and deploy on Zerops
-    needs: [plan, build, rotate]
+    needs: [plan, build]
     if: >-
-      always() && needs.plan.result == 'success' && needs.plan.outputs.any == 'true' && needs.rotate.result == 'success' &&
+      always() && needs.plan.result == 'success' && needs.plan.outputs.any == 'true' &&
       (needs.plan.outputs.app == 'false' || needs.build.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 75
