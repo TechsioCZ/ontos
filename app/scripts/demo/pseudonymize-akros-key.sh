@@ -19,7 +19,7 @@ need "${ONTOS_STAGE_SECRETS_DIR:-}" ONTOS_STAGE_SECRETS_DIR 'owner-only local di
 [ -s "$ONTOS_STAGE_KNOWN_HOSTS" ] || { printf 'ONTOS_STAGE_KNOWN_HOSTS is missing or empty\n' >&2; exit 2; }
 DEST="$ONTOS_STAGE_SECRETS_DIR/sroubshop-storefront-api-key"
 REMOTE_FILE='.ontos-operator-handoff/sroubshop-storefront-api-key'
-NODE=/var/www/app/.zerops/node/bin/node
+NODE=node
 remote() {
   ssh -o UserKnownHostsFile="$ONTOS_STAGE_KNOWN_HOSTS" -o StrictHostKeyChecking=yes -o BatchMode=yes app "$1"
 }

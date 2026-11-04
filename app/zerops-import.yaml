@@ -4,9 +4,9 @@ services:
   - hostname: spicedb
     type: docker@26.1.5
   - hostname: migrator
-    type: nodejs@24
+    type: alpine/nodejs@26
   - hostname: app
-    type: nodejs@24
+    type: alpine/nodejs@26
     enableSubdomainAccess: true
     # Owner render resources are lazy and immutable asset metadata is cached. The measured login bursts fit
     # a 2.5 GiB floor; keep 0.5 GiB free and allow growth to 4 GiB instead of relying on swap.
@@ -23,13 +23,13 @@ services:
     minContainers: 1
     maxContainers: 1
   - hostname: storefront
-    type: nodejs@24
+    type: alpine/nodejs@26
     enableSubdomainAccess: true
   # The pseudonymous demo e-shop (ontos-stage-shop): the same `storefront` setup with its own key and brand in the
   # service variables (STOREFRONT_BRAND, ONTOS_AKROS_STOREFRONT_API_KEY, ONTOS_STOREFRONT_APP_ID,
   # ONTOS_STOREFRONT_LEGAL_ENTITY_ID). Shared CPU and the smallest memory: it serves demo traffic only.
   - hostname: shop
-    type: nodejs@24
+    type: alpine/nodejs@26
     enableSubdomainAccess: true
     verticalAutoscaling:
       cpuMode: SHARED
@@ -44,7 +44,7 @@ services:
   # The N1 e-shop (ontos-stage-n1): the `n1` setup, one minimal Next container. Its tenant and seller are in zerops.yaml;
   # its storefront key is a sensitive service variable synced from the stage-edge secret (ONTOS_N1_STOREFRONT_API_KEY).
   - hostname: n1
-    type: nodejs@24
+    type: alpine/nodejs@26
     enableSubdomainAccess: true
     verticalAutoscaling:
       cpuMode: SHARED

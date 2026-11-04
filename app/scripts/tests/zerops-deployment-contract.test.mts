@@ -106,12 +106,10 @@ it('binds the SpiceDB datastore password, never a URL, into the SpiceDB and appl
   expect(zeropsYaml).not.toContain('SPICEDB_DATABASE_URL');
 });
 
-it('runs the whole application in the app container through the shipped Node, from the whole workspace', () => {
+it('runs the whole application in the app container through native Node, from the whole workspace', () => {
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
 
-  expect(app.getIn(['run', 'start'])).toBe(
-    `sh -c 'cd app && PATH="$PWD/.zerops/node/bin:$PATH" exec node scripts/zerops/app-host.mts'`,
-  );
+  expect(app.getIn(['run', 'start'])).toBe(`sh -c 'cd app && exec node scripts/zerops/app-host.mts'`);
   expect(serviceStrings(app, ['build', 'deployFiles'])).toStrictEqual(['app/']);
   for (const branch of [
     ['deploy', 'readinessCheck'],
@@ -127,11 +125,11 @@ it('runs the whole application in the app container through the shipped Node, fr
 it('starts the storefront from its standalone bundle and keeps the Shell URL in-project', () => {
   const storefront = serviceBlock(readZeropsDeploymentYaml(), 'storefront');
 
-  expect(storefront).toContain('exec node/bin/node akros-storefront/server.js');
+  expect(storefront).toContain('exec node akros-storefront/server.js');
   expect(storefront).toContain('ONTOS_SHELL_URL: http://app:3000');
 });
 
-it('ships checksum-pinned Bun beside Node with the Shell pilot off and no runtime download', () => {
+it('ships checksum-pinned Bun with the native Node Shell default and no runtime download', () => {
   const app = serviceNode(readZeropsDeploymentYaml(), 'app');
   expect(serviceStrings(app, ['build', 'prepareCommands'])).toContain(
     'sh /build/source/app/scripts/install-zerops-bun.sh 1.4.4',
@@ -177,30 +175,22 @@ it('bakes the public origins the app runs with into its bundles, including the A
   expect(buildApp).toContain('export ULTRAMODERN_PUBLIC_URL_SHOP_STOREFRONT="$ONTOS_SHOP_STOREFRONT_ORIGIN"');
 });
 
-it('builds every Node service with the pinned toolchain and ships Node instead of downloading it at start', () => {
+it('uses native Alpine Node 26 for every Node build and runtime without a custom Node installation', () => {
   const zeropsYaml = readZeropsDeploymentYaml();
-  const node = /^node = "(?<node>[^"]+)"$/mu.exec(readFileSync(new URL('../../.mise.toml', import.meta.url), 'utf-8'))
-    ?.groups?.node;
   const pnpm = /"packageManager": "pnpm@(?<pnpm>[^"+]+)"/u.exec(
     readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
   )?.groups?.pnpm;
-  const nodeServices = zeropsYaml
-    .split(/(?=^ {2}- setup:)/mu)
-    .filter((block) => block.includes('install-zerops-node.sh'));
-
-  expect(nodeServices.length).toBe(3);
-  for (const block of nodeServices) {
-    expect(block).toContain(`install-zerops-node.sh ${node} ${pnpm}\n`);
-    expect(block).toContain(`"$HOME/.local/node-${node}/bin`);
-    // The official nodejs.org/dist musl Node is dynamically linked against libatomic, which alpine does not ship;
-    // without it the pinned Node cannot start and the build fails with exit status 127. Both the build and the
-    // runtime install it, because the runtime ships and starts that same Node binary.
-    expect(block).toMatch(/sudo apk add --no-cache [^\n]*\blibatomic\b/u);
-    expect(block).toContain(
-      '    run:\n      base: nodejs@24\n      prepareCommands:\n        - sudo apk add --no-cache libatomic\n',
-    );
-    expect(block).toMatch(/start: sh -c '.*exec (?:node\/bin\/node|node) /u);
-    expect(block).not.toContain('initCommands');
+  expect(pnpm).toBeDefined();
+  for (const setup of ['storefront', 'n1', 'app']) {
+    const service = serviceNode(zeropsYaml, setup);
+    const block = serviceBlock(zeropsYaml, setup);
+    expect(service.getIn(['build', 'base'])).toBe('alpine/nodejs@26');
+    expect(service.getIn(['run', 'base'])).toBe('alpine/nodejs@26');
+    expect(serviceStrings(service, ['build', 'prepareCommands'])).toContain(`sudo npm install --global pnpm@${pnpm}`);
+    expect(serviceStrings(service, ['run', 'prepareCommands'])).toEqual([]);
+    expect(serviceStrings(service, ['run', 'initCommands'])).toEqual([]);
+    expect(block).not.toMatch(/install-zerops-node|\.local\/node-|\.zerops\/node|\/node\/bin|libatomic/u);
+    expect(block).toMatch(/start: sh -c '.*exec node /u);
     expect(block).not.toMatch(/virtual-store|VIRTUAL_STORE|--force|reset-workspace-dependencies/u);
   }
 });
@@ -331,11 +321,11 @@ it('declares the import list of the data plane, the migrator secrets, the app an
   ).toStrictEqual([
     'db18 postgresql:single@18 false',
     'spicedb docker@26.1.5 false',
-    'migrator nodejs@24 false',
-    'app nodejs@24 true',
-    'storefront nodejs@24 true',
-    'shop nodejs@24 true',
-    'n1 nodejs@24 true',
+    'migrator alpine/nodejs@26 false',
+    'app alpine/nodejs@26 true',
+    'storefront alpine/nodejs@26 true',
+    'shop alpine/nodejs@26 true',
+    'n1 alpine/nodejs@26 true',
   ]);
   for (const { hostname } of services) {
     expect(hostname).toMatch(/^[a-z0-9]{1,25}$/u);
@@ -404,7 +394,7 @@ it('runs the N1 e-shop on one minimal service of its own, from the n1 setup, wit
   expect(block).toContain('ONTOS_SHELL_URL: https://ontos-stage.web-revolution.cz');
   expect(block).toContain('test -n "$ONTOS_N1_STOREFRONT_API_KEY"');
   expect(pushDelivery).toContain(`n1) id="\${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}"; setup=n1`);
-  expect(workflow).toContain('ONTOS_N1_STOREFRONT_API_KEY: ${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}');
+  expect(workflow).toContain(`ONTOS_N1_STOREFRONT_API_KEY: \${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}`);
   expect(workflow).toContain('route-stage-domains.sh ontos-stage-n1.web-revolution.cz');
 });
 
