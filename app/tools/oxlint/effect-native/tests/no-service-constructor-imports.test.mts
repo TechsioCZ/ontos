@@ -1140,20 +1140,6 @@ it('retains recursive data closure through native Object.values on arrays', () =
   });
 });
 
-it('proves the concrete Outbox fixture imports without an ownership or name exemption', () => {
-  const support = nodePath.join(appRoot, 'packages/core-runtime/tests/support/outbox-worker-composition.ts');
-  const processFixture = nodePath.join(
-    appRoot,
-    'packages/core-runtime/tests/fixtures/outbox-worker-process.fixture.ts',
-  );
-  expect(provesDataFactoryImport(support, '../../src/testing/module-contract.ts', 'makeModuleContractFixture')).toBe(
-    true,
-  );
-  expect(
-    provesDataFactoryImport(processFixture, '../support/outbox-worker-composition.ts', 'makeOutboxWorkerComposition'),
-  ).toBe(true);
-});
-
 describe('allows service constructor calls only within proven native service factory callbacks', () => {
   const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
   const factory = nodePath.join(directory, factoryFilename);
@@ -2947,33 +2933,6 @@ describe('proves native transport-layer merges only when every route import stay
       source: transportFactorySource(merged),
     },
   ]);
-});
-
-describe('proves the actual Shell API composition factory from current owner source without executing it', () => {
-  const { accept, directory, register, write } = recordScenario(serviceRuleTitle);
-  const owner = nodePath.join(directory, 'app/apps/shell-super-app');
-  for (const file of [
-    'api/index.ts',
-    'api/live-changes/transport.ts',
-    'api/shell-transport.ts',
-    'shared/api.ts',
-    'shared/module-target-diagnostics.ts',
-    'src/module-api/transport.ts',
-  ]) {
-    const target = nodePath.join(owner, file);
-    write(target, readFileSync(nodePath.join(appRoot, 'apps/shell-super-app', file), 'utf-8'));
-  }
-  const consumer = nodePath.join(owner, supportDirectory, bootstrapFilename);
-  write(
-    consumer,
-    [
-      processImports,
-      "import { makeShellAuthenticationApiRuntime } from '../../api/index.ts'; void makeShellAuthenticationApiRuntime;",
-      directRunMain,
-    ].join('\n'),
-  );
-  accept(consumer);
-  register();
 });
 
 const finiteKeyParameterProbe = (body: string): string =>

@@ -101,6 +101,17 @@ const textArray = (values: readonly string[]) =>
 const idsFilter = (column: AnyPgColumn, ids: readonly string[]) =>
   ids.length === 0 ? sql`false` : inArray(column, [...ids]);
 
+/**
+ * Homepage featured products, in order: the products' own featured positions (`featured_position`, set by
+ * UpdateProduct), limited to what the storefront shows. The one source of the homepage order; no separate list.
+ */
+const featuredProductIdsOf = (
+  scope: StoreScope,
+) => sql`(select coalesce(array_agg(f.id order by f.featured_position asc, f.ordinal asc), '{}'::text[])
+  from ${products} f
+  where f.tenant_id = ${scope.tenantId}::uuid and f.legal_entity_id = ${scope.legalEntityId}::uuid
+    and f.featured_position is not null and f.archived = false and f.active = true and f.published = true)`;
+
 // ------------------------------------------------------------------------------------------------ products
 
 const productSelection = {
@@ -452,17 +463,6 @@ const labelFilter = (label: NonNullable<StorefrontCatalogQuery['label']>) => {
   }
   return eq(products.isNew, true);
 };
-/**
- * Homepage featured products, in order: the products' own featured positions (`featured_position`, set by
- * UpdateProduct), limited to what the storefront shows. The one source of the homepage order; no separate list.
- */
-const featuredProductIdsOf = (
-  scope: StoreScope,
-) => sql`(select coalesce(array_agg(f.id order by f.featured_position asc, f.ordinal asc), '{}'::text[])
-  from ${products} f
-  where f.tenant_id = ${scope.tenantId}::uuid and f.legal_entity_id = ${scope.legalEntityId}::uuid
-    and f.featured_position is not null and f.archived = false and f.active = true and f.published = true)`;
-
 const storefrontBaseOrder = (catalog: StorefrontCatalogQuery, featuredIds: SQL): SQL[] => {
   if (catalog.productIds !== undefined) {
     return [sql`array_position(${textArray(catalog.productIds)}, ${products.id})`];

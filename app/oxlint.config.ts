@@ -5,6 +5,11 @@ import react from 'ultracite/oxlint/react';
 
 import { testRestrictedImports } from './tools/oxlint/effect-native/shared/test-restricted-imports.ts';
 
+const selectRestrictedImport = {
+  message: "Import SelectTemplate from '@app/admin-ui/select-template' so native options carry labels.",
+  name: '@techsio/ui-kit/templates/select',
+};
+
 const selectedJsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
 const jsPlugins = {
   ...selectedJsPlugins,
@@ -60,10 +65,6 @@ const antiSlopRules = {
   'anti-slop/require-safety-comment-for-type-assertion': 'error',
 } satisfies NonNullable<Parameters<typeof defineConfig>[0]['rules']>;
 
-const antiSlopEffectRules = {
-  'anti-slop-effect/no-service-constructor-imports': 'error',
-} satisfies NonNullable<Parameters<typeof defineConfig>[0]['rules']>;
-
 // Only a top-level call can use this exact value import without a nested binding
 // shadowing it. Aliases and nested calls fail closed. The second argument alone
 // owns Core's inference-sensitive prepare/load/finish order, not its nested data.
@@ -78,6 +79,8 @@ const coreReadPipelineSelector = [
 
 // Effect-native architecture rules derived from docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md.
 // Each rule cites the audit finding it enforces; see tools/oxlint/effect-native/README.md.
+// Nullability style and factory-import purity are review advice, not correctness proofs.
+// Explicit contracts, Effect requirements and owner-boundary checks remain blocking.
 const effectNativeRules = {
   'effect-native/no-ad-hoc-argv-in-scripts': 'error',
   'effect-native/no-ambient-date': 'error',
@@ -179,13 +182,12 @@ const effectNativeRules = {
     },
   ],
   'effect-native/no-manual-route-param-parsing': 'error',
-  'effect-native/no-manual-tag-comparison': 'error',
+  'effect-native/no-manual-tag-comparison': ['error', { ignoreTests: true }],
   'effect-native/no-native-error-construction': 'error',
   'effect-native/no-native-json-parse': 'error',
   'effect-native/no-native-json-stringify': 'error',
   'effect-native/no-native-timers': 'error',
   'effect-native/no-nested-effect-run': 'error',
-  'effect-native/no-nullable-schema-field': 'error',
   'effect-native/no-nullable-service-outcome': 'error',
   'effect-native/no-per-operation-http-api-client': 'error',
   'effect-native/no-per-request-key-material': 'error',
@@ -253,21 +255,30 @@ export default defineConfig({
     { name: 'perfectionist', specifier: './tools/oxlint/order-sensitive-objects.ts' },
     { name: 'anti-slop', specifier: './tools/oxlint/anti-slop/index.ts' },
     {
-      name: 'anti-slop-effect',
-      specifier: './tools/oxlint/anti-slop/effect/index.ts',
-    },
-    {
       name: 'effect-native',
       specifier: './tools/oxlint/effect-native/index.ts',
     },
   ],
   options: {
     denyWarnings: true,
-    reportUnusedDisableDirectives: 'error',
     typeAware: true,
     typeCheck: true,
   },
   overrides: [
+    {
+      // ui-kit's hidden native <option> prints displayValue, else the item value (an ID). The admin-ui wrapper passes
+      // each label as displayValue, so every select in the app goes through it.
+      excludeFiles: ['packages/admin-ui/src/select-template.tsx'],
+      files: ['apps/**/*.{ts,tsx}', 'verticals/**/*.{ts,tsx}', 'packages/**/*.{ts,tsx}'],
+      rules: {
+        'eslint/no-restricted-imports': [
+          'error',
+          {
+            paths: [selectRestrictedImport],
+          },
+        ],
+      },
+    },
     {
       files: ['**/*.{test,spec}.{ts,tsx,mts}'],
       rules: {
@@ -279,41 +290,24 @@ export default defineConfig({
     },
     {
       excludeFiles: ['**/tests/e2e/**'],
-      files: [
-        'apps/**/tests/**',
-        'verticals/**/tests/**',
-        'packages/**/tests/**',
-        'scripts/**/*.test.mts',
-        'tools/**/tests/*.test.mts',
-      ],
+      files: ['apps/**/tests/**', 'verticals/**/tests/**', 'packages/**/tests/**'],
       rules: {
         'eslint/no-restricted-imports': [
           'error',
           {
-            paths: testRestrictedImports,
+            paths: [...testRestrictedImports, selectRestrictedImport],
           },
         ],
       },
     },
     {
-      // ui-kit's hidden native <option> prints displayValue, else the item value (an ID). The admin-ui wrapper passes
-      // each label as displayValue, so every select in the app goes through it.
-      excludeFiles: ['packages/admin-ui/src/select-template.tsx'],
-      files: ['apps/**/*.{ts,tsx}', 'verticals/**/*.{ts,tsx}', 'packages/**/*.{ts,tsx}'],
+      excludeFiles: ['**/tests/e2e/**'],
+      files: ['scripts/**/*.test.mts', 'tools/**/tests/*.test.mts'],
       rules: {
-        'eslint/no-restricted-imports': [
-          'error',
-          {
-            paths: [
-              {
-                message: "Import SelectTemplate from '@app/admin-ui/select-template' so native options carry labels.",
-                name: '@techsio/ui-kit/templates/select',
-              },
-            ],
-          },
-        ],
+        'eslint/no-restricted-imports': ['error', { paths: testRestrictedImports }],
       },
     },
+
     {
       // The shared scroll region joins the tab order only while its content overflows, so keyboard users can reach
       // and scroll a wide table or document (WCAG 2.1.1, axe scrollable-region-focusable). A named region is not an
@@ -321,14 +315,6 @@ export default defineConfig({
       files: ['packages/admin-ui/src/scroll-region.tsx'],
       rules: {
         'jsx-a11y/no-noninteractive-tabindex': 'off',
-      },
-    },
-    {
-      // This guarded test-only entrypoint composes real services with boundary fakes.
-      // database-access:check rejects imports of it from production source.
-      files: ['packages/core-runtime/src/testing/**/*.ts', 'apps/shell-super-app/tests/e2e/auth-fixture.ts'],
-      rules: {
-        'anti-slop-effect/no-service-constructor-imports': 'off',
       },
     },
     {
@@ -405,13 +391,6 @@ export default defineConfig({
       },
     },
     {
-      // This transaction-scoped factory composes its owner evidence source and repository.
-      files: ['verticals/assortment/src/services/decision-evidence.repository.ts'],
-      rules: {
-        'anti-slop-effect/no-service-constructor-imports': 'off',
-      },
-    },
-    {
       // The Action factory supplies transaction-scoped evaluation and persistence ports to
       // one issuance; these dependencies are explicit in the existing issuer contract.
       files: ['verticals/assortment/src/services/assortment-commitment-confirmation.service.ts'],
@@ -419,20 +398,6 @@ export default defineConfig({
         'effect-native/no-dependency-parameters': 'off',
         'effect-native/no-wide-factory-signature': 'off',
         'effect-native/require-context-service-for-service-interface': 'off',
-      },
-    },
-    {
-      // These exact Pricing composition roots construct owner-local services behind Context-backed exports; the test support file only builds deterministic evidence.
-      files: [
-        policyFiles.manageQuotationAction,
-        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence-live.ts',
-        'verticals/pricing/src/integrations/current-pricing-decision-whole-evaluation-adapters.ts',
-        policyFiles.pricingDecisionEvaluation,
-        policyFiles.exactPriceResolution,
-        'verticals/pricing/tests/unit/support/issue-788-confirmation.fixture.ts',
-      ],
-      rules: {
-        'anti-slop-effect/no-service-constructor-imports': 'off',
       },
     },
     {
@@ -543,26 +508,7 @@ export default defineConfig({
         'effect-native/no-local-defect-seam': 'off',
       },
     },
-    {
-      // These exact external/database contracts preserve JSON null as the published open-interval, unknown-revision or absent-proof wire value.
-      files: [
-        'packages/pricing-contracts/src/domain/commercial-fee.ts',
-        'packages/pricing-contracts/src/domain/currency-support.ts',
-        'packages/pricing-contracts/src/domain/discount.ts',
-        policyFiles.materialEvidence,
-        'packages/pricing-contracts/src/domain/price-group-interpretation.ts',
-        'packages/pricing-contracts/src/domain/price-schedule.ts',
-        'packages/pricing-contracts/src/domain/quantity-tier.ts',
-        'packages/pricing-contracts/src/domain/source-revision-evidence.ts',
-        'packages/commerce-order-contracts/src/apis/verify-order-commitment-binding.ts',
-        'verticals/commerce-customer-context/shared/apis/pricing-purchase-context-verification.ts',
-        'verticals/commerce-order/shared/domain/order-commitment.ts',
-        'verticals/pricing/src/persistence/currency-support-persistence.ts',
-      ],
-      rules: {
-        'effect-native/no-nullable-schema-field': 'off',
-      },
-    },
+
     {
       // Canonical encoding must succeed before replay-state lookup, so these yields are intentionally ordered.
       files: [policyFiles.manageQuotationAction],
@@ -1478,7 +1424,6 @@ export default defineConfig({
     'unicorn/prefer-top-level-await': 'error',
     'unicorn/throw-new-error': 'off',
     ...antiSlopRules,
-    ...antiSlopEffectRules,
     ...effectNativeRules,
   },
   settings: jsPluginSettings,

@@ -69,7 +69,7 @@ Then generate its MicroVertical module contract before its business artifacts. G
 | Stage delivery                          | `../.github/workflows/zerops-stage.yml` and `topology/stage-edge.json`                         |
 | Local database defaults                 | `.env.example`, Compose configuration, and database scripts                                    |
 
-Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
+Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Standalone Node scripts and shared build configuration have their own TypeScript projects (`scripts/tsconfig.json` and `packages/shared-contracts/tooling/tsconfig.json`), so framework application globals cannot contaminate their HTTP or environment types. Node-tooling projects share `tsconfig.node-tooling.json` with standard TypeScript strict checking, separate from application-only model diagnostics. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
 
 ## Private-first routes and public output
 
@@ -159,7 +159,7 @@ Readiness accepts a fixed environment name and loads source-controlled contexts 
 
 ## Validation
 
-For quality reports and their explicit blocking/advisory policy, see [Quality audits](docs/quality-audit.md). Run `mise exec -- pnpm quality:check` from this directory to produce a fresh full report and enforce the gate. `quality:audit` alone produces reports without rejecting Knip findings; `quality:audit:gate` applies the blocking checks to that report. Knip findings and report-integrity failures block; duplication, complexity, and semantic similarity findings are advisory. Upstream Effect TSGo, Ultracite, and custom Oxlint enforcement are unchanged.
+For quality reports and their explicit blocking/advisory policy, see [Quality audits](docs/quality-audit.md). Run `mise exec -- pnpm quality:check` from this directory to produce a fresh full report and enforce the gate. `quality:audit` alone produces reports without rejecting Knip findings; `quality:audit:gate` applies the blocking checks to that report. All code-quality findings are advisory; missing, malformed, or incomplete reports still fail report validation. The separate Quality Audit workflow owns this analysis; `pnpm check` does not rerun it. Upstream Effect TSGo, Ultracite, and custom Oxlint enforcement are unchanged.
 
 Use the explicit local feedback scopes instead of repeatedly running the aggregate gate while editing:
 

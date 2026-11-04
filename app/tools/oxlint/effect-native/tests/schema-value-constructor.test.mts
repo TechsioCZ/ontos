@@ -25,7 +25,11 @@ it('applies the native schema maker proof to direct and aliased imports without 
     for (const filename of [consumerFilename, validFilename, ...invalidFilenames]) {
       copyFileSync(path.join(fixtureDirectory, filename), path.join(directory, filename));
     }
-    const run = runOxlint(path.join(appRoot, 'oxlint.config.ts'), [path.join(directory, consumerFilename)], directory);
+    const run = runOxlint(
+      path.join(appRoot, 'tools/oxlint/effect-native/tests/native-service-factory-import.config.ts'),
+      [path.join(directory, consumerFilename)],
+      directory,
+    );
     expect(run.numberOfFiles).toBe(1);
     const reports = run.diagnostics.filter(({ code }) => code === 'anti-slop-effect(no-service-constructor-imports)');
     expect(reports).toHaveLength(invalidFilenames.length);

@@ -3,48 +3,14 @@ import path from 'node:path';
 import { expect, it } from 'effect-rstest';
 
 import { provesDataFactoryImport } from '../../anti-slop/effect/rules/data-factory-proof.ts';
-import { appRoot, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
-const ruleCode = 'anti-slop-effect(no-service-constructor-imports)';
 const factorySource = './factory.ts';
 const effectImport = 'import { Effect } from "effect";';
 const consumerSource = "import { makeData } from './factory.ts'; void makeData;";
 const consumerFilename = 'consumer.ts';
 const factoryFilename = 'factory.ts';
 const nativeIndexColumn = 'columns.title.op("gin_trgm_ops")';
-const lintConfig = path.join(appRoot, 'oxlint.config.ts');
-
-it('proves the three current metadata imports at their actual consuming modules', () => {
-  const imports = [
-    {
-      consumer: 'packages/core-runtime/tests/support/outbox-worker-composition.ts',
-      name: 'makeModuleContractFixture',
-      source: '../../src/testing/module-contract.ts',
-    },
-    {
-      consumer: 'packages/core-runtime/scripts/verify-db-schema.mts',
-      name: 'makeCoreIdentityPolicies',
-      source: '../src/db/identity-policies.ts',
-    },
-    {
-      consumer: 'packages/core-runtime/tests/fixtures/outbox-worker-process.fixture.ts',
-      name: 'makeOutboxWorkerComposition',
-      source: '../support/outbox-worker-composition.ts',
-    },
-  ];
-  for (const { consumer, name, source } of imports) {
-    expect(provesDataFactoryImport(path.join(appRoot, consumer), source, name), consumer).toBe(true);
-  }
-  const run = runOxlint(
-    lintConfig,
-    imports.map(({ consumer }) => consumer),
-    appRoot,
-  );
-  expect(run.numberOfFiles).toBe(imports.length);
-  expect(run.diagnostics.filter(({ code }) => code === ruleCode)).toEqual([]);
-});
-
 it('resolves native named schema, Result and Option imports without admitting executable or fake SDK values', () => {
   withTemporaryWorkspace((directory) => {
     const consumer = path.join(directory, consumerFilename);

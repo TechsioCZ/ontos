@@ -18,6 +18,8 @@ const constructorFactory = [
   '',
 ].join('\n');
 const constructorConsumer = "import { makeCustomerSchema } from './factory.ts';\n\nvoid makeCustomerSchema;\n";
+const restrictedImportDiagnostic = 'eslint(no-restricted-imports)';
+const retiredConstructorDiagnostic = 'anti-slop-effect(no-service-constructor-imports)';
 const nodeTestImport = "import { test } from 'node:test';\ntest('example', () => {});\n";
 
 it('production configuration loads every repository plugin and scopes its overrides by path', () => {
@@ -40,12 +42,12 @@ it('production configuration loads every repository plugin and scopes its overri
   // effect-native and anti-slop rules from the base configuration.
   expect(codesFor(run, source)).toContain('effect-native(no-instanceof)');
   expect(codesFor(run, source)).toContain('anti-slop(no-unknown-parameters)');
-  // anti-slop-effect is enabled, and switched off for the guarded core-runtime testing entrypoint.
-  expect(codesFor(run, serviceConsumer)).toContain('anti-slop-effect(no-service-constructor-imports)');
-  expect(codesFor(run, testingConsumer)).not.toContain('anti-slop-effect(no-service-constructor-imports)');
+  // Constructor imports are legal. Effect requirements and explicit owner-boundary checks govern composition.
+  expect(codesFor(run, serviceConsumer)).not.toContain(retiredConstructorDiagnostic);
+  expect(codesFor(run, testingConsumer)).not.toContain(retiredConstructorDiagnostic);
   // The test import policy applies to application tests, not to e2e adapters.
-  expect(codesFor(run, applicationTest)).toContain('eslint(no-restricted-imports)');
-  expect(codesFor(run, e2eTest)).not.toContain('eslint(no-restricted-imports)');
+  expect(codesFor(run, applicationTest)).toContain(restrictedImportDiagnostic);
+  expect(codesFor(run, e2eTest)).not.toContain(restrictedImportDiagnostic);
 });
 
 it('production route filename override admits exact native splat filenames and keeps nearby rejections', () => {
@@ -103,4 +105,34 @@ it('production SonarJS configuration accepts Match.tags and discriminator keys t
   const sonarCodes = codesFor(run, source).filter((code) => code.startsWith('sonarjs('));
   expect(sonarCodes, 'the SonarJS plugin must run on the fixture').toContain('sonarjs(no-all-duplicated-branches)');
   expect(sonarCodes, 'domain-vocabulary keys are not function names').not.toContain('sonarjs(function-name)');
+});
+
+// This is a wire-contract choice, not evidence of an untyped API or an invalid domain model.
+it('production lint accepts nullable wire schemas without prescribing a domain representation', () => {
+  const file = 'verticals/demo/shared/domain/parent.ts';
+  const run = runProductionOxlint({
+    [file]: "import { Schema } from 'effect';\nexport const ParentSchema = Schema.NullOr(Schema.String);\n",
+  });
+  expect(codesFor(run, file)).not.toContain('effect-native(no-nullable-schema-field)');
+});
+
+it('test runner restrictions compose with the accessible select wrapper policy', () => {
+  const files = [
+    'apps/demo/tests/example.test.ts',
+    'verticals/demo/tests/example.test.ts',
+    'packages/demo/tests/example.test.ts',
+  ];
+  const source = `${nodeTestImport}import { SelectTemplate } from '@techsio/ui-kit/templates/select';\nvoid SelectTemplate;\n`;
+  const script = 'scripts/ui.test.mts';
+  const wrapper = 'packages/admin-ui/src/select-template.tsx';
+  const run = runProductionOxlint({
+    ...Object.fromEntries(files.map((file) => [file, source])),
+    [script]: source,
+    [wrapper]: "import { SelectTemplate } from '@techsio/ui-kit/templates/select';\nvoid SelectTemplate;\n",
+  });
+  for (const file of files) {
+    expect(codesFor(run, file).filter((code) => code === restrictedImportDiagnostic)).toHaveLength(2);
+  }
+  expect(codesFor(run, script).filter((code) => code === restrictedImportDiagnostic)).toHaveLength(1);
+  expect(codesFor(run, wrapper)).not.toContain(restrictedImportDiagnostic);
 });

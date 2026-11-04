@@ -175,18 +175,9 @@ for (const [name, source] of positiveReports) {
           modeledUsages: 0,
           nativeFindingCounts: result.coverage.findingCounts,
         });
-      } else {
-        const advisories = yield* validate(summary);
-        expect(advisories.map((entry) => entry.name)).toContain(name);
-        return;
       }
-      yield* Effect.matchCause(validate(summary), {
-        onFailure: (cause) =>
-          expect(String(Cause.squash(cause))).toMatch(new RegExp(`Quality audit gate failed: ${name}=1`, 'u')),
-        onSuccess: () => {
-          throw new Error(EXPECTED_EFFECT_FAILURE);
-        },
-      });
+      const advisories = yield* validate(summary);
+      expect(advisories.map((entry) => entry.name)).toContain(name);
     }),
   );
 }
@@ -282,6 +273,9 @@ it.effect(
     );
     const summary = clean();
     const [first] = summary.results;
+    if (first === undefined) {
+      throw new Error(EXPECTED_PROOF_VALUE);
+    }
     first.name = 'unknown';
     yield* Effect.matchCause(validate(summary), {
       onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
@@ -369,6 +363,9 @@ it.effect(
   Effect.fn(function* mergedScenario14() {
     const duplicate = clean();
     const [, repeated] = duplicate.results;
+    if (repeated === undefined) {
+      throw new Error(EXPECTED_PROOF_VALUE);
+    }
     duplicate.results[0] = repeated;
     yield* Effect.matchCause(validate(duplicate), {
       onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),

@@ -1559,7 +1559,7 @@ export const evolveMerchandiseState = (
       }),
     ),
     Match.tag('UpdateCategory', (value) => updateCategoryCommand(state, value, input)),
-    Match.tag('CreateCategory', (value) => createCategoryCommand(state, value, input)),
+    Match.tag('CreateCategory', (value) => createCategoryCommand(state, value)),
     // Replaces every row of the company in parts, so persistence (applyOnce) performs it; the pure evolve never does.
     Match.tag('ResetDemoData', () => Effect.fail(conflict('Demo reset runs only through persistence'))),
     Match.tag('ChangeProductImages', () => Effect.fail(conflict('Gallery changes run only through persistence'))),
@@ -1751,6 +1751,9 @@ export const workingSetRequestOf = (
       ChangeOrderStatus: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       ChangePrice: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       ChangeProductImages: (value): WorkingSetRequest => ({ productIds: [value.id] }),
+      CreateCategory: (value): WorkingSetRequest => ({
+        categoryIds: value.parentId === null ? [value.id] : [value.id, value.parentId],
+      }),
       CreateOrder: (value): WorkingSetRequest => ({
         lastOrderNumber: true,
         movements: true,
@@ -1782,9 +1785,6 @@ export const workingSetRequestOf = (
       RecordStockMovement: (value): WorkingSetRequest => ({ movements: true, productIds: [value.productId] }),
       RemoveDemoOrder: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
-      CreateCategory: (value): WorkingSetRequest => ({
-        categoryIds: value.parentId === null ? [value.id] : [value.id, value.parentId],
-      }),
       UpdateProduct: (value): WorkingSetRequest => {
         const request: Mutable<WorkingSetRequest> = { productIds: [value.id] };
         if (value.patch.slug !== undefined) {
