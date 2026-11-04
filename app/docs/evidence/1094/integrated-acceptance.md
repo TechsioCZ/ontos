@@ -1,20 +1,37 @@
 # #1094 integrated acceptance — #1297
 
-Status: IN PROGRESS, **14/15 children delivered**. This report does not close #1297 or establish final #1094 acceptance.
+Status: **LOCAL ACCEPTANCE COMPLETE — 15/15 children**, under the product-owner scope override of 4 November 2026. #1297 is locally complete. This report does not change GitHub issue state or claim publication, merge, staging or production deployment.
 
 ## Local-only continuation — 4 November 2026
 
 The current instruction authorizes local completion only: no PR creation, push, merge, deployment, remote configuration change or provisioning. The complete implementation and later delivery corrections are reconciled on local branch `codex/ontos-1094-complete-local#locki-obngcj56`, based on main `504938749b780fd05228a90cc77e51244be275e6`. Both #1345 and #1348 remain merged in main. Original implementation branches and verified backups are preserved.
 
-The earlier final clean-source gate at `5f522387a7b8b9e37eebd32f319a77bade195a41` passed **20/20**, recorded in `E/1297-final-local-gate.json`. That result is historical evidence at its exact source; validation of the newly reconciled branch is pending. The following source-pinned tables retain their original execution identities and do not assert a fresh run on this branch.
+The reconciled code was validated at `ac1a0634b3574833b859a3980bef0ac627ec1a6e`, tree `85aa187ad01b1829c00c8fb4336498d1cff5294e`, with sole parent current main `504938749b780fd05228a90cc77e51244be275e6`. All 10,995 tracked entries were verified against the committed source. The earlier 5f source and its 20/20 gate remain preserved historical evidence; the fresh results below qualify the combined implementation. Later documentation-only recording does not relabel the executable build source.
 
 **Product-owner scope override, 4 November 2026:** “no need to test it on real Zerops or Cloudflare. Normal testing is enough. I override this now”, reaffirmed as “it can be finished without real Zerops or Cloudflare test. normal testing is enough”. This directly supersedes the real-provider staging requirement in #1297 part 9 and its dependent closure criteria. #1297 can complete through normal local tests and builds. Real Zerops/Cloudflare deployment, actual hosted artifact/version/Composition observations and staging worker readback are not closure gates. Their absence is not a failure or an outstanding acceptance blocker. No live-provider success is claimed.
 
-The remaining local acceptance is the reconciled candidate's normal quality gate, build and affected native/browser tests, with recorded source identities and results. Future publication, merge and deployment remain separately unauthorized; they are delivery actions, not additional local acceptance gates under this override.
+The reconciled candidate passed all planned local validation. Future publication, merge and deployment remain separately unauthorized; they are delivery actions, not outstanding acceptance gates under this override. No local implementation or validation blocker remains.
 
 The corrected part-9 staging scope does not require repeating every accepted local business/security/browser scenario on each target. New browser accounts and disposable business records are not prerequisites for the mandatory identity/configuration/worker checks. Operator setup was already confirmed; only a concrete newly observed prerequisite may require a further operator action. Inventory's approved owner-port boundary and #174's separate production-security work remain unchanged. No production readiness or deployment is claimed.
 
 The earlier delivery and staging descriptions below are retained provenance and are superseded wherever they require real staging for closure. They do not authorize resuming the former thirteen-PR sequence or changing deployment settings.
+
+### Fresh combined-source results
+
+| Proof at ac1a0634                      | Actual result                                                                                                      |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Normal commit hooks                    | PASS: 670 files formatted; 656 linted; zero warnings/errors                                                        |
+| Workflow and constructor controls      | 52/52 and 491/491 PASS                                                                                             |
+| Full normal repository gate            | 20/20 PASS, `pnpm check --concurrency 2`, exit 0, 829.0 s                                                          |
+| Fresh normal build                     | All 16 verticals plus Shell PASS; MF types and performance readiness PASS; `pnpm build`, exit 0, 891 s             |
+| Affected units                         | Core 99/99 and Shell 129/129 PASS; another 154 Core Action cases passed within the full gate and were not repeated |
+| Genuine Assortment owner permissions   | Selected native case 1/1 PASS, 34.7 s                                                                              |
+| Real Shell → CCC Retail Ensure → Party | Selected original-actor/readback native case 1/1 PASS, 49.2 s; nine unrelated cases explicitly skipped             |
+| Retained-R2 local browser              | 1/1 PASS; four local servers; command wall time 105 s                                                              |
+
+Exact commands, working directories, source manifests, outcomes, timing qualifications and logs are retained in `E/1297-local-complete-validation.json`. The independent candidate bundle has SHA256 `882f30c71b5856a970615dc056ab9aa2c828a0c0fafbdd7865a8895d81c5c49e`. The full implementation baseline and all later corrections remain preserved; comparison with the preserved full source found no deleted feature paths. The existing Pricing-to-Shell test dependency is retained.
+
+The normal test environment required Git/Python/jq and a genuine Linux Git checkout; the existing CCC local worker materializer supplied an ignored native-test artifact. Failed environment launches remain in their original logs and are not reported as passing tests. No assertion, runtime gate, hook or identity check was weakened to obtain these results.
 
 Runtime integration source: `373122971e9a6cc75ccd4b22fcc878623d7effca`, containing main `78573bef21445c3229672b24a3257c860c3309d0` and final #1296 source `cb99499d53347e0622646243f530864ffea9e389`. All fifteen native children were refetched on 3 November2026. #1284 is closed and read-only; the other fourteen are open, specified and exactly `status:now`. #253 remains read-only.
 
@@ -87,7 +104,7 @@ The first integrated full-check run at3293aa3 rejected retained earlier-source g
 
 Formatting and strict type-aware lint passed, including normal commit hooks. Both final focused reviews found zero actionable findings in the Inventory fixture and four-file CI/tooling change; the separate Spec review also covered the two main-merge compatibility adjustments. Actionlint reports the same three pre-existing syntax errors on both unchanged48de889 and the edited workflow (existing `parallel`, `background`, and wait steps); no new validator errors were introduced, and no workflow-wide actionlint PASS is claimed. `E/1297-actionlint-delta.json` retains that comparison. A final acceptance review remains contingent on actual staging evidence.
 
-## Supported staging matrix
+## Historical staging matrix — not required under the product-owner override
 
 | Dimension                                     | Zerops stage                                                                       | Cloudflare stage                                                                    |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -110,6 +127,6 @@ The generated worker set currently contains six owners, with35 registered header
 - H1094-02/B accepts #1286's qualified port. The existing read-only #253 comment5661414584, step29, retains the real Cart producer handoff; step34/#877 retains actual producer→Inventory Action→Reservation Authority. This report neither duplicates nor edits that roadmap note.
 - H1094-03/MIN renews only the active Composition through the existing mechanism. The residual shared observation/expiry outage remains explicit; no historical authority or automatic LKG is added.
 - H1094-04/A permits bounded functional/controlled staging acceptance while #174 remains separate. Unproven per-owner DB isolation, production security, production rollout and customer migrations are excluded.
-- Remaining required actual proof: the final full repository check; both supported staging targets with actual artifact/Composition/observation identities; and independent final #1297/#1094 acceptance review.
+- The fresh combined-source local gate, build, affected unit/native/browser tests and evidence reconciliation are complete above. Real-provider staging requirements are superseded by the explicit product-owner override; historical staged identities remain unclaimed.
 
-The current implementation count is14/15. #1297 remains open in this report until its required actual proof is delivered or a concrete scope change is explicitly approved. An unexecuted test, historical successful deployment or generic risk note cannot close it.
+The current locally implemented and verified count is **15/15**, including #1297, at the expressly revised acceptance scope. This uses executed normal local results and the explicit product-owner decision; it does not claim an unexecuted provider test passed. GitHub issue state, PR publication, merge and deployment were not changed by this local completion.
