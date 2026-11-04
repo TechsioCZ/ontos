@@ -27,7 +27,7 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/reactivity';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
-import { Context, DateTime, Deferred, Effect, Fiber, Layer, Redacted, Result, Schema, Stream } from 'effect';
+import { Context, DateTime, Deferred, Effect, Fiber, Layer, Option, Redacted, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -790,7 +790,7 @@ const QuantityReceiverReadySchema = Schema.Struct({
   port: Schema.Number,
   type: Schema.Literal('ready'),
 });
-const quantityHttpServices = NodeHttpServer.layerTest.pipe(Layer.provideMerge(nativeServices));
+const quantityHttpServices = nativeServices;
 const prepareQuantityReceiverArtifact = Effect.fn('QuantityProfileAdmissionTests.receiverArtifact')(
   function* prepareReceiver() {
     const artifact = fileURLToPath(
@@ -853,7 +853,7 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
   const snapshotDocument = yield* Schema.encodeEffect(
     Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
   )(owner.snapshot);
-  const source = yield* HttpServer.HttpServer;
+  const source = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
   yield* source.serve(Effect.succeed(HttpServerResponse.text(snapshotDocument, { contentType: 'application/json' })));
   const { address } = source;
   if (!Schema.is(Schema.Struct({ port: Schema.Number }))(address)) {
@@ -873,36 +873,10 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
     stderr: 'pipe',
     stdout: 'pipe',
   });
-  // Private bounded buffers retain diagnostics from either NodeRuntime output stream. Raw output is never logged.
-  const output = { stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
-  const retain = (stream: keyof typeof output, chunk: Uint8Array) => {
-    output[stream] = Buffer.concat([output[stream], chunk.subarray(0, Math.max(0, 65_536 - output[stream].length))]);
-  };
-  yield* child.stderr.pipe(
-    Stream.runForEach((chunk) => Effect.sync(() => retain('stderr', chunk))),
-    Effect.forkScoped,
-  );
-  const receiverReady = yield* Deferred.make<typeof QuantityReceiverReadySchema.Type>();
-  yield* child.stdout.pipe(
-    Stream.mapEffect((chunk) =>
-      Effect.sync(() => {
-        retain('stdout', chunk);
-        return chunk;
-      }),
-    ),
-    Stream.decodeText(),
-    Stream.splitLines,
-    Stream.runForEach((line) =>
-      Schema.decodeUnknownEffect(Schema.fromJsonString(QuantityReceiverReadySchema))(line).pipe(
-        Effect.result,
-        Effect.flatMap((result) =>
-          Result.isSuccess(result) ? Deferred.succeed(receiverReady, result.success) : Effect.void,
-        ),
-      ),
-    ),
-    Effect.forkScoped,
-  );
-  const ready = yield* Deferred.await(receiverReady).pipe(Effect.timeout('10 seconds'));
+  yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+  const line = yield* child.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead);
+  assert.isOk(Option.isSome(line));
+  const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(QuantityReceiverReadySchema))(line.value);
   expect(ready.marker).toEqual(prepared.marker);
   const baseUrl = `http://127.0.0.1:${ready.port}`;
   const clockClient = yield* PgClient.make({
@@ -936,113 +910,13 @@ const startQuantityPublicReceiver = Effect.fn('QuantityProfileAdmissionTests.pub
         .sign(pair.privateKey),
     );
   });
-  const retainedIncludes = (diagnostic: string) =>
-    output.stdout.toString('utf-8').includes(diagnostic) || output.stderr.toString('utf-8').includes(diagnostic);
   const read = (at: string, assertion: string) =>
     executeCommerceQuantityPolicyCurrentWithAuthorization(
       Schema.decodeUnknownSync(CommerceQuantityPolicyCurrentRequestSchema)({ at }),
       `Bearer ${assertion}`,
       randomUUID(),
       { baseUrl, compositionRevision: owner.snapshot.composition.revision },
-    ).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.tapError(() => {
-        const knownDiagnostics = [
-          ...Array.from({ length: 500 }, (_, index) => `SOURCE_HTTP_STATUS_${index + 100}`),
-          'schema.field.composition',
-          'schema.field.observedAt',
-          'schema.field.validUntil',
-          'schema.field.modules',
-          'schema.field.shell',
-          'schema.field.schemaVersion',
-          'schema.field.deployment',
-          'schema.field.appId',
-          'schema.field.buildMarker',
-          'schema.field.contractDocument',
-          'schema.field.manifest',
-          'schema.field.publicSurface',
-          'schema.field.operationContracts',
-          'schema.field.requirements',
-          'schema.field.intrinsic',
-          'schema.field.coreCapabilities',
-          'schema.field.api',
-          'schema.field.actions',
-          'schema.field.components',
-          'schema.field.runtime',
-          'schema.field.outboxSubscriptions',
-          'schema.field.exposes',
-          'schema.field.federation',
-          'schema.field.sharedSingletons',
-          'schema.field.contributionAbi',
-          'SOURCE_LOAD_BEGIN',
-          'SOURCE_LOAD_OK',
-          'SOURCE_LOAD_FAIL',
-          'CONFIG_LOAD_OK',
-          'CONFIG_LOAD_FAIL',
-          'SchemaError',
-          'ApplicationCompositionValidationError',
-          'ActiveApplicationCompositionSourceReadError',
-          'application_composition_invalid',
-          'active_application_composition_unavailable',
-          'Application Composition authority is expired or not yet valid',
-          'The active Application Composition snapshot is unavailable or invalid',
-          'Application Composition snapshot exceeds its byte budget',
-          'The ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL configuration is required',
-          'The active Application Composition source URL is invalid',
-          'The active Application Composition source read-token configuration is invalid',
-          'The active Application Composition source read failed',
-          'The active Application Composition source body read failed',
-          'The active Application Composition snapshot is not UTF-8 text',
-          'The active Application Composition snapshot has no valid authority deadline',
-          'The active Application Composition source read timed out',
-          'VERIFY_CREATED',
-          'VERIFY_BEGIN',
-          'VERIFY_OK',
-          'VERIFY_FAIL_UNCLASSIFIED',
-          'ActionPrincipalExpiredError',
-          'ActionPrincipalInvalidError',
-          'ActionPrincipalMissingError',
-          'ActionPrincipalScopeError',
-          'REDEMPTION_CONSUME_BEGIN',
-          'REDEMPTION_CONSUME_OK',
-          'REDEMPTION_CONSUME_FAIL_UNCLASSIFIED',
-          'GatewayAssertionRedemptionUnavailableError',
-          'GatewayAssertionReplayError',
-          'ActionPrincipalConfigurationError',
-          'ActionPrincipalUnavailableError',
-          'READ_RUNTIME_BEGIN',
-          'READ_RUNTIME_OK',
-          'READ_RUNTIME_FAIL_UNCLASSIFIED',
-          'ReadHandlerUnavailable',
-          'ReadHandlerExecutionError',
-          'ReadScopeResolutionError',
-          'ReadPermissionDenied',
-          'ReadPermissionUnavailable',
-          'ReadEvidencePersistenceError',
-          'ReadEvidenceValidationError',
-          'ReadResultValidationError',
-          'ReadPolicyEvaluationError',
-          'ModuleOperationRequirementError',
-          'ActiveApplicationCompositionUnavailableError',
-          'OperationContextUnavailable',
-          'SqlError',
-          'ConnectionError',
-          'PermissionDenied',
-          'receiving-owner-release-not-approved',
-          'read_handler_unavailable',
-          'read_evidence_persistence_error',
-          'operation_context_unavailable',
-          'module_operation_requirement_unavailable',
-          '42501',
-          'The receiving owner release is not approved by the active Application Composition',
-          'Current Commerce Quantity policy is temporarily unavailable',
-        ];
-        return Effect.logError('Quantity receiver diagnostic', {
-          known: knownDiagnostics.filter(retainedIncludes),
-          stage: 'public-read',
-        });
-      }),
-    );
+    ).pipe(Effect.provide(FetchHttpClient.layer));
   return { freshAssertion, read };
 });
 
