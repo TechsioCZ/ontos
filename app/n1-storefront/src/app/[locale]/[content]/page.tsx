@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { getDictionary } from "@/i18n";
 import { ContactView } from "@/features/contact-view";
+import { FulfillmentView } from "@/features/fulfillment-view";
+import { getFulfillment } from "@/ontos/fulfillment";
 import { AuthView } from "@/features/auth-view";
 import { Schema } from "effect";
 import { PortalVerificationNoticeSchema } from "@/ontos/portal";
@@ -41,6 +43,16 @@ const ContentPage = async ({
   const title = Object.entries(titles).find(([key]) => key === content)?.[1];
   if (title === undefined) {
     notFound();
+  }
+  if (content === "doprava" || content === "platba") {
+    return (
+      <FulfillmentView
+        dictionary={d}
+        kind={content === "doprava" ? "shipping" : "payment"}
+        locale={locale}
+        result={await getFulfillment(locale)}
+      />
+    );
   }
   if (content === "kontakty") {
     return <ContactView dictionary={d} />;
