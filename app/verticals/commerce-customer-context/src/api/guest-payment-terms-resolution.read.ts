@@ -248,6 +248,7 @@ export const guestPaymentTermsResolutionRead = defineRead(
         compositionRevision,
         legalEntityId: scope.legalEntityId,
         requestCorrelation: scope.correlationId,
+        tenantId: scope.tenantId,
       });
       const policy = customerCommercePaymentTermsPolicyResolver(
         'GUEST',

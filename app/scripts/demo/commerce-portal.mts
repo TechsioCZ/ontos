@@ -6,10 +6,17 @@
  *   node scripts/demo/commerce-portal.mts                          # principal + grants + managed key + Shell data
  *   node scripts/demo/commerce-portal.mts --env-file <path>        # write the values to another env file
  *
- * One non-human principal, `commerce-portal`, member of the AKROS company only:
+ * Stage, per Tenant workload (principal and grants come from that Tenant's provisioning, e.g. akros-playground-provision):
  *
- *   - its managed API key is both the Core identity transport credential (`COMMERCE_CORE_IDENTITY_API_KEY`) and the
- *     vertical's gateway credential for owner calls (`ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY`);
+ *   node scripts/demo/commerce-portal.mts --workload akros-playground --key-file <owner-only path>
+ *       # issue (or reuse) the workload's managed key into the file; the key is never printed
+ *   node scripts/demo/commerce-portal.mts --workload akros-playground --key-file <path> --bundle <in> --bundle-out <out>
+ *       # add the Tenant's COMMERCE_TENANT_CREDENTIALS entry and its Shell and Commerce verification grants
+ *
+ * One non-human principal per Tenant; in the demo Tenant `commerce-portal`, member of the AKROS company only:
+ *
+ *   - its managed API key is both the Core identity transport credential and the vertical's gateway credential for
+ *     owner calls: the Tenant's entry of `COMMERCE_TENANT_CREDENTIALS` (`coreIdentityApiKey`, `gatewayApiKey`);
  *   - module read access, tenant Party identity management for match/create, and counterparty management only in
  *     the selling company, plus executor grants for exactly the Actions the enrollment owners run;
  *   - the Shell's `ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT` names it as the attester of the portal namespace and
@@ -57,35 +64,58 @@ import {
   commercePortalActionKeys,
   commercePortalPrincipal,
   commercePortalRelationships,
+  demoCommercePortalWorkload,
   privacyConsentAuthorityRelationships,
   privacyConsentPrincipal,
 } from './permissions.mts';
+import type { CommercePortalWorkload } from './permissions.mts';
+import { akrosPlaygroundCommercePortal } from './akros-playground-policy.mts';
 
 const STAFF_NAMESPACE = 'ontos.staff.better-auth.v1';
 const SHELL_AUDIENCE = 'shell-super-app';
-const GATEWAY_CONTEXT_AUDIENCES = ['commerce-customer-context', 'party-registry', 'privacy'] as const;
+const PARTY_REGISTRY_AUDIENCE = 'party-registry';
+const GATEWAY_CONTEXT_AUDIENCES = ['commerce-customer-context', PARTY_REGISTRY_AUDIENCE, 'privacy'] as const;
 const BINDING_OPERATIONS = ['activate', 'read', 'reserve', 'resolve', 'status'] as const;
 
-/** The Shell's external identity provider deployment data for the portal namespace. */
-export const commercePortalExternalIdentityDeployment = () => {
-  const workload = {
-    receivingAudience: SHELL_AUDIENCE,
-    targetAuthenticationNamespaceId: COMMERCE_PORTAL_NAMESPACE,
-    tenantId: demoTenantId,
-    workloadAuthenticationNamespaceId: STAFF_NAMESPACE,
-    workloadPrincipalId: commercePortalPrincipal.principalId,
-  };
+/** Every Tenant workload this repository provisions, by the name operators pass as `--workload`. */
+export const commercePortalWorkloads = {
+  'akros-playground': { operatorEmail: 'admin@akros.playground', workload: akrosPlaygroundCommercePortal },
+  demo: { operatorEmail: 'obchod@demo.ontos', workload: demoCommercePortalWorkload },
+} as const satisfies Readonly<
+  Record<string, { readonly operatorEmail: string; readonly workload: CommercePortalWorkload }>
+>;
+type WorkloadName = keyof typeof commercePortalWorkloads;
+/** The demo workload stays first: it is the provider deployment's attester. */
+const workloadNames: readonly WorkloadName[] = ['demo', 'akros-playground'];
+
+/**
+ * The Shell's external identity provider deployment data for the portal namespace: per Tenant, its own workload
+ * Principal holds exactly the binding operations and gateway-context audiences, in that Tenant only.
+ */
+export const commercePortalExternalIdentityDeployment = (
+  workloads: readonly [CommercePortalWorkload, ...CommercePortalWorkload[]] = [demoCommercePortalWorkload],
+) => {
+  const [attester] = workloads;
   return {
-    attesterPrincipalId: commercePortalPrincipal.principalId,
+    attesterPrincipalId: attester.principalId,
     authenticationNamespaceId: COMMERCE_PORTAL_NAMESPACE,
-    grants: [
-      ...BINDING_OPERATIONS.map((operation) => ({ ...workload, operation })),
-      ...GATEWAY_CONTEXT_AUDIENCES.map((targetAudience) => ({
-        ...workload,
-        operation: 'gateway-context' as const,
-        targetAudience,
-      })),
-    ],
+    grants: workloads.flatMap(({ principalId, tenantId }) => {
+      const workload = {
+        receivingAudience: SHELL_AUDIENCE,
+        targetAuthenticationNamespaceId: COMMERCE_PORTAL_NAMESPACE,
+        tenantId,
+        workloadAuthenticationNamespaceId: STAFF_NAMESPACE,
+        workloadPrincipalId: principalId,
+      };
+      return [
+        ...BINDING_OPERATIONS.map((operation) => ({ ...workload, operation })),
+        ...GATEWAY_CONTEXT_AUDIENCES.map((targetAudience) => ({
+          ...workload,
+          operation: 'gateway-context' as const,
+          targetAudience,
+        })),
+      ];
+    }),
     providerEndpointAudience: SHELL_AUDIENCE,
   };
 };
@@ -162,8 +192,12 @@ export const commercePortalReleaseSecrets = Effect.fn('CommercePortal.releaseSec
   };
 });
 
-const operatorEmail = 'obchod@demo.ontos';
-const demoPassword = Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(Config.withDefault(Redacted.make('password1234')));
+const operatorPasswords = {
+  'akros-playground': Config.Redacted('ONTOS_AKROS_PLAYGROUND_PASSWORD').pipe(
+    Config.withDefault(Redacted.make('password1234')),
+  ),
+  demo: Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(Config.withDefault(Redacted.make('password1234'))),
+} satisfies Readonly<Record<WorkloadName, Config.Config<Redacted.Redacted>>>;
 const shellConfig = Config.all({
   compositionUrl: Config.String('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL').pipe(
     Config.withDefault('http://127.0.0.1:3041/active'),
@@ -185,7 +219,15 @@ const post = (url: string, body: Schema.Json, headers: Readonly<Record<string, s
 const CompositionSchema = Schema.Struct({ composition: Schema.Struct({ revision: Schema.String }) });
 const IssuedKeySchema = Schema.Struct({ secret: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))) });
 const SECURE_COOKIE_PREFIX = '__Secure-';
-const KEY_VARIABLE = 'COMMERCE_CORE_IDENTITY_API_KEY';
+const CREDENTIALS_VARIABLE = 'COMMERCE_TENANT_CREDENTIALS';
+const TenantCredentialsSchema = Schema.Record(
+  Schema.String,
+  Schema.Struct({
+    coreIdentityApiKey: Schema.RedactedFromValue(Schema.String),
+    gatewayApiKey: Schema.RedactedFromValue(Schema.String),
+  }),
+);
+const TenantCredentialsJson = Schema.fromJsonString(TenantCredentialsSchema);
 
 const envLine = /^(?<key>[A-Z][A-Z0-9_]*)=(?<value>.*)$/u;
 const readEnv = (text: string): ReadonlyMap<string, string> =>
@@ -218,7 +260,9 @@ const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(
   previous: Redacted.Redacted | undefined,
   identity: { readonly apiKeyName: string; readonly legalEntityId: string; readonly principalId: string },
   audience: 'party-registry' | 'commerce-customer-context',
+  operator: WorkloadName = 'demo',
 ) {
+  const { operatorEmail } = commercePortalWorkloads[operator];
   const client = yield* HttpClient.HttpClient;
   const { compositionUrl, shellUrl } = yield* shellConfig;
   const revision = yield* client.get(compositionUrl).pipe(
@@ -247,7 +291,7 @@ const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(
   }
   const signIn = yield* post(
     `${shellUrl}/shell-super-app-api/auth/sign-in`,
-    { email: operatorEmail, password: Redacted.value(yield* demoPassword) },
+    { email: operatorEmail, password: Redacted.value(yield* operatorPasswords[operator]) },
     { 'content-type': 'application/json', origin: shellUrl },
   );
   if (signIn.status !== 200) {
@@ -317,14 +361,13 @@ const main = (existing: ReadonlyMap<string, string>, configuration?: Readonly<Re
       `commerce-portal: principal ${commercePortalPrincipal.principalId}, ${relationships.length} relationships`,
     );
     yield* liftKeyRateLimit(commercePortalPrincipal.apiKeyName);
-    const previous = existing.get(KEY_VARIABLE);
-    const key = Redacted.value(
-      yield* ensureKey(
-        previous === undefined || previous === '' ? undefined : Redacted.make(previous),
-        commercePortalPrincipal,
-        'party-registry',
+    const previous = Option.getOrUndefined(
+      Option.flatMapNullishOr(
+        Schema.decodeUnknownOption(TenantCredentialsJson)(existing.get(CREDENTIALS_VARIABLE) ?? ''),
+        (credentials) => credentials[demoTenantId]?.coreIdentityApiKey,
       ),
     );
+    const key = yield* ensureKey(previous, commercePortalPrincipal, PARTY_REGISTRY_AUDIENCE);
     yield* liftKeyRateLimit(commercePortalPrincipal.apiKeyName);
     const { shellUrl } = yield* shellConfig;
     yield* executor
@@ -357,15 +400,110 @@ const main = (existing: ReadonlyMap<string, string>, configuration?: Readonly<Re
     const verificationGrants = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
       commercePortalVerificationWorkloadGrants(),
     );
+    const credentials = yield* Schema.encodeEffect(TenantCredentialsJson)({
+      [demoTenantId]: { coreIdentityApiKey: key, gatewayApiKey: key },
+    });
     return new Map([
       ['COMMERCE_CORE_IDENTITY_BASE_URL', `${shellUrl}/shell-super-app-api`],
-      [KEY_VARIABLE, key],
-      ['ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', key],
+      [CREDENTIALS_VARIABLE, credentials],
       ['ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT', deployment],
       ['COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS', verificationGrants],
       ['ONTOS_PRIVACY_GATEWAY_API_KEY', privacyKey],
       ['COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID', commercePortalPrincipal.principalId],
     ]);
+  });
+
+type OwnerBundle = Readonly<Record<string, Readonly<Record<string, string>>>>;
+
+/**
+ * Adds one Tenant's workload key to `COMMERCE_TENANT_CREDENTIALS` and derives, from every Tenant in that map, the
+ * Shell's per-Tenant workload grants and Commerce's verification grants. A map entry for a Tenant this repository does
+ * not provision is refused rather than granted.
+ */
+export const commercePortalTenantBundle = Effect.fn('CommercePortal.tenantBundle')(function* tenantBundle(
+  bundle: OwnerBundle,
+  name: WorkloadName,
+  key: Redacted.Redacted,
+): Effect.fn.Return<OwnerBundle, CommercePortalError> {
+  const commerce = bundle['commerce-customer-context'];
+  const shell = bundle['shell-super-app'];
+  if (commerce === undefined || shell === undefined) {
+    return yield* fail('The owner bundle requires the Commerce and Shell units');
+  }
+  const current = commerce[CREDENTIALS_VARIABLE];
+  const existing =
+    current === undefined
+      ? {}
+      : yield* Schema.decodeUnknownEffect(TenantCredentialsJson)(current).pipe(
+          Effect.mapError(() => fail(`${CREDENTIALS_VARIABLE} in the owner bundle is malformed`)),
+        );
+  const { workload } = commercePortalWorkloads[name];
+  const credentials = {
+    ...existing,
+    [workload.tenantId]: { coreIdentityApiKey: key, gatewayApiKey: key },
+  };
+  const known = workloadNames.map((candidate) => commercePortalWorkloads[candidate].workload);
+  const unknown = Object.keys(credentials).filter((tenantId) => !known.some((row) => row.tenantId === tenantId));
+  if (unknown.length > 0) {
+    return yield* fail(`${CREDENTIALS_VARIABLE} names Tenants without a provisioned workload: ${unknown.join(', ')}`);
+  }
+  const [first, ...rest] = known.filter(({ tenantId }) => tenantId in credentials);
+  if (first === undefined) {
+    return yield* fail('No Tenant workload is configured');
+  }
+  const deployment = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
+    commercePortalExternalIdentityDeployment([first, ...rest]),
+  ).pipe(Effect.mapError(() => fail('The Shell provider deployment could not be encoded')));
+  const encoded = yield* Schema.encodeEffect(TenantCredentialsJson)(credentials).pipe(
+    Effect.mapError(() => fail(`${CREDENTIALS_VARIABLE} could not be encoded`)),
+  );
+  return yield* commercePortalReleaseSecrets({
+    ...bundle,
+    'commerce-customer-context': { ...commerce, [CREDENTIALS_VARIABLE]: encoded },
+    'shell-super-app': { ...shell, ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: deployment },
+  });
+});
+
+const OwnerBundleJson = Schema.fromJsonString(
+  Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)),
+);
+
+/** Stage: issue or reuse one Tenant workload's managed key, kept only in an owner-only file. */
+const persistWorkloadKey = (name: WorkloadName, keyFile: string) =>
+  Effect.gen(function* writeWorkloadKey() {
+    const fs = yield* FileSystem.FileSystem;
+    const { workload } = commercePortalWorkloads[name];
+    const previous = (yield* fs.exists(keyFile)) ? (yield* fs.readFileString(keyFile)).trim() : '';
+    yield* liftKeyRateLimit(workload.apiKeyName);
+    const key = yield* ensureKey(
+      previous === '' ? undefined : Redacted.make(previous),
+      workload,
+      PARTY_REGISTRY_AUDIENCE,
+      name,
+    );
+    yield* liftKeyRateLimit(workload.apiKeyName);
+    yield* fs.writeFileString(keyFile, `${Redacted.value(key)}\n`, { mode: 0o600 });
+    yield* fs.chmod(keyFile, 0o600);
+    yield* Console.log(`commerce-portal: ${name} workload key -> ${keyFile}`);
+  });
+
+/** Stage: write the owner bundle with the Tenant's credential entry and grants; the values are never printed. */
+const persistTenantBundle = (name: WorkloadName, keyFile: string, input: string, output: string) =>
+  Effect.gen(function* writeTenantBundle() {
+    const fs = yield* FileSystem.FileSystem;
+    const key = (yield* fs.readFileString(keyFile)).trim();
+    if (key.length < 16) {
+      return yield* fail(`The ${name} workload key file is empty`);
+    }
+    const bundle = yield* Schema.decodeUnknownEffect(OwnerBundleJson)(yield* fs.readFileString(input)).pipe(
+      Effect.mapError(() => fail('The owner bundle must be a JSON record of owner units')),
+    );
+    const updated = yield* commercePortalTenantBundle(bundle, name, Redacted.make(key));
+    const text = yield* Schema.encodeEffect(OwnerBundleJson)(updated).pipe(
+      Effect.mapError(() => fail('The owner bundle could not be encoded')),
+    );
+    yield* fs.writeFileString(output, text, { flag: 'wx', mode: 0o600 });
+    return yield* Console.log(`commerce-portal: ${name} workload added; owner bundle -> ${output}`);
   });
 
 const environmentLive = ConfigProvider.layer(
@@ -414,14 +552,40 @@ const persistConfiguration = (envFileOption: string | undefined) =>
     yield* Console.log(`commerce-portal: Core identity transport and Shell provider data -> ${envFile}`);
   });
 
+const selectedRun = (flags: {
+  readonly bundle: Option.Option<string>;
+  readonly bundleOut: Option.Option<string>;
+  readonly envFile: Option.Option<string>;
+  readonly keyFile: Option.Option<string>;
+  readonly workload: Option.Option<WorkloadName>;
+}) => {
+  if (Option.isNone(flags.workload)) {
+    return persistConfiguration(Option.getOrUndefined(flags.envFile));
+  }
+  const name = flags.workload.value;
+  if (Option.isNone(flags.keyFile)) {
+    return Effect.fail(fail('--workload requires --key-file'));
+  }
+  if (Option.isSome(flags.bundle) && Option.isSome(flags.bundleOut)) {
+    return persistTenantBundle(name, flags.keyFile.value, flags.bundle.value, flags.bundleOut.value);
+  }
+  return Option.isNone(flags.bundle) && Option.isNone(flags.bundleOut)
+    ? persistWorkloadKey(name, flags.keyFile.value)
+    : Effect.fail(fail('--bundle and --bundle-out go together'));
+};
+
 const command = Command.make(
   commercePortalPrincipal.apiKeyName,
-  { envFile: Flag.String('env-file').pipe(Flag.optional) },
-  ({ envFile }) =>
+  {
+    bundle: Flag.String('bundle').pipe(Flag.optional),
+    bundleOut: Flag.String('bundle-out').pipe(Flag.optional),
+    envFile: Flag.String('env-file').pipe(Flag.optional),
+    keyFile: Flag.String('key-file').pipe(Flag.optional),
+    workload: Flag.Literals('workload', workloadNames).pipe(Flag.optional),
+  },
+  (flags) =>
     Layer.build(
-      Layer.effectDiscard(persistConfiguration(Option.getOrUndefined(envFile)).pipe(Effect.scoped)).pipe(
-        Layer.provide(commercePortalServicesLive),
-      ),
+      Layer.effectDiscard(selectedRun(flags).pipe(Effect.scoped)).pipe(Layer.provide(commercePortalServicesLive)),
     ).pipe(
       Effect.scoped,
       Effect.asVoid,

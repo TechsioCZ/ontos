@@ -199,7 +199,12 @@ const nativeOwnerServer = (mode: IssuanceMode, recoveryState: RecoveryState = 'R
 const configured = (baseUrl: URL) =>
   ConfigProvider.layer(
     ConfigProvider.fromUnknown({
-      ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'reviewed-enrollment-service-key',
+      COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+        [tenantId]: {
+          coreIdentityApiKey: 'reviewed-enrollment-core-identity-key',
+          gatewayApiKey: 'reviewed-enrollment-service-key',
+        },
+      }),
       ONTOS_SHELL_GATEWAY_BASE_URL: baseUrl.href,
     }),
   );

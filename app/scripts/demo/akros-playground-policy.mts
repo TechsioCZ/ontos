@@ -12,8 +12,14 @@ import {
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
 import { demoId } from './fixture-ids.mts';
-import type { DemoAction, DemoRelationship, DemoRole } from './permissions.mts';
-import { eshopDemoRoles, principalRelationships } from './permissions.mts';
+import type { CommercePortalWorkload, DemoAction, DemoRelationship, DemoRole } from './permissions.mts';
+import {
+  commercePortalPrincipal,
+  commercePortalRelationships,
+  commercePortalRole,
+  eshopDemoRoles,
+  principalRelationships,
+} from './permissions.mts';
 
 const playgroundKey = 'akros-playground';
 const principalResource = 'core.principal';
@@ -41,6 +47,20 @@ export const akrosPlaygroundAccounts = [
   account('expedice', 'Expedice AKROS', 'fulfilment', eshopDemoRoles.fulfilment),
 ] as const;
 
+/**
+ * AKROS's own Commerce portal workload: customer self-enrollment for this Tenant reserves and activates bindings, and
+ * runs the Party, Privacy and Commerce owner Actions, as this Principal. Its key is the AKROS entry of
+ * `COMMERCE_TENANT_CREDENTIALS`; the Shell and Commerce verification grants name it for this Tenant only.
+ */
+export const akrosPlaygroundCommercePortal: CommercePortalWorkload = {
+  apiKeyName: 'akros-playground-commerce-portal',
+  displayName: commercePortalPrincipal.displayName,
+  legalEntityId: akrosPlaygroundLegalEntityId,
+  principalId: demoId(principalResource, 'akros-playground-commerce-portal'),
+  roleKey: 'commerce-portal',
+  tenantId: akrosPlaygroundTenantId,
+};
+
 export const akrosPlaygroundServices = [
   {
     displayName: 'akros-playground-storefront',
@@ -63,6 +83,12 @@ export const akrosPlaygroundServices = [
       restrictedModules: ['commerce.customer-context'],
     } satisfies DemoRole,
     roleKey: 'market-authority',
+  },
+  {
+    displayName: akrosPlaygroundCommercePortal.apiKeyName,
+    principalId: akrosPlaygroundCommercePortal.principalId,
+    role: commercePortalRole,
+    roleKey: akrosPlaygroundCommercePortal.roleKey,
   },
 ] as const;
 
@@ -126,9 +152,19 @@ export const akrosPlaygroundRelationships = (actions: readonly DemoAction[]): re
     buildActionAuthorizationRelationships(deriveScopedActionAuthorization(actions, scopes)),
   );
   const subjects = [...akrosPlaygroundAccounts, ...akrosPlaygroundServices];
-  const policy = subjects.flatMap(({ principalId, role, roleKey }) =>
-    principalRelationships(principalId, role, actions, akrosPlaygroundLegalEntityId, akrosPlaygroundTenantId, roleKey),
-  );
+  const policy = [
+    ...subjects.flatMap(({ principalId, role, roleKey }) =>
+      principalRelationships(
+        principalId,
+        role,
+        actions,
+        akrosPlaygroundLegalEntityId,
+        akrosPlaygroundTenantId,
+        roleKey,
+      ),
+    ),
+    ...commercePortalRelationships(actions, akrosPlaygroundCommercePortal),
+  ];
   const resources = [
     {
       moduleId: marketModule,

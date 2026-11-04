@@ -83,14 +83,13 @@ export const commerceCustomerAuthorityLive = Layer.effect(
           providerSubjectId: input.providerSubjectId,
           subjectType: 'user',
         }).pipe(Effect.mapError(unavailable));
+        const clientOptions = yield* commerceCoreIdentityClientOptions(
+          configuration,
+          input.tenantId,
+          yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable)),
+        ).pipe(Effect.mapError(unavailable));
         const identity = yield* client
-          .resolveExternalSubject(
-            request,
-            commerceCoreIdentityClientOptions(
-              configuration,
-              yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable)),
-            ),
-          )
+          .resolveExternalSubject(request, clientOptions)
           .pipe(
             Effect.mapError((cause) =>
               'status' in cause &&

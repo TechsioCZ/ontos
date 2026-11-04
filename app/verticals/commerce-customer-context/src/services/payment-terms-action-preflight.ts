@@ -66,6 +66,7 @@ export const preparePaymentTermsChangeCatalog = Effect.fn('PaymentTermsActionPre
             compositionRevision: context.compositionRevision,
             legalEntityId,
             requestCorrelation: scope.correlationId,
+            tenantId: scope.tenantId,
           }).pipe(
             Effect.flatMap((catalog) => catalog.resolveDefinitions(requests)),
             Effect.result,

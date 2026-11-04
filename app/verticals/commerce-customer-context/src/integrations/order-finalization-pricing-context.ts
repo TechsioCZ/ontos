@@ -13,6 +13,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Config, DateTime, Effect, Match, Option, Schema, Predicate } from 'effect';
 import { Hex } from 'effect/encoding';
+import { commerceTenantGatewayApiKey } from '../../api/tenant-workload-credentials.ts';
 import { OrderFinalizationPricingContextSchema } from '../../shared/domain/order-finalization-pricing-context.ts';
 import {
   PurchaseApprovalRequestSchema,
@@ -74,7 +75,6 @@ const invalid = () =>
   });
 
 const ownerGatewayConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
   shellBaseUrl: Config.schema(
     Schema.URLFromString.check(
       Schema.makeFilter((url) =>
@@ -99,6 +99,7 @@ const readOrderStorefrontCurrent = Effect.fn('OrderFinalizationPricingContext.re
     compositionRevision: string,
   ) {
     const configured = yield* ownerGatewayConfiguration.pipe(Effect.mapError(unavailable));
+    const apiKey = yield* commerceTenantGatewayApiKey(scope.tenantId).pipe(Effect.mapError(unavailable));
     const { legalEntityId } = scope;
     if (legalEntityId === undefined || approved.proposal.context.channelId !== 'B2B') {
       return yield* invalid();
@@ -108,7 +109,7 @@ const readOrderStorefrontCurrent = Effect.fn('OrderFinalizationPricingContext.re
     ) {
       const issued = yield* issueApiKeyGatewayContext(
         { audience, compositionRevision, legalEntityId },
-        { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: scope.correlationId },
+        { apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: scope.correlationId },
       ).pipe(Effect.mapError(unavailable));
       const now = yield* DateTime.now;
       if (

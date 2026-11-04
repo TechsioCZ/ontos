@@ -150,6 +150,7 @@ export const finishOrderFinalizationPaymentTerms = Effect.fn('OrderFinalizationP
       compositionRevision,
       legalEntityId,
       requestCorrelation: actualScope.correlationId,
+      tenantId: actualScope.tenantId,
     });
     const policy = customerCommercePaymentTermsPolicyResolver(
       'PROFILE',

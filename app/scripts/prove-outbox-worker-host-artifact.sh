@@ -146,12 +146,11 @@ log="$artifact/outbox-worker-host.log"
   exec env \
     NODE_ENV=production \
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="$source_url" \
-    COMMERCE_CORE_IDENTITY_API_KEY="$proof_secret" \
+    COMMERCE_TENANT_CREDENTIALS="{\"70000000-0000-4000-8000-000000000020\":{\"coreIdentityApiKey\":\"$proof_secret\",\"gatewayApiKey\":\"$proof_secret\"}}" \
     COMMERCE_CORE_IDENTITY_BASE_URL="$shell_gateway_base_url" \
     COMMERCE_PORTAL_AUTH_SECRET="$proof_secret" \
     COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS="$storefront_origin" \
     COMMERCE_PORTAL_AUTH_URL="$storefront_origin" \
-    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY="$proof_secret" \
     ONTOS_SHELL_GATEWAY_BASE_URL="$shell_gateway_base_url" \
     OUTBOX_WORKER_HEALTH_PORT="$port" \
     OUTBOX_WORKER_POLL_INTERVAL_MS=250 \

@@ -52,11 +52,12 @@ const INTENT_DIGEST = 'a'.repeat(64);
 const OTHER_INTENT_DIGEST = 'b'.repeat(64);
 const ORIGINAL_COMPOSITION_REVISION = 'c'.repeat(64);
 
-const clientOptions = (): ExternalIdentityClientOptions => ({
-  apiKey: Redacted.make('preparation-subject-unit'),
-  baseUrl: 'https://core.invalid',
-  requestCorrelation: 'preparation-subject-unit',
-});
+const clientOptions = () =>
+  Effect.succeed<ExternalIdentityClientOptions>({
+    apiKey: Redacted.make('preparation-subject-unit'),
+    baseUrl: 'https://core.invalid',
+    requestCorrelation: 'preparation-subject-unit',
+  });
 
 const attemptFor = (overrides: {
   readonly intentDigest?: string;

@@ -35,7 +35,7 @@ the realm can be live without them, and they are rotated independently.
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `COMMERCE_CORE_IDENTITY_BASE_URL` | no | `http`/`https` base URL of the Core identity API (no userinfo/query/hash). Read in `api/portal-auth/provider/core-identity-client-config.ts`. |
-| `COMMERCE_CORE_IDENTITY_API_KEY` | no | Server-owned service credential, ≥16 characters, `Redacted` from the moment it is read. |
+| `COMMERCE_TENANT_CREDENTIALS` | no | Per-Tenant server-owned workload keys, `{ "<tenant id>": { "coreIdentityApiKey", "gatewayApiKey" } }`, each ≥16 characters, `Redacted` from the moment they are read. A Tenant without an entry fails closed. Add a Tenant with `scripts/demo/commerce-portal.mts --workload <name>` (key, then `--bundle`). |
 
 Naming neither is a supported opt-out: enrollment commit convergence stays the fail-closed
 `commerceEnrollmentCommitResolutionUnavailableLive` and refuses retryably instead of reporting an

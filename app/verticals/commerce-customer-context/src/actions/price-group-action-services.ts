@@ -52,6 +52,7 @@ export const priceGroupActionServicesForTransaction = Effect.fn('PriceGroupActio
         catalog: priceGroupCatalogPortFromEnvironment({
           compositionRevision,
           requestCorrelation: scope.correlationId,
+          tenantId: scope.tenantId,
         }),
         local: priceGroupLocalActionServicesForTransaction(invoker, scope),
       },

@@ -93,11 +93,12 @@ const transitionFor = (transitionKey: string): Effect.Effect<CommerceEnrollmentO
     Effect.orDie,
   );
 
-const clientOptions = () => ({
-  apiKey: Redacted.make('test'),
-  baseUrl: 'https://core.invalid',
-  requestCorrelation: 'existing-account-core-unit',
-});
+const clientOptions = () =>
+  Effect.succeed({
+    apiKey: Redacted.make('test'),
+    baseUrl: 'https://core.invalid',
+    requestCorrelation: 'existing-account-core-unit',
+  });
 
 it.effect(
   'composes the Existing-account journey from a target definition, dropping the target account-creation step',

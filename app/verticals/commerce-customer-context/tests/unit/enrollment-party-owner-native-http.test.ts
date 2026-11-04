@@ -9,8 +9,12 @@ import { Base64Url } from 'effect/encoding';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
+import { CommerceTenantWorkloadCredentialUnavailable } from '../../api/tenant-workload-credentials.ts';
 import { retailCustomerDirectoryOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-customer-owner.ts';
-import { retailPartyCandidateOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
+import {
+  acquireRetailPartyGateway,
+  retailPartyCandidateOwnerEffect,
+} from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import {
@@ -74,7 +78,9 @@ const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
 });
 const configuration = ConfigProvider.layer(
   ConfigProvider.fromUnknown({
-    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'scheduled-service-api-key',
+    COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+      [tenantId]: { coreIdentityApiKey: 'scheduled-core-identity-key', gatewayApiKey: 'scheduled-service-api-key' },
+    }),
     ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
   }),
 );
@@ -138,6 +144,26 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
       expect(request?.headers.get('x-correlation-id')).toBe(requestCorrelation);
     }
     expect(requests[1]?.headers.get('idempotency-key')).toBe(ownerInvocationId);
+  }),
+);
+
+it.effect('a Tenant without a workload credential fails closed without presenting any key', () =>
+  Effect.gen(function* unconfiguredTenant() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (target, init) => {
+      requests.push(new Request(target, init));
+      return Promise.resolve(Response.json(gatewayResponse()));
+    };
+    const failure = yield* acquireRetailPartyGateway({
+      compositionRevision,
+      legalEntityId,
+      requestCorrelation,
+      tenantId: '90000000-0000-4000-8000-000000000001',
+    }).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+    expect(failure.reason).toBe('The Party Registry server gateway credential is unavailable');
+    expect(failure.cause).toBeInstanceOf(CommerceTenantWorkloadCredentialUnavailable);
+    expect(requests).toHaveLength(0);
   }),
 );
 

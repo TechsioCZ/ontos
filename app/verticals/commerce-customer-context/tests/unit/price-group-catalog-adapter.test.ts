@@ -264,12 +264,13 @@ it.effect('obtains a fresh server-owned assertion for every provider attempt', (
     const issuanceRequests: {
       readonly audience: 'price-group-catalog';
       readonly requestCorrelation: string;
+      readonly tenantId: string;
     }[] = [];
     const authorizations: string[] = [];
     const destinations: (string | URL | undefined)[] = [];
     const selectedRevisions: (string | undefined)[] = [];
     const port = yield* priceGroupCatalogPortFromEnvironment(
-      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation' },
+      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation', tenantId },
       (_payload, credential, _correlation, options) => {
         authorizations.push(Redacted.value(credential));
         destinations.push(options.baseUrl);
@@ -305,11 +306,13 @@ it.effect('obtains a fresh server-owned assertion for every provider attempt', (
         audience: 'price-group-catalog',
         compositionRevision: 'a'.repeat(64),
         requestCorrelation: 'price-group-correlation',
+        tenantId,
       },
       {
         audience: 'price-group-catalog',
         compositionRevision: 'a'.repeat(64),
         requestCorrelation: 'price-group-correlation',
+        tenantId,
       },
     ]);
   }),
@@ -320,7 +323,7 @@ it.effect('fails closed before provider execution when the selected connection c
     let executionCount = 0;
     let issuanceCount = 0;
     const port = yield* priceGroupCatalogPortFromEnvironment(
-      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation' },
+      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation', tenantId },
       () => {
         executionCount += 1;
         return Effect.succeed(decision({ evidence: compatibility, kind: 'USABLE' }));

@@ -14,6 +14,7 @@ import { expect, it } from 'effect-rstest';
 
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { makeCommerceTenantWorkloadCredentials } from '../../api/tenant-workload-credentials.ts';
 import {
   CommerceCustomerAuthority,
   commerceCustomerAuthorityLive,
@@ -112,8 +113,13 @@ const harness = Effect.fnUntraced(function* authorityHarness(
     cryptoLayer,
     Layer.succeed(ExternalIdentityClient, client),
     Layer.succeed(CommerceCoreIdentityClientConfig, {
-      apiKey: Redacted.make('test-only-workload-credential'),
       baseUrl: 'https://core.example.test',
+      credentials: makeCommerceTenantWorkloadCredentials({
+        [tenantId]: {
+          coreIdentityApiKey: Redacted.make('test-only-workload-credential'),
+          gatewayApiKey: Redacted.make('test-only-gateway-credential'),
+        },
+      }),
     }),
     Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
     Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, {

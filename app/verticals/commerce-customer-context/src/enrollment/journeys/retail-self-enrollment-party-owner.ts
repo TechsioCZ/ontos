@@ -11,6 +11,7 @@ import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-
 import { Config, Effect, Match, Redacted, Schema } from 'effect';
 import { Base64Url } from 'effect/encoding';
 
+import { commerceTenantGatewayApiKey } from '../../../api/tenant-workload-credentials.ts';
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import { decodeOwnerOutcome, decodeOwnerResolution, ownerUnavailable } from '../orchestration/owner-effect-codec.ts';
 import type { OwnerOutcomeDraft, OwnerResolutionDraft } from '../orchestration/owner-effect-codec.ts';
@@ -90,7 +91,6 @@ const httpUrl = Schema.URLFromString.check(
   ),
 );
 const partyGatewayConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
   baseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
@@ -101,13 +101,16 @@ export const acquireRetailPartyGateway = Effect.fn('RetailSelfEnrollmentPartyOwn
     const configured = yield* partyGatewayConfiguration.pipe(
       Effect.mapError((cause) => unavailable('The Party Registry server gateway configuration is unavailable', cause)),
     );
+    const apiKey = yield* commerceTenantGatewayApiKey(tenantId).pipe(
+      Effect.mapError((cause) => unavailable('The Party Registry server gateway credential is unavailable', cause)),
+    );
     const response = yield* issueApiKeyGatewayContext(
       {
         audience: 'party-registry',
         compositionRevision,
         legalEntityId,
       },
-      { apiKey: configured.apiKey, baseUrl: configured.baseUrl, requestCorrelation },
+      { apiKey, baseUrl: configured.baseUrl, requestCorrelation },
     ).pipe(
       Effect.mapError((cause) => unavailable('The Party Registry server gateway credential is unavailable', cause)),
     );

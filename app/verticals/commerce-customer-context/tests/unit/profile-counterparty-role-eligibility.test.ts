@@ -10,6 +10,7 @@ import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
+import { CommerceTenantWorkloadCredentialUnavailable } from '../../api/tenant-workload-credentials.ts';
 import { ProfilePersistenceDependencyFailure } from '../../src/persistence/profile-persistence.ts';
 import {
   ProfileCounterpartyRoleEligibilityResolverFactory,
@@ -264,7 +265,9 @@ it.effect('publishes the production resolver through its contextual factory Laye
 
 const serverConfig = ConfigProvider.layer(
   ConfigProvider.fromUnknown({
-    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'unit-server-api-key',
+    COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+      [tenantId]: { coreIdentityApiKey: 'unit-server-core-identity-key', gatewayApiKey: 'unit-server-api-key' },
+    }),
     ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
   }),
 );
@@ -356,6 +359,29 @@ it.effect('fails closed without server credential configuration', () =>
     );
     expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
   }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({})))),
+);
+
+it.effect('fails closed for a tenant without a workload credential before requesting any credential', () =>
+  Effect.gen(function* unconfiguredTenant() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+    const otherTenantId = '10000000-0000-4000-8000-000000000099';
+    let requests = 0;
+    const fakeFetch: typeof fetch = () => {
+      requests += 1;
+      return Promise.resolve(Response.json({}));
+    };
+    const failure = yield* makeProfileCounterpartyRoleEligibilityResolver({ ...serverScope, tenantId: otherTenantId })({
+      counterpartyResourceId,
+      tenantId: otherTenantId,
+    }).pipe(
+      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      Effect.flip,
+    );
+    expect(failure).toBeInstanceOf(ProfilePersistenceDependencyFailure);
+    expect(failure.cause).toBeInstanceOf(CommerceTenantWorkloadCredentialUnavailable);
+    expect(requests).toBe(0);
+  }).pipe(Effect.provide(serverConfig)),
 );
 
 it.effect('rejects an expired server composition before requesting any credential', () =>

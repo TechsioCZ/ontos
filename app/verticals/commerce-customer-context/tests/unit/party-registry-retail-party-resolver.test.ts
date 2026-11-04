@@ -229,7 +229,12 @@ const serveNativePartyContract = (compositionRevision: string) =>
       layer: Layer.mergeAll(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
-            ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'contract-test-commerce-key',
+            COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+              [tenantId]: {
+                coreIdentityApiKey: 'contract-test-core-identity-key',
+                gatewayApiKey: 'contract-test-commerce-key',
+              },
+            }),
             ONTOS_SHELL_GATEWAY_BASE_URL: 'https://native-party-contract.test',
           }),
         ),

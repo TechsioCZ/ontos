@@ -114,6 +114,7 @@ describe('Tenant Currency Support purchase-context invariance', () => {
           audience: 'pricing',
           compositionRevision: 'a'.repeat(64),
           requestCorrelation: purchase.correlation,
+          tenantId,
         })),
       );
       expect(calls).toEqual(

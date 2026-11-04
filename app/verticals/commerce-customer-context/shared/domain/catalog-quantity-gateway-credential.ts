@@ -14,6 +14,8 @@ export interface CatalogQuantityGatewayCredentialIssuer {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    /** The Tenant of the request being served; selects that Tenant's own gateway key. */
+    readonly tenantId: string;
   }) => Effect.Effect<CatalogQuantityGatewayConnection, CommerceQuantityCatalogUnavailable>;
 }
 

@@ -30,6 +30,7 @@ import {
   commercePortalAuthEnrollmentIntent,
 } from '../../api/portal-auth/enrollment/intent.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { everyTenantTestCredentials } from '../support/tenant-workload-credentials.ts';
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import {
@@ -621,8 +622,8 @@ it.live('admits the new provider account immediately after verification and one 
             ContextAccessLive,
             enrollmentApplicationCompositionLayer,
             Layer.succeed(CommerceCoreIdentityClientConfig, {
-              apiKey: Redacted.make('test-only-external-owner'),
               baseUrl: 'https://core.example.test',
+              credentials: everyTenantTestCredentials('test-only-external-owner'),
             }),
           ),
         ),

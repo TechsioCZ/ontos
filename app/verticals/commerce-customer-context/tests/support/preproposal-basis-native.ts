@@ -1502,7 +1502,13 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
         serviceGrant,
         { ...serviceGrant, principalId: identities.pricingIssuer.principalId },
       ]),
-      ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: Redacted.value(identities.cccReader.secret),
+      // The reader's managed key is this run's only Commerce workload key for the Tenant.
+      COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+        [core.tenantId]: {
+          coreIdentityApiKey: Redacted.value(identities.cccReader.secret),
+          gatewayApiKey: Redacted.value(identities.cccReader.secret),
+        },
+      }),
       ONTOS_PREPROPOSAL_FAILURE_SPAN: 'service.resolveSubmission',
       // Setup-only: Market validates the Storefront through the same granted service identity.
       ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: Redacted.value(identities.cccReader.secret),

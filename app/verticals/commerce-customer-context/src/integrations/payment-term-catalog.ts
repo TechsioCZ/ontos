@@ -148,6 +148,8 @@ export const paymentTermCatalogPortFromEnvironment = (
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    /** The Tenant being served; the catalog credential is that Tenant's own. */
+    readonly tenantId: string;
   },
   execute: AuthorizedCurrentPaymentTermsExecutor = executeAuthorizedCurrentPaymentTerms,
 ): Effect.Effect<PaymentTermCatalogPort> =>
@@ -168,6 +170,7 @@ export const paymentTermCatalogPortFromEnvironment = (
             compositionRevision: context.compositionRevision,
             legalEntityId: context.legalEntityId,
             requestCorrelation: correlation,
+            tenantId: context.tenantId,
           })
           .pipe(
             Effect.flatMap(({ baseUrl, credential }) =>

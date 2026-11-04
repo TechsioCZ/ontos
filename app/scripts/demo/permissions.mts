@@ -950,8 +950,28 @@ export const kavarnaMarketAuthorityPrincipal = {
 } as const;
 
 export const COMMERCE_PORTAL_NAMESPACE = 'ontos.commerce.portal.better-auth.v1';
+
+/**
+ * One Tenant's Commerce portal workload. API keys resolve to one Principal and a Principal belongs to one Tenant, so
+ * every Tenant that runs customer self-enrollment has its own service Principal, key and grants.
+ */
+export interface CommercePortalWorkload {
+  readonly apiKeyName: string;
+  readonly displayName: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly roleKey: string;
+  readonly tenantId: string;
+}
+
+export const demoCommercePortalWorkload: CommercePortalWorkload = {
+  ...commercePortalPrincipal,
+  roleKey: demoPrincipalRoleKey(commercePortalPrincipal.principalId),
+  tenantId: demoTenantId,
+};
+
 /** Exact company-scoped native reads; the Actions below are granted one by one. */
-const commercePortalRole: DemoRole = {
+export const commercePortalRole: DemoRole = {
   contextPermissions: { 'privacy.core': privacyReadContextPermissions },
   label: 'Commerce portal (service)',
   modules: { 'commerce.customer-context': 'read', 'party.registry': 'read', 'privacy.core': 'read' },
@@ -979,36 +999,35 @@ export const commercePortalActionKeys: readonly string[] = [
   'commerce.customer-context.record-portal-enrollment-outcome',
 ];
 
-export const commercePortalRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
-  const { legalEntityId, principalId } = commercePortalPrincipal;
-  const namespace = toIdentityNamespaceAccessObjectId(demoTenantId, COMMERCE_PORTAL_NAMESPACE) ?? '';
-  const roleId = toScopedRoleObjectId({
-    legalEntityId,
-    roleKey: demoPrincipalRoleKey(principalId),
-    tenantId: demoTenantId,
-  });
+export const commercePortalRelationships = (
+  actions: readonly DemoAction[],
+  workload: CommercePortalWorkload = demoCommercePortalWorkload,
+): readonly DemoRelationship[] => {
+  const { legalEntityId, principalId, roleKey, tenantId } = workload;
+  const namespace = toIdentityNamespaceAccessObjectId(tenantId, COMMERCE_PORTAL_NAMESPACE) ?? '';
+  const roleId = toScopedRoleObjectId({ legalEntityId, roleKey, tenantId });
   const relationships: DemoRelationship[] = [
     {
       relation: 'tenant',
       resourceId: namespace,
       resourceType: 'identity_namespace',
-      subjectId: demoTenantId,
+      subjectId: tenantId,
       subjectType: 'tenant',
     },
     roleRelationship('identity_namespace', namespace, 'provisioner', roleId),
-    ...principalRelationships(principalId, commercePortalRole, actions, legalEntityId),
+    ...principalRelationships(principalId, commercePortalRole, actions, legalEntityId, tenantId, roleKey),
     // Business authority is independent of the exact Action executor allowlist below.
     // Keep module access read-only: a write role would automatically grant every Party Action.
-    roleRelationship('tenant', demoTenantId, 'party_identity_manager', roleId),
+    roleRelationship('tenant', tenantId, 'party_identity_manager', roleId),
     roleRelationship(
       'legal_entity',
-      toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+      toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
       'counterparty_manager',
       roleId,
     ),
   ];
   for (const action of actions.filter(({ actionKey }) => commercePortalActionKeys.includes(actionKey))) {
-    relationships.push(...scopedDemoActionRelationships(principalId, action, legalEntityId));
+    relationships.push(...scopedDemoActionRelationships(principalId, action, legalEntityId, tenantId, roleKey));
   }
   return [...new Map(relationships.map((relationship) => [relationshipKey(relationship), relationship])).values()];
 };

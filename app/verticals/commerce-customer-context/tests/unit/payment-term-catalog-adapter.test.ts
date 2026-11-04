@@ -252,12 +252,14 @@ it.effect('requires a server-owned gateway credential before a production catalo
       readonly audience: 'payment-term-catalog';
       readonly legalEntityId: string;
       readonly requestCorrelation: string;
+      readonly tenantId: string;
     }[] = [];
     const port = yield* paymentTermCatalogPortFromEnvironment(
       {
         compositionRevision: 'a'.repeat(64),
         legalEntityId: '20000000-0000-4000-8000-000000000001',
         requestCorrelation: 'payment-correlation',
+        tenantId,
       },
       (_payload, credential, _correlation, options) => {
         authorization = Redacted.value(credential);
@@ -301,6 +303,7 @@ it.effect('requires a server-owned gateway credential before a production catalo
         compositionRevision: 'a'.repeat(64),
         legalEntityId: '20000000-0000-4000-8000-000000000001',
         requestCorrelation: 'payment-correlation',
+        tenantId,
       },
     ]);
   }),

@@ -864,11 +864,12 @@ it.effect('does not classify a current Core binding without exact owner evidence
     };
     const options: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
       client,
-      clientOptions: () => ({
-        apiKey: Redacted.make('test'),
-        baseUrl: 'https://core.invalid',
-        requestCorrelation: 'core-driver-unit',
-      }),
+      clientOptions: () =>
+        Effect.succeed({
+          apiKey: Redacted.make('test'),
+          baseUrl: 'https://core.invalid',
+          requestCorrelation: 'core-driver-unit',
+        }),
       makeDispatchRequest: () => {
         throw new Error('The reconcile-only test must not dispatch');
       },
@@ -909,11 +910,12 @@ it.effect('requires original invocation provenance before invoking Core read int
     };
     const options: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
       client,
-      clientOptions: () => ({
-        apiKey: Redacted.make('test'),
-        baseUrl: 'https://core.invalid',
-        requestCorrelation: 'core-driver-unit',
-      }),
+      clientOptions: () =>
+        Effect.succeed({
+          apiKey: Redacted.make('test'),
+          baseUrl: 'https://core.invalid',
+          requestCorrelation: 'core-driver-unit',
+        }),
       interpretReadResult: (input, result) =>
         Effect.sync(() => {
           interpretations += 1;
@@ -956,11 +958,12 @@ it.effect('rejects a Core reservation that returns a non-current existing bindin
     };
     const options: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
       client,
-      clientOptions: () => ({
-        apiKey: Redacted.make('test'),
-        baseUrl: 'https://core.invalid',
-        requestCorrelation: 'core-driver-unit',
-      }),
+      clientOptions: () =>
+        Effect.succeed({
+          apiKey: Redacted.make('test'),
+          baseUrl: 'https://core.invalid',
+          requestCorrelation: 'core-driver-unit',
+        }),
       makeDispatchRequest: () => ({
         operation: 'reserve',
         payload: {
@@ -1028,11 +1031,12 @@ it.effect('binds Core reserve and activate payloads to the original revision and
     for (const operationKind of operations) {
       const options: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
         client,
-        clientOptions: () => ({
-          apiKey: Redacted.make('test'),
-          baseUrl: 'https://core.invalid',
-          requestCorrelation: 'core-driver-unit',
-        }),
+        clientOptions: () =>
+          Effect.succeed({
+            apiKey: Redacted.make('test'),
+            baseUrl: 'https://core.invalid',
+            requestCorrelation: 'core-driver-unit',
+          }),
         makeDispatchRequest: () =>
           operationKind === 'reserve'
             ? {

@@ -283,8 +283,7 @@ step agent-operators env ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos \
 step crm-party-intake pnpm_ demo:crm-party-intake
 # ŠroubShop customer accounts: publish the two workload identities/keys and Shell provider configuration first.
 step commerce-portal pnpm_ demo:commerce-portal
-reload_env_keys COMMERCE_CORE_IDENTITY_BASE_URL COMMERCE_CORE_IDENTITY_API_KEY \
-  ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT \
+reload_env_keys COMMERCE_CORE_IDENTITY_BASE_URL COMMERCE_TENANT_CREDENTIALS ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT \
   COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS ONTOS_PRIVACY_GATEWAY_API_KEY COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID
 restart_server() { # restart_server <name> <directory>
   local pid

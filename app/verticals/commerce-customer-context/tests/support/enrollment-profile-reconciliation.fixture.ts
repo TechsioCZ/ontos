@@ -243,7 +243,9 @@ export const makeEnrollmentProfileReconciliationFixture = Effect.fn('EnrollmentP
     const apiKey = `enrollment-profile-${randomUUID()}`;
     const configuration = ConfigProvider.layer(
       ConfigProvider.fromUnknown({
-        ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: apiKey,
+        COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+          [fixture.tenantId]: { coreIdentityApiKey: `enrollment-core-${randomUUID()}`, gatewayApiKey: apiKey },
+        }),
         ONTOS_GATEWAY_ISSUER: issuer,
         ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
           keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'owned-profile', use: 'sig' }],

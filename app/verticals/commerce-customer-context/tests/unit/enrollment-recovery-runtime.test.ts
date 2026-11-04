@@ -48,15 +48,20 @@ const observedHealth = Effect.gen(function* observedHealthEffect() {
   };
 });
 
+const tenantCredentials = JSON.stringify({
+  '70000000-0000-4000-8000-000000000001': {
+    coreIdentityApiKey: 'synthetic-core-identity-credential',
+    gatewayApiKey: 'synthetic-test-credential',
+  },
+});
+
 for (const [index, environment] of [
   {},
   { ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.invalid' },
+  { COMMERCE_TENANT_CREDENTIALS: '', ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.invalid' },
+  { COMMERCE_TENANT_CREDENTIALS: '{}', ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.invalid' },
   {
-    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: '',
-    ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.invalid',
-  },
-  {
-    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'synthetic-test-credential',
+    COMMERCE_TENANT_CREDENTIALS: tenantCredentials,
     ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.invalid?untrusted=true',
   },
 ].entries()) {
@@ -77,7 +82,7 @@ it.effect('accepts explicit owner gateway configuration without resolving ambien
     Effect.provideService(
       ConfigProvider.ConfigProvider,
       ConfigProvider.fromUnknown({
-        ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'synthetic-test-credential',
+        COMMERCE_TENANT_CREDENTIALS: tenantCredentials,
         ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.invalid',
       }),
     ),

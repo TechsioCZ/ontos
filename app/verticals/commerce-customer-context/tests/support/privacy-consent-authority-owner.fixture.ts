@@ -87,6 +87,11 @@ import {
   gatewayAssertionRedemptionPgClient,
 } from '../../api/auth/gateway-assertion-redemption.ts';
 import { CommerceCoreIdentityClientConfigLive } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { commerceTenantWorkloadCredentials } from '../../api/tenant-workload-credentials.ts';
+import type {
+  CommerceTenantWorkloadCredentialUnavailable,
+  CommerceTenantWorkloadCredentials,
+} from '../../api/tenant-workload-credentials.ts';
 import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
 import { CommercePortalAuthAccountCreationProviderLive } from '../../api/portal-auth/provider/account-create.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
@@ -691,6 +696,7 @@ type RetainedServerPartyFailure =
   | Effect.Error<ReturnType<typeof issueApiKeyGatewayContext>>
   | Effect.Error<ReturnType<typeof executePartyDetailWithAuthorization>>
   | Effect.Error<ActiveApplicationCompositionServiceContract['load']>
+  | CommerceTenantWorkloadCredentialUnavailable
   | ProfilePersistenceDependencyFailure;
 const observeServerPartyFailure = (error: RetainedServerPartyFailure) =>
   Effect.sync(() => {
@@ -708,7 +714,7 @@ const observePartyDetailReturned = Effect.sync(() => {
 });
 const resolveRetainedParty = (
   scope: typeof retainedServerScopeSchema.Type,
-  apiKey: Redacted.Redacted,
+  credentials: CommerceTenantWorkloadCredentials,
   shellBaseUrl: URL,
   authority: ActiveApplicationCompositionServiceContract,
   input: PartyRegistryRetailPartyResolverFactoryInput,
@@ -729,13 +735,14 @@ const resolveRetainedParty = (
         reason: 'The owned Party server scope is not admitted',
       });
     }
+    const { gatewayApiKey } = yield* credentials.forTenant(scope.tenantId);
     const gateway = yield* issueApiKeyGatewayContext(
       {
         audience: retainedPartyAppId,
         compositionRevision: scope.compositionRevision,
         legalEntityId: scope.legalEntityId,
       },
-      { apiKey, baseUrl: shellBaseUrl, requestCorrelation: input.requestCorrelation },
+      { apiKey: gatewayApiKey, baseUrl: shellBaseUrl, requestCorrelation: input.requestCorrelation },
     );
     serverPartyObservation.stage = 'GATEWAY_ISSUED';
     if (
@@ -770,14 +777,14 @@ const retainedPartyResolverFactoryLive = Layer.effect(
       Schema.fromJsonString(retainedServerScopeSchema),
       'ONTOS_RETAINED_CONSENT_SERVER_SCOPE',
     );
-    const apiKey = yield* Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY');
+    const credentials = yield* commerceTenantWorkloadCredentials;
     const shellBaseUrl = yield* Config.schema(Schema.URLFromString, 'ONTOS_SHELL_GATEWAY_BASE_URL');
     const authority = yield* ActiveApplicationCompositionService;
     serverPartyObservation.stage = 'FACTORY_BUILT';
     return PartyRegistryRetailPartyResolverFactory.of({
       make: (input) => {
         serverPartyObservation.stage = 'FACTORY_MADE';
-        return (request) => resolveRetainedParty(scope, apiKey, shellBaseUrl, authority, input, request);
+        return (request) => resolveRetainedParty(scope, credentials, shellBaseUrl, authority, input, request);
       },
     });
   }),
@@ -930,7 +937,13 @@ const serve = Effect.scoped(
       ['/auth/identity/external/bindings/reserve', 'reserve'],
       ['/auth/identity/external/bindings/activate', 'activate'],
     ]);
-    const expectedCoreKey = yield* Config.Redacted('COMMERCE_CORE_IDENTITY_API_KEY');
+    const retainedScope = yield* Config.schema(
+      Schema.fromJsonString(retainedServerScopeSchema),
+      'ONTOS_RETAINED_CONSENT_SERVER_SCOPE',
+    );
+    const { coreIdentityApiKey: expectedCoreKey } = yield* commerceTenantWorkloadCredentials.pipe(
+      Effect.flatMap((credentials) => credentials.forTenant(retainedScope.tenantId)),
+    );
     const authenticationDetails = new Map<string, typeof enrollmentObservationSchema.Type.coreReadAuthentication>([
       ['A workload API key is required', 'MISSING'],
       ['The workload API key is invalid', 'INVALID'],

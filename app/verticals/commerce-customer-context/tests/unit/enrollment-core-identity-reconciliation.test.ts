@@ -7,6 +7,7 @@ import type { ExternalIdentityClientPort } from '../../../../packages/shared-con
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthAccountCreationReconciliationService } from '../../api/portal-auth/provider/account-creation-reconciliation-service.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { makeCommerceTenantWorkloadCredentials } from '../../api/tenant-workload-credentials.ts';
 import {
   ACTIVATE_PRINCIPAL_BINDING_TRANSITION_KEY,
   CORE_IDENTITY_OWNER_MODULE_KEY,
@@ -213,8 +214,13 @@ const registryLive = (bindingStatus: 'active' | 'pending') =>
       Layer.mergeAll(
         Layer.succeed(ExternalIdentityClient, coreClient(bindingStatus)),
         Layer.succeed(CommerceCoreIdentityClientConfig, {
-          apiKey: Redacted.make('enrollment-core-identity-reconciliation'),
           baseUrl: 'https://core-identity.invalid',
+          credentials: makeCommerceTenantWorkloadCredentials({
+            [TENANT_ID]: {
+              coreIdentityApiKey: Redacted.make('enrollment-core-identity-reconciliation'),
+              gatewayApiKey: Redacted.make('enrollment-core-identity-reconciliation-gateway'),
+            },
+          }),
         }),
         Layer.succeed(CommercePortalAuthAccountLookupService, {
           existsByEmail: unreachable('existsByEmail'),

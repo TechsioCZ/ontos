@@ -5,7 +5,7 @@ import {
 } from '@app/core-runtime';
 import { commercialDemoCompany, demoCompanyTenantId, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { expect, it } from 'effect-rstest';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import {
@@ -46,9 +46,12 @@ import {
   crmIntakeLegalEntityIds,
   crmPartyIntakePrincipal,
   crmIntakeRelationships,
+  demoCommercePortalWorkload,
 } from '../demo/permissions.mts';
 import type { DemoAction, DemoPermissionInstallation, DemoRelationship } from '../demo/permissions.mts';
 import { warmupAccounts } from '../demo/warmup-accounts.mts';
+import { akrosPlaygroundCommercePortal } from '../demo/akros-playground-policy.mts';
+import { PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 
 import {
   bootstrapDemoPermissionContexts,
@@ -60,6 +63,7 @@ import { administratorRelationships } from '../demo/accounts-admin-grants.mts';
 import {
   commercePortalExternalIdentityDeployment,
   commercePortalReleaseSecrets,
+  commercePortalTenantBundle,
   commercePortalVerificationWorkloadGrants,
 } from '../demo/commerce-portal.mts';
 
@@ -1018,7 +1022,7 @@ it.effect(
         grants: deployment.grants.map((grant) => ({ ...grant, tenantId, workloadPrincipalId })),
       };
       const bundle = {
-        'commerce-customer-context': { COMMERCE_CORE_IDENTITY_API_KEY: 'unit-only-secret' },
+        'commerce-customer-context': { COMMERCE_TENANT_CREDENTIALS: 'unit-only-secret' },
         'party-registry': { UNRELATED_SECRET: 'unit-only-party-secret' },
         'shell-super-app': {
           BETTER_AUTH_SECRET: 'unit-only-shell-secret',
@@ -1026,10 +1030,10 @@ it.effect(
         },
       };
       const result = yield* commercePortalReleaseSecrets(bundle);
-      expect(result['commerce-customer-context']?.COMMERCE_CORE_IDENTITY_API_KEY).toBe('unit-only-secret');
+      expect(result['commerce-customer-context']?.COMMERCE_TENANT_CREDENTIALS).toBe('unit-only-secret');
       expect(result['party-registry']).toBe(bundle['party-registry']);
       expect(result['shell-super-app']).toBe(bundle['shell-super-app']);
-      expect(Object.keys(bundle['commerce-customer-context'])).toEqual(['COMMERCE_CORE_IDENTITY_API_KEY']);
+      expect(Object.keys(bundle['commerce-customer-context'])).toEqual(['COMMERCE_TENANT_CREDENTIALS']);
       const generated: unknown = JSON.parse(
         result['commerce-customer-context']?.COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS ?? 'null',
       );
@@ -1049,6 +1053,70 @@ it.effect(
       const second = yield* commercePortalReleaseSecrets(result);
       expect(second).toEqual(result);
     }),
+);
+
+it.effect('adds a Tenant workload with its own key and grants, never widening another Tenant', () =>
+  Effect.gen(function* tenantWorkloadBundle() {
+    const demoKey = 'unit-only-demo-workload-key';
+    const akrosKey = 'unit-only-akros-workload-key';
+    const bundle = yield* commercePortalTenantBundle(
+      {
+        'commerce-customer-context': {
+          COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+            [demoTenantId]: { coreIdentityApiKey: demoKey, gatewayApiKey: demoKey },
+          }),
+        },
+        'shell-super-app': {
+          ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: JSON.stringify(commercePortalExternalIdentityDeployment()),
+        },
+      },
+      'akros-playground',
+      Redacted.make(akrosKey),
+    );
+    expect(JSON.parse(bundle['commerce-customer-context']?.COMMERCE_TENANT_CREDENTIALS ?? 'null')).toEqual({
+      [akrosPlaygroundCommercePortal.tenantId]: { coreIdentityApiKey: akrosKey, gatewayApiKey: akrosKey },
+      [demoTenantId]: { coreIdentityApiKey: demoKey, gatewayApiKey: demoKey },
+    });
+    const GrantsJson = Schema.fromJsonString(
+      Schema.Struct({
+        grants: Schema.Array(Schema.Struct({ tenantId: TenantIdSchema, workloadPrincipalId: PrincipalIdSchema })),
+      }),
+    );
+    const deploymentText = bundle['shell-super-app']?.ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT ?? 'null';
+    expect(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(deploymentText)).toEqual(
+      commercePortalExternalIdentityDeployment([demoCommercePortalWorkload, akrosPlaygroundCommercePortal]),
+    );
+    // Each Tenant's grants name only that Tenant's own Principal.
+    for (const grant of (yield* Schema.decodeUnknownEffect(GrantsJson)(deploymentText)).grants) {
+      expect(grant.workloadPrincipalId).toBe(
+        grant.tenantId === demoTenantId
+          ? commercePortalPrincipal.principalId
+          : akrosPlaygroundCommercePortal.principalId,
+      );
+    }
+    const verification = yield* Schema.decodeUnknownEffect(GrantsJson)(
+      bundle['commerce-customer-context']?.COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS ?? 'null',
+    );
+    expect(verification.grants.map((grant) => grant.tenantId)).toEqual([
+      demoTenantId,
+      akrosPlaygroundCommercePortal.tenantId,
+    ]);
+    const foreign = yield* Effect.flip(
+      commercePortalTenantBundle(
+        {
+          'commerce-customer-context': {
+            COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+              '10000000-0000-4000-8000-000000000099': { coreIdentityApiKey: demoKey, gatewayApiKey: demoKey },
+            }),
+          },
+          'shell-super-app': {},
+        },
+        'akros-playground',
+        Redacted.make(akrosKey),
+      ),
+    );
+    expect(foreign.reason).toContain('without a provisioned workload');
+  }),
 );
 
 it.effect('replaces stale hand-copied verification grants with the canonical generated value', () =>

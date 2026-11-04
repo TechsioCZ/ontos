@@ -231,6 +231,7 @@ export const customerPriceGroupResolutionServicesForTransaction = (
     const catalog = yield* priceGroupCatalogPortFromEnvironment({
       compositionRevision,
       requestCorrelation: scope.correlationId,
+      tenantId: scope.tenantId,
     });
     return {
       catalog,

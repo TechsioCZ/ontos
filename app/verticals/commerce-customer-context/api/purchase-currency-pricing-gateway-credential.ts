@@ -7,6 +7,8 @@ import { unavailablePurchaseCurrencyDependency } from '../shared/domain/purchase
 import type { PurchaseCurrencyDependencyUnavailable } from '../shared/domain/purchase-currency-dependency.ts';
 import { PurchaseCurrencyPricingGatewayCredentialService } from '../shared/domain/purchase-currency-pricing-gateway-credential.ts';
 import type { PurchaseCurrencyPricingGatewayCredentialIssuer } from '../shared/domain/purchase-currency-pricing-gateway-credential.ts';
+import { commerceTenantWorkloadCredentials } from './tenant-workload-credentials.ts';
+import type { CommerceTenantWorkloadCredentials } from './tenant-workload-credentials.ts';
 
 const httpUrl = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
@@ -21,7 +23,7 @@ const httpUrl = Schema.URLFromString.check(
 );
 
 const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
+  credentials: commerceTenantWorkloadCredentials,
   shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
@@ -40,10 +42,13 @@ const unavailableConfigurationIssuer = (cause: unknown): PurchaseCurrencyPricing
 });
 
 export const makePurchaseCurrencyPricingGatewayCredentialIssuer = (
-  configured: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: URL },
+  configured: { readonly credentials: CommerceTenantWorkloadCredentials; readonly shellBaseUrl: URL },
   issue: GatewayContextIssue = issueApiKeyGatewayContext,
 ): PurchaseCurrencyPricingGatewayCredentialIssuer => ({
   issue: Effect.fn('PurchaseCurrencyPricingGatewayCredentialIssuer.issue')(function* issueCredential(input) {
+    const { gatewayApiKey } = yield* configured.credentials
+      .forTenant(input.tenantId)
+      .pipe(Effect.mapError((cause) => unavailable('Pricing gateway configuration is unavailable', cause)));
     const gatewayContext =
       input.legalEntityId === undefined
         ? { audience: input.audience, compositionRevision: input.compositionRevision }
@@ -53,7 +58,7 @@ export const makePurchaseCurrencyPricingGatewayCredentialIssuer = (
             legalEntityId: input.legalEntityId,
           };
     const response = yield* issue(gatewayContext, {
-      apiKey: configured.apiKey,
+      apiKey: gatewayApiKey,
       baseUrl: configured.shellBaseUrl,
       requestCorrelation: input.requestCorrelation,
     }).pipe(Effect.mapError((cause) => unavailable('The Pricing gateway credential could not be issued', cause)));

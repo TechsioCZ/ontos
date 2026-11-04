@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { ActionCommitIndeterminate } from '@app/core-runtime';
-import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ExternalIdentityClient } from '../../../../packages/shared-contracts/src/external-identity-client.ts';
@@ -9,6 +9,7 @@ import type { ExternalIdentityClientPort } from '../../../../packages/shared-con
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthAccountCreationReconciliationService } from '../../api/portal-auth/provider/account-creation-reconciliation-service.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { everyTenantTestCredentials } from '../support/tenant-workload-credentials.ts';
 import { BindRetailPortalProfileActionConflictProblemSchema } from '../../shared/apis/bind-retail-portal-profile-action.ts';
 import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
@@ -91,8 +92,8 @@ const registryLive = (native: NativeProfileFixture) =>
       Layer.mergeAll(
         Layer.succeed(ExternalIdentityClient, coreClient),
         Layer.succeed(CommerceCoreIdentityClientConfig, {
-          apiKey: Redacted.make('enrollment-profile-reconciliation'),
           baseUrl: 'https://core-identity.invalid',
+          credentials: everyTenantTestCredentials('enrollment-profile-reconciliation'),
         }),
         Layer.succeed(CommercePortalAuthAccountLookupService, {
           existsByEmail: unreachable('existsByEmail'),

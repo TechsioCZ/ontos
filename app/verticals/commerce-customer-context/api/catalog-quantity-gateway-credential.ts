@@ -6,6 +6,8 @@ import { Config, Effect, Layer, Redacted, Schema } from 'effect';
 import { CatalogQuantityGatewayCredentialService } from '../shared/domain/catalog-quantity-gateway-credential.ts';
 import type { CatalogQuantityGatewayCredentialIssuer } from '../shared/domain/catalog-quantity-gateway-credential.ts';
 import type { CommerceQuantityCatalogUnavailable } from '../shared/domain/commerce-quantity-catalog-port.ts';
+import { commerceTenantWorkloadCredentials } from './tenant-workload-credentials.ts';
+import type { CommerceTenantWorkloadCredentials } from './tenant-workload-credentials.ts';
 
 const httpUrl = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
@@ -19,7 +21,7 @@ const httpUrl = Schema.URLFromString.check(
   ),
 );
 const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
+  credentials: commerceTenantWorkloadCredentials,
   shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
@@ -45,14 +47,17 @@ const unavailableConfigurationIssuer = (cause: unknown): CatalogQuantityGatewayC
 });
 
 export const makeCatalogQuantityGatewayCredentialIssuer = (
-  configured: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: URL },
+  configured: { readonly credentials: CommerceTenantWorkloadCredentials; readonly shellBaseUrl: URL },
   issue: GatewayContextIssue = issueApiKeyGatewayContext,
 ): CatalogQuantityGatewayCredentialIssuer => ({
   issue: Effect.fn('CatalogQuantityGatewayCredentialIssuer.issue')(function* issueCredential(input) {
+    const { gatewayApiKey } = yield* configured.credentials
+      .forTenant(input.tenantId)
+      .pipe(Effect.mapError((cause) => unavailable('Catalog gateway configuration is unavailable', cause)));
     const response = yield* issue(
       { audience: input.audience, compositionRevision: input.compositionRevision, legalEntityId: input.legalEntityId },
       {
-        apiKey: configured.apiKey,
+        apiKey: gatewayApiKey,
         baseUrl: configured.shellBaseUrl,
         requestCorrelation: input.requestCorrelation,
       },

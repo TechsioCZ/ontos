@@ -105,6 +105,7 @@ const makePricingPort = (input: {
             audience: 'pricing',
             compositionRevision: input.requestContext.compositionRevision,
             requestCorrelation: input.requestContext.requestCorrelation,
+            tenantId: request.tenantId,
           })
           .pipe(
             Effect.flatMap(({ baseUrl, credential }) =>

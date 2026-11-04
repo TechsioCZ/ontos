@@ -81,7 +81,8 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
     credentialVariables: [
       'ONTOS_CCC_ORDER_GATEWAY_API_KEY',
       'ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY',
-      'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY',
+      // Per-Tenant Core identity and gateway keys: { "<tenant id>": { coreIdentityApiKey, gatewayApiKey } }.
+      'COMMERCE_TENANT_CREDENTIALS',
     ],
     operatorValues: [
       uuid('ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID'),

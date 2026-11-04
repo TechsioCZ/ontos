@@ -90,6 +90,7 @@ import { CommercePortalAuthAccountCreationUnavailable } from '../../api/portal-a
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { everyTenantTestCredentials } from '../support/tenant-workload-credentials.ts';
 import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
 import {
   claimedOrIndeterminate,
@@ -288,8 +289,8 @@ const preparationAuthorityLive = Effect.fnUntraced(function* preparationAuthorit
   const coreIdentityLive = CommerceCoreIdentityClientLive.pipe(
     Layer.provide(
       Layer.succeed(CommerceCoreIdentityClientConfig, {
-        apiKey: Redacted.make('enrollment-journeys-http-core-identity'),
         baseUrl: 'https://core-identity.invalid',
+        credentials: everyTenantTestCredentials('enrollment-journeys-http-core-identity'),
       }),
     ),
   );
@@ -309,8 +310,8 @@ const preparationAuthorityLive = Effect.fnUntraced(function* preparationAuthorit
         transactionRunnerLive,
         coreIdentityLive,
         Layer.succeed(CommerceCoreIdentityClientConfig, {
-          apiKey: Redacted.make('enrollment-journeys-http-core-identity'),
           baseUrl: 'https://core-identity.invalid',
+          credentials: everyTenantTestCredentials('enrollment-journeys-http-core-identity'),
         }),
       ),
     ),
@@ -435,8 +436,8 @@ const continuationLive = Effect.fnUntraced(function* continuationLive(
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
   const coreIdentityConfigurationLive = Layer.succeed(CommerceCoreIdentityClientConfig, {
-    apiKey: Redacted.make('enrollment-journeys-http-core-identity'),
     baseUrl: 'https://core-identity.invalid',
+    credentials: everyTenantTestCredentials('enrollment-journeys-http-core-identity'),
   });
   const transactionRunnerLive = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
     Layer.provide(

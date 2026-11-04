@@ -17,6 +17,7 @@ import type { EnsureRetailCustomerProfileResult } from '../../shared/actions/ens
 import type { CommercePortalAuthAccountLookup } from '../../api/portal-auth/provider/account-lookup-service.ts';
 import { ExternalIdentityClient } from '@app/shared-contracts/server/external-identity-client';
 import { DateTime, Effect, Layer, Option, Schema } from 'effect';
+import type { CommerceTenantWorkloadCredentialUnavailable } from '../../api/tenant-workload-credentials.ts';
 import {
   CommerceCoreIdentityClientConfig,
   commerceCoreIdentityClientOptions,
@@ -52,10 +53,16 @@ export interface RetailEnrollmentBindingPorts {
     readonly partyId: string;
     readonly tenantId: string;
   }) => Effect.Effect<Option.Option<EnsureRetailCustomerProfileResult>, CommerceEnrollmentAttemptError>;
+  /** Core read under the workload credential of the Attempt's Tenant; an unconfigured Tenant fails closed. */
   readonly readBinding: (
     request: ReadPrincipalBindingRequest,
+    tenantId: string,
     correlation: string,
-  ) => ReturnType<ExternalIdentityClientPort['readPrincipalBinding']>;
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<ExternalIdentityClientPort['readPrincipalBinding']>>,
+    | Effect.Error<ReturnType<ExternalIdentityClientPort['readPrincipalBinding']>>
+    | CommerceTenantWorkloadCredentialUnavailable
+  >;
   readonly store: (tenantId: typeof EnrollmentTenantIdSchema.Type) => CommerceEnrollmentOwnerAttemptStore;
   readonly verifiedEmail: CommercePortalAuthAccountLookup['verifiedEmailForOwnerInvocation'];
 }
@@ -223,7 +230,7 @@ export const retailEnrollmentBindingForPorts = (ports: RetailEnrollmentBindingPo
         providerSubjectId: subject.providerSubjectId,
         subjectType: subject.subjectType,
       });
-      const current = yield* ports.readBinding(request, input.correlationId);
+      const current = yield* ports.readBinding(request, tenantId, input.correlationId);
       if (
         current.outcome !== 'FOUND' ||
         String(current.authenticationNamespaceId) !== String(subject.authenticationNamespaceId) ||
@@ -268,8 +275,10 @@ export const retailEnrollmentBindingAuthorityLive = Layer.effect(
             Effect.mapError((cause) => attemptUnavailable(cause.reason, undefined, cause)),
           ),
         ),
-      readBinding: (request, correlation) =>
-        client.readPrincipalBinding(request, commerceCoreIdentityClientOptions(configuration, correlation)),
+      readBinding: (request, tenantId, correlation) =>
+        commerceCoreIdentityClientOptions(configuration, tenantId, correlation).pipe(
+          Effect.flatMap((options) => client.readPrincipalBinding(request, options)),
+        ),
       store: (tenantId) => commerceEnrollmentOwnerAttemptStoreForRun({ tenantId }, runner.run),
       verifiedEmail: accounts.verifiedEmailForOwnerInvocation,
     });

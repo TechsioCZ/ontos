@@ -354,6 +354,7 @@ export const changeCustomerPaymentTermsAction = defineAction(
         compositionRevision,
         legalEntityId,
         requestCorrelation: scope.correlationId,
+        tenantId: scope.tenantId,
       });
       return paymentTermsPersistenceForTransaction(
         {

@@ -10,6 +10,10 @@ import {
   makeCatalogQuantityGatewayCredentialLayer,
 } from '../../api/catalog-quantity-gateway-credential.ts';
 import {
+  COMMERCE_TENANT_CREDENTIALS_KEY,
+  CommerceTenantWorkloadCredentialUnavailable,
+} from '../../api/tenant-workload-credentials.ts';
+import {
   CatalogQuantityGatewayCredentialService,
   unavailableCatalogQuantityGatewayCredentialIssuer,
 } from '../../shared/domain/catalog-quantity-gateway-credential.ts';
@@ -17,6 +21,18 @@ import { CommerceQuantityCatalogLineRequestSchema } from '../../shared/domain/co
 import { catalogQuantityPortFromEnvironment } from '../../src/integrations/catalog-quantity.ts';
 
 const { tenantId } = CZECH_LAUNCH_COMMERCE_FIXTURE.scope;
+const tenantGatewayApiKey = 'customer-context-owner-key';
+const tenantCredentialsConfig = ConfigProvider.layer(
+  ConfigProvider.fromUnknown(
+    {
+      [COMMERCE_TENANT_CREDENTIALS_KEY]: JSON.stringify({
+        [tenantId]: { coreIdentityApiKey: 'customer-context-core-identity-key', gatewayApiKey: tenantGatewayApiKey },
+      }),
+      ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test',
+    },
+    { preserveEmptyStrings: true },
+  ),
+);
 const fixturePricingCurrencies = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies;
 const fixturePricingVerificationRef = `commerce.pricing.currency-support-proof:${fixturePricingCurrencies.supportRevisionRef.resourceId}`;
 const activationOwnerFacts = {
@@ -79,6 +95,7 @@ describe('Catalog Quantity production adapter', () => {
           compositionRevision: 'a'.repeat(64),
           legalEntityId: '20000000-0000-4000-8000-000000000001',
           requestCorrelation: 'quantity-test',
+          tenantId,
         })
         .pipe(Effect.flip);
 
@@ -100,6 +117,7 @@ describe('Catalog Quantity production adapter', () => {
 
   it.effect('uses the production gateway composition and retains exact selection, basis, and normalization', () => {
     const gatewayRequests: unknown[] = [];
+    const presentedKeys: string[] = [];
     return Effect.gen(function* resolvesOwnerFacts() {
       const ready = yield* decodeReady;
       const calls: unknown[] = [];
@@ -141,6 +159,7 @@ describe('Catalog Quantity production adapter', () => {
           },
         },
       ]);
+      expect(presentedKeys).toEqual([tenantGatewayApiKey]);
       expect(result[0]).toMatchObject({
         lineId: 'line-1',
         selection: {
@@ -156,6 +175,7 @@ describe('Catalog Quantity production adapter', () => {
         makeCatalogQuantityGatewayCredentialLayer((payload, options) =>
           Effect.sync(() => {
             gatewayRequests.push({ options, payload });
+            presentedKeys.push(Redacted.value(options.apiKey));
             return {
               apiBaseUrl: '/owner-api',
               compositionRevision: 'a'.repeat(64),
@@ -165,17 +185,59 @@ describe('Catalog Quantity production adapter', () => {
           }),
         ),
       ),
+      Effect.provide(tenantCredentialsConfig),
+    );
+  });
+
+  it.effect("fails closed for a Tenant without its own credential and never presents another Tenant's key", () => {
+    const gatewayRequests: unknown[] = [];
+    return Effect.gen(function* rejectsUnconfiguredTenant() {
+      const ready = yield* decodeReady;
+      let ownerReadExecuted = false;
+      const port = yield* catalogQuantityPortFromEnvironment(
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: '20000000-0000-4000-8000-000000000001',
+          requestCorrelation: 'quantity-test',
+        },
+        () => {
+          ownerReadExecuted = true;
+          return Effect.succeed(ready);
+        },
+      );
+      const failure = yield* port
+        .resolveCurrentSelections({
+          lines: [line],
+          observedAt: '2026-09-22T10:00:00.000Z',
+          tenantId: '10000000-0000-4000-8000-000000000099',
+        })
+        .pipe(Effect.flip);
+
+      expect(ownerReadExecuted).toBe(false);
+      expect(gatewayRequests).toEqual([]);
+      expect(failure).toMatchObject({
+        code: 'catalog_selection_unavailable',
+        reason: 'Catalog gateway configuration is unavailable',
+        retryable: true,
+      });
+      expect(
+        Schema.is(CommerceTenantWorkloadCredentialUnavailable)('cause' in failure ? failure.cause : undefined),
+      ).toBe(true);
+    }).pipe(
       Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown(
-            {
-              ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'customer-context-owner-key',
-              ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test',
-            },
-            { preserveEmptyStrings: true },
-          ),
+        makeCatalogQuantityGatewayCredentialLayer((payload, options) =>
+          Effect.sync(() => {
+            gatewayRequests.push({ options, payload });
+            return {
+              apiBaseUrl: '/owner-api',
+              compositionRevision: payload.compositionRevision,
+              expiresAt: 1_700_000_300,
+              token: 'must-not-be-issued',
+            };
+          }),
         ),
       ),
+      Effect.provide(tenantCredentialsConfig),
     );
   });
 

@@ -1443,7 +1443,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   };
   const commerceEnvironment = {
     ...environment,
-    COMMERCE_CORE_IDENTITY_API_KEY: Redacted.value(issued.secret),
     COMMERCE_CORE_IDENTITY_BASE_URL: `${coreOrigin}${shellGatewayContextContract.apiPrefix}`,
     COMMERCE_PORTAL_AUTH_DATABASE_URL: isolated.connections.runtime.connectionString,
     COMMERCE_PORTAL_AUTH_SECRET: `${suffix}${suffix}`,
@@ -1451,7 +1450,12 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: '',
     COMMERCE_PORTAL_AUTH_TRUSTED_PROXIES: '',
     COMMERCE_PORTAL_AUTH_URL: 'https://retained-portal.example.test',
-    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: Redacted.value(issued.secret),
+    COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+      [fixture.tenantId]: {
+        coreIdentityApiKey: Redacted.value(issued.secret),
+        gatewayApiKey: Redacted.value(issued.secret),
+      },
+    }),
     ONTOS_RETAINED_CONSENT_SERVER_SCOPE: JSON.stringify({
       compositionRevision: initialSnapshot.composition.revision,
       legalEntityId: fixture.legalEntityId,

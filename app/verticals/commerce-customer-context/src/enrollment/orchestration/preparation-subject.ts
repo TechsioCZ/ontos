@@ -11,6 +11,7 @@ import type {
 } from '@app/shared-contracts/server/external-identity-client';
 import { Context, Effect, Layer, Option, Result, Schema } from 'effect';
 
+import type { CommerceTenantWorkloadCredentialUnavailable } from '../../../api/tenant-workload-credentials.ts';
 import {
   CommerceCoreIdentityClientConfig,
   commerceCoreIdentityClientOptions,
@@ -378,7 +379,9 @@ const partyCandidateDigestFor = (attempt: EnrollmentAttemptSnapshot): string =>
 const resolveSubject = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.resolve')(function* resolveSubjectEffect(
   store: CommerceEnrollmentOwnerAttemptStore,
   client: ExternalIdentityClientPort,
-  clientOptions: (attempt: EnrollmentAttemptSnapshot) => ExternalIdentityClientOptions,
+  clientOptions: (
+    attempt: EnrollmentAttemptSnapshot,
+  ) => Effect.Effect<ExternalIdentityClientOptions, CommerceTenantWorkloadCredentialUnavailable>,
   input: ReadEnrollmentAttemptInput,
 ): Effect.fn.Return<RetailSelfEnrollmentPreparationSubject, CommerceEnrollmentAttemptError> {
   const attempt = yield* store.read(input);
@@ -409,7 +412,11 @@ const resolveSubject = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.r
     attempt,
     authenticationRef,
     client,
-    options: clientOptions(attempt),
+    options: yield* clientOptions(attempt).pipe(
+      Effect.mapError((cause) =>
+        unavailable(attempt, 'No Core identity credential is configured for this Tenant', cause),
+      ),
+    ),
   };
   const { partyRef, principalRef } = yield* Effect.all(
     {
@@ -442,9 +449,10 @@ export const CommerceEnrollmentPreparationSubjectResolverLive = Layer.effect(
     const client = yield* ExternalIdentityClient;
     const configuration = yield* CommerceCoreIdentityClientConfig;
     /** One correlation per Attempt, so every Core call this resolver makes is traceable to it. */
-    const clientOptions = (attempt: EnrollmentAttemptSnapshot): ExternalIdentityClientOptions =>
+    const clientOptions = (attempt: EnrollmentAttemptSnapshot) =>
       commerceCoreIdentityClientOptions(
         configuration,
+        attempt.tenantId,
         `commerce-enrollment-subject:${attempt.portalEnrollmentAttemptId}`,
       );
     return {

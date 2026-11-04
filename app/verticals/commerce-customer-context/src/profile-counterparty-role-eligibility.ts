@@ -7,6 +7,7 @@ import type { executeCounterpartyRead } from '@app/party-registry/api/client';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { Config, Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
+import { commerceTenantGatewayApiKey } from '../api/tenant-workload-credentials.ts';
 import { ProfilePersistenceDependencyFailure } from './persistence/profile-persistence.ts';
 import type { CounterpartyRoleEligibility, ProfilePersistenceDependencies } from './persistence/profile-persistence.ts';
 
@@ -28,7 +29,6 @@ const dependencyFailure = (reason: string, cause?: unknown): ProfilePersistenceD
 };
 
 const serverConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
   shellBaseUrl: Config.schema(
     Schema.URLFromString.check(
       Schema.makeFilter((url) =>
@@ -56,10 +56,11 @@ const executeServerCounterpartyRead = Effect.fn('ProfileCounterpartyRoleEligibil
     }
     const active = yield* composition.value.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
     const configured = yield* serverConfiguration;
+    const apiKey = yield* commerceTenantGatewayApiKey(scope.tenantId);
     const compositionRevision = active.composition.revision;
     const issued = yield* issueApiKeyGatewayContext(
       { audience: 'party-registry', compositionRevision, legalEntityId: scope.legalEntityId },
-      { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: scope.requestCorrelation },
+      { apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: scope.requestCorrelation },
     );
     if (issued.compositionRevision !== compositionRevision) {
       return yield* dependencyFailure('The Party credential does not match the active composition revision');

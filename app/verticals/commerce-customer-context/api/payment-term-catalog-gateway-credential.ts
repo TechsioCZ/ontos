@@ -6,6 +6,8 @@ import { Config, Effect, Layer, Redacted, Schema } from 'effect';
 import { PaymentTermsDependencyUnavailable } from '../shared/domain/payment-term-errors.ts';
 import { PaymentTermCatalogGatewayCredentialService } from '../shared/domain/payment-term-catalog-gateway-credential.ts';
 import type { PaymentTermCatalogGatewayCredentialIssuer } from '../shared/domain/payment-term-catalog-gateway-credential.ts';
+import { commerceTenantWorkloadCredentials } from './tenant-workload-credentials.ts';
+import type { CommerceTenantWorkloadCredentials } from './tenant-workload-credentials.ts';
 
 const httpUrl = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
@@ -19,8 +21,8 @@ const httpUrl = Schema.URLFromString.check(
   ),
 );
 const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
   baseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+  credentials: commerceTenantWorkloadCredentials,
 });
 
 type GatewayContextIssue = (
@@ -59,8 +61,8 @@ const unavailableConfigurationIssuer = (cause: unknown): PaymentTermCatalogGatew
 
 export const makePaymentTermCatalogGatewayCredentialIssuer = (
   configured: {
-    readonly apiKey: Redacted.Redacted;
     readonly baseUrl: URL;
+    readonly credentials: CommerceTenantWorkloadCredentials;
   },
   issue: GatewayContextIssue = issueGatewayContextOverFetch,
 ): PaymentTermCatalogGatewayCredentialIssuer =>
@@ -71,7 +73,11 @@ export const makePaymentTermCatalogGatewayCredentialIssuer = (
         readonly compositionRevision: string;
         readonly legalEntityId: string;
         readonly requestCorrelation: string;
+        readonly tenantId: string;
       }) {
+        const { gatewayApiKey } = yield* configured.credentials
+          .forTenant(input.tenantId)
+          .pipe(Effect.mapError(unavailable));
         const response = yield* issue(
           {
             audience: input.audience,
@@ -79,7 +85,7 @@ export const makePaymentTermCatalogGatewayCredentialIssuer = (
             legalEntityId: input.legalEntityId,
           },
           {
-            apiKey: configured.apiKey,
+            apiKey: gatewayApiKey,
             baseUrl: configured.baseUrl,
             requestCorrelation: input.requestCorrelation,
           },

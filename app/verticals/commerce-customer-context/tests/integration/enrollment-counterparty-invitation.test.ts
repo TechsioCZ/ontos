@@ -31,6 +31,7 @@ import { CommercePortalAuthAccountCreationProviderLive } from '../../api/portal-
 import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-service.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { CommerceCoreIdentityClientConfig } from '../../api/portal-auth/provider/core-identity-client-config.ts';
+import { everyTenantTestCredentials } from '../support/tenant-workload-credentials.ts';
 import { CommerceCoreIdentityClientLive } from '../../api/portal-auth/provider/core-identity-client.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import { CommercePortalAuthAccountCreationReconciliationLive } from '../../src/portal-auth/persistence/portal-auth-account-creation-reconciliation.ts';
@@ -159,8 +160,8 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive(requ
 const preparationAuthorityLive = Effect.fnUntraced(function* preparationAuthorityLive(requests: Request[]) {
   const configuration = yield* portalAuthConfiguration();
   const coreIdentityConfigurationLive = Layer.succeed(CommerceCoreIdentityClientConfig, {
-    apiKey: Redacted.make('enrollment-counterparty-invitation-core-identity'),
     baseUrl: 'https://core-identity.invalid',
+    credentials: everyTenantTestCredentials('enrollment-counterparty-invitation-core-identity'),
   });
   const transactionRunnerLive = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
     Layer.provide(
@@ -568,8 +569,8 @@ const claimTransitionFor = (scenario: InvitationScenario) =>
 const sweepingContinuation = Effect.fnUntraced(function* sweepingContinuation(scenario: InvitationScenario) {
   const configuration = yield* portalAuthConfiguration();
   const coreIdentityConfigurationLive = Layer.succeed(CommerceCoreIdentityClientConfig, {
-    apiKey: Redacted.make('enrollment-counterparty-invitation-core-identity'),
     baseUrl: 'https://core-identity.invalid',
+    credentials: everyTenantTestCredentials('enrollment-counterparty-invitation-core-identity'),
   });
   const transactionRunnerLive = Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, {
     run: scenario.fixture.run,

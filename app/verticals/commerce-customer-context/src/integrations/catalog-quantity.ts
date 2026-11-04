@@ -130,6 +130,7 @@ const makeCatalogQuantityPort = (dependencies: {
         compositionRevision: dependencies.context.compositionRevision,
         legalEntityId: dependencies.context.legalEntityId,
         requestCorrelation: dependencies.context.requestCorrelation,
+        tenantId,
       })
       .pipe(
         Effect.flatMap(({ baseUrl, credential }) =>

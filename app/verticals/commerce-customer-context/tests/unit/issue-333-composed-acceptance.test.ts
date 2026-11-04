@@ -297,6 +297,7 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
         compositionRevision: 'a'.repeat(64),
         legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-payment-term',
+        tenantId: fixtureScope.tenantId,
       },
       (payload, credential, correlation) => {
         ownerCalls.push({ correlation, credential: Redacted.value(credential), payload });
@@ -333,6 +334,7 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
         compositionRevision: 'a'.repeat(64),
         legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-payment-term',
+        tenantId: fixtureScope.tenantId,
       },
     ]);
     expect(definitions).toEqual([currentPaymentTerm satisfies PaymentTermDefinition]);
@@ -404,6 +406,7 @@ it.effect('uses the Catalog production adapter and preserves owner quantity evid
         compositionRevision: 'a'.repeat(64),
         legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-catalog-quantity',
+        tenantId: fixtureScope.tenantId,
       },
     ]);
     expect(lines).toEqual([
@@ -490,6 +493,7 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
         audience: 'pricing',
         compositionRevision: 'a'.repeat(64),
         requestCorrelation: 'czech-launch-pricing',
+        tenantId: purchasingContext.tenantId,
       },
     ]);
     expect(pricing).toEqual(expectedPricingSupport);

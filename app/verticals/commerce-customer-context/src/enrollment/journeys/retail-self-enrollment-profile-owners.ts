@@ -20,6 +20,7 @@ import type { RetailCustomerProfileRefSchema } from '../../../shared/resources/r
 import type { RetailPortalPrincipalRefSchema } from '../../../shared/resources/retail-portal-profile-binding.ts';
 import { executeBindRetailPortalProfileWithAuthorization } from '../../api/bind-retail-portal-profile-action-client.ts';
 import { executeEnsureRetailCustomerProfileWithAuthorization } from '../../api/ensure-retail-customer-profile-action-client.ts';
+import { commerceTenantGatewayApiKey } from '../../../api/tenant-workload-credentials.ts';
 import { decodeOwnerOutcome, decodeOwnerResolution, ownerUnavailable } from '../orchestration/owner-effect-codec.ts';
 import type { OwnerOutcomeDraft, OwnerResolutionDraft } from '../orchestration/owner-effect-codec.ts';
 import type {
@@ -428,7 +429,6 @@ const enrollmentShellUrl = Schema.URLFromString.check(
 );
 
 const enrollmentGatewayConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
   baseUrl: Config.schema(enrollmentShellUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
@@ -442,13 +442,14 @@ interface RetailOwnerInvocationAuthority {
 const issueRetailOwnerConnection = Effect.fn('RetailEnrollment.issueOwnerConnection')(
   function* issueRetailOwnerConnectionEffect(input: RetailOwnerInvocationAuthority) {
     const configured = yield* enrollmentGatewayConfiguration;
+    const apiKey = yield* commerceTenantGatewayApiKey(input.tenantId);
     const response = yield* issueApiKeyGatewayContext(
       {
         audience: 'commerce-customer-context',
         compositionRevision: input.compositionRevision,
         legalEntityId: input.legalEntityId,
       },
-      { ...configured, requestCorrelation: input.requestCorrelation },
+      { apiKey, baseUrl: configured.baseUrl, requestCorrelation: input.requestCorrelation },
     );
     if (response.compositionRevision !== input.compositionRevision) {
       return yield* unavailable('The issued credential does not match the enrollment composition revision');

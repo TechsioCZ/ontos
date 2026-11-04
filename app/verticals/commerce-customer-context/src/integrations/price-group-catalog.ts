@@ -196,20 +196,25 @@ export const priceGroupCatalogPort = (
 const authorizedExecutor =
   (
     issuer: PriceGroupCatalogGatewayCredentialIssuer,
-    compositionRevision: string,
+    context: { readonly compositionRevision: string; readonly tenantId: string },
     execute: AuthorizedPriceGroupCompatibilityExecutor,
   ): PriceGroupCompatibilityExecutor =>
   (payload, correlation) =>
     issuer
-      .issue({ audience: 'price-group-catalog', compositionRevision, requestCorrelation: correlation })
+      .issue({
+        audience: 'price-group-catalog',
+        compositionRevision: context.compositionRevision,
+        requestCorrelation: correlation,
+        tenantId: context.tenantId,
+      })
       .pipe(
         Effect.flatMap(({ baseUrl, credential }) =>
-          execute(payload, credential, correlation, { baseUrl, compositionRevision }),
+          execute(payload, credential, correlation, { baseUrl, compositionRevision: context.compositionRevision }),
         ),
       );
 
 export const priceGroupCatalogPortFromEnvironment = (
-  context: { readonly compositionRevision: string; readonly requestCorrelation: string },
+  context: { readonly compositionRevision: string; readonly requestCorrelation: string; readonly tenantId: string },
   execute: AuthorizedPriceGroupCompatibilityExecutor = executeAuthorizedCompatibility,
 ): Effect.Effect<PriceGroupCatalogPort> =>
   Effect.serviceOption(PriceGroupCatalogGatewayCredentialService).pipe(
@@ -218,7 +223,7 @@ export const priceGroupCatalogPortFromEnvironment = (
         context.requestCorrelation,
         authorizedExecutor(
           Option.isSome(issuerOption) ? issuerOption.value : unavailablePriceGroupCatalogGatewayCredentialIssuer,
-          context.compositionRevision,
+          context,
           execute,
         ),
       ),

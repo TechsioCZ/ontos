@@ -432,7 +432,11 @@ export const preparePriceGroupActionServices = Effect.fn('PriceGroupAction.prepa
   const trustedOperationAt = DateTime.formatIso(yield* DateTime.now);
   const { catalog, snapshot } = yield* Effect.all(
     {
-      catalog: priceGroupCatalogPortFromEnvironment({ compositionRevision, requestCorrelation: scope.correlationId }),
+      catalog: priceGroupCatalogPortFromEnvironment({
+        compositionRevision,
+        requestCorrelation: scope.correlationId,
+        tenantId: scope.tenantId,
+      }),
       snapshot: context.transaction((transaction) =>
         inspectMutationProfiles(
           intent,

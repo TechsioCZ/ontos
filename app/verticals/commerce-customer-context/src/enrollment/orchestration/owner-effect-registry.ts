@@ -21,6 +21,8 @@ import {
   CommerceCoreIdentityClientConfig,
   commerceCoreIdentityClientOptions,
 } from '../../../api/portal-auth/provider/core-identity-client-config.ts';
+import type { CommerceTenantWorkloadCredentialUnavailable } from '../../../api/tenant-workload-credentials.ts';
+import { CommerceEnrollmentOwnerEffectUnavailable } from './owner-transition-errors.ts';
 import {
   readRetailEnrollmentRestartContext,
   retailRestartIdentity,
@@ -1062,7 +1064,9 @@ const invitationClaimEntry =
 
 interface CoreIdentitySeam {
   readonly client: ExternalIdentityClientPort;
-  readonly clientOptions: (context: CommerceEnrollmentOwnerEffectContext) => ExternalIdentityClientOptions;
+  readonly clientOptions: (
+    context: CommerceEnrollmentOwnerEffectContext,
+  ) => Effect.Effect<ExternalIdentityClientOptions, CommerceTenantWorkloadCredentialUnavailable>;
 }
 
 const coreAuthenticationRef = (context: CommerceEnrollmentOwnerEffectContext) => {
@@ -1122,7 +1126,18 @@ const coreIdentityEffect = (
 ): CommerceEnrollmentOwnerEffect => {
   const base: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
     client: seam.client,
-    clientOptions: () => seam.clientOptions(context),
+    clientOptions: () =>
+      seam.clientOptions(context).pipe(
+        Effect.mapError((cause) =>
+          withCause(
+            new CommerceEnrollmentOwnerEffectUnavailable({
+              code: 'core_identity_tenant_unconfigured',
+              reason: 'No Core identity credential is configured for this Tenant',
+            }),
+            cause,
+          ),
+        ),
+      ),
     interpretReadResult: (input, result) =>
       decodeOwnerResolution(
         {
@@ -1226,13 +1241,29 @@ const coreActivateEntry = (seam: CoreIdentitySeam): RegistryEntry =>
     if (accountSubject === undefined || Option.isNone(reserved)) {
       return none;
     }
-    const readRequest = yield* existingAccountCoreIdentityReadByBindingRequest(reserved.value).pipe(
-      Effect.mapError(rejectFor(context, 'The reserved Core Principal Auth Binding reference is unusable')),
+    const { clientOptions, readRequest } = yield* Effect.all(
+      {
+        clientOptions: seam
+          .clientOptions(context)
+          .pipe(
+            Effect.mapError((cause) =>
+              attemptUnavailable(
+                'No Core identity credential is configured for this Tenant',
+                context.attempt.portalEnrollmentAttemptId,
+                cause,
+              ),
+            ),
+          ),
+        readRequest: existingAccountCoreIdentityReadByBindingRequest(reserved.value).pipe(
+          Effect.mapError(rejectFor(context, 'The reserved Core Principal Auth Binding reference is unusable')),
+        ),
+      },
+      { concurrency: 2 },
     );
     // Activation is a compare-and-set on the binding revision and only Core knows it. This read is
     // an owner read outside every Attempt transaction, exactly as the dispatch that follows it is.
     const binding = yield* seam.client
-      .readPrincipalBinding(readRequest, seam.clientOptions(context))
+      .readPrincipalBinding(readRequest, clientOptions)
       .pipe(
         Effect.mapError((cause) =>
           attemptUnavailable(
@@ -1297,6 +1328,7 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
       clientOptions: (context) =>
         commerceCoreIdentityClientOptions(
           configuration,
+          context.attempt.tenantId,
           `commerce-enrollment-continuation:${context.attempt.portalEnrollmentAttemptId}`,
         ),
     };

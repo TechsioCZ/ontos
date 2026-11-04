@@ -3,6 +3,10 @@ import {
   makePaymentTermCatalogGatewayCredentialIssuer,
   makePaymentTermCatalogGatewayCredentialLayer,
 } from '../../api/payment-term-catalog-gateway-credential.ts';
+import {
+  CommerceTenantWorkloadCredentialUnavailable,
+  makeCommerceTenantWorkloadCredentials,
+} from '../../api/tenant-workload-credentials.ts';
 import { ConfigProvider, Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -10,9 +14,14 @@ import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-t
 
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const requestCorrelation = 'catalog-credential-correlation';
+const tenantId = '10000000-0000-4000-8000-000000000001';
+const otherTenantId = '10000000-0000-4000-8000-000000000002';
+const gatewayApiKey = Redacted.make('dedicated-customer-context-key');
 const configuration = {
-  apiKey: Redacted.make('dedicated-customer-context-key'),
   baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
+  credentials: makeCommerceTenantWorkloadCredentials({
+    [tenantId]: { coreIdentityApiKey: Redacted.make('tenant-core-identity-key'), gatewayApiKey },
+  }),
 };
 
 it.effect('fails closed when the server-owned issuance configuration is absent', () =>
@@ -24,6 +33,7 @@ it.effect('fails closed when the server-owned issuance configuration is absent',
         compositionRevision: 'a'.repeat(64),
         legalEntityId,
         requestCorrelation,
+        tenantId,
       })
       .pipe(Effect.flip);
 
@@ -52,6 +62,7 @@ it.effect('maps denied or mismatched Shell issuance to a sanitized typed depende
         compositionRevision: 'a'.repeat(64),
         legalEntityId,
         requestCorrelation,
+        tenantId,
       })
       .pipe(Effect.flip);
 
@@ -95,12 +106,14 @@ it.effect('requests a fresh audience and Legal-Entity-bound assertion for every 
       compositionRevision: 'a'.repeat(64),
       legalEntityId,
       requestCorrelation,
+      tenantId,
     });
     const second = yield* issuer.issue({
       audience: 'payment-term-catalog',
       compositionRevision: 'a'.repeat(64),
       legalEntityId,
       requestCorrelation,
+      tenantId,
     });
 
     expect(requests).toHaveLength(2);
@@ -109,7 +122,7 @@ it.effect('requests a fresh audience and Legal-Entity-bound assertion for every 
       { audience: 'payment-term-catalog', compositionRevision: 'a'.repeat(64), legalEntityId },
     ]);
     expect(requests.map(({ options }) => options.requestCorrelation)).toEqual([requestCorrelation, requestCorrelation]);
-    expect(requests.every(({ options }) => options.apiKey === configuration.apiKey)).toBe(true);
+    expect(requests.every(({ options }) => options.apiKey === gatewayApiKey)).toBe(true);
     expect(first.baseUrl.href).toBe('https://shell.example.test/owner-api');
     expect(second.baseUrl.href).toBe('https://shell.example.test/owner-api');
     expect(Redacted.value(first.credential)).toBe('Bearer fresh-assertion-1');
@@ -133,8 +146,39 @@ it.effect('rejects issuance from a different composition before returning the se
         compositionRevision: 'a'.repeat(64),
         legalEntityId,
         requestCorrelation,
+        tenantId,
       })
       .pipe(Effect.flip);
     expect(Schema.is(PaymentTermsDependencyUnavailable)(failure)).toBe(true);
+  }),
+);
+
+it.effect("fails closed for an unconfigured tenant without presenting another tenant's key", () =>
+  Effect.gen(function* unconfiguredTenantTest() {
+    const presentedKeys: Redacted.Redacted[] = [];
+    const issuer = makePaymentTermCatalogGatewayCredentialIssuer(configuration, (payload, options) =>
+      Effect.sync(() => {
+        presentedKeys.push(options.apiKey);
+        return {
+          apiBaseUrl: '/owner-api',
+          compositionRevision: payload.compositionRevision,
+          expiresAt: 1_700_000_300,
+          token: 'must-not-be-issued',
+        };
+      }),
+    );
+    const failure = yield* issuer
+      .issue({
+        audience: 'payment-term-catalog',
+        compositionRevision: 'a'.repeat(64),
+        legalEntityId,
+        requestCorrelation,
+        tenantId: otherTenantId,
+      })
+      .pipe(Effect.flip);
+
+    expect(Schema.is(PaymentTermsDependencyUnavailable)(failure)).toBe(true);
+    expect(failure.cause).toBeInstanceOf(CommerceTenantWorkloadCredentialUnavailable);
+    expect(presentedKeys).toEqual([]);
   }),
 );

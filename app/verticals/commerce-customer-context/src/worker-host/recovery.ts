@@ -1,6 +1,7 @@
 import type { OutboxWorkerEntry } from '@app/core-runtime/outbox/worker';
-import { Clock, Config, Effect, Option, Redacted, Ref, Schema, Semaphore } from 'effect';
+import { Clock, Config, Effect, Option, Ref, Schema, Semaphore } from 'effect';
 
+import { commerceTenantWorkloadCredentials } from '../../api/tenant-workload-credentials.ts';
 import { CommerceEnrollmentContinuation } from '../enrollment/continuation/enrollment-continuation.ts';
 import { commerceEnrollmentContinuationSweeperFor } from '../workers/enrollment-continuation-sweeper.ts';
 
@@ -38,18 +39,14 @@ const gatewayUrl = Schema.URLFromString.check(
   ),
 );
 
-/** The owner adapters read these lazily. An empty journal must not conceal missing credentials. */
+/**
+ * The owner adapters read these lazily. An empty journal must not conceal missing credentials: the Tenant credential
+ * map must parse to at least one Tenant, and each Attempt still selects its own Tenant's key when it runs.
+ */
 export const validateCommerceEnrollmentRecoveryConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
   baseUrl: Config.schema(gatewayUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-}).pipe(
-  Effect.mapError(recoveryConfigurationFailure),
-  Effect.filterOrFail(
-    ({ apiKey }) => Redacted.value(apiKey).trim().length > 0,
-    () => recoveryConfigurationFailure('empty-gateway-credential'),
-  ),
-  Effect.asVoid,
-);
+  credentials: commerceTenantWorkloadCredentials,
+}).pipe(Effect.mapError(recoveryConfigurationFailure), Effect.asVoid);
 
 export interface CommerceEnrollmentRecoveryCycleHealth {
   readonly cycleFailed: Effect.Effect<void>;
