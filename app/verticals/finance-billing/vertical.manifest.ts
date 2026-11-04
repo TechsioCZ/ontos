@@ -13,6 +13,7 @@ import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { documentResourceDescriptor } from './shared/resources/document.ts';
 import { financialPlanEntryResourceDescriptor } from './shared/resources/financial-plan-entry.ts';
 import { invoiceResourceDescriptor } from './shared/resources/invoice.ts';
+import { LeaseInvoicesApi } from './shared/apis/lease-invoices.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/finance/page.tsx';
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
@@ -57,6 +58,7 @@ export const financeBillingManifest = defineOntosModuleManifest({
     ],
     api: {
       // <generated-module-manifest-apis>
+      'lease-invoices': LeaseInvoicesApi,
       records: RecordsApi,
       // </generated-module-manifest-apis>
     },

@@ -29,18 +29,19 @@ import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramo
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
-import {
-  FinanceRedemptionClientLive,
-  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
-} from './auth/gateway-assertion-redemption.ts';
+// The redemption binding itself arrives through the generated support-import slot below; only the
+// finance-specific client comes from the owner service module, so this file imports that module once.
+import { FinanceRedemptionClientLive } from '../src/services/gateway-redemption.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { documentsReadApiLive } from './documents-search-server.ts';
 import { invoicesReadApiLive } from './invoices-search-server.ts';
+import { leaseInvoicesReadApiLive } from './lease-invoices-read-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 // </generated-governed-http-handler-imports>
@@ -91,6 +92,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   documentsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   invoicesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  leaseInvoicesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>

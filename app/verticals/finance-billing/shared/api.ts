@@ -11,6 +11,7 @@ import type { MicroVerticalBuildMarker, MicroVerticalOperationContext } from '@m
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
 import { DocumentsSearchApi } from './apis/documents-search.ts';
 import { InvoicesSearchApi } from './apis/invoices-search.ts';
+import { LeaseInvoicesApi } from './apis/lease-invoices.ts';
 import { RecordsApi } from './apis/records.ts';
 import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
 // </generated-governed-http-api-imports>
@@ -44,6 +45,7 @@ export const financeBillingApi = HttpApi.make('FinanceBillingApi')
   .addHttpApi(ApplyCommandActionApi)
   .addHttpApi(DocumentsSearchApi)
   .addHttpApi(InvoicesSearchApi)
+  .addHttpApi(LeaseInvoicesApi)
   .addHttpApi(RecordsApi)
   .addHttpApi(RequestSearchRebuildActionApi)
   // </generated-governed-http-api-additions>
