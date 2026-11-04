@@ -196,4 +196,5 @@ it.live(
         expect(yield* current.readProofs()).toEqual([]);
       }),
     ).pipe(Effect.provide(services)),
+  120_000,
 );

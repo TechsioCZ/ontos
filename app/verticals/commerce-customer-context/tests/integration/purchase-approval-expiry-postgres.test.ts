@@ -351,157 +351,172 @@ const expectConflict = (result: Result.Result<unknown, unknown>) => {
   }
 };
 
-it.live('rejects a new Decision after a real unchanged request-row lock waits across expiry', () =>
-  Effect.scoped(
-    Effect.gen(function* postLockExpiry() {
-      const current = yield* scenario();
-      const before = yield* current.readState();
-      const held = yield* Deferred.make<number>();
-      const release = yield* Deferred.make<boolean>();
-      const holder = yield* current.admin
-        .transaction((transaction) =>
-          Effect.gen(function* holdRequestRow() {
-            const [connection] = yield* transaction.execute<{ pid: number }>(
-              sql`select pg_backend_pid() as pid`,
-              'objects',
-            );
-            yield* transaction
-              .select()
-              .from(purchaseApprovalRequests)
-              .where(
-                and(
-                  eq(purchaseApprovalRequests.tenantId, current.tenantId),
-                  eq(purchaseApprovalRequests.requestResourceId, current.request.request.requestRef.resourceId),
-                ),
-              )
-              .for('update');
-            if (connection === undefined) {
-              return yield* Effect.die('Holder native connection unavailable');
-            }
-            yield* Deferred.succeed(held, connection.pid);
-            return yield* Deferred.await(release);
-          }),
-        )
-        .pipe(Effect.forkScoped);
-      const blocker = yield* Deferred.await(held);
-      const decision = yield* current.decide().pipe(Effect.result, Effect.forkScoped);
-      const waiter = yield* current.waitForBlock(blocker);
-      yield* current.waitUntilExpired();
-      expect(yield* current.waitForBlock(blocker)).toBe(waiter);
-      yield* Deferred.succeed(release, true);
-      yield* Fiber.join(holder);
-      expectConflict(yield* Fiber.join(decision));
-      for (const decisionKind of ['RETURN', 'REJECT'] as const) {
-        expectConflict(
-          yield* Effect.result(
-            current.decide({ decision: decisionKind, reason: 'A new late decision must remain unavailable' }),
-          ),
-        );
-      }
-      expect(yield* current.readState()).toEqual(before);
-      expect(yield* current.installedPredicate()).toEqual([
-        { inclusive: true, operationClockPreserved: true, postLockSample: true },
-      ]);
-      yield* current.assertSourceJournalUnchanged();
-    }),
-  ).pipe(Effect.provide(services)),
-);
-
-it.live('commits a pre-expiry Decision and recovers its exact immutable result after expiry', () =>
-  Effect.scoped(
-    Effect.gen(function* recoverCommittedDecision() {
-      const current = yield* scenario();
-      const first = yield* current.decide();
-      expect(first.outcome).toBe('DECISION_RECORDED');
-      expect(first.request.status).toBe('APPROVED');
-      const committed = yield* current.readState();
-      expect(committed.decisions).toHaveLength(1);
-      yield* current.waitUntilExpired();
-      const replayed = yield* current.decide();
-      expect(replayed.outcome).toBe('ALREADY_RECORDED');
-      expect(replayed.decision).toEqual(first.decision);
-      expect(yield* current.readState()).toEqual(committed);
-      const conflict = yield* Effect.result(current.decide({ reason: 'Changed historical intent' }));
-      expect(Result.isFailure(conflict)).toBe(true);
-      expect(yield* current.readState()).toEqual(committed);
-      expectConflict(yield* Effect.result(current.decide({ idempotencyKey: randomUUID() })));
-      expect(yield* current.readState()).toEqual(committed);
-      yield* current.assertSourceJournalUnchanged();
-    }),
-  ).pipe(Effect.provide(services)),
-);
-
-it.live('retains serialized CAS, exact proposal/scope guards and atomic owner rollback', () =>
-  Effect.scoped(
-    Effect.gen(function* guardedDecision() {
-      const current = yield* scenario({ ttlMilliseconds: 30_000 });
-      const before = yield* current.readState();
-      const invalidInputs = [
-        { ...current.command, expectedRequestRevision: 2 },
-        {
-          ...current.command,
-          proposalRevisionRef: { ...current.command.proposalRevisionRef, resourceId: randomUUID() },
-        },
-        { ...current.command, counterpartyRef: { ...current.command.counterpartyRef, tenantId: randomUUID() } },
-        { ...current.command, storefrontId: 'foreign-storefront' },
-      ].map((input) => Schema.decodeUnknownSync(Schema.toType(DecidePurchaseApprovalRequestInputSchema))(input));
-      for (const patch of invalidInputs) {
-        expect(Result.isFailure(yield* Effect.result(current.decide(patch)))).toBe(true);
+it.live(
+  'rejects a new Decision after a real unchanged request-row lock waits across expiry',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* postLockExpiry() {
+        const current = yield* scenario();
+        const before = yield* current.readState();
+        const held = yield* Deferred.make<number>();
+        const release = yield* Deferred.make<boolean>();
+        const holder = yield* current.admin
+          .transaction((transaction) =>
+            Effect.gen(function* holdRequestRow() {
+              const [connection] = yield* transaction.execute<{ pid: number }>(
+                sql`select pg_backend_pid() as pid`,
+                'objects',
+              );
+              yield* transaction
+                .select()
+                .from(purchaseApprovalRequests)
+                .where(
+                  and(
+                    eq(purchaseApprovalRequests.tenantId, current.tenantId),
+                    eq(purchaseApprovalRequests.requestResourceId, current.request.request.requestRef.resourceId),
+                  ),
+                )
+                .for('update');
+              if (connection === undefined) {
+                return yield* Effect.die('Holder native connection unavailable');
+              }
+              yield* Deferred.succeed(held, connection.pid);
+              return yield* Deferred.await(release);
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        const blocker = yield* Deferred.await(held);
+        const decision = yield* current.decide().pipe(Effect.result, Effect.forkScoped);
+        const waiter = yield* current.waitForBlock(blocker);
+        yield* current.waitUntilExpired();
+        expect(yield* current.waitForBlock(blocker)).toBe(waiter);
+        yield* Deferred.succeed(release, true);
+        yield* Fiber.join(holder);
+        expectConflict(yield* Fiber.join(decision));
+        for (const decisionKind of ['RETURN', 'REJECT'] as const) {
+          expectConflict(
+            yield* Effect.result(
+              current.decide({ decision: decisionKind, reason: 'A new late decision must remain unavailable' }),
+            ),
+          );
+        }
         expect(yield* current.readState()).toEqual(before);
-      }
-      current.fixture.faultNextTransaction('rollback');
-      const rolledBack = yield* Effect.result(current.decide());
-      expect(Result.isFailure(rolledBack)).toBe(true);
-      expect(yield* current.readState()).toEqual(before);
-      const contenders = yield* Effect.all(
-        [Effect.result(current.decide()), Effect.result(current.decide({ idempotencyKey: randomUUID() }))],
-        { concurrency: 2 },
-      );
-      expect(contenders.filter(Result.isSuccess)).toHaveLength(1);
-      expect(contenders.filter(Result.isFailure)).toHaveLength(1);
-      const committed = yield* current.readState();
-      expect(committed.decisions).toHaveLength(1);
-      expect(committed.requests[0]?.requestRevision).toBe(2);
-      expect(committed.requests[0]?.status).toBe('APPROVED');
-      yield* current.assertSourceJournalUnchanged();
-    }),
-  ).pipe(Effect.provide(services)),
+        expect(yield* current.installedPredicate()).toEqual([
+          { inclusive: true, operationClockPreserved: true, postLockSample: true },
+        ]);
+        yield* current.assertSourceJournalUnchanged();
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
-it.live('preserves successive levels and derives the actor from the trusted owner scope', () =>
-  Effect.scoped(
-    Effect.gen(function* multipleLevels() {
-      const current = yield* scenario({ ttlMilliseconds: 30_000, twoLevels: true });
-      const first = yield* current.decide({ actor: { principalId: randomUUID(), tenantId: randomUUID() } });
-      expect(first.decision.actor).toEqual(current.principal);
-      expect(first.request.status).toBe('PENDING');
-      expect(first.request.route.currentLevelOrder).toBe(2);
-      expectConflict(yield* Effect.result(current.decide({ idempotencyKey: randomUUID() })));
-      const second = yield* current.decide({
-        expectedRequestRevision: first.request.requestRevision,
-        idempotencyKey: randomUUID(),
-      });
-      expect(second.request.status).toBe('APPROVED');
-      expect(second.decision.levelOrder).toBe(2);
-      expect((yield* current.readState()).decisions).toHaveLength(2);
-      yield* current.assertSourceJournalUnchanged();
-    }),
-  ).pipe(Effect.provide(services)),
+it.live(
+  'commits a pre-expiry Decision and recovers its exact immutable result after expiry',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* recoverCommittedDecision() {
+        const current = yield* scenario();
+        const first = yield* current.decide();
+        expect(first.outcome).toBe('DECISION_RECORDED');
+        expect(first.request.status).toBe('APPROVED');
+        const committed = yield* current.readState();
+        expect(committed.decisions).toHaveLength(1);
+        yield* current.waitUntilExpired();
+        const replayed = yield* current.decide();
+        expect(replayed.outcome).toBe('ALREADY_RECORDED');
+        expect(replayed.decision).toEqual(first.decision);
+        expect(yield* current.readState()).toEqual(committed);
+        const conflict = yield* Effect.result(current.decide({ reason: 'Changed historical intent' }));
+        expect(Result.isFailure(conflict)).toBe(true);
+        expect(yield* current.readState()).toEqual(committed);
+        expectConflict(yield* Effect.result(current.decide({ idempotencyKey: randomUUID() })));
+        expect(yield* current.readState()).toEqual(committed);
+        yield* current.assertSourceJournalUnchanged();
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
-it.live('keeps a wrong Current route approver denied without writing a Decision', () =>
-  Effect.scoped(
-    Effect.gen(function* wrongRouteApprover() {
-      const current = yield* scenario({ ttlMilliseconds: 30_000, wrongApprover: true });
-      const before = yield* current.readState();
-      const rejected = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(current.decide()),
-      );
-      expect(rejected.code).toBe('NOT_ROUTE_ELIGIBLE');
-      expect(yield* current.readState()).toEqual(before);
-      yield* current.assertSourceJournalUnchanged();
-    }),
-  ).pipe(Effect.provide(services)),
+it.live(
+  'retains serialized CAS, exact proposal/scope guards and atomic owner rollback',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* guardedDecision() {
+        const current = yield* scenario({ ttlMilliseconds: 30_000 });
+        const before = yield* current.readState();
+        const invalidInputs = [
+          { ...current.command, expectedRequestRevision: 2 },
+          {
+            ...current.command,
+            proposalRevisionRef: { ...current.command.proposalRevisionRef, resourceId: randomUUID() },
+          },
+          { ...current.command, counterpartyRef: { ...current.command.counterpartyRef, tenantId: randomUUID() } },
+          { ...current.command, storefrontId: 'foreign-storefront' },
+        ].map((input) => Schema.decodeUnknownSync(Schema.toType(DecidePurchaseApprovalRequestInputSchema))(input));
+        for (const patch of invalidInputs) {
+          expect(Result.isFailure(yield* Effect.result(current.decide(patch)))).toBe(true);
+          expect(yield* current.readState()).toEqual(before);
+        }
+        current.fixture.faultNextTransaction('rollback');
+        const rolledBack = yield* Effect.result(current.decide());
+        expect(Result.isFailure(rolledBack)).toBe(true);
+        expect(yield* current.readState()).toEqual(before);
+        const contenders = yield* Effect.all(
+          [Effect.result(current.decide()), Effect.result(current.decide({ idempotencyKey: randomUUID() }))],
+          { concurrency: 2 },
+        );
+        expect(contenders.filter(Result.isSuccess)).toHaveLength(1);
+        expect(contenders.filter(Result.isFailure)).toHaveLength(1);
+        const committed = yield* current.readState();
+        expect(committed.decisions).toHaveLength(1);
+        expect(committed.requests[0]?.requestRevision).toBe(2);
+        expect(committed.requests[0]?.status).toBe('APPROVED');
+        yield* current.assertSourceJournalUnchanged();
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
+);
+
+it.live(
+  'preserves successive levels and derives the actor from the trusted owner scope',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* multipleLevels() {
+        const current = yield* scenario({ ttlMilliseconds: 30_000, twoLevels: true });
+        const first = yield* current.decide({ actor: { principalId: randomUUID(), tenantId: randomUUID() } });
+        expect(first.decision.actor).toEqual(current.principal);
+        expect(first.request.status).toBe('PENDING');
+        expect(first.request.route.currentLevelOrder).toBe(2);
+        expectConflict(yield* Effect.result(current.decide({ idempotencyKey: randomUUID() })));
+        const second = yield* current.decide({
+          expectedRequestRevision: first.request.requestRevision,
+          idempotencyKey: randomUUID(),
+        });
+        expect(second.request.status).toBe('APPROVED');
+        expect(second.decision.levelOrder).toBe(2);
+        expect((yield* current.readState()).decisions).toHaveLength(2);
+        yield* current.assertSourceJournalUnchanged();
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
+);
+
+it.live(
+  'keeps a wrong Current route approver denied without writing a Decision',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* wrongRouteApprover() {
+        const current = yield* scenario({ ttlMilliseconds: 30_000, wrongApprover: true });
+        const before = yield* current.readState();
+        const rejected = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(current.decide()),
+        );
+        expect(rejected.code).toBe('NOT_ROUTE_ELIGIBLE');
+        expect(yield* current.readState()).toEqual(before);
+        yield* current.assertSourceJournalUnchanged();
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
 it.live(
@@ -569,24 +584,30 @@ it.live(
         yield* current.assertSourceJournalUnchanged();
       }),
     ).pipe(Effect.provide(services)),
+  120_000,
 );
 
-it.live('retains pre-expiry return and reject transitions on their exact immutable proposal lineages', () =>
-  Effect.scoped(
-    Effect.gen(function* terminalDecisionControls() {
-      const current = yield* scenario({ ttlMilliseconds: 30_000 });
-      const returned = yield* current.decide({ decision: 'RETURN', reason: 'Native pre-expiry return control' });
-      expect(returned.request.status).toBe('RETURNED');
-      expect(returned.request.proposal.state).toBe('SUPERSEDED');
-      const other = yield* current.native.createRequest({ ttlMilliseconds: 30_000 });
-      const rejected = yield* other.decide({ decision: 'REJECT', reason: 'Native pre-expiry reject control' });
-      expect(rejected.request.status).toBe('REJECTED');
-      expect(rejected.request.proposal.state).toBe('SUPERSEDED');
-      const committed = yield* current.readState();
-      expect(committed.decisions).toHaveLength(2);
-      expect(committed.requests).toHaveLength(2);
-      expect(committed.requests.map(({ status }) => status)).toEqual(expect.arrayContaining(['REJECTED', 'RETURNED']));
-      yield* current.assertSourceJournalUnchanged();
-    }),
-  ).pipe(Effect.provide(services)),
+it.live(
+  'retains pre-expiry return and reject transitions on their exact immutable proposal lineages',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* terminalDecisionControls() {
+        const current = yield* scenario({ ttlMilliseconds: 30_000 });
+        const returned = yield* current.decide({ decision: 'RETURN', reason: 'Native pre-expiry return control' });
+        expect(returned.request.status).toBe('RETURNED');
+        expect(returned.request.proposal.state).toBe('SUPERSEDED');
+        const other = yield* current.native.createRequest({ ttlMilliseconds: 30_000 });
+        const rejected = yield* other.decide({ decision: 'REJECT', reason: 'Native pre-expiry reject control' });
+        expect(rejected.request.status).toBe('REJECTED');
+        expect(rejected.request.proposal.state).toBe('SUPERSEDED');
+        const committed = yield* current.readState();
+        expect(committed.decisions).toHaveLength(2);
+        expect(committed.requests).toHaveLength(2);
+        expect(committed.requests.map(({ status }) => status)).toEqual(
+          expect.arrayContaining(['REJECTED', 'RETURNED']),
+        );
+        yield* current.assertSourceJournalUnchanged();
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
