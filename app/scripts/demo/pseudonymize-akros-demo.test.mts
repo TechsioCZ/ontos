@@ -18,7 +18,10 @@ import {
   PseudonymPlanSchema,
   pseudonymPlanFingerprint,
   pseudonymPlanMatches,
+  assertPseudonymReplacementActive,
+  ManagedServiceSchema,
   retirementGaps,
+  retirementStarted,
   validatePseudonymSnapshot,
 } from './pseudonymize-akros-snapshot.mts';
 import type { Snapshot } from './pseudonymize-akros-snapshot.mts';
@@ -308,6 +311,42 @@ it('reports every retirement gap until associations, markets, pricing, applicati
   };
   expect(retirementGaps(retired)).toEqual([]);
 });
+
+it.effect('resumes a partly applied retire against the replacement, not against already removed sources', () =>
+  Effect.gen(function* resumesPartialRetire() {
+    const after = preparedSnapshot(plan().baseline);
+    expect(retirementStarted(after)).toBe(false);
+    const partlyRetired: Snapshot = {
+      ...after,
+      markets: after.markets.map((market) =>
+        market.marketCode.startsWith('AKROS-') ? { ...market, lifecycle: 'RETIRED' as const } : market,
+      ),
+      services: [
+        ...after.services,
+        Schema.decodeSync(ManagedServiceSchema)({
+          displayName: legacyStorefront,
+          enabled: false,
+          keyBindingId: null,
+          keyStatus: null,
+          principalId: legacyStorefrontPrincipalId,
+          principalStatus: 'disabled',
+        }),
+      ],
+      settings: after.settings.filter(({ marketCode }) => !marketCode.startsWith('AKROS-')),
+    };
+    expect(retirementStarted(partlyRetired)).toBe(true);
+    expect(yield* assertPseudonymReplacementActive(partlyRetired)).toBe(partlyRetired);
+    const failure = yield* Effect.flip(
+      assertPseudonymReplacementActive({
+        ...partlyRetired,
+        associations: partlyRetired.associations.filter(
+          ({ storefrontRef }) => storefrontRef.appId !== pseudonymStorefront,
+        ),
+      }),
+    );
+    expect(failure.reason).toContain('Replacement market or association missing');
+  }),
+);
 
 it.effect('includes retired QA markets without a replacement and removes their pricing on retirement', () =>
   Effect.gen(function* qaMarkets() {

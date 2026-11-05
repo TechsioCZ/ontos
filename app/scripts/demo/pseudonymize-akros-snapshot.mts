@@ -418,6 +418,46 @@ export const assertPseudonymPrepared = Effect.fn('Pseudonym.assertPrepared')(fun
   return after;
 });
 
+/** The replacement a resumed retire relies on: migrated company, active new application, every SROUB market on it. */
+export const assertPseudonymReplacementActive = Effect.fn('Pseudonym.assertReplacementActive')(
+  function* assertReplacementActive(snapshot: Snapshot) {
+    if (snapshot.companyName !== akrosDemoCompany.legalName) {
+      return yield* fail('Company name not migrated');
+    }
+    if (
+      !snapshot.applications.some(
+        ({ lifecycle, storefrontAppId }) => lifecycle === 'ACTIVE' && storefrontAppId === pseudonymStorefront,
+      )
+    ) {
+      return yield* fail('New application not active');
+    }
+    for (const pair of pseudonymMarketPairs) {
+      const target = marketByCode(snapshot, pair.targetCode);
+      if (
+        target === undefined ||
+        target.marketRef.resourceId !== pair.marketId ||
+        !snapshot.associations.some(
+          ({ marketRef, storefrontRef }) =>
+            marketRef.resourceId === pair.marketId && storefrontRef.appId === pseudonymStorefront,
+        )
+      ) {
+        return yield* fail(`Replacement market or association missing: ${pair.targetCode}`);
+      }
+    }
+    return snapshot;
+  },
+);
+
+/**
+ * The retire phase has begun once the legacy storefront principal is no longer active (its first committed write).
+ * From then on the legacy sources may already be retired and their pricing removed, so a resumed retire plan checks
+ * the replacement and the remaining gaps instead of re-validating the sources against their copies.
+ */
+export const retirementStarted = (snapshot: Snapshot): boolean =>
+  snapshot.services.some(
+    ({ principalId, principalStatus }) => principalId === legacyStorefrontPrincipalId && principalStatus !== 'active',
+  );
+
 /** Everything the retirement phase must leave behind; asynchronous owner workers may lag, so verify can repeat. */
 export const retirementGaps = (after: Snapshot): readonly string[] => {
   const checks: readonly (readonly [boolean, string])[] = [

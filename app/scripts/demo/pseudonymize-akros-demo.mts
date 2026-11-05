@@ -14,6 +14,7 @@ import nodePath from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
+import { ownerResourceModuleContainment } from '@app/core-runtime';
 import { reconcileStageServicePrincipals } from '@app/core-runtime/install/stage-context-bootstrap';
 import {
   Config,
@@ -48,6 +49,7 @@ import { connectPseudonymShell } from './pseudonymize-akros-shell.mts';
 import {
   deployedServiceSliceReady,
   keyHandoffDirectory,
+  legacyStorefront,
   keyHandoffFile,
   legacyStorefrontMemberships,
   legacyStorefrontPrincipalId,
@@ -58,6 +60,8 @@ import {
 import { prepareMarkets, retireLegacyCatalog } from './pseudonymize-akros-steps.mts';
 import {
   assertPseudonymPrepared,
+  assertPseudonymReplacementActive,
+  retirementStarted,
   fail,
   hasActivePseudonymKey,
   planCodec,
@@ -74,7 +78,7 @@ import {
   reconcileServiceGrants,
   stageServicePrincipals,
 } from './reconcile-stage-service-grants.mts';
-import { connectSeedClient } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError } from './seed-client.mts';
 import type { SeedTarget, SeedWriteCheckpoint } from './seed-client.mts';
 import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
 
@@ -361,9 +365,12 @@ const connect = (journal: PseudonymCheckpoint) =>
 type Operator = Effect.Success<ReturnType<typeof connect>>;
 /** Read-only preconditions of each phase; they hold for plan and apply (apply requires an identical state). */
 const checkPhase = Effect.fn('Pseudonym.checkPhase')(function* checkPhase(phase: Phase, baseline: Snapshot) {
-  yield* validatePseudonymSnapshot(baseline);
+  const resumedRetire = phase === 'retire' && retirementStarted(baseline);
+  yield* resumedRetire ? assertPseudonymReplacementActive(baseline) : validatePseudonymSnapshot(baseline);
   if (phase === 'retire') {
-    yield* assertPseudonymPrepared(baseline, baseline);
+    if (!resumedRetire) {
+      yield* assertPseudonymPrepared(baseline, baseline);
+    }
     if (!hasActivePseudonymKey(baseline)) {
       return yield* fail('The new storefront key is not active; finish the prepare phase first');
     }
@@ -533,12 +540,43 @@ const applyRetire = Effect.fn('Pseudonym.applyRetire')(function* applyRetire(
       },
     });
   }
+  // Registry writes authorize on the application's own resource; the legacy application never had that module
+  // containment (only its app-id alias did), so it is installed before the application retires.
+  const legacyApplication = saved.baseline.applications.find(
+    ({ lifecycle, storefrontAppId }) => storefrontAppId === legacyStorefront && lifecycle !== 'RETIRED',
+  );
+  const containment =
+    legacyApplication === undefined
+      ? undefined
+      : ownerResourceModuleContainment(
+          demoTenantId,
+          akrosDemoLegalEntityId,
+          legacyApplication.storefrontApplicationRef,
+        );
+  if (containment !== undefined) {
+    yield* rpc.writeRelationships(
+      v1.WriteRelationshipsRequest.create({
+        updates: [
+          {
+            operation: v1.RelationshipUpdate_Operation.TOUCH,
+            relationship: v1.Relationship.create({
+              relation: containment.relation,
+              resource: containment.resource,
+              subject: { object: containment.container, optionalRelation: '' },
+            }),
+          },
+        ],
+      }),
+    );
+  }
   yield* retireLegacyCatalog(operator.client, saved.baseline, reason);
 });
 
 const verifyRetired = Effect.fn('Pseudonym.verifyRetired')(function* verifyRetired(operator: Operator, saved: Plan) {
   const after = yield* readSnapshot(operator.client, operator.shell);
-  yield* assertPseudonymPrepared(saved.baseline, after);
+  yield* retirementStarted(saved.baseline)
+    ? assertPseudonymReplacementActive(after)
+    : assertPseudonymPrepared(saved.baseline, after);
   const gaps = retirementGaps(after);
   if (gaps.length > 0) {
     return yield* fail(
@@ -617,9 +655,13 @@ const command = (journal: PseudonymCheckpoint) =>
     },
     ({ issueKey, mode, phase, plan, reviewed }) =>
       run(mode, phase, plan, reviewed, issueKey, journal).pipe(
-        Effect.tapError(() =>
+        Effect.tapError((failure) =>
           Console.error(
-            'Pseudonym migration stopped; retain the pending native seed journal and reconcile before any explicit resume. No automatic retry.',
+            [
+              'Pseudonym migration stopped',
+              Schema.is(DemoSeedError)(failure) ? ` (${failure.reason})` : '',
+              '; retain the pending native seed journal and reconcile before any explicit resume. No automatic retry.',
+            ].join(''),
           ),
         ),
       ),
