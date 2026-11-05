@@ -1,4 +1,9 @@
-import { OperationContextDenied, ReadHandlerUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  OntosMcpTextSchema,
+  OperationContextDenied,
+  ReadHandlerUnavailable,
+  TrustedPrincipalContextSchema,
+} from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
@@ -67,12 +72,13 @@ it('rejects fractional money amounts', () => {
 
 it('tells agents that a records page without summary holds at most the detail cap of products', () => {
   const { description } = merchandiseMcpContribution.reads.records;
+  expect(Schema.is(OntosMcpTextSchema)(description)).toBe(true);
   expect(description.en).toContain(
-    `without view.summary carry their variants and a page holds at most ${PRODUCT_DETAIL_PAGE_LIMIT} regardless of view.limit`,
+    `a page holds at most ${PRODUCT_DETAIL_PAGE_LIMIT} products regardless of view.limit; read lists with view.summary: true`,
   );
-  expect(description.en).toContain('read lists with view.summary: true');
-  expect(description.cs).toContain(`stránka jich má nejvýš ${PRODUCT_DETAIL_PAGE_LIMIT} bez ohledu na view.limit`);
-  expect(description.cs).toContain('seznam čtěte s view.summary: true');
+  expect(description.cs).toContain(
+    `stránka má nejvýš ${PRODUCT_DETAIL_PAGE_LIMIT} produkty bez ohledu na view.limit; seznamy čtěte s view.summary: true`,
+  );
 });
 
 it('accepts a records request with no view and with a view filter', () => {
