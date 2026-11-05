@@ -63,9 +63,14 @@ const ContentPage = async ({
     return <LegalView article={legalArticles[content]} />;
   }
   return (
-    <article className="mx-auto max-w-n1-content px-4 py-12">
-      <h1 className="mb-8 text-xl font-bold">{title}</h1>
-      <output>{d.featureUnavailable}</output>
+    <article className="mx-auto w-full max-w-n1-content p-10">
+      <h1 className="relative text-xl font-bold leading-8">
+        {title}
+        <span aria-hidden="true" className="absolute bottom-0 left-0 h-1 w-24 bg-primary" />
+      </h1>
+      <output className="mt-6 block py-20 text-center text-md leading-6 text-fg-secondary">
+        {d.featureUnavailable}
+      </output>
     </article>
   );
 };

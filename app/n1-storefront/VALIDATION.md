@@ -1,5 +1,23 @@
 # Kontrola převodu N1 storefrontu
 
+## C32: článková kompozice nedostupných novinek — 2026-11-05
+
+- Fresh Figma desktop370:2418 / mobile370:2538: obal max1200/p40,
+  H1 24/32 s96×4 podtržením, gap24, dva source paddingy40=80,
+  sdělení16/24 vystředěné. Wrapper používá existující layout/typography tokeny.
+- Nedostupnost zůstává skutečná `featureUnavailable`, nikoli fixture tvrzení
+  o prázdném feedu. Nezměněné čtení dat, právní články a kit komponenty.
+- 490/490 N1 testů PASS, lint/TSRS, formát a produkční build PASS; běželo
+  sériově s naším FE vypnutým. První testovací start v sandboxu odmítl lokální
+  socket EPERM; standardní běh s povoleným socketem poté prošel.
+- Skutečný produkční browser1440/390: obal1200/p40, na mobilu inner310,
+  nadpis32, gap24, sdělenípy80/center, žádný horizontální overflow.
+  Screenshot `.local/n1-c32-news-mobile.png`; úzká Figma reference
+  `.local/n1-news-article-figma.png`. Font zůstává system-ui; úplná pixelová
+  shoda celé stránky se netvrdí. Pozitivní news feed není implementovaný.
+- Nezávislé source + screenshot-region review GO bez nálezu; posuzované jen
+  toto rozložení, nikoli dokončený CMS nebo celý storefront.
+
 ## C31: správná registrace kanonické tučnosti Label — 2026-11-05
 
 V kitu0.57 zastaralý --font-label:var(--font-bold) vytvořil font-family utility
