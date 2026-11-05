@@ -22,6 +22,115 @@ const association = {
 };
 
 describe("N1 market admission", () => {
+  for (const supportedLocales of [
+    ["cs-CZ", "en-CZ"],
+    ["en-CZ", "cs-CZ"],
+  ]) {
+    for (const locale of ["cs", "en"]) {
+      it.effect(
+        `uses explicit ${locale} support regardless of locale ordering ${supportedLocales.join(",")}`,
+        () =>
+          Effect.gen(function* explicitLocaleSupport() {
+            const candidate = { ...market, supportedLocales };
+            const result = yield* selectMarket(
+              { associations: [association], markets: [candidate] },
+              config,
+              locale,
+              now,
+            );
+            expect(result).toEqual(candidate);
+          }),
+      );
+    }
+  }
+  for (const [supportedLocales, locale] of [
+    [["cs-CZ"], "en"],
+    [["cs-CZ", "en-CZ"], "de"],
+  ] as const) {
+    it.effect(`does not substitute another language for unsupported ${locale}`, () =>
+      Effect.gen(function* noLanguageFallback() {
+        const failure = yield* Effect.flip(
+          selectMarket(
+            { associations: [association], markets: [{ ...market, supportedLocales }] },
+            config,
+            locale,
+            now,
+          ),
+        );
+        expect(failure.reason).toBe("missing");
+      }),
+    );
+  }
+  it.effect("treats two explicitly supported secondary-locale markets as ambiguous", () =>
+    Effect.gen(function* ambiguousSecondaryLocales() {
+      const second = {
+        ...market,
+        marketRef: { resourceId: "second" },
+        supportedLocales: ["sk-SK", "en-GB"],
+      };
+      const failure = yield* Effect.flip(
+        selectMarket(
+          {
+            associations: [association, { ...association, marketRef: second.marketRef }],
+            markets: [{ ...market, supportedLocales: ["cs-CZ", "en-CZ"] }, second],
+          },
+          config,
+          "en",
+          now,
+        ),
+      );
+      expect(failure.reason).toBe("ambiguous");
+    }),
+  );
+  it.effect("counts the market once when it supports two tags of the same language", () =>
+    Effect.gen(function* oneMarketMultipleEnglishTags() {
+      const candidate = { ...market, supportedLocales: ["cs-CZ", "en-CZ", "en-GB"] };
+      expect(
+        yield* selectMarket(
+          { associations: [association], markets: [candidate] },
+          config,
+          "en",
+          now,
+        ),
+      ).toEqual(candidate);
+    }),
+  );
+  it.effect("keeps lifecycle admission when English is a secondary supported tag", () =>
+    Effect.gen(function* secondaryLocaleLifecycle() {
+      const candidate = { ...market, supportedLocales: ["cs-CZ", "en-CZ"] };
+      const suspended = {
+        ...candidate,
+        lifecycle: "SUSPENDED",
+        marketRef: { resourceId: "suspended" },
+      };
+      const result = yield* selectMarket(
+        {
+          associations: [association, { ...association, marketRef: suspended.marketRef }],
+          markets: [candidate, suspended],
+        },
+        config,
+        "en",
+        now,
+      );
+      expect(result).toEqual(candidate);
+    }),
+  );
+  it.effect("does not admit an inactive secondary-locale market", () =>
+    Effect.gen(function* inactiveSecondaryLocale() {
+      const failure = yield* Effect.flip(
+        selectMarket(
+          {
+            associations: [association],
+            markets: [{ ...market, lifecycle: "SUSPENDED", supportedLocales: ["cs-CZ", "en-CZ"] }],
+          },
+          config,
+          "en",
+          now,
+        ),
+      );
+      expect(failure.reason).toBe("inactive");
+    }),
+  );
   it.effect("resolves only its associated active market", () =>
     Effect.gen(function* resolvesMarket() {
       const result = yield* selectMarket(

@@ -1,5 +1,20 @@
 # Kontrola převodu N1 storefrontu
 
+## C34: všechny výslovně podporované locale tagy — 2026-11-05
+
+- N1 market admission chybně zkoušela jen supportedLocales[0]. Owner contract
+  používá neprázdné unikátní pole podporovaných tagů, bez primarylocale práva;
+  jeho testy modelují jeden market s cs-CZ/en-CZ. N1 nyní kontroluje `.some`.
+- Scope tenant/app/seller/B2C/effective/ACTIVE a odmítnutí ambiguity zůstávají
+  beze změn. Nevybírá jiný jazyk ani nefiltrovaný katalog; dva podporované EN
+  tagy jednoho marketu stále znamenají jeden market, nikoli dva kandidáty.
+- TDD secondarylocale/order a ambiguous skutečně RED→GREEN;10 nových případů
+  včetně unsupported EN/DE a lifecycle, plných525/525 N1 testů PASS.
+  Lint/TSRS, formát a produkční build PASS; samostatné source review GO.
+- Toto není tvrzení o změně živé market definice nebo pozitivním EN průchodu.
+  Dříve ověřený CS-only market se tím anglicky neotevře. Žádná nativní
+  ReviseMarketDefinition ani nový měnový market nebyly provedeny.
+
 ## C33: skutečný dotaz na produkt přes existující Contact / Work Tasks — 2026-11-05
 
 - Figma desktop219:2865 v219:2854 + aktuální Akros FOR-KAI-UWE kontakt424:

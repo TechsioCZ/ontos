@@ -56,7 +56,7 @@ export const selectMarket = (
     const markets = catalog.markets.filter(
       (market) =>
         market.sellingLegalEntityRef.resourceId === config.legalEntityId &&
-        market.supportedLocales[0]?.split("-")[0] === locale &&
+        market.supportedLocales.some((supported) => supported.split("-")[0] === locale) &&
         associations.some((item) => item.marketRef.resourceId === market.marketRef.resourceId),
     );
     if (markets.length === 0) {
