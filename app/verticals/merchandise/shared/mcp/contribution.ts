@@ -1,5 +1,6 @@
 /** Catalog, stock and order tools offered to agents, without approval plumbing or demo maintenance. */
 import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
+import { PRODUCT_DETAIL_PAGE_LIMIT } from '../apis/records.ts';
 
 export const merchandiseMcpContribution = defineOntosMcpContribution({
   actions: { 'bootstrap-playground-catalog': 'hidden', 'request-search-rebuild': 'hidden' },
@@ -114,8 +115,8 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
     media: OntosMcpHidden,
     records: {
       description: {
-        cs: 'Produkty, sklad a objednávky. view.markets: true vrátí trhy s režimem, měnou, kurzem a počty výjimek; view.marketExceptions { marketId } výjimky produktů trhu; detail produktu (view.productId) vrátí productMarkets s nabídkou a cenou v každém trhu.',
-        en: 'Products, stock and orders. view.markets: true returns markets with mode, currency, rate and exception counts; view.marketExceptions { marketId } a market product exceptions; a product detail (view.productId) returns productMarkets with offer and price per market.',
+        cs: `Produkty, sklad a objednávky. Produkty bez view.summary nesou varianty a stránka jich má nejvýš ${PRODUCT_DETAIL_PAGE_LIMIT} bez ohledu na view.limit; seznam čtěte s view.summary: true (view.limit do 250) a stránkujte view.offset o počet vrácených produktů. view.markets: true vrátí trhy s režimem, měnou, kurzem a počty výjimek; view.marketExceptions { marketId } výjimky produktů trhu; detail produktu (view.productId) vrátí productMarkets s nabídkou a cenou v každém trhu.`,
+        en: `Products, stock and orders. Products without view.summary carry their variants and a page holds at most ${PRODUCT_DETAIL_PAGE_LIMIT} regardless of view.limit; read lists with view.summary: true (view.limit up to 250) and advance view.offset by the number of products returned. view.markets: true returns markets with mode, currency, rate and exception counts; view.marketExceptions { marketId } a market product exceptions; a product detail (view.productId) returns productMarkets with offer and price per market.`,
       },
       title: { cs: 'Přehled produktů, skladu a objednávek', en: 'Products, stock and orders overview' },
     },

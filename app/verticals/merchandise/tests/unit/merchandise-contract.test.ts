@@ -5,7 +5,12 @@ import { Effect, Schema } from 'effect';
 import { recordsRead } from '../../src/api/records.read.ts';
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
-import { RecordsRequestSchema, StorefrontCatalogQuerySchema } from '../../shared/apis/records.ts';
+import {
+  PRODUCT_DETAIL_PAGE_LIMIT,
+  RecordsRequestSchema,
+  StorefrontCatalogQuerySchema,
+} from '../../shared/apis/records.ts';
+import { merchandiseMcpContribution } from '../../shared/mcp/contribution.ts';
 
 import { MinorAmountSchema } from '../../shared/domain/merchandise-model.ts';
 
@@ -58,6 +63,16 @@ it('keeps ORDER out of manual stock movement reasons', () => {
 it('rejects fractional money amounts', () => {
   expect(Schema.is(MinorAmountSchema)(199.5)).toBe(false);
   expect(Schema.is(MinorAmountSchema)(19_950)).toBe(true);
+});
+
+it('tells agents that a records page without summary holds at most the detail cap of products', () => {
+  const { description } = merchandiseMcpContribution.reads.records;
+  expect(description.en).toContain(
+    `without view.summary carry their variants and a page holds at most ${PRODUCT_DETAIL_PAGE_LIMIT} regardless of view.limit`,
+  );
+  expect(description.en).toContain('read lists with view.summary: true');
+  expect(description.cs).toContain(`stránka jich má nejvýš ${PRODUCT_DETAIL_PAGE_LIMIT} bez ohledu na view.limit`);
+  expect(description.cs).toContain('seznam čtěte s view.summary: true');
 });
 
 it('accepts a records request with no view and with a view filter', () => {

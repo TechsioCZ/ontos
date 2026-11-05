@@ -5,6 +5,7 @@ import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { Effect, Match, Option, Schema } from 'effect';
+import { PRODUCT_DETAIL_PAGE_LIMIT } from '../../shared/apis/records.ts';
 import type {
   CategoryTrail,
   RecordsView,
@@ -75,8 +76,6 @@ const storedRowsFailure = (cause: MerchandiseStoreFailure['cause']) =>
   new MerchandiseStoreFailure({ cause, reason: STORED_ROWS_REASON });
 
 export const DEFAULT_PRODUCT_LIMIT = 50;
-/** Products per page that carry their variants (one AKROS product can hold ~400 variants, ~400 kB). */
-export const DETAIL_PAGE_LIMIT = 2;
 const CART_PAGE_LIMIT = 50;
 export const DEFAULT_ORDER_LIMIT = 100;
 const MOVEMENT_LIMIT = 500;
@@ -388,7 +387,7 @@ export const staffProducts = (
     limit:
       view.summary === true
         ? (view.limit ?? DEFAULT_PRODUCT_LIMIT)
-        : Math.min(view.limit ?? DETAIL_PAGE_LIMIT, input.detailLimit ?? DETAIL_PAGE_LIMIT),
+        : Math.min(view.limit ?? PRODUCT_DETAIL_PAGE_LIMIT, input.detailLimit ?? PRODUCT_DETAIL_PAGE_LIMIT),
     offset: view.offset ?? 0,
     orderBy: staffProductOrder(view.productSort),
     variantCount: view.summary === true,
@@ -1106,7 +1105,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   const pageSize =
     fields === 'card'
       ? requested
-      : Math.min(requested, catalog.variantIds === undefined ? DETAIL_PAGE_LIMIT : CART_PAGE_LIMIT);
+      : Math.min(requested, catalog.variantIds === undefined ? PRODUCT_DETAIL_PAGE_LIMIT : CART_PAGE_LIMIT);
   const page = catalog.page ?? 1;
   const variantIds = catalog.variantIds === undefined ? undefined : new Set(catalog.variantIds);
   const result = yield* productPage(db, scope, {

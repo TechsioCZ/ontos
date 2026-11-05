@@ -130,12 +130,15 @@ export const MarketExceptionPageSchema = Schema.Struct({
 });
 export type MarketExceptionPage = typeof MarketExceptionPageSchema.Type;
 
+/** Products per page that carry their variants (one AKROS product can hold ~400 variants, ~400 kB). */
+export const PRODUCT_DETAIL_PAGE_LIMIT = 2;
+
 /**
  * Optional filters. Every collection is bounded: no read returns the whole catalog.
  * - products: filters combine with AND, paged by `offset`/`limit`, ordered by `productSort` (default: catalog
  *   order). `totalProducts` counts all matches. `summary: true` = list rows without variants, price and content
  *   history (default limit 50, max 250; 0 = none). Without `summary` each product carries its variants (detail) and a
- *   page holds at most 2 products.
+ *   page holds at most {@link PRODUCT_DETAIL_PAGE_LIMIT} products.
  * - movements: only with `productId` (that product's ledger, newest 500, oldest first).
  * - orders (staff): newest first, paged by `ordersOffset`/`ordersLimit` (default 100, max 250; 0 = none);
  *   `totalOrders` counts all matches.
