@@ -281,6 +281,16 @@ const reconcileOutcomeRoutine = defineScopedRoutine({
   schema: 'commerce_customer_context',
 });
 
+/** Re-admit only parked work; native admission preserves origin, outcomes and all sweep/lease fences. */
+const admitAttemptRoutine = defineScopedRoutine({
+  name: 'admit_portal_enrollment_attempt',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid(), text()],
+  resultSchema: Schema.Struct({ admitted: Schema.Boolean }),
+  routineKey: 'portal-enrollment-attempt.admit',
+  schema: 'commerce_customer_context',
+});
+
 const terminateAttemptRoutine = defineScopedRoutine({
   name: 'terminate_portal_enrollment',
   ownerModuleKey: MODULE_KEY,
@@ -1387,6 +1397,13 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
       ),
     terminate: (input) =>
       ensureTenant(scope, input.tenantId).pipe(
+        // Parked work from an earlier release is re-admitted to this one; a terminal Attempt is left as it is and
+        // answers ALREADY_TERMINAL below, and unresolved owner work refuses re-admission (the trigger's fence).
+        Effect.flatMap(() =>
+          transaction
+            .invoke(admitAttemptRoutine, [input.portalEnrollmentAttemptId, input.compositionRevision])
+            .pipe(Effect.mapError(mapRoutineError)),
+        ),
         Effect.flatMap(() =>
           invokeAttempt(terminateAttemptRoutine, [
             input.portalEnrollmentAttemptId,
@@ -1518,16 +1535,6 @@ export const setEnrollmentVerificationState = (
       ),
       Effect.asVoid,
     );
-
-/** Re-admit only parked work; native admission preserves origin, outcomes and all sweep/lease fences. */
-const admitAttemptRoutine = defineScopedRoutine({
-  name: 'admit_portal_enrollment_attempt',
-  ownerModuleKey: MODULE_KEY,
-  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid(), text()],
-  resultSchema: Schema.Struct({ admitted: Schema.Boolean }),
-  routineKey: 'portal-enrollment-attempt.admit',
-  schema: 'commerce_customer_context',
-});
 
 export const admitEnrollmentAttempt = (
   transaction: EnrollmentAttemptScopedRoutineInvoker,

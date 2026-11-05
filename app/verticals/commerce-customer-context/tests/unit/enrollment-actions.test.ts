@@ -511,5 +511,7 @@ it.effect('terminate derives the trusted Actor, Tenant and invocation for the te
     expect(request?.tenantId).toBe(tenantId);
     expect(request?.portalEnrollmentAttemptId).toBe(attemptId);
     expect(request?.reason).toBe(terminatePayload.reason);
+    // A parked Attempt of an earlier release is re-admitted to the release this Action runs under.
+    expect(request?.compositionRevision).toBe('c'.repeat(64));
   }),
 );

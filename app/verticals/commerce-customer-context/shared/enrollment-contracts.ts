@@ -347,6 +347,11 @@ export type ReconcileEnrollmentResolution = typeof ReconcileEnrollmentResolution
 export const TerminateEnrollmentAttemptInputSchema = Schema.Struct({
   actionInvocationId: EnrollmentActionInvocationIdSchema,
   actorPrincipalId: EnrollmentPrincipalIdSchema,
+  /**
+   * The release the terminating Action runs under. A parked Attempt from an earlier release (one waiting for its
+   * customer, which nothing sweeps) is re-admitted to it first, so an operator can still settle it.
+   */
+  compositionRevision: EnrollmentCompositionRevisionSchema,
   expectedRevision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
   reason: EnrollmentBoundedTextSchema,

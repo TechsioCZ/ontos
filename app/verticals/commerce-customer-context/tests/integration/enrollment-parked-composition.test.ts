@@ -23,6 +23,7 @@ import {
   ClaimEnrollmentTransitionInputSchema,
   EnrollmentLeaseTokenSchema,
   ReadEnrollmentAttemptInputSchema,
+  TerminateEnrollmentAttemptInputSchema,
   ReconcileEnrollmentOutcomeInputSchema,
   RecordEnrollmentOutcomeInputSchema,
   StartEnrollmentAttemptInputSchema,
@@ -310,6 +311,56 @@ it.live(
           );
       }),
     ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
+);
+
+it.live('an operator terminates a parked verification wait of an earlier release under the current one', () =>
+  Effect.scoped(
+    Effect.gen(function* parkedTermination() {
+      const releaseA = yield* makeEnrollmentApplicationCompositionSnapshot('parked-terminate-a', []);
+      const releaseB = yield* makeEnrollmentApplicationCompositionSnapshot('parked-terminate-b', []);
+      yield* installEnrollmentTestAuthority(releaseA.composition.revision);
+      const connections = yield* loadDatabaseConnectionPair();
+      const client = yield* makeTestPgClient(connections.admin.connectionString);
+      const admin = yield* makeTestDatabaseFromClient(client, coreRelations);
+      const rollback = new Error('parked termination rollback');
+      yield* admin
+        .transaction((transaction) =>
+          Effect.gen(function* terminateParkedWait() {
+            const parked = yield* parkedJourney(
+              transaction,
+              releaseA.composition.revision,
+              releaseB.composition.revision,
+            );
+            yield* publishApplicationCompositionAuthority(transaction, {
+              ...releaseB,
+              validUntil: DateTime.add(releaseB.validUntil, { hours: 2 }),
+            });
+            yield* parked.execute(sql`set local role ontos_runtime`);
+            const terminated = yield* parked.persistence.terminate(
+              yield* Schema.decodeEffect(TerminateEnrollmentAttemptInputSchema)({
+                ...parked.identity,
+                actionInvocationId: yield* randomId,
+                actorPrincipalId: parked.actorId,
+                compositionRevision: releaseB.composition.revision,
+                expectedRevision: parked.parked.attempt.revision,
+                reason: 'Zastaralý testovací pokus',
+              }),
+            );
+            expect(terminated.outcome).toBe('TERMINATED');
+            expect(terminated.attempt.state).toBe('TERMINATED');
+            expect(terminated.attempt.compositionRevision).toBe(releaseB.composition.revision);
+            yield* parked.execute(sql`reset role`);
+            return yield* Effect.fail(rollback);
+          }),
+        )
+        .pipe(
+          Effect.catchIf(
+            (failure) => failure === rollback,
+            () => Effect.void,
+          ),
+        );
+    }),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 it.live('a journaled owner reconciliation wait releases publication and resumes unchanged under the next release', () =>
