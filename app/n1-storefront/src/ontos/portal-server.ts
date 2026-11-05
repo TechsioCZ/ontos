@@ -64,6 +64,11 @@ const freshContext = (config: StorefrontConfiguration) =>
       Effect.timeout(readDeadline),
       Effect.mapError(() => new PortalFailure({ reason: "unavailable" })),
     );
+    if (response.status === 403) {
+      yield* Effect.logWarning("N1 Portal request refused").pipe(
+        Effect.annotateLogs({ operation: "gateway-context", reason: "forbidden" }),
+      );
+    }
     if (response.status < 200 || response.status >= 300) {
       return yield* new PortalFailure({
         reason: response.status === 403 ? "refused" : "unavailable",
@@ -224,6 +229,28 @@ export const readPortalOwnProfile = (
     ),
   );
 type PortalOwnerClient = Effect.Success<ReturnType<typeof makeOwnerClient>>;
+type PortalEnrollmentCallFailure = Effect.Error<
+  | ReturnType<PortalOwnerClient["portalAuthEnrollment"]["startEnrollment"]>
+  | ReturnType<PortalOwnerClient["portalAuthEnrollment"]["resumeCurrentEnrollment"]>
+>;
+/** Only closed owner codes enter logs; the error and its private cause remain unobserved. */
+const logPortalEnrollmentFailure = (
+  operation: "enrollment-start" | "enrollment-resume",
+  error: PortalEnrollmentCallFailure,
+) =>
+  Effect.logWarning("N1 Portal enrollment failed").pipe(
+    Effect.annotateLogs({
+      operation,
+      reason: Match.value(error).pipe(
+        Match.tag("CommercePortalAuthEnrollmentForbiddenProblem", (problem) => problem.code),
+        Match.tag(
+          "CommercePortalAuthEnrollmentJourneyUnavailableProblem",
+          () => "journey_unavailable",
+        ),
+        Match.orElse(() => "other"),
+      ),
+    }),
+  );
 type OwnProfileUpdate = Parameters<
   PortalOwnerClient["customerOwnProfileUpdate"]["execute"]
 >[0]["payload"];
@@ -242,15 +269,15 @@ const readEnrollment = (
   request: PortalRequestContext,
   resume: boolean,
 ) =>
-  makeOwnerClient(config, request).pipe(
-    Effect.flatMap((client) =>
-      resume
-        ? client.portalAuthEnrollment.resumeCurrentEnrollment({ payload: {} })
-        : client.portalAuthEnrollment.readCurrentEnrollment(),
-    ),
-    Effect.timeout(readDeadline),
-    Effect.map((attempt) => portalEnrollmentProgress(attempt.state)),
-  );
+  Effect.gen(function* readPortalEnrollmentProgram() {
+    const client = yield* makeOwnerClient(config, request);
+    const attempt = yield* resume
+      ? client.portalAuthEnrollment
+          .resumeCurrentEnrollment({ payload: {} })
+          .pipe(Effect.tapError((error) => logPortalEnrollmentFailure("enrollment-resume", error)))
+      : client.portalAuthEnrollment.readCurrentEnrollment();
+    return portalEnrollmentProgress(attempt.state);
+  }).pipe(Effect.timeout(readDeadline));
 export const loginPortalServer = (input: PortalLogin, request: PortalRequestContext) =>
   Effect.gen(function* loginPortalProgram() {
     const config = yield* configuration;
@@ -285,7 +312,10 @@ export const registerPortalServer = (input: PortalRegistration, request: PortalR
       admit: readAdmission(config, request),
       start: client.portalAuthEnrollment
         .startEnrollment({ payload: enrollmentBody(input, config.legalEntityId) })
-        .pipe(Effect.timeout(writeDeadline)),
+        .pipe(
+          Effect.tapError((error) => logPortalEnrollmentFailure("enrollment-start", error)),
+          Effect.timeout(writeDeadline),
+        ),
     });
   });
 export const currentPortalServer = (request: PortalRequestContext, resume = false) =>
