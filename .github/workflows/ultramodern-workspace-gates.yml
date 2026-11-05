@@ -1167,7 +1167,6 @@ jobs:
 
   # The one required status check of the main ruleset, so new gate jobs join it here, not the ruleset.
   # It passes when every gate passed, or when the merge queue already proved this commit and the gates were skipped.
-  # OntOS runs on Zerops only; the Cloudflare artifact build still runs and reports, but it no longer gates a merge.
   workspace-gates:
     name: Workspace gates
     if: ${{ always() }}
