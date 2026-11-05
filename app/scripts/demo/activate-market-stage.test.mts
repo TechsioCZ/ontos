@@ -10,6 +10,7 @@ import {
 } from './activate-market-stage.mts';
 import type { StageMarketOperatorLive } from './activate-market-stage.mts';
 import { demoTenantId } from './fixture-ids.mts';
+import { N1_TENANT_ID } from './n1-stage-grants.mts';
 
 const plan = {
   actionKey: 'core.modules.change-tenant-module-state',
@@ -19,23 +20,32 @@ const plan = {
   tenantId: demoTenantId,
 };
 const validPlan = Schema.is(ReviewedMarketActivationPlanSchema);
+const tasks = 'work.tasks';
 
-it('accepts only tenant-only session scope in the approved demo tenant', () => {
-  expect(marketActivationScopeAllowed(demoTenantId, 'session')).toBe(true);
+it('accepts only a tenant-only session in a Tenant allowed the module', () => {
+  const market = 'commerce.market-catalog';
+  expect(marketActivationScopeAllowed(demoTenantId, market, 'session')).toBe(true);
   for (const method of ['api_key', 'system', 'oauth_connection', 'support_impersonation']) {
-    expect(marketActivationScopeAllowed(demoTenantId, method)).toBe(false);
+    expect(marketActivationScopeAllowed(demoTenantId, market, method)).toBe(false);
   }
-  expect(marketActivationScopeAllowed(demoTenantId, 'session', '71000000-0000-4000-8000-000000000024')).toBe(false);
-  expect(marketActivationScopeAllowed('70000000-0000-4000-8000-000000000010', 'session')).toBe(false);
+  expect(marketActivationScopeAllowed(demoTenantId, market, 'session', '71000000-0000-4000-8000-000000000024')).toBe(
+    false,
+  );
+  expect(marketActivationScopeAllowed('70000000-0000-4000-8000-000000000010', market, 'session')).toBe(false);
+  // N1 may activate Tasks for its storefront inquiries, and nothing else; the demo tenant may not take Tasks here.
+  expect(marketActivationScopeAllowed(N1_TENANT_ID, tasks, 'session')).toBe(true);
+  expect(marketActivationScopeAllowed(N1_TENANT_ID, 'projects.core', 'session')).toBe(false);
+  expect(marketActivationScopeAllowed(demoTenantId, tasks, 'session')).toBe(false);
 });
 
-it('the reviewed plan names only an allowed demo module, its Core activation Action, and the demo tenant', () => {
+it('the reviewed plan names only an allowed module, its Core activation Action, and an allowed Tenant', () => {
   expect(validPlan(plan)).toBe(true);
   expect(validPlan({ ...plan, moduleKey: 'commerce.storefront-registry' })).toBe(true);
   expect(validPlan({ ...plan, moduleKey: 'projects.core' })).toBe(true);
   expect(validPlan({ ...plan, moduleKey: 'commerce.assortment' })).toBe(false);
   expect(validPlan({ ...plan, moduleKey: 'privacy.core' })).toBe(false);
   expect(validPlan({ ...plan, actionKey: 'commerce.market-catalog.retire-market' })).toBe(false);
+  expect(validPlan({ ...plan, moduleKey: tasks, tenantId: N1_TENANT_ID })).toBe(true);
   expect(validPlan({ ...plan, tenantId: '70000000-0000-4000-8000-000000000010' })).toBe(false);
   expect(validPlan({ ...plan, operatorPrincipalId: 'not-a-principal' })).toBe(false);
   expect(validPlan({ ...plan, compositionRevision: '' })).toBe(false);

@@ -21,14 +21,26 @@ import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 import { AgentProfileReadDatabase } from './agent-profile-setup.mts';
 import { demoTenantId } from './fixture-ids.mts';
+import { N1_TENANT_ID } from './n1-stage-grants.mts';
 
-/** The e-shop market modules and Projekty, which this operator may activate tenant-wide; nothing else. */
 export const stageMarketModuleKeys = [
   'commerce.market-catalog',
   'commerce.storefront-registry',
   'projects.core',
+  'work.tasks',
 ] as const;
 export type StageMarketModuleKey = (typeof stageMarketModuleKeys)[number];
+
+/** The modules this operator may activate tenant-wide, per Tenant; nothing else. */
+const stageActivationScopes: readonly {
+  readonly moduleKeys: readonly StageMarketModuleKey[];
+  readonly tenantId: string;
+}[] = [
+  // The e-shop market modules and Projekty.
+  { moduleKeys: ['commerce.market-catalog', 'commerce.storefront-registry', 'projects.core'], tenantId: demoTenantId },
+  // The N1 storefront files every contact and product inquiry as a Task.
+  { moduleKeys: ['work.tasks'], tenantId: N1_TENANT_ID },
+];
 const activationReason = 'Operator-approved tenant-wide module activation for the sales demo';
 const modes = ['dry-run', 'apply', 'verify'] as const;
 const sameContracts = Schema.toEquivalence(Schema.Array(OntosModuleDeploymentContractSchema));
@@ -39,8 +51,15 @@ export class StageMarketActivationFailure extends Schema.TaggedError<StageMarket
 ) {}
 const fail = (reason: string) => new StageMarketActivationFailure({ reason });
 
-export const marketActivationScopeAllowed = (tenantId: string, authMethod: string, legalEntityId?: string) =>
-  tenantId === demoTenantId && authMethod === 'session' && legalEntityId === undefined;
+export const marketActivationScopeAllowed = (
+  tenantId: string,
+  moduleKey: StageMarketModuleKey,
+  authMethod: string,
+  legalEntityId?: string,
+) =>
+  authMethod === 'session' &&
+  legalEntityId === undefined &&
+  stageActivationScopes.some((scope) => scope.tenantId === tenantId && scope.moduleKeys.includes(moduleKey));
 
 export const ReviewedMarketActivationPlanSchema = Schema.Struct({
   actionKey: Schema.Literal('core.modules.change-tenant-module-state'),
@@ -50,7 +69,7 @@ export const ReviewedMarketActivationPlanSchema = Schema.Struct({
     Schema.brand('MarketActivationOperatorPrincipalId'),
     Schema.decodeTo(Schema.String.check(Schema.isUUID())),
   ),
-  tenantId: Schema.Literal(demoTenantId),
+  tenantId: Schema.Literals([demoTenantId, N1_TENANT_ID]),
 });
 export const marketActivationPlanFingerprint = (text: string) => createHash('sha256').update(text).digest('hex');
 
@@ -69,14 +88,16 @@ const main = (
     const operator = yield* Effect.acquireRelease(authenticateAgentProfileOperator, (session) =>
       session.close.pipe(Effect.ignore),
     );
+    const { tenantId } = operator.principal;
     if (
       !marketActivationScopeAllowed(
-        operator.principal.tenantId,
+        tenantId,
+        stageMarketModuleKey,
         operator.principal.authMethod,
         operator.principal.legalEntityId,
       )
     ) {
-      return yield* fail('Market activation requires a genuine tenant-only demo operator session');
+      return yield* fail('Module activation requires a tenant-only operator session of a Tenant allowed this module');
     }
     const snapshot = yield* (yield* ActiveApplicationCompositionService).load;
     const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
@@ -92,7 +113,7 @@ const main = (
       compositionRevision: snapshot.composition.revision,
       moduleKey: stageMarketModuleKey,
       operatorPrincipalId: operator.principal.principalId,
-      tenantId: demoTenantId,
+      tenantId,
     });
     const text = yield* Schema.encodeEffect(Schema.fromJsonString(ReviewedMarketActivationPlanSchema))(plan);
     const fingerprint = marketActivationPlanFingerprint(text);
@@ -101,7 +122,7 @@ const main = (
     const readState = executor
       .select({ state: tenantModuleStates.state })
       .from(tenantModuleStates)
-      .where(and(eq(tenantModuleStates.tenantId, demoTenantId), eq(tenantModuleStates.moduleKey, stageMarketModuleKey)))
+      .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, stageMarketModuleKey)))
       .limit(1)
       .pipe(Effect.map((rows) => rows.at(0)?.state ?? 'inactive'));
     const state = yield* readState;
@@ -110,7 +131,7 @@ const main = (
     }
     if (mode === 'dry-run') {
       yield* filesystem.writeFileString(planPath, text, { flag: 'wx', mode: 0o600 });
-      return yield* Console.log({ fingerprint, mode, moduleKey: stageMarketModuleKey, state, tenantId: demoTenantId });
+      return yield* Console.log({ fingerprint, mode, moduleKey: stageMarketModuleKey, state, tenantId });
     }
     const stat = yield* filesystem.stat(planPath);
     const saved = yield* filesystem.readFileString(planPath);
@@ -149,7 +170,7 @@ const main = (
     if ((yield* readState) !== 'active') {
       return yield* fail('The governed activation did not persist an active module state');
     }
-    return yield* Console.log({ mode, moduleKey: stageMarketModuleKey, state: 'active', tenantId: demoTenantId });
+    return yield* Console.log({ mode, moduleKey: stageMarketModuleKey, state: 'active', tenantId });
   }).pipe(Effect.scoped);
 
 export const StageMarketOperatorLive = Layer.effect(
