@@ -8,10 +8,56 @@ import { Effect, Fiber } from "effect";
 import { useParams } from "next/navigation";
 import type { SubmitEvent } from "react";
 import { useEffect, useRef, useState } from "react";
-import { decodeInquiry, inquiryMessageMaximum } from "@/ontos/inquiry";
+import { inquiryMessageMaximum } from "@/ontos/inquiry";
 import type { InquiryOutcome, InquiryProductContext } from "@/ontos/inquiry";
-import { inquiryRuntime, startInquirySubmission, submitInquiry } from "@/ontos/inquiry-client";
+import { inquiryRuntime, startInquirySubmission } from "@/ontos/inquiry-client";
 import type { Dictionary } from "@/i18n";
+import { inquiryGuardKey, readInquiryBarrier, submitGuardedInquiry } from "./inquiry-guard";
+
+type ContactState = InquiryOutcome["state"] | "idle" | "pending";
+type BarrierState = "loading" | "clear" | "blocked" | "unavailable";
+const observeBarrier = (accept: (value: BarrierState) => void) =>
+  readInquiryBarrier().pipe(
+    Effect.match({
+      onFailure: (failure) => accept(failure.reason === "blocked" ? "blocked" : "unavailable"),
+      onSuccess: (blocked) => accept(blocked ? "blocked" : "clear"),
+    }),
+  );
+const useInquiryBarrier = () => {
+  const [barrier, setBarrier] = useState<BarrierState>("loading");
+  useEffect(() => {
+    const refresh = () => {
+      inquiryRuntime.runFork(observeBarrier(setBarrier));
+    };
+    const changed = (event: StorageEvent) => {
+      if (event.key === null || event.key === inquiryGuardKey) {
+        refresh();
+      }
+    };
+    refresh();
+    window.addEventListener("storage", changed);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("storage", changed);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+  return {
+    barrier,
+    refresh: () => {
+      inquiryRuntime.runFork(observeBarrier(setBarrier));
+    },
+  };
+};
+const visibleContactState = (state: ContactState, barrier: BarrierState): ContactState => {
+  if (state === "pending" || state === "sent" || state === "unconfirmed") {
+    return state;
+  }
+  if (barrier === "blocked") {
+    return "unconfirmed";
+  }
+  return barrier === "unavailable" ? "unavailable" : state;
+};
 
 /** N1 contact composition with owner-confirmed submission and explicit uncertain outcomes. */
 export const ContactView = ({
@@ -40,7 +86,9 @@ export const ContactView = ({
           d.contact.productQuestionPrompt,
           "",
         ].join("\n");
-  const [state, setState] = useState<InquiryOutcome["state"] | "idle" | "pending">("idle");
+  const [localState, setLocalState] = useState<ContactState>("idle");
+  const { barrier, refresh } = useInquiryBarrier();
+  const state = visibleContactState(localState, barrier);
   const active = useRef<Fiber.Fiber<InquiryOutcome> | null>(null);
   useEffect(
     () => () => {
@@ -53,7 +101,11 @@ export const ContactView = ({
     [],
   );
   const locked =
-    unavailableProduct || state === "pending" || state === "sent" || state === "unconfirmed";
+    unavailableProduct ||
+    barrier === "loading" ||
+    state === "pending" ||
+    state === "sent" ||
+    state === "unconfirmed";
   const statusText = unavailableProduct
     ? d.contact.formUnavailable
     : {
@@ -72,34 +124,21 @@ export const ContactView = ({
       return;
     }
     const fields = new FormData(event.currentTarget);
-    setState("pending");
-    const customerFields = {
-      email: fields.get("email"),
-      locale,
-      message: fields.get("message"),
-      name: fields.get("name"),
-      phone: fields.get("phone"),
-      requestId: crypto.randomUUID(),
-    };
-    const payload =
+    setLocalState("pending");
+    const selector =
       product === undefined
-        ? customerFields
+        ? undefined
         : {
-            ...customerFields,
-            product: {
-              productId: product.productId,
-              variantIds: product.variant === undefined ? [] : [product.variant.id],
-            },
+            productId: product.productId,
+            variantIds: product.variant === undefined ? [] : [product.variant.id],
           };
     startInquirySubmission(
       active,
-      (result) => setState(result.state),
-      decodeInquiry(payload).pipe(
-        Effect.flatMap(submitInquiry),
-        Effect.catchTag("InquiryFailure", () =>
-          Effect.succeed<InquiryOutcome>({ state: "invalid" }),
-        ),
-      ),
+      (result) => {
+        setLocalState(result.state);
+        refresh();
+      },
+      submitGuardedInquiry(fields, locale, selector),
     );
   };
   return (
