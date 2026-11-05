@@ -110,7 +110,7 @@ export const CheckoutRecoveryRequestSchema = Schema.Struct({
   scope: CartScopeSchema,
 });
 export type CheckoutRecoveryRequest = typeof CheckoutRecoveryRequestSchema.Type;
-const CheckoutRecoverySchema = Schema.Union([
+export const CheckoutRecoverySchema = Schema.Union([
   Schema.Struct({ result: CheckoutResultSchema, state: Schema.Literal("confirmed") }),
   Schema.Struct({ state: Schema.Literal("unconfirmed") }),
 ]).check(

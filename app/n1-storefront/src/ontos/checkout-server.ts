@@ -32,6 +32,8 @@ import {
   sameCheckoutScope,
 } from "./checkout-context";
 import type { FulfillmentInfo } from "./fulfillment-model";
+import { readPortalIdentityWithConfiguration } from "./portal-server";
+import type { PortalRequestContext, PortalServerIdentity } from "./portal-server";
 
 export { CheckoutFailure } from "./checkout-context";
 
@@ -88,6 +90,31 @@ type GuestCommand = Extract<
   { readonly _tag: "PlaceStorefrontOrder" }
 >;
 type MutableGuestCommand = { -readonly [Key in keyof GuestCommand]: GuestCommand[Key] };
+
+const buyerFailure = (
+  error: Effect.Error<ReturnType<typeof readPortalIdentityWithConfiguration>>,
+) =>
+  new CheckoutFailure({
+    state: Match.value(error).pipe(
+      Match.tag("PortalFailure", (failure) =>
+        failure.reason === "refused" ? ("forbidden" as const) : ("unavailable" as const),
+      ),
+      Match.orElse(() => "unavailable" as const),
+    ),
+  });
+
+/** No browser subject is trusted. A presented but unusable Portal session never becomes a guest. */
+const checkoutBuyer = (config: StorefrontConfiguration, request?: PortalRequestContext) =>
+  request === undefined || request.cookie === ""
+    ? Effect.succeed<PortalServerIdentity>({ state: "anonymous" })
+    : readPortalIdentityWithConfiguration(config, request).pipe(
+        Effect.mapError(buyerFailure),
+        Effect.flatMap((identity) =>
+          identity.state === "admitted"
+            ? Effect.succeed(identity)
+            : Effect.fail(new CheckoutFailure({ state: "forbidden" })),
+        ),
+      );
 
 const correctOutcomeEvidence = (
   request: CheckoutRequest,
@@ -233,8 +260,12 @@ const readReceiptPresentation = (
     Effect.match({ onFailure: () => [], onSuccess: (presentation) => presentation }),
   );
 
-/** Public guest nonce lookup returns no catalog rows. Catalog-mode reads do not implement this owner capability. */
-const readGuestReceipt = (config: StorefrontConfiguration, request: CheckoutRecoveryRequest) =>
+/** Nonce is an intent locator; customer receipts additionally require the current native subject. */
+const readCheckoutReceipt = (
+  config: StorefrontConfiguration,
+  request: CheckoutRecoveryRequest,
+  buyer: PortalServerIdentity,
+) =>
   Effect.gen(function* readGuestReceiptProgram() {
     const snapshot = yield* readOwner(
       config,
@@ -260,13 +291,20 @@ const readGuestReceipt = (config: StorefrontConfiguration, request: CheckoutReco
       order === undefined ||
       order.clientRequestId !== request.clientRequestId ||
       order.channel !== "STOREFRONT" ||
-      order.customerAccountId !== undefined ||
       order.market?.marketId !== request.scope.marketId ||
       order.market.currency !== request.scope.currency ||
       order.pricesIncludeVat !== true ||
       order.shipping === undefined
     ) {
       return yield* new CheckoutFailure({ state: "unavailable" });
+    }
+    if (
+      order.customerAccountId !== undefined &&
+      (buyer.state !== "admitted" ||
+        order.customerAccountId !== buyer.account.id ||
+        order.partyId !== buyer.account.partyId)
+    ) {
+      return yield* new CheckoutFailure({ state: "forbidden" });
     }
     const result = yield* Schema.decodeUnknownEffect(CheckoutResultSchema)({
       issues: [],
@@ -304,21 +342,26 @@ const readGuestReceipt = (config: StorefrontConfiguration, request: CheckoutReco
 export const recoverCheckoutWithConfiguration = (
   config: StorefrontConfiguration,
   input: CheckoutRecoveryRequest,
+  portal?: PortalRequestContext,
 ) =>
   Effect.gen(function* recoverCheckoutProgram() {
     const request = yield* Schema.decodeUnknownEffect(CheckoutRecoveryRequestSchema, {
       onExcessProperty: "error",
     })(input).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
     yield* scopedContext(config, request.locale, request.scope);
-    return yield* readGuestReceipt(config, request);
+    const buyer = yield* checkoutBuyer(config, portal);
+    return yield* readCheckoutReceipt(config, request, buyer);
   });
 
-export const recoverCheckout = (input: CheckoutRecoveryRequest) =>
-  configuration().pipe(Effect.flatMap((config) => recoverCheckoutWithConfiguration(config, input)));
+export const recoverCheckout = (input: CheckoutRecoveryRequest, portal?: PortalRequestContext) =>
+  configuration().pipe(
+    Effect.flatMap((config) => recoverCheckoutWithConfiguration(config, input, portal)),
+  );
 
 export const submitCheckoutWithConfiguration = (
   config: StorefrontConfiguration,
   input: CheckoutRequest,
+  portal?: PortalRequestContext,
 ) =>
   Effect.gen(function* submitCheckoutProgram() {
     const request = yield* Schema.decodeUnknownEffect(CheckoutRequestSchema, {
@@ -333,8 +376,9 @@ export const submitCheckoutWithConfiguration = (
       ...Struct.pick(request.contact, ["phone"]),
     }).pipe(Effect.mapError(() => new CheckoutFailure({ state: "invalid" })));
     const context = yield* scopedContext(config, request.locale, request.scope);
+    const buyer = yield* checkoutBuyer(config, portal);
     if (request.mode === "place") {
-      const existing = yield* readGuestReceipt(config, request);
+      const existing = yield* readCheckoutReceipt(config, request, buyer);
       if (existing.state === "confirmed") {
         return existing.result;
       }
@@ -363,6 +407,10 @@ export const submitCheckoutWithConfiguration = (
       marketId: context.scope.marketId,
       shippingMethod: method.id,
     };
+    if (buyer.state === "admitted") {
+      command.customerAccountId = buyer.account.id;
+      command.partyId = buyer.account.partyId;
+    }
     if (request.contact.phone !== undefined && request.contact.phone !== "") {
       command.deliveryRecipient = {
         firstName: request.contact.firstName,
@@ -411,5 +459,7 @@ export const submitCheckoutWithConfiguration = (
     return yield* confirmCheckoutResult(request, result);
   });
 
-export const submitCheckout = (input: CheckoutRequest) =>
-  configuration().pipe(Effect.flatMap((config) => submitCheckoutWithConfiguration(config, input)));
+export const submitCheckout = (input: CheckoutRequest, portal?: PortalRequestContext) =>
+  configuration().pipe(
+    Effect.flatMap((config) => submitCheckoutWithConfiguration(config, input, portal)),
+  );

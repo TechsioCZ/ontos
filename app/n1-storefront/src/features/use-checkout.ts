@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Effect, Match, Result, Schema } from "effect";
 import { HttpApiClient } from "effect/http-api";
 import { CheckoutApi, CheckoutRequestSchema } from "@/ontos/checkout";
@@ -21,6 +21,7 @@ import type { CheckoutGuard } from "./checkout-guard";
 import type { CartEntry } from "./cart-state";
 import { advanceQuoteSelection } from "./cart-quote-state";
 import type { QuoteSelection } from "./cart-quote-state";
+import { usePortalAuth } from "./auth-view";
 
 type ReadyOptions = Extract<CheckoutOptions, { state: "ready" }>;
 type Notice =
@@ -54,8 +55,9 @@ const definitiveRefusal = (error: Effect.Error<ReturnType<typeof sendCheckout>>)
   );
 
 /** IO and generators live outside React Compiler's hook bodies. */
-const submitCheckoutProgram = ({
+export const submitCheckoutProgram = ({
   fields,
+  isCurrentSession,
   lines,
   locale,
   method,
@@ -63,6 +65,7 @@ const submitCheckoutProgram = ({
   scope,
 }: {
   fields: FormData;
+  isCurrentSession: () => boolean;
   lines: CartQuoteRequest["lines"];
   locale: string;
   method: ReadyOptions["shippingMethods"][number];
@@ -113,12 +116,12 @@ const submitCheckoutProgram = ({
         yield* saveCheckoutGuard(guard);
         const outcome = yield* Effect.result(send);
         if (Result.isFailure(outcome)) {
-          if (definitiveRefusal(outcome.failure)) {
+          if (isCurrentSession() && definitiveRefusal(outcome.failure)) {
             yield* removeCheckoutGuard(guard);
           }
           return yield* Effect.fail(outcome.failure);
         }
-        if (outcome.success.outcome === "REJECTED") {
+        if (isCurrentSession() && outcome.success.outcome === "REJECTED") {
           yield* removeCheckoutGuard(guard);
         }
         return outcome.success;
@@ -183,9 +186,39 @@ const observeGuard = (scope: CartScope, accept: (value: GuardObservation) => voi
     }),
   );
 
+/** Observe only the in-memory shared Portal session; credentials never enter durable intent state. */
+const useCheckoutSession = () => {
+  const auth = usePortalAuth({ mode: "login" });
+  // Presentation outcomes may be fresh objects on every render; keep the observation stable.
+  // This only invalidates local UI. Server admission remains the authority for every request.
+  const sessionKey = JSON.stringify([auth.loaded, auth.pending, auth.outcome]);
+  const [previousSession, setPreviousSession] = useState({
+    generation: 0,
+    key: sessionKey,
+  });
+  const sessionChanged = previousSession.key !== sessionKey;
+  const sessionGeneration = previousSession.generation + (sessionChanged ? 1 : 0);
+  if (sessionChanged) {
+    setPreviousSession({
+      generation: sessionGeneration,
+      key: sessionKey,
+    });
+  }
+  const currentSession = useRef(sessionGeneration);
+  useLayoutEffect(() => {
+    currentSession.current = sessionGeneration;
+    return () => {
+      // Also fence callbacks after this checkout unmounts.
+      currentSession.current = -1;
+    };
+  }, [sessionGeneration]);
+  return { currentSession, ready: auth.loaded && !auth.pending, sessionGeneration };
+};
+
 /** An intent survives reloads; only explicit receipt dismissal permits another order. */
 export const useCheckout = (options: ReadyOptions, locale: string) => {
   const cart = useCart();
+  const { currentSession, ready: sessionReady, sessionGeneration } = useCheckoutSession();
   const [editVersion, setEditVersion] = useState(0);
   const [progress, setProgress] = useState<"idle" | "quote" | "place" | "recovery">("idle");
   const busy = useRef(false);
@@ -194,6 +227,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     (QuoteSelection & { result: CheckoutResult }) | null
   >(null);
   const [receipt, setReceipt] = useState<CheckoutResult | null>(null);
+  const [receiptSession, setReceiptSession] = useState<number | null>(null);
   const [receiptGuard, setReceiptGuard] = useState<CheckoutGuard | null>(null);
   const [receiptEntries, setReceiptEntries] = useState<readonly CartEntry[]>([]);
   const [guardState, setGuardState] = useState<GuardObservation | null>(null);
@@ -206,9 +240,14 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     options.shippingMethods,
     lines,
     editVersion,
+    sessionGeneration,
   ]);
   const currentReceipt =
-    receipt !== null && checkoutGuardKey(receipt.scope) === key ? receipt : null;
+    receipt !== null &&
+    receiptSession === sessionGeneration &&
+    checkoutGuardKey(receipt.scope) === key
+      ? receipt
+      : null;
   const [previousSelection, setPreviousSelection] = useState<QuoteSelection>({
     generation: 0,
     key: selectionKey,
@@ -233,11 +272,16 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     window.addEventListener("storage", changed);
     return () => window.removeEventListener("storage", changed);
   }, [key, options.scope]);
-  const complete = (result: CheckoutResult, submitted: CheckoutGuard) => {
+  const complete = (result: CheckoutResult, submitted: CheckoutGuard, generation: number) => {
+    if (currentSession.current !== generation) {
+      restore();
+      return;
+    }
     if (cart !== null && cart.entries.length > 0) {
       setReceiptEntries(cart.entries);
     }
     setReceipt(result);
+    setReceiptSession(generation);
     setReceiptGuard(submitted);
     const cleared = cart?.clearSubmitted(submitted.lines) ?? false;
     if (cart !== null && cart.entries.length > 0 && !cleared) {
@@ -256,6 +300,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
   ) => {
     if (
       busy.current ||
+      !sessionReady ||
       (activeGuard?.guard !== null && activeGuard?.guard !== undefined) ||
       activeGuard?.error === true ||
       activeGuard?.loaded !== true
@@ -276,12 +321,14 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     const placing = quote?.outcome === "VALID";
     const requestKey = selectionKey;
     const requestGeneration = selection.generation;
+    const requestSession = sessionGeneration;
     busy.current = true;
     setProgress(placing ? "place" : "quote");
     setNotice(null);
     clientRuntime.runFork(
       submitCheckoutProgram({
         fields,
+        isCurrentSession: () => currentSession.current === requestSession,
         lines: cartLineSnapshot(cart.entries),
         locale,
         method,
@@ -290,12 +337,18 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
       }).pipe(
         Effect.match({
           onFailure: (error) => {
-            setNotice(failureNotice(error, placing));
+            if (currentSession.current === requestSession) {
+              setNotice(failureNotice(error, placing));
+            }
             restore();
           },
           onSuccess: ({ guard, result }) => {
+            if (currentSession.current !== requestSession) {
+              restore();
+              return;
+            }
             if (result.outcome === "PLACED" || result.outcome === "REPLAYED") {
-              complete(result, guard);
+              complete(result, guard, requestSession);
             } else {
               setQuoteSnapshot({ generation: requestGeneration, key: requestKey, result });
               if (result.outcome === "REJECTED") {
@@ -315,15 +368,24 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
       return;
     }
     busy.current = true;
+    const requestSession = sessionGeneration;
     setProgress("recovery");
     setNotice(null);
     clientRuntime.runFork(
       recoverCheckoutProgram(guard, locale).pipe(
         Effect.match({
-          onFailure: () => setNotice(currentReceipt === null ? "uncertain" : "unavailable"),
+          onFailure: () => {
+            if (currentSession.current === requestSession) {
+              setNotice(currentReceipt === null ? "uncertain" : "unavailable");
+            }
+          },
           onSuccess: (result) => {
+            if (currentSession.current !== requestSession) {
+              restore();
+              return;
+            }
             if (result.state === "confirmed") {
-              complete(result.result, guard);
+              complete(result.result, guard, requestSession);
             } else {
               setNotice(currentReceipt === null ? "uncertain" : "unavailable");
             }
@@ -334,7 +396,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     );
   };
   const dismiss = (onDone: () => void) => {
-    if (busy.current || receipt === null || receiptGuard === null) {
+    if (busy.current || currentReceipt === null || receiptGuard === null) {
       return;
     }
     busy.current = true;
@@ -368,7 +430,7 @@ export const useCheckout = (options: ReadyOptions, locale: string) => {
     progress,
     quote,
     receipt: currentReceipt,
-    receiptEntries,
+    receiptEntries: currentReceipt === null ? [] : receiptEntries,
     recover,
     submit,
   };

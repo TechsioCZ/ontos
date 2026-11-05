@@ -1,5 +1,5 @@
 import "server-only";
-import { ByteSize, Effect, Layer, ManagedRuntime, Match } from "effect";
+import { ByteSize, Effect, Layer, ManagedRuntime, Match, Schema } from "effect";
 import {
   FetchHttpClient,
   HttpRouter,
@@ -7,7 +7,10 @@ import {
   HttpServerRequest,
   HttpServerError,
   HttpServerResponse,
+  Cookies,
+  HttpEffect,
 } from "effect/http";
+import type { HttpClient } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import {
   CheckoutApi,
@@ -17,10 +20,14 @@ import {
   CheckoutScopeProblem,
   CheckoutUnavailableProblem,
   CheckoutUncertainProblem,
+  CheckoutResultSchema,
+  CheckoutRecoverySchema,
 } from "./checkout";
 import type { CheckoutFailure } from "./checkout-server";
 import { recoverCheckout, submitCheckout } from "./checkout-server";
 import { normalizePublicRequest } from "./request-origin";
+import { portalRequestContext } from "./portal-server";
+import type { PortalRequestContext } from "./portal-server";
 
 const maxBodyBytes = 65_536;
 const noStore = HttpServerResponse.setHeader("cache-control", "no-store");
@@ -53,10 +60,61 @@ const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(
   CheckoutSchemaErrorMiddleware,
   () => Effect.fail(invalidProblem()),
 );
+const problems = Schema.Union([
+  CheckoutInvalidProblem,
+  CheckoutForbiddenProblem,
+  CheckoutScopeProblem,
+  CheckoutUnavailableProblem,
+  CheckoutUncertainProblem,
+]);
+const channel = (
+  request: HttpServerRequest.HttpServerRequest,
+  program: (
+    context: PortalRequestContext,
+  ) => Effect.Effect<HttpServerResponse.HttpServerResponse, CheckoutFailure, HttpClient.HttpClient>,
+) =>
+  Effect.gen(function* checkoutChannel() {
+    const context = portalRequestContext(
+      new URL(request.originalUrl).origin,
+      request.headers.cookie,
+    );
+    // Native request-owned response hooks survive an interrupted dispatch and the outer timeout reply.
+    yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+      Effect.succeed(
+        response.pipe(HttpServerResponse.replaceCookies(Cookies.fromSetCookie(context.setCookies))),
+      ),
+    );
+    const response = yield* program(context).pipe(
+      Effect.catch((error) => {
+        const problem = toProblem(error);
+        return HttpServerResponse.schemaJson(problems)(problem, {
+          contentType: problemContentType,
+          status: problem.status,
+        }).pipe(Effect.orDie);
+      }),
+    );
+    return response;
+  });
 const handlers = HttpApiBuilder.group(CheckoutApi, "checkout", (group) =>
   group
-    .handle("execute", ({ payload }) => submitCheckout(payload).pipe(Effect.mapError(toProblem)))
-    .handle("status", ({ payload }) => recoverCheckout(payload).pipe(Effect.mapError(toProblem))),
+    .handle("execute", ({ payload, request }) =>
+      channel(request, (context) =>
+        submitCheckout(payload, context).pipe(
+          Effect.flatMap((data) =>
+            HttpServerResponse.schemaJson(CheckoutResultSchema)(data).pipe(Effect.orDie),
+          ),
+        ),
+      ),
+    )
+    .handle("status", ({ payload, request }) =>
+      channel(request, (context) =>
+        recoverCheckout(payload, context).pipe(
+          Effect.flatMap((data) =>
+            HttpServerResponse.schemaJson(CheckoutRecoverySchema)(data).pipe(Effect.orDie),
+          ),
+        ),
+      ),
+    ),
 ).pipe(Layer.provide(schemaErrors));
 const failureResponse = (state: "invalid" | "forbidden" | "uncertain") =>
   Match.value(state).pipe(
@@ -97,6 +155,8 @@ const responsePolicy = HttpRouter.middleware(
             )
           : Effect.die(defect),
       ),
+      // This deadline returns through native response sending, so pre-response cookie hooks run.
+      Effect.timeoutOrElse({ duration: "55 seconds", orElse: () => failureResponse("uncertain") }),
       Effect.flatMap(finalizeResponse),
     ),
   { global: true },
@@ -131,7 +191,7 @@ export const checkoutWeb = HttpRouter.toWebHandler(application, {
       return yield* effect;
     }).pipe(
       // A timeout may occur after native dispatch. Never imply that another order can safely be sent.
-      Effect.timeoutOrElse({ duration: "55 seconds", orElse: () => failureResponse("uncertain") }),
+      Effect.timeoutOrElse({ duration: "60 seconds", orElse: () => failureResponse("uncertain") }),
       Effect.map(noStore),
     ),
 });

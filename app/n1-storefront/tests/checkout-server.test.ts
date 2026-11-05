@@ -8,6 +8,7 @@ import type { StorefrontConfiguration } from "../src/ontos/config";
 import { CheckoutRequestSchema, CheckoutResultSchema } from "../src/ontos/checkout";
 import type { CheckoutRequest } from "../src/ontos/checkout";
 import { readCheckoutContext } from "../src/ontos/checkout-context";
+import { portalRequestContext } from "../src/ontos/portal-server";
 import {
   recoverCheckoutWithConfiguration,
   submitCheckoutWithConfiguration,
@@ -67,6 +68,13 @@ const order = {
   totalVatMinor: 2659,
   updatedAt: "2026-11-04T12:00:00.000Z",
 } satisfies typeof OrderSchema.Encoded;
+const customerAccount = {
+  email: "customer@example.test",
+  id: "71000000-0000-4000-8000-000000000091",
+  name: "Native Customer",
+  partyId: "71000000-0000-4000-8000-000000000092",
+  tenantId: config.tenantId,
+};
 interface BackendOptions {
   readonly actionStatus?: number;
   readonly badPlacedProof?: boolean;
@@ -77,6 +85,10 @@ interface BackendOptions {
   readonly existingOrder?: typeof OrderSchema.Encoded;
   readonly locale?: "cs" | "en";
   readonly noReceipt?: boolean;
+  readonly portalAccount?: typeof customerAccount;
+  readonly portalAnonymous?: boolean;
+  readonly portalGatewayStatus?: number;
+  readonly portalStatus?: number;
   readonly shippingPriceMinor?: number;
 }
 const readHeaders = {
@@ -123,6 +135,33 @@ const receiptOrders = (placed: boolean, options: BackendOptions) => {
   }
   return placed ? [order] : [];
 };
+const portalResponse = async (request: Request, options: BackendOptions) => {
+  const path = new URL(request.url).pathname;
+  if (path.endsWith("/customer-account")) {
+    return Response.json(
+      options.portalAnonymous === true
+        ? { state: "anonymous" }
+        : { account: options.portalAccount ?? customerAccount, state: "authenticated" },
+      { status: options.portalStatus ?? 200 },
+    );
+  }
+  if (!path.endsWith("/gateway-context")) {
+    return null;
+  }
+  const payload = await request.clone().json();
+  if (payload.audience !== "commerce-customer-context") {
+    return null;
+  }
+  if (options.portalGatewayStatus !== undefined) {
+    return Response.json({}, { status: options.portalGatewayStatus });
+  }
+  return Response.json({
+    apiBaseUrl: "/shell-super-app-api/gateway/portal",
+    compositionRevision: "a".repeat(64),
+    expiresAt: 9_999_999_999,
+    token: "portal-test-only-assertion",
+  });
+};
 const backend = (options: BackendOptions = {}) => {
   const calls: Request[] = [];
   const countryCodes = options.countryCodes ?? ["CZ"];
@@ -133,6 +172,10 @@ const backend = (options: BackendOptions = {}) => {
     const request = new Request(url, init);
     calls.push(request.clone());
     const path = new URL(request.url).pathname;
+    const portal = await portalResponse(request, options);
+    if (portal !== null) {
+      return portal;
+    }
     const payload = await request.clone().json();
     if (path.endsWith("/gateway-read")) {
       let body;
@@ -225,6 +268,184 @@ const backend = (options: BackendOptions = {}) => {
 };
 const decode = (input: typeof CheckoutRequestSchema.Encoded = draft) =>
   Schema.decodeUnknownEffect(CheckoutRequestSchema, { onExcessProperty: "error" })(input);
+
+const customerContext = () =>
+  portalRequestContext(
+    "https://n1.example",
+    "commerce-portal.session=customer-test-session; staff.session=never-relay",
+  );
+const customerOrder = {
+  ...order,
+  customerAccountId: customerAccount.id,
+  partyId: customerAccount.partyId,
+};
+
+describe("checkout derives customer ownership from fresh native Portal admission", () => {
+  it.effect("maps a definite Portal gateway refusal to forbidden before any Action", () =>
+    Effect.gen(function* refusedPortalGate() {
+      const owner = backend({ portalGatewayStatus: 403 });
+      const input = yield* decode();
+      const result = yield* submitCheckoutWithConfiguration(config, input, customerContext()).pipe(
+        Effect.result,
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure.state).toBe("forbidden");
+      }
+      expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+    }),
+  );
+  for (const mode of ["quote", "place"] as const) {
+    it.effect(`binds ${mode} to the admitted account and Party, never the contact email`, () =>
+      Effect.gen(function* customerCheckout() {
+        const owner = backend();
+        const input = yield* decode({ ...draft, mode });
+        const result = yield* submitCheckoutWithConfiguration(
+          config,
+          input,
+          customerContext(),
+        ).pipe(
+          Effect.provide(FetchHttpClient.layer),
+          Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+        );
+        expect(result.outcome).toBe(mode === "quote" ? "VALID" : "PLACED");
+        const admission = owner.calls.filter((call) => call.url.endsWith("/customer-account"));
+        expect(admission).toHaveLength(1);
+        expect(admission[0]?.headers.get("cookie")).toContain("commerce-portal.session");
+        expect(admission[0]?.headers.get("cookie")).not.toContain("staff.session");
+        const actions = owner.calls.filter((call) => call.url.endsWith("/apply-command"));
+        expect(actions).toHaveLength(1);
+        const payload = yield* Effect.promise(() => actions[0]?.json());
+        expect(payload.command).toMatchObject({
+          contact: { email: draft.contact.email },
+          customerAccountId: customerAccount.id,
+          dryRun: mode === "quote",
+          partyId: customerAccount.partyId,
+        });
+        expect(JSON.stringify(result)).not.toContain(customerAccount.id);
+        expect(JSON.stringify(result)).not.toContain(customerAccount.partyId);
+      }),
+    );
+  }
+
+  for (const options of [
+    { portalAnonymous: true },
+    { portalStatus: 403 },
+    { portalStatus: 503 },
+    { portalAccount: { ...customerAccount, tenantId: config.legalEntityId } },
+  ] satisfies BackendOptions[]) {
+    it.effect(
+      `never silently places as guest when Portal cookies cannot admit: ${JSON.stringify(options)}`,
+      () =>
+        Effect.gen(function* noGuestDowngrade() {
+          const owner = backend(options);
+          const input = yield* decode();
+          const outcome = yield* submitCheckoutWithConfiguration(
+            config,
+            input,
+            customerContext(),
+          ).pipe(
+            Effect.result,
+            Effect.provide(FetchHttpClient.layer),
+            Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+          );
+          expect(Result.isFailure(outcome)).toBe(true);
+          expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+        }),
+    );
+  }
+
+  it.effect("recovers the customer's canonical receipt without another Action", () =>
+    Effect.gen(function* ownedReceipt() {
+      const owner = backend({ existingOrder: customerOrder });
+      const result = yield* recoverCheckoutWithConfiguration(
+        config,
+        { clientRequestId, locale: "cs", scope },
+        customerContext(),
+      ).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(result).toMatchObject({
+        result: { orderId: order.id, receipt: { contact: order.contact } },
+        state: "confirmed",
+      });
+      expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+      expect(JSON.stringify(result)).not.toContain(customerAccount.id);
+    }),
+  );
+
+  for (const portalAccount of [
+    { ...customerAccount, id: "71000000-0000-4000-8000-000000000090" },
+    { ...customerAccount, partyId: "71000000-0000-4000-8000-000000000090" },
+  ]) {
+    it.effect(
+      `denies a customer receipt unless BOTH subject fields match: ${portalAccount.id}/${portalAccount.partyId}`,
+      () =>
+        Effect.gen(function* noForeignReceipt() {
+          const owner = backend({ existingOrder: customerOrder, portalAccount });
+          const result = yield* recoverCheckoutWithConfiguration(
+            config,
+            { clientRequestId, locale: "cs", scope },
+            customerContext(),
+          ).pipe(
+            Effect.result,
+            Effect.provide(FetchHttpClient.layer),
+            Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+          );
+          expect(Result.isFailure(result)).toBe(true);
+          expect(JSON.stringify(result)).not.toContain(order.contact.email);
+          expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+        }),
+    );
+  }
+
+  it.effect("keeps a historical guest nonce guest after the browser later logs in", () =>
+    Effect.gen(function* guestRemainsGuest() {
+      const owner = backend({ existingOrder: order });
+      const input = yield* decode();
+      const result = yield* submitCheckoutWithConfiguration(config, input, customerContext()).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+      );
+      expect(result).toMatchObject({ orderId: order.id, outcome: "REPLAYED" });
+      expect(owner.calls.filter((call) => call.url.endsWith("/apply-command"))).toHaveLength(0);
+    }),
+  );
+  it.effect("reauthenticates placement instead of reusing the identity from a prior quote", () =>
+    Effect.gen(function* freshPlacementIdentity() {
+      const quotedOwner = backend();
+      const quoted = yield* decode({ ...draft, mode: "quote" });
+      yield* submitCheckoutWithConfiguration(config, quoted, customerContext()).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, quotedOwner.fetch),
+      );
+      const changedAccount = {
+        ...customerAccount,
+        id: "71000000-0000-4000-8000-000000000089",
+        partyId: "71000000-0000-4000-8000-000000000088",
+      };
+      const placedOwner = backend({ portalAccount: changedAccount });
+      const input = yield* decode();
+      yield* submitCheckoutWithConfiguration(config, input, customerContext()).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, placedOwner.fetch),
+      );
+      const action = placedOwner.calls.find((call) => call.url.endsWith("/apply-command"));
+      expect(action).toBeDefined();
+      if (action === undefined) {
+        return;
+      }
+      const payload = yield* Effect.promise(() => action.json());
+      expect(payload.command).toMatchObject({
+        customerAccountId: changedAccount.id,
+        partyId: changedAccount.partyId,
+      });
+    }),
+  );
+});
 
 describe("owner-backed guest checkout", () => {
   it("preserves shipping-inclusive VAT and refuses shipping above the grand total", () => {
