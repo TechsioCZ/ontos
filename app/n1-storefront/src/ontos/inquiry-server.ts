@@ -7,8 +7,14 @@ import { Effect, Match, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import type { StorefrontConfiguration } from "./config";
 import { readConfiguration } from "./config";
-import type { Inquiry } from "./inquiry";
-import { confirmInquiryTask, InquiryFailure, sendInquiry } from "./inquiry-model";
+import type { Inquiry, InquiryProduct } from "./inquiry";
+import {
+  confirmInquiryTask,
+  InquiryFailure,
+  resolveInquiryProduct,
+  sendInquiry,
+} from "./inquiry-model";
+import { loadCatalog } from "./catalog";
 
 const ContextSchema = Schema.Struct({
   apiBaseUrl: Schema.String.check(Schema.isPattern(/^\/shell-super-app-api\/[a-z\d/-]+$/u)),
@@ -101,6 +107,19 @@ const writeInquiry = (config: StorefrontConfiguration, payload: ApplyCommandPayl
     );
   });
 
+/** The same market-scoped public catalog backs prefill and fresh pre-write identity verification. */
+export const readInquiryProduct = (locale: string, selector: InquiryProduct) =>
+  loadCatalog(locale, { productId: selector.productId }).pipe(
+    Effect.flatMap((catalog) =>
+      catalog.configured
+        ? resolveInquiryProduct(selector, catalog.details)
+        : Effect.fail(new InquiryFailure({ reason: "unavailable" })),
+    ),
+    Effect.mapError((problem) =>
+      problem._tag === "InquiryFailure" ? problem : new InquiryFailure({ reason: "unavailable" }),
+    ),
+  );
+
 export const persistInquiry = (inquiry: Inquiry) =>
   Effect.gen(function* persistInquiryProgram() {
     const config = yield* readConfiguration(process.env).pipe(
@@ -108,6 +127,7 @@ export const persistInquiry = (inquiry: Inquiry) =>
     );
     return yield* sendInquiry(inquiry, {
       apply: (payload) => writeInquiry(config, payload),
+      product: (selector) => readInquiryProduct(inquiry.locale, selector),
       revision: shellRequest(config, "gateway-read", {
         audience: "work-tasks",
         legalEntityId: config.legalEntityId,

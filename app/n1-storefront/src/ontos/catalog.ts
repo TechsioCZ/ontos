@@ -11,6 +11,7 @@ export interface CatalogQuery {
   categorySlug?: string;
   featured?: boolean;
   page?: number;
+  productId?: string;
   q?: string;
   slug?: string;
 }
@@ -19,12 +20,15 @@ const CatalogQuerySchema = Schema.Struct({
   categorySlug: Schema.optionalKey(Schema.String),
   featured: Schema.optionalKey(Schema.Boolean),
   page: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  productId: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  ),
   q: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
   slug: Schema.optionalKey(Schema.String),
 });
 
 /** Read-only public channel. No writes, seed catalog or alternate data source lives in this app. */
-const loadCatalog = (locale: string, query: CatalogQuery) =>
+export const loadCatalog = (locale: string, query: CatalogQuery) =>
   Effect.gen(function* loadCatalogProgram() {
     const config = yield* readConfiguration(process.env);
     const now = yield* Clock.currentTimeMillis;
@@ -36,6 +40,18 @@ const loadCatalog = (locale: string, query: CatalogQuery) =>
       MarketCatalogSchema,
     );
     const market = yield* selectMarket(markets, config, locale, now);
+    const { productId, ...filters } = query;
+    const full = query.slug !== undefined || productId !== undefined;
+    const fields: "card" | "full" = full ? "full" : "card";
+    const catalogQuery = {
+      ...filters,
+      fields,
+      includeCategories: productId === undefined,
+      marketId: market.marketRef.resourceId,
+      pageSize: full ? 1 : 24,
+    };
+    const storefrontCatalog =
+      productId === undefined ? catalogQuery : { ...catalogQuery, productIds: [productId] };
     const body = yield* readOwner(
       config,
       "merchandise",
@@ -43,13 +59,7 @@ const loadCatalog = (locale: string, query: CatalogQuery) =>
       {
         view: {
           storefront: true,
-          storefrontCatalog: {
-            ...query,
-            fields: query.slug === undefined ? "card" : "full",
-            includeCategories: true,
-            marketId: market.marketRef.resourceId,
-            pageSize: query.slug === undefined ? 24 : 1,
-          },
+          storefrontCatalog,
         },
       },
       CatalogResponseSchema,

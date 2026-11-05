@@ -8,14 +8,38 @@ import { Effect, Fiber } from "effect";
 import { useParams } from "next/navigation";
 import type { SubmitEvent } from "react";
 import { useEffect, useRef, useState } from "react";
-import { decodeInquiry } from "@/ontos/inquiry";
-import type { InquiryOutcome } from "@/ontos/inquiry";
+import { decodeInquiry, inquiryMessageMaximum } from "@/ontos/inquiry";
+import type { InquiryOutcome, InquiryProductContext } from "@/ontos/inquiry";
 import { inquiryRuntime, startInquirySubmission, submitInquiry } from "@/ontos/inquiry-client";
 import type { Dictionary } from "@/i18n";
 
 /** N1 contact composition with owner-confirmed submission and explicit uncertain outcomes. */
-export const ContactView = ({ dictionary: d }: { dictionary: Dictionary }) => {
+export const ContactView = ({
+  dictionary: d,
+  question,
+}: {
+  dictionary: Dictionary;
+  question?: { product: InquiryProductContext; state: "ready" } | { state: "unavailable" };
+}) => {
   const { locale } = useParams<{ locale: string }>();
+  const product = question?.state === "ready" ? question.product : undefined;
+  const unavailableProduct = question?.state === "unavailable";
+  const defaultMessage =
+    product === undefined
+      ? undefined
+      : [
+          d.contact.productLine.replace("{name}", () => product.productName),
+          ...(product.variant === undefined
+            ? []
+            : [
+                d.contact.variantLine
+                  .replace("{name}", () => product.variant?.name ?? "")
+                  .replace("{sku}", () => product.variant?.sku ?? ""),
+              ]),
+          "",
+          d.contact.productQuestionPrompt,
+          "",
+        ].join("\n");
   const [state, setState] = useState<InquiryOutcome["state"] | "idle" | "pending">("idle");
   const active = useRef<Fiber.Fiber<InquiryOutcome> | null>(null);
   useEffect(
@@ -28,16 +52,19 @@ export const ContactView = ({ dictionary: d }: { dictionary: Dictionary }) => {
     },
     [],
   );
-  const locked = state === "pending" || state === "sent" || state === "unconfirmed";
-  const statusText = {
-    forbidden: d.contact.forbidden,
-    idle: "",
-    invalid: d.contact.invalid,
-    pending: d.contact.submitting,
-    sent: d.contact.sent,
-    unavailable: d.contact.formUnavailable,
-    unconfirmed: d.contact.unconfirmed,
-  }[state];
+  const locked =
+    unavailableProduct || state === "pending" || state === "sent" || state === "unconfirmed";
+  const statusText = unavailableProduct
+    ? d.contact.formUnavailable
+    : {
+        forbidden: d.contact.forbidden,
+        idle: "",
+        invalid: d.contact.invalid,
+        pending: d.contact.submitting,
+        sent: d.contact.sent,
+        unavailable: d.contact.formUnavailable,
+        unconfirmed: d.contact.unconfirmed,
+      }[state];
   const buttonText = { pending: d.contact.submitting, unavailable: d.contact.retry };
   const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -46,17 +73,28 @@ export const ContactView = ({ dictionary: d }: { dictionary: Dictionary }) => {
     }
     const fields = new FormData(event.currentTarget);
     setState("pending");
+    const customerFields = {
+      email: fields.get("email"),
+      locale,
+      message: fields.get("message"),
+      name: fields.get("name"),
+      phone: fields.get("phone"),
+      requestId: crypto.randomUUID(),
+    };
+    const payload =
+      product === undefined
+        ? customerFields
+        : {
+            ...customerFields,
+            product: {
+              productId: product.productId,
+              variantIds: product.variant === undefined ? [] : [product.variant.id],
+            },
+          };
     startInquirySubmission(
       active,
       (result) => setState(result.state),
-      decodeInquiry({
-        email: fields.get("email"),
-        locale,
-        message: fields.get("message"),
-        name: fields.get("name"),
-        phone: fields.get("phone"),
-        requestId: crypto.randomUUID(),
-      }).pipe(
+      decodeInquiry(payload).pipe(
         Effect.flatMap(submitInquiry),
         Effect.catchTag("InquiryFailure", () =>
           Effect.succeed<InquiryOutcome>({ state: "invalid" }),
@@ -115,7 +153,7 @@ export const ContactView = ({ dictionary: d }: { dictionary: Dictionary }) => {
         <h2 className="text-lg font-semibold" id="contact-form-heading">
           {d.contact.formHeading}
         </h2>
-        {state !== "idle" && (
+        {(state !== "idle" || unavailableProduct) && (
           <output aria-live="polite" className="mt-4 block" id="contact-form-status">
             {statusText}
           </output>
@@ -123,7 +161,9 @@ export const ContactView = ({ dictionary: d }: { dictionary: Dictionary }) => {
         <form onSubmit={submit}>
           <fieldset
             aria-busy={state === "pending"}
-            aria-describedby={state === "idle" ? undefined : "contact-form-status"}
+            aria-describedby={
+              state === "idle" && !unavailableProduct ? undefined : "contact-form-status"
+            }
             className="mt-6 grid min-w-0 grid-cols-2 gap-4"
             disabled={locked}
           >
@@ -163,10 +203,11 @@ export const ContactView = ({ dictionary: d }: { dictionary: Dictionary }) => {
             </div>
             <div className="min-w-0 space-y-3">
               <FormTextarea
+                defaultValue={defaultMessage}
                 disabled={locked}
                 id="contact-message"
                 label={d.contact.message}
-                maxLength={1500}
+                maxLength={inquiryMessageMaximum(product, locale)}
                 name="message"
                 required
                 resize="none"

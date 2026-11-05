@@ -1,5 +1,39 @@
 # Kontrola převodu N1 storefrontu
 
+## C33: skutečný dotaz na produkt přes existující Contact / Work Tasks — 2026-11-05
+
+- Figma desktop219:2865 v219:2854 + aktuální Akros FOR-KAI-UWE kontakt424:
+  PDP Link přenáší skutečné productId a zvolenou variantu do kontaktního formuláře.
+  Historické N1 NOOP akce nejsou převzaté. Mobil31:641 actionrow nemá;
+  desktop-only je doložený rozsah, ostatní tři akce/ETA nejsou prohlášeny hotové.
+- Pouze selektory + zákaznická pole v kanálu. Jedna vybraná varianta max300 znaků
+  včetně skutečných legacy ID; missing/repeated/plural/foreign/inactive odmítnuty.
+  Stejný public catalog Effect používá přesný productIds:[id]/full/pageSize1,
+  vybraný N1 market a returned-market kontrolu, nikoli staff či nefiltrovaný fallback.
+- Před nativním CreateTask se canonical produkt/varianta čtou znovu, ještě před
+  Work Tasks revision read. Kind/title/subject/productName/slug odvozuje server;
+  varianta je uložena v canonical description, owner nemá variantIds pole.
+  Nejasný Action výsledek zůstává terminal; žádný nový retry nebo náhradní klíč.
+- Chybná identita končí404; nedostupný produktový read zamkne produktový dotaz,
+  nepřepne jej tiše na obecný CONTACT. Key odpovídá selectoru. Zpráva je editable,
+  ale její text není autoritou pro canonical metadata. Limity1500/ownerdescription2000
+  mají sdílený konzervativní budget a maxlength; nativní schema znovu validuje,
+  žádné ořezávání zákaznické zprávy při zápisu.
+- TDD dva nové případy skutečně RED→GREEN.515/515 N1 testů PASS, lint/TSRS,
+  formát a produkční build PASS; po scope/props úpravě také cílené route/PDP testy.
+  Nezávislé source review GO. Větší kroky běžely postupně s naším FE vypnutým.
+- Skutečný browser CS1440/390: M1968→prefill29092-185-M, S1969→29092-185-S,
+  produkt490c4aec-197b-45ba-ae19-cb0988b69e14. Maxlength1467, label700, mobilní
+  pole147×44, žádný horizontální overflow. Nativní produktový GET byl úspěšný.
+- Finální Icon props md/secondary: skutečný paint16×16/#555/gap8/row24;
+  `.local/n1-c33-pdp-question-desktop-final.png`, reference n1-pdp-actions-figma.png.
+  Link0.57 je unstyled a neumí Figma sm14/fg-secondary/underline přes veřejné API;
+  canonical defaultlinktokeny navíc této instanci neodpovídají. Žádné appearanceCSS
+  ani app token override nebyly přidány. Plná vizuální shoda actionrow se netvrdí.
+- Pozitivní CreateTask QA zatím neproběhlo kvůli běžícímu datovému writeru.
+  EN productquestion GET pravdivě skončil unavailable/disabled přes stávající
+  StorefrontMarketUnavailable; EN pozitivní průchod ani odeslaný e-mail se netvrdí.
+
 ## C32: článková kompozice nedostupných novinek — 2026-11-05
 
 - Fresh Figma desktop370:2418 / mobile370:2538: obal max1200/p40,

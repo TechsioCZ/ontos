@@ -10,6 +10,7 @@ import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Tabs } from "@techsio/ui-kit/molecules/tabs";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Link } from "@techsio/ui-kit/atoms/link";
+import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
 import type { Dictionary } from "@/i18n";
@@ -76,6 +77,10 @@ export const ProductView = ({
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
+  const questionSearch = new URLSearchParams({ productId: product.id });
+  if (variant !== undefined) {
+    questionSearch.set("variantIds", variant.id);
+  }
   return (
     <article className="mx-auto max-w-n1-product-content p-4 md:py-6">
       <Breadcrumb aria-label={d.catalog} size="md">
@@ -238,6 +243,16 @@ export const ProductView = ({
             />
           </div>
           <div aria-hidden="true" className="order-7 hidden h-px bg-border-primary md:block" />
+          <div className="order-8 hidden items-center gap-2 md:mt-4 md:flex">
+            <Icon color="secondary" icon="icon-[mdi--help-circle-outline]" size="md" />
+            <Link
+              as={NextLink}
+              href={`/${locale}/kontakty?${questionSearch}#contact-form-heading`}
+              prefetch={false}
+            >
+              {d.contact.productQuestion}
+            </Link>
+          </div>
         </div>
       </div>
       <div className="mt-8 md:mt-1">

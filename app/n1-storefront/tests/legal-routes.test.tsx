@@ -3,13 +3,18 @@ import { beforeEach, describe, expect, it, rs } from "@rstest/core";
 import ContentPage from "../src/app/[locale]/[content]/page";
 import { getFulfillment } from "../src/ontos/fulfillment";
 import { getDictionary } from "../src/i18n";
+import { Effect } from "effect";
+import { readInquiryProduct } from "../src/ontos/inquiry-server";
+import { InquiryFailure } from "../src/ontos/inquiry";
+import { ContactView } from "../src/features/contact-view";
 
 rs.mock("../src/features/auth-view", () => ({
   AuthView: () => <div>auth-view</div>,
 }));
 rs.mock("../src/features/contact-view", () => ({
-  ContactView: () => <div>contact-view</div>,
+  ContactView: rs.fn(() => <div>contact-view</div>),
 }));
+rs.mock("../src/ontos/inquiry-server", () => ({ readInquiryProduct: rs.fn() }));
 rs.mock("../src/features/fulfillment-view", () => ({
   FulfillmentView: ({ kind }: { kind: string }) => <div>{kind}</div>,
 }));
@@ -26,6 +31,62 @@ const renderPage = async (content: string, locale = "cs") =>
   );
 beforeEach(() => {
   rs.clearAllMocks();
+  rs.mocked(readInquiryProduct).mockReset();
+});
+
+const renderContact = async (query: {
+  productId?: string | string[];
+  variantIds?: string | string[];
+}) =>
+  renderToStaticMarkup(
+    await ContentPage({
+      params: Promise.resolve({ content: "kontakty", locale: "cs" }),
+      searchParams: Promise.resolve(query),
+    }),
+  );
+
+describe("contact product selectors fail closed at the route boundary", () => {
+  it("reads the real selected identity and passes only canonical prefill to ContactView", async () => {
+    const product = {
+      productId: "product",
+      productName: "Actual owner product",
+      productSlug: "actual",
+      variant: { id: "n1legacy:variant:12", name: "M", sku: "ACTUAL-M" },
+    };
+    rs.mocked(readInquiryProduct).mockReturnValue(Effect.succeed(product));
+    expect(
+      await renderContact({ productId: "product", variantIds: "n1legacy:variant:12" }),
+    ).toContain("contact-view");
+    expect(readInquiryProduct).toHaveBeenCalledExactlyOnceWith("cs", {
+      productId: "product",
+      variantIds: ["n1legacy:variant:12"],
+    });
+    expect(rs.mocked(ContactView).mock.calls[0]?.[0].question).toEqual({ product, state: "ready" });
+  });
+  it("shows a locked unavailable question rather than reverting to a generic contact", async () => {
+    rs.mocked(readInquiryProduct).mockReturnValue(
+      Effect.fail(new InquiryFailure({ reason: "unavailable" })),
+    );
+    expect(await renderContact({ productId: "product" })).toContain("contact-view");
+    expect(rs.mocked(ContactView).mock.calls[0]?.[0].question).toEqual({ state: "unavailable" });
+  });
+  it("returns not-found for a product or variant that the public catalog no longer exposes", async () => {
+    rs.mocked(readInquiryProduct).mockReturnValue(
+      Effect.fail(new InquiryFailure({ reason: "invalid" })),
+    );
+    await expect(renderContact({ productId: "product", variantIds: "removed" })).rejects.toThrow(
+      /404/u,
+    );
+    expect(ContactView).not.toHaveBeenCalled();
+  });
+  it.each([
+    { productId: ["product", "other"] },
+    { variantIds: "variant" },
+    { productId: "product", variantIds: "first,second" },
+  ])("rejects invalid selectors before performing a catalog read", async (query) => {
+    await expect(renderContact(query)).rejects.toThrow(/404/u);
+    expect(readInquiryProduct).not.toHaveBeenCalled();
+  });
 });
 
 describe("legal routes retain the existing content dispatch boundary", () => {

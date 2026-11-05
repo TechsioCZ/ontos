@@ -4,7 +4,10 @@ import { ContactView } from "@/features/contact-view";
 import { FulfillmentView } from "@/features/fulfillment-view";
 import { getFulfillment } from "@/ontos/fulfillment";
 import { AuthView } from "@/features/auth-view";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
+import { parseInquiryProductQuery } from "@/ontos/inquiry";
+import { readInquiryProduct } from "@/ontos/inquiry-server";
+import { storefrontRuntime } from "@/ontos/runtime";
 import { PortalVerificationNoticeSchema } from "@/ontos/portal";
 import { legalArticles } from "@/content/legal-content";
 import { LegalView } from "@/features/legal-view";
@@ -14,7 +17,11 @@ const ContentPage = async ({
   searchParams,
 }: {
   params: Promise<{ content: string; locale: string }>;
-  searchParams: Promise<{ verification?: string | string[] }>;
+  searchParams: Promise<{
+    productId?: string | string[];
+    variantIds?: string | string[];
+    verification?: string | string[];
+  }>;
 }) => {
   const { content, locale } = await params;
   const d = getDictionary(locale);
@@ -57,8 +64,30 @@ const ContentPage = async ({
     );
   }
   if (content === "kontakty") {
-    return <ContactView dictionary={d} />;
+    const question = parseInquiryProductQuery(await searchParams);
+    if (question.state === "none") {
+      return <ContactView dictionary={d} />;
+    }
+    if (question.state === "invalid") {
+      notFound();
+    }
+    const result = await storefrontRuntime.runPromise(
+      readInquiryProduct(locale, question.selector).pipe(
+        Effect.match({
+          onFailure: (failure) =>
+            failure.reason === "invalid"
+              ? { state: "invalid" as const }
+              : { state: "unavailable" as const },
+          onSuccess: (product) => ({ product, state: "ready" as const }),
+        }),
+      ),
+    );
+    if (result.state === "invalid") {
+      notFound();
+    }
+    return <ContactView dictionary={d} key={JSON.stringify(question.selector)} question={result} />;
   }
+
   if (content === "obchodni-podminky" || content === "ochrana-osobnich-udaju") {
     return <LegalView article={legalArticles[content]} />;
   }
