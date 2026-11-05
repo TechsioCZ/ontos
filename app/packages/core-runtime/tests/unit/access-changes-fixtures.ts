@@ -245,11 +245,15 @@ export const assignment = (
  * grantor's bound never trips it.
  */
 /** The tenant's live members as the projection reads them: by default only `PERSON`, the grantor. */
-export const tenantMembership = (members: readonly string[] = [PERSON]) => ({
-  legalEntities: [],
-  members: members.map((principalId) => ({ holder: principalHolder(principalId) })),
-  suspended: [],
-});
+export const tenantMembership = (members: readonly string[] = [PERSON]) => {
+  const live = members.map((principalId) => ({ holder: principalHolder(principalId) }));
+  // The same people are members of `LEGAL_ENTITY`, so a company delegation's path is live too.
+  return {
+    legalEntities: [{ legalEntityId: LEGAL_ENTITY, members: live, suspended: [] }],
+    members: live,
+    suspended: [],
+  };
+};
 
 export const grantorHolding = (capabilityKeys: readonly string[], cells?: readonly Cell[]) => {
   const held = roleState({

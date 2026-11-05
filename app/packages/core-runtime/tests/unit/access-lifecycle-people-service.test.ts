@@ -154,7 +154,13 @@ const serviceOver = (holdings: readonly ReturnType<typeof holding>[], fixture: S
     loader: { loadConfigureBases: () => Effect.succeed(fixture.bases ?? [{ _tag: 'Owner' }]) },
     memberships: {
       loadTenantMemberships: () =>
-        Effect.succeed([membership(MANAGER, scopeB, 1), membership(MEMBER, scopeB, 2), membership(GRANTOR, scopeB, 3)]),
+        Effect.succeed([
+          membership(MANAGER, scopeB, 1),
+          membership(MEMBER, scopeB, 2),
+          membership(GRANTOR, scopeB, 3),
+          // A company grantor's grants count only on a live path: the tenant's membership and the company's.
+          membership(GRANTOR, tenantScope, 4),
+        ]),
       recordMembership: () => unused,
       recordMemberships: () => unused,
       setMembershipStatus: () => unused,
@@ -340,7 +346,12 @@ it.effect('assigns through a delegated manager envelope only, and freezes its li
     yield* TestClock.setTime(AT.getTime());
     const delegation = managed();
     const written: PeopleIntentWrite[] = [];
-    const service = serviceOver([], { bases: [delegatedBasis(delegation)], delegations: [delegation], written });
+    // The grantor pays in company B, which is what the delegate hands on.
+    const service = serviceOver([holding(10, scopeB, 50_000)], {
+      bases: [delegatedBasis(delegation)],
+      delegations: [delegation],
+      written,
+    });
 
     // A role the envelope names, for a person it names: written with the delegation's frozen limits.
     const assigned = yield* service.assignRole(managerScope, assignInB(MEMBER, 1));
@@ -363,6 +374,15 @@ it.effect('assigns through a delegated manager envelope only, and freezes its li
     const outsider = yield* Effect.flip(service.assignRole(managerScope, assignInB(GRANTOR, 4)));
     expect(outsider.code).toBe('delegation_holder_outside_envelope');
     expect(written).toHaveLength(1);
+
+    // A grantor who no longer pays leaves the delegate nothing to assign, though the delegation lives.
+    const lapsed = yield* Effect.flip(
+      serviceOver([], { bases: [delegatedBasis(delegation)], delegations: [delegation] }).assignRole(
+        managerScope,
+        assignInB(MEMBER, 5),
+      ),
+    );
+    expect(lapsed.code).toBe('delegation_outside_grantor_authority');
   }),
 );
 
