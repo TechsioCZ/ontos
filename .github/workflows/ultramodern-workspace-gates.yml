@@ -752,6 +752,16 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm --filter @app/shell-super-app test:e2e
 
+      - name: Verify browser recovery into a newly published release
+        if: matrix.suite == 'browser'
+        working-directory: app
+        env:
+          ONTOS_E2E_RETAINED_PARTY_R2: 'true'
+        run: >-
+          mise exec -- pnpm --filter @app/shell-super-app exec playwright test
+          tests/e2e/login.spec.ts --grep 'reloads failed Contacts into a genuinely published R2'
+          --workers 1
+
       - name: Upload browser failure diagnostics
         if: failure() && matrix.suite == 'browser'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
