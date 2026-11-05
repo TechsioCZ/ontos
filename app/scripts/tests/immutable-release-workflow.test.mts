@@ -7,6 +7,7 @@ import { parse } from 'yaml';
 const CANDIDATE_FLAG = '--candidate-file';
 const UPLOAD_ACTION = 'actions/upload-artifact@';
 const MIGRATION_JOB = 'deploy-migrations';
+const DEPLOY_TARGET_JOB = 'deploy-target';
 const NODE_PLAN_JOB = 'node-release-plan';
 const NODE_PREFLIGHT_JOB = 'prepare-node-composition';
 const INTENT_FLAG = '--intent-file';
@@ -39,6 +40,7 @@ const WorkflowSchema = Schema.Struct({
     'edge-build': JobSchema,
     'edge-plan': JobSchema,
     'finalize-edge-deployment': JobSchema,
+    'node-asset-config': JobSchema,
     'node-release-build': JobSchema,
     'node-release-plan': JobSchema,
     'prepare-node-composition': JobSchema,
@@ -93,6 +95,36 @@ it('derives the retained origin before each module build and transports the same
   expect(archive?.run).toContain('plan');
   expect(JSON.stringify(jobs['edge-build'])).not.toContain('secrets.');
   expect(JSON.stringify(jobs['edge-build'])).not.toContain('CLOUDFLARE_API_TOKEN');
+});
+
+it('reads the Node asset subdomain without re-enabling retired Worker readiness or deployment', () => {
+  const jobs = readJobs();
+  const config = jobs['node-asset-config'];
+  expect(config.needs).toEqual([DEPLOY_TARGET_JOB]);
+  expect(config.if).toBe(
+    "needs.deploy-target.outputs.configured == 'true' && needs.deploy-target.outputs.target == 'zerops'",
+  );
+  expect(config.environment).toEqual({
+    deployment: false,
+    name: `\${{ needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}`,
+  });
+  expect(config.outputs).toEqual({
+    workers_dev_subdomain: `\${{ steps.configuration.outputs.workers_dev_subdomain }}`,
+  });
+  const read = config.steps.find(({ id }) => id === 'configuration');
+  expect(read?.env).toEqual({
+    CLOUDFLARE_WORKERS_DEV_SUBDOMAIN: `\${{ vars.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN }}`,
+  });
+  expect(read?.run).toContain(String.raw`printf 'workers_dev_subdomain=%s\n' "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN"`);
+  expect(JSON.stringify(config)).not.toContain('secrets.');
+  const plan = jobs[NODE_PLAN_JOB];
+  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB, 'deploy-plan', 'node-asset-config']);
+  expect(plan.if).toContain("needs.node-asset-config.result == 'success'");
+  const derive = plan.steps.find(({ name }) => name === 'Derive fresh plans from the actual clean checkout');
+  expect(derive?.env?.WORKERS_DEV_SUBDOMAIN).toBe(
+    `\${{ needs.node-asset-config.outputs.workers_dev_subdomain || vars.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN }}`,
+  );
+  expect(JSON.stringify(plan)).not.toContain('needs.edge-deploy-readiness');
 });
 
 it('uses native immutable deployment receipts and leaves a failed release retained for investigation', () => {
