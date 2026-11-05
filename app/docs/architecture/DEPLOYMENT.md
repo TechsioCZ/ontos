@@ -117,8 +117,46 @@ These are non-negotiable:
 5. **Installation is not activation.** Deploy a new MicroVertical dark. Tenant module state is the authoritative release flag and defaults inactive until canary verification succeeds.
 6. **Every overlap is backward compatible.** Database, authorization, manifest, BFF, Module Federation, and Shell/MicroVertical boundaries must work while old and new versions coexist.
 7. **Rollback is prepared before rollout.** Record a previously validated immutable composition and artifact for every affected delivery unit. Rollback is an explicit audited promotion, never an automatic persistent fallback, and must not depend on reversing a schema migration.
-8. **One failed gate stops promotion.** Preserve the artifact and evidence, reproduce in the parity environment, fix the failure class, and rerun the release sequence from its first gate.
+8. **One failed required gate stops promotion.** The validated change plan selects the required CI checks; missing results and unplanned skips fail the required check. Preserve failed artifact and release evidence, reproduce in the parity environment, and fix the failure class before promotion.
 9. **Continuous product delivery is not customer version pinning.** OntOS controls promotion of immutable artifacts. Customer Configuration selects permitted modules/implementations and activation state, never a separate whole-product release line.
+
+### Change-aware CI
+
+`ultramodern-workspace-gates.yml` always reports the required `Workspace gates` check for
+pull requests and merge groups. `scripts/plan-ci-changes.sh` compares the exact event base
+and checked-out head with a NUL-delimited Git diff, including both sides of renames. A diff
+confined to root `docs/`, `CONTEXT-MAP.md`, `README.md` and `AGENTS.md` needs no application
+installation, builds or services. Application documentation and unknown paths do not get
+this exemption. Missing history, an empty diff, nightly runs and an explicit full request
+require the full suite.
+
+For application changes, `scripts/plan-ci-checks.mts` computes owner and transitive consumer
+impact from workspace manifests, public-contract producer metadata, topology ownership
+and runtime federation references, including the Shell's vertical consumers.
+CI and deployment share the fixed-point consumer traversal. The checked-in
+`scripts/ci-matrices.json` owns the complete source, unit and integration matrices.
+Integration rows also declare runtime packages used by extra native proofs. A change to
+any declared proof package retains that row even when its ordinary test filters select
+no packages. Unknown proof packages require the full suite.
+
+Affected selection starts in **shadow mode**. Every application gate still runs, and the
+job summary records the candidate affected packages and integration shards. Set the
+`CI_AFFECTED_ENABLED` repository variable to `true` only after reviewing these plans against
+representative full runs. With that opt-in, unrelated package tests may be omitted; source
+checks, lint, static contracts and the complete Node artifact proof remain required.
+The retired Cloudflare build and proof jobs stay disabled and are not required gates. Core,
+authorization, schema, public-API, package-metadata, workflow and unknown changes still
+require the complete suite. Source checks do not wait for Node artifact builds; unit and
+integration fixtures retain their same-run artifact dependency.
+
+The final verifier requires a successful plan and exact agreement between every job result
+and its planned `success` or `skipped` state. An affected plan is not a deployment plan and
+does not bypass migration, database-trust, artifact or activation checks. No assertion
+retries or test quarantines are introduced.
+
+A full regression run starts daily at 02:30 UTC. A workflow dispatch with
+`force-ci-full=true` runs every gate even for a merge-queue-proven commit and performs no deployment. Otherwise an
+exact-commit merge-queue proof retains the existing no-repeat behavior on main.
 
 ## Delivery-unit contract
 
