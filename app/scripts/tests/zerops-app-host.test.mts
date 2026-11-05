@@ -19,6 +19,7 @@ import { ownerEntrySource } from '../zerops/owner-entry.mts';
 
 const PARTY_REGISTRY = 'party-registry';
 const SHELL_ID = 'shell-super-app';
+const COMMERCE_CUSTOMER_CONTEXT = 'commerce-customer-context';
 const ORIGIN = 'https://ontos.example.com';
 const DIST = '/abs/app/dist';
 const resolvePackage = (specifier: string) => `/abs/app/node_modules/${specifier}/index.js`;
@@ -278,6 +279,72 @@ describe('derivedEnvironment', () => {
     expect(derivedValues.AKROS_STOREFRONT_PUBLIC_URL).toBe(SHOP);
   });
 
+  it('adds only the two approved N1 origins to the Stage Commerce Portal realm', () => {
+    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map(), SHOP, 'stage');
+    const portalOrigins = derivedValues.COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS.split(',');
+    expect(portalOrigins).toEqual([
+      ORIGIN,
+      STOREFRONT,
+      SHOP,
+      'https://ontos-stage-n1.web-revolution.cz',
+      'http://localhost:3071',
+    ]);
+    for (const unapproved of [
+      '*',
+      'http://127.0.0.1:3071',
+      'http://localhost:3070',
+      'http://localhost:3072',
+      'https://unapproved.example',
+    ]) {
+      expect(portalOrigins).not.toContain(unapproved);
+    }
+    expect(derivedValues.BETTER_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${SHOP}`);
+  });
+
+  it('keeps the approved Stage Portal origins authoritative over stored owner origin overrides', () => {
+    const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map(), SHOP, 'stage');
+    const hosted = processEnvironment(
+      [COMMERCE_CUSTOMER_CONTEXT],
+      {
+        [COMMERCE_CUSTOMER_CONTEXT]: {
+          BETTER_AUTH_TRUSTED_ORIGINS: '*',
+          COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: 'https://unapproved.example,http://127.0.0.1:3071,*',
+          COMMERCE_PORTAL_AUTH_URL: 'https://unapproved.example',
+        },
+      },
+      derivedValues,
+    );
+    expect(hosted.conflicts).toEqual([]);
+    expect(hosted.environment.COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS).toBe(
+      `${ORIGIN},${STOREFRONT},${SHOP},https://ontos-stage-n1.web-revolution.cz,http://localhost:3071`,
+    );
+    expect(hosted.environment.BETTER_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${SHOP}`);
+    expect(hosted.environment.COMMERCE_PORTAL_AUTH_URL).toBe(STOREFRONT);
+  });
+
+  it('does not add N1 Stage origins for missing or non-stage deployment environments', () => {
+    for (const environment of [undefined, '', 'production', 'development', 'staging', 'stage ', 'STAGE']) {
+      const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map(), SHOP, environment);
+      expect(derivedValues.COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${SHOP}`);
+      expect(derivedValues.BETTER_AUTH_TRUSTED_ORIGINS).toBe(`${ORIGIN},${STOREFRONT},${SHOP}`);
+    }
+  });
+
+  it('retains every other host-derived value when enabling the approved Stage Portal origins', () => {
+    const ports = new Map([
+      [COMMERCE_CUSTOMER_CONTEXT, 4103],
+      ['commerce-cart', 4115],
+    ]);
+    const original = derivedEnvironment(ORIGIN, STOREFRONT, 3000, ports, SHOP);
+    const stage = derivedEnvironment(ORIGIN, STOREFRONT, 3000, ports, SHOP, 'stage');
+    for (const [key, value] of Object.entries(original)) {
+      if (key !== 'COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS') {
+        expect(derivedValue(stage, key)).toEqual(value);
+      }
+    }
+    expect(Object.keys(stage)).toEqual(Object.keys(original));
+  });
+
   it('uses the public origin as the issuer and auth URL', () => {
     const derivedValues = derivedEnvironment(ORIGIN, STOREFRONT, 3000, new Map([['price-group-catalog', 4204]]), SHOP);
     expect(derivedValues.ONTOS_GATEWAY_ISSUER).toBe(ORIGIN);
@@ -295,7 +362,7 @@ describe('derivedEnvironment', () => {
       STOREFRONT,
       3000,
       new Map([
-        ['commerce-customer-context', 4103],
+        [COMMERCE_CUSTOMER_CONTEXT, 4103],
         ['commerce-cart', 4115],
       ]),
       SHOP,

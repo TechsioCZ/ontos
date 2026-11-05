@@ -197,6 +197,9 @@ const PublicOriginSchema = Schema.URLFromString.check(
   ),
 );
 
+/** Explicit Stage-only Commerce Portal admission; never inferred from an incoming request. */
+const STAGE_N1_PORTAL_ORIGINS = ['https://ontos-stage-n1.web-revolution.cz', 'http://localhost:3071'] as const;
+
 const loopbackOrigin = (port: number) => `http://127.0.0.1:${String(port)}`;
 
 /**
@@ -225,10 +228,17 @@ export const derivedEnvironment = (
   controlPort: number,
   ports: ReadonlyMap<string, number>,
   shopStorefrontOrigin: string,
+  environment = 'production',
 ) => {
   const shellGateway = unitApiBaseUrl(loopbackOrigin(SHELL_PORT), SHELL_ID);
-  // Both deployed storefront hosts sign customers in through the one portal realm; the AKROS host names it.
+  // AKROS names the shared realm. The approved N1 additions belong only to Commerce Portal on Stage.
   const trustedOrigins = [origin, storefrontOrigin, shopStorefrontOrigin].join(',');
+  const portalTrustedOrigins = [
+    origin,
+    storefrontOrigin,
+    shopStorefrontOrigin,
+    ...(environment === 'stage' ? STAGE_N1_PORTAL_ORIGINS : []),
+  ].join(',');
   return {
     ...ownerRuntimeEnvironment(ports),
     // The e-mail dispatcher writes for the demo company only, whose e-shop is the pseudonymous one.
@@ -236,7 +246,7 @@ export const derivedEnvironment = (
     BETTER_AUTH_TRUSTED_ORIGINS: trustedOrigins,
     BETTER_AUTH_URL: origin,
     COMMERCE_CORE_IDENTITY_BASE_URL: shellGateway,
-    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: trustedOrigins,
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: portalTrustedOrigins,
     COMMERCE_PORTAL_AUTH_URL: storefrontOrigin,
     // A container serves one immutable release. The deployment package excludes compressed copies.
     MODERN_SERVER_IMMUTABLE_ASSETS: 'true',
@@ -665,6 +675,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const publicOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_PUBLIC_ORIGIN')).origin;
   const storefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_STOREFRONT_ORIGIN')).origin;
   const shopStorefrontOrigin = (yield* Config.schema(PublicOriginSchema, 'ONTOS_SHOP_STOREFRONT_ORIGIN')).origin;
+  const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(Config.withDefault('production'));
   const ownerSecrets = yield* Config.Redacted('ONTOS_OWNER_SECRETS_JSON').pipe(
     Config.withDefault(Redacted.make('{}')),
     Effect.flatMap((encoded) => Schema.decodeEffect(OwnerSecretsSchema)(Redacted.value(encoded))),
@@ -672,7 +683,14 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const units = yield* readHostedUnits;
   const ports = new Map(units.map(({ id, port }) => [id, port]));
-  const derived = derivedEnvironment(publicOrigin, storefrontOrigin, CONTROL_PORT, ports, shopStorefrontOrigin);
+  const derived = derivedEnvironment(
+    publicOrigin,
+    storefrontOrigin,
+    CONTROL_PORT,
+    ports,
+    shopStorefrontOrigin,
+    environment,
+  );
   const node = process.execPath;
   const runtime = yield* shellRuntime;
   const published = yield* Ref.make(false);
