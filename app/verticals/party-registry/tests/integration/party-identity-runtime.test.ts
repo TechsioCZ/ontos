@@ -26,15 +26,22 @@ import {
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Crypto, Deferred, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Crypto, DateTime, Deferred, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import type { Row } from 'effect/sql/SqlConnection';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { IdentityCorrectionCommandSchema } from '../../shared/domain/correction-contracts.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { outboxTopic as partyCreatedTopic } from '../../shared/outbox/party-registry-party-created-v1.ts';
+import { addPartyOfficialIdentifierAction } from '../../src/actions/add-party-official-identifier.action.ts';
+import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
+import { endPartyOfficialIdentifierAction } from '../../src/actions/end-party-official-identifier.action.ts';
+import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
+import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
+import { partyOfficialIdentifierHistoryRead } from '../../src/api/party-official-identifier-history.read.ts';
 import { addContactPointAction } from '../../src/actions/add-contact-point.action.ts';
 import { counterpartyCreateAction } from '../../src/actions/counterparty-create.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
@@ -197,9 +204,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           const compositionSnapshot = yield* partyCompositionSnapshot;
           const compositionRevision = compositionSnapshot.composition.revision;
-          const actionKeys = [createPartyAction, counterpartyCreateAction, addContactPointAction].map(
-            ({ descriptor }) => descriptor.actionKey,
-          );
+          const actionKeys = [
+            createPartyAction,
+            resolveDuplicateCandidateCreateAction,
+            counterpartyCreateAction,
+            addContactPointAction,
+            addPartyOfficialIdentifierAction,
+            correctPartyFactAction,
+            endPartyOfficialIdentifierAction,
+            requestSearchRebuildAction,
+          ].map(({ descriptor }) => descriptor.actionKey);
           const openFixture = Effect.acquireRelease(
             makeLiveOperationFixture({
               actionKeys,
@@ -263,14 +277,25 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               principal: manager,
               transport: yield* freshTransport,
             });
-            assert.isOk(created.outcome === 'CREATED');
+            assert.isOk(created.outcome === 'AMBIGUOUS');
+            const reviewed = yield* runAction({
+              registration: resolveDuplicateCandidateCreateAction,
+              payload: {
+                caseRef: created.caseRef,
+                expectedRevision: 1,
+                reason: 'Reviewed the concrete external subject',
+              },
+              principal: manager,
+              transport: yield* freshTransport,
+            });
+            assert.isOk(reviewed.partyRef);
             const counterparty = yield* runAction({
               registration: counterpartyCreateAction,
-              payload: { partyRef: created.partyRef, provenance: counterpartyProvenance },
+              payload: { partyRef: reviewed.partyRef, provenance: counterpartyProvenance },
               principal: legalEntity,
               transport: yield* freshTransport,
             });
-            return { counterpartyRef: counterparty.counterpartyRef, partyRef: created.partyRef };
+            return { counterpartyRef: counterparty.counterpartyRef, partyRef: reviewed.partyRef };
           });
           const own = yield* seedCounterparty(managerPrincipal, legalEntityPrincipal).pipe(
             Effect.provideContext(fixtureContext),
@@ -346,22 +371,330 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               Layer.provide(CoreSearchProjectionStoreLive),
             ),
           ).pipe(Effect.provideContext(fixtureContext));
-          const hits = yield* Effect.all([ReadRuntime, freshReadTransport]).pipe(
-            Effect.flatMap(([runtime, transport]) =>
-              runtime.runRead({
-                registration: counterpartiesRead,
-                input: { query: sharedIco },
-                principal: legalEntityPrincipal,
-                transport,
-              }),
-            ),
-            Effect.provideContext(searchContext),
-            Effect.provideContext(fixtureContext),
-          );
+          const search = (searchQuery: string) =>
+            Effect.all([ReadRuntime, freshReadTransport]).pipe(
+              Effect.flatMap(([runtime, transport]) =>
+                runtime.runRead({
+                  registration: counterpartiesRead,
+                  input: { query: searchQuery },
+                  principal: legalEntityPrincipal,
+                  transport,
+                }),
+              ),
+              Effect.provideContext(searchContext),
+              Effect.provideContext(fixtureContext),
+            );
+          const hits = yield* search(sharedIco);
           const refs = hits.map(({ ref }) => ref);
           expect(refs).toContainEqual(own.counterpartyRef);
           expect(refs).not.toContainEqual(foreign.counterpartyRef);
           expect(refs.every((ref) => ref.tenantId === fixture.tenantId)).toBe(true);
+          expect(yield* search('identity-runtime@example.test')).toEqual([]);
+
+          const beforeRebuildDenial = yield* fixture.evidence(coreAdmin);
+          const rebuildDenied = yield* runAction({
+            registration: requestSearchRebuildAction,
+            payload: {},
+            principal: deniedPrincipal,
+            transport: yield* freshTransport,
+          }).pipe(Effect.provideContext(fixtureContext), Effect.flip);
+          assert.isOk(Predicate.isTagged(rebuildDenied, 'ActionPermissionDenied'));
+          const afterRebuildDenial = yield* fixture.evidence(coreAdmin);
+          expect(afterRebuildDenial.events).toEqual(beforeRebuildDenial.events);
+          expect(afterRebuildDenial.outbox).toEqual(beforeRebuildDenial.outbox);
+
+          const rebuildAndProject = Effect.fn('PartyIdentityRuntimeTest.rebuildAndProject')(function* rebuildAndProject(
+            expectedWorker: string,
+            referenceKey: string,
+            referenceId: string,
+          ) {
+            const queued = yield* runAction({
+              registration: requestSearchRebuildAction,
+              payload: {},
+              principal: managerPrincipal,
+              transport: yield* freshTransport,
+            }).pipe(Effect.provideContext(fixtureContext));
+            expect(queued.status).toBe('QUEUED');
+            const { cycle } = yield* runPartyWorkerCycle(compositionRevision);
+            expect(cycle.succeeded).toBeGreaterThanOrEqual(1);
+            const rebuildDeliveries = yield* query(
+              adminClient,
+              `select delivery.status, delivery.worker_key, message.payload_json
+                 from core.outbox_deliveries delivery
+                 join core.outbox_messages message using (outbox_message_id)
+                where message.tenant_id = $1 and delivery.worker_key = 'party.registry.rebuild-search'
+                  and message.payload_json ->> 'requestId' = $2`,
+              [fixture.tenantId, queued.requestId],
+            );
+            expect(rebuildDeliveries).toEqual([
+              {
+                status: 'done',
+                worker_key: 'party.registry.rebuild-search',
+                payload_json: { requestId: queued.requestId },
+              },
+            ]);
+            const lifecycleDeliveries = yield* query(
+              adminClient,
+              `select delivery.status, delivery.worker_key
+                 from core.outbox_deliveries delivery
+                 join core.outbox_messages message using (outbox_message_id)
+                where message.tenant_id = $1 and delivery.worker_key = $2
+                  and message.payload_json -> $3 ->> 'resourceId' = $4`,
+              [fixture.tenantId, expectedWorker, referenceKey, referenceId],
+            );
+            expect(lifecycleDeliveries).toEqual([{ status: 'done', worker_key: expectedWorker }]);
+          });
+          const firstDic = 'CZ27074358';
+          const correctedDic = 'CZ26168685';
+          expect(yield* search(firstDic)).toEqual([]);
+          const addedIdentifier = yield* runAction({
+            registration: addPartyOfficialIdentifierAction,
+            payload: {
+              identifier: { identifierType: 'CZ_DIC', value: firstDic },
+              partyRef: own.partyRef,
+              provenanceMethod: 'DOCUMENT',
+              provenanceSource: 'identity-runtime',
+              validFrom: '2020-01-01T00:00:00.000Z',
+            },
+            principal: managerPrincipal,
+            transport: yield* freshTransport,
+          }).pipe(Effect.provideContext(fixtureContext));
+          yield* rebuildAndProject(
+            'party.registry.project-official-identifier-added-to-search',
+            'officialIdentifierRef',
+            addedIdentifier.officialIdentifierRef.resourceId,
+          );
+          expect((yield* search(firstDic)).map(({ ref }) => ref)).toEqual([own.counterpartyRef]);
+
+          const corrected = yield* runAction({
+            registration: correctPartyFactAction,
+            payload: yield* Schema.decodeUnknownEffect(IdentityCorrectionCommandSchema)({
+              partyId: own.partyRef.resourceId,
+              targetAssertionId: addedIdentifier.officialIdentifierRef.resourceId,
+              factKind: 'OFFICIAL_IDENTIFIER',
+              replacementValue: correctedDic,
+              reasonCode: 'WRONG_IDENTITY_VALUE',
+              reasonDetail: 'Correct the declared identifier from retained source evidence',
+              evidenceSource: 'DOCUMENT',
+              evidenceRefs: ['identity-runtime/correction'],
+              policyVersion: 'party-correction.v1',
+              provenance: { method: 'DOCUMENT', source: 'identity-runtime' },
+            }),
+            principal: managerPrincipal,
+            transport: yield* freshTransport,
+          }).pipe(Effect.provideContext(fixtureContext));
+          yield* rebuildAndProject(
+            'party.registry.project-party-fact-corrected-to-search',
+            'correctionRef',
+            corrected.correctionRef.resourceId,
+          );
+          expect(yield* search(firstDic)).toEqual([]);
+          expect((yield* search(correctedDic)).map(({ ref }) => ref)).toEqual([own.counterpartyRef]);
+          const history = yield* Effect.all([ReadRuntime, freshReadTransport]).pipe(
+            Effect.flatMap(([runtime, transport]) =>
+              runtime.runRead({
+                registration: partyOfficialIdentifierHistoryRead,
+                input: { partyRef: own.partyRef },
+                principal: managerReadPrincipal,
+                transport,
+              }),
+            ),
+            Effect.provideContext(fixtureContext),
+          );
+          const replacement = history.items.find((item) => item.normalizedValue === correctedDic);
+          assert.isOk(replacement);
+          expect(history.items.find((item) => item.normalizedValue === firstDic)?.state).toBe('SUPERSEDED');
+          yield* runAction({
+            registration: endPartyOfficialIdentifierAction,
+            payload: {
+              officialIdentifierRef: replacement.officialIdentifierRef,
+              reason: 'Declared identifier validity ended',
+              validTo: DateTime.formatIso(yield* DateTime.now),
+            },
+            principal: managerPrincipal,
+            transport: yield* freshTransport,
+          }).pipe(Effect.provideContext(fixtureContext));
+          yield* rebuildAndProject(
+            'party.registry.project-official-identifier-ended-to-search',
+            'officialIdentifierRef',
+            replacement.officialIdentifierRef.resourceId,
+          );
+          expect(yield* search(correctedDic)).toEqual([]);
+          expect((yield* search(sharedIco)).map(({ ref }) => ref)).toEqual([own.counterpartyRef]);
+          expect(yield* search('identity-runtime@example.test')).toEqual([]);
+          // Rehearse the approved non-client reset on exactly three derived fixture records.
+          // The previous worker-cycle scope has joined; no worker runs until all obsolete rows are gone.
+          const resetDatabase = new URL(connections.admin.connectionString);
+          expect(['127.0.0.1', 'localhost', '[::1]']).toContain(resetDatabase.hostname);
+          expect(resetDatabase.port).toBe('5433');
+          expect(resetDatabase.pathname).toBe('/ontos_ci');
+          expect(resetDatabase.username).toBe('ontos_ci_admin');
+          const canonicalControls = () =>
+            query(
+              adminClient,
+              `select kind, digest from (
+               select 'tenant' as kind, md5(to_jsonb(row)::text) as digest from core.tenants row where tenant_id in ($1, $2)
+               union all select 'principal', md5(to_jsonb(row)::text) from core.principals row where tenant_id in ($1, $2)
+               union all select 'auth_binding', md5(to_jsonb(row)::text) from core.principal_auth_bindings row where tenant_id in ($1, $2)
+               union all select 'module_state', md5(to_jsonb(row)::text) from core.tenant_module_states row where tenant_id in ($1, $2)
+               union all select 'party', md5(to_jsonb(row)::text) from party.parties row where tenant_id in ($1, $2)
+               union all select 'fact', md5(to_jsonb(row)::text) from party.party_fact_assertions row where tenant_id in ($1, $2)
+               union all select 'identifier', md5(to_jsonb(row)::text) from party.party_official_identifiers row where tenant_id in ($1, $2)
+               union all select 'contact', md5(to_jsonb(row)::text) from party.party_contact_points row where tenant_id in ($1, $2)
+               union all select 'purpose', md5(to_jsonb(row)::text) from party.party_contact_point_purposes row where tenant_id in ($1, $2)
+               union all select 'counterparty', md5(to_jsonb(row)::text) from party.counterparties row where tenant_id in ($1, $2)
+             ) controls order by kind, digest`,
+              [fixture.tenantId, other.tenantId],
+            );
+          const foreignProjection = () =>
+            query(
+              adminClient,
+              `select md5(to_jsonb(entry)::text) as digest from core.search_index_entries entry
+              where tenant_id = $1 and source_module_key = 'party.registry' order by search_index_entry_id`,
+              [other.tenantId],
+            );
+          const beforeResetControls = yield* canonicalControls();
+          const beforeForeignProjection = yield* foreignProjection();
+          expect(beforeForeignProjection.length).toBeGreaterThanOrEqual(1);
+          const beforeResetEvidence = yield* fixture.evidence(coreAdmin);
+          const [ownProjection] = yield* query(
+            adminClient,
+            `select search_index_entry_id from core.search_index_entries
+              where tenant_id = $1 and source_module_key = 'party.registry'
+                and source_resource_type = 'party.registry.counterparty' and source_resource_id = $2`,
+            [fixture.tenantId, own.counterpartyRef.resourceId],
+          );
+          assert.isOk(ownProjection);
+          const [obsoleteMessageId, obsoleteDeliveryId] = yield* Effect.all([nextUuid, nextUuid]);
+          const [addedEvent] = addedEvents;
+          assert.isOk(addedEvent);
+          // Deliberately synthetic obsolete payload; historical contact outbox messages were reference-only.
+          const syntheticObsoletePayload = {
+            contactPointRef: contactPoint.contactPointRef,
+            partyRef: own.partyRef,
+            verification: { state: 'UNVERIFIED' },
+          };
+          yield* adminClient.withTransaction(
+            Effect.gen(function* seedDisposableResetRecords() {
+              expect(
+                yield* query(
+                  adminClient,
+                  `update core.search_index_entries set title = 'Synthetic stale fixture projection', body_text = 'obsolete-fixture'
+                where search_index_entry_id = $1 and tenant_id = $2 and source_module_key = 'party.registry'
+                  and source_resource_type = 'party.registry.counterparty' and source_resource_id = $3
+                returning search_index_entry_id`,
+                  [ownProjection['search_index_entry_id'], fixture.tenantId, own.counterpartyRef.resourceId],
+                ),
+              ).toHaveLength(1);
+              yield* query(
+                adminClient,
+                `insert into core.outbox_messages (outbox_message_id, tenant_id, domain_event_id, producer_module_key, topic, payload_json)
+               values ($1, $2, $3, 'party.registry', 'party.registry.contact-point-added.v1', $4::jsonb)`,
+                [obsoleteMessageId, fixture.tenantId, addedEvent.domainEventId, encodeJson(syntheticObsoletePayload)],
+              );
+              yield* query(
+                adminClient,
+                `insert into core.outbox_deliveries (outbox_delivery_id, outbox_message_id, worker_key, consumer_module_key, status, attempts_count)
+               values ($1, $2, 'party.registry.project-contact-point-added-to-search', 'party.registry', 'pending', 0)`,
+                [obsoleteDeliveryId, obsoleteMessageId],
+              );
+            }),
+          );
+          yield* adminClient.withTransaction(
+            Effect.gen(function* resetAllowlistedDerivedRecords() {
+              const locked = yield* query(
+                adminClient,
+                `select delivery.status, delivery.attempts_count, delivery.claimed_by, delivery.claimed_at, delivery.claim_expires_at,
+                      message.completion_consumer_module_key, message.completion_original_revision, message.matched_at, message.payload_json
+                 from core.outbox_messages message join core.outbox_deliveries delivery using (outbox_message_id)
+                where message.outbox_message_id = $1 and message.tenant_id = $2 and message.domain_event_id = $3
+                  and message.producer_module_key = 'party.registry' and message.topic = 'party.registry.contact-point-added.v1'
+                  and delivery.outbox_delivery_id = $4 and delivery.consumer_module_key = 'party.registry'
+                  and delivery.worker_key = 'party.registry.project-contact-point-added-to-search'
+                for update of message, delivery`,
+                [obsoleteMessageId, fixture.tenantId, addedEvent.domainEventId, obsoleteDeliveryId],
+              );
+              expect(locked).toEqual([
+                {
+                  status: 'pending',
+                  attempts_count: 0,
+                  claimed_by: null,
+                  claimed_at: null,
+                  claim_expires_at: null,
+                  completion_consumer_module_key: null,
+                  completion_original_revision: null,
+                  matched_at: null,
+                  payload_json: syntheticObsoletePayload,
+                },
+              ]);
+              expect(
+                yield* query(
+                  adminClient,
+                  `select (select count(*)::integer from core.outbox_attempts where outbox_delivery_id = $1) as attempts,
+                      (select count(*)::integer from core.outbox_delivery_resolutions where outbox_delivery_id = $1 or outbox_message_id = $2) as resolutions`,
+                  [obsoleteDeliveryId, obsoleteMessageId],
+                ),
+              ).toEqual([{ attempts: 0, resolutions: 0 }]);
+              expect(
+                yield* query(
+                  adminClient,
+                  `delete from core.outbox_deliveries where outbox_delivery_id = $1 and outbox_message_id = $2 returning outbox_delivery_id`,
+                  [obsoleteDeliveryId, obsoleteMessageId],
+                ),
+              ).toEqual([{ outbox_delivery_id: obsoleteDeliveryId }]);
+              expect(
+                yield* query(
+                  adminClient,
+                  `delete from core.outbox_messages where outbox_message_id = $1 and tenant_id = $2 and domain_event_id = $3 returning outbox_message_id`,
+                  [obsoleteMessageId, fixture.tenantId, addedEvent.domainEventId],
+                ),
+              ).toEqual([{ outbox_message_id: obsoleteMessageId }]);
+              expect(
+                yield* query(
+                  adminClient,
+                  `delete from core.search_index_entries where search_index_entry_id = $1 and tenant_id = $2
+                and source_module_key = 'party.registry' and source_resource_type = 'party.registry.counterparty'
+                and source_resource_id = $3 and title = 'Synthetic stale fixture projection' and body_text = 'obsolete-fixture'
+                  returning search_index_entry_id`,
+                  [ownProjection['search_index_entry_id'], fixture.tenantId, own.counterpartyRef.resourceId],
+                ),
+              ).toEqual([{ search_index_entry_id: ownProjection['search_index_entry_id'] }]);
+            }),
+          );
+          const obsoleteQueue = () =>
+            query(
+              adminClient,
+              `select outbox_message_id from core.outbox_messages where outbox_message_id = $1
+             union all select outbox_message_id from core.outbox_deliveries where outbox_delivery_id = $2`,
+              [obsoleteMessageId, obsoleteDeliveryId],
+            );
+          expect(yield* obsoleteQueue()).toEqual([]);
+          expect(yield* canonicalControls()).toEqual(beforeResetControls);
+          expect(yield* foreignProjection()).toEqual(beforeForeignProjection);
+          const afterResetEvidence = yield* fixture.evidence(coreAdmin);
+          expect(afterResetEvidence.events).toEqual(beforeResetEvidence.events);
+          expect(afterResetEvidence.audits).toEqual(beforeResetEvidence.audits);
+          expect(yield* search(sharedIco)).toEqual([]);
+          yield* rebuildAndProject(
+            'party.registry.project-contact-point-added-to-search',
+            'contactPointRef',
+            contactPoint.contactPointRef.resourceId,
+          );
+          expect((yield* search(sharedIco)).map(({ ref }) => ref)).toEqual([own.counterpartyRef]);
+          expect(yield* search('identity-runtime@example.test')).toEqual([]);
+          const afterResetDenial = yield* runAction({
+            registration: requestSearchRebuildAction,
+            payload: {},
+            principal: deniedPrincipal,
+            transport: yield* freshTransport,
+          }).pipe(Effect.provideContext(fixtureContext), Effect.flip);
+          assert.isOk(Predicate.isTagged(afterResetDenial, 'ActionPermissionDenied'));
+          expect(yield* canonicalControls()).toEqual(beforeResetControls);
+          expect(yield* foreignProjection()).toEqual(beforeForeignProjection);
+          expect(yield* obsoleteQueue()).toEqual([]);
+          const afterRebuildEvidence = yield* fixture.evidence(coreAdmin);
+          expect(afterRebuildEvidence.events).toEqual(expect.arrayContaining(beforeResetEvidence.events));
+          expect(afterRebuildEvidence.audits).toEqual(expect.arrayContaining(beforeResetEvidence.audits));
         }),
       ),
     { timeout: 120_000 },
