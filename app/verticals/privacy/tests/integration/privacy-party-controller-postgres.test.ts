@@ -1017,5 +1017,7 @@ for (const arrangement of ['PERSON', 'ORGANIZATION', 'LEGAL_ENTITY', 'MIXED'] as
         Effect.provide(publicProofServices),
         Effect.provide(NodeHttpServer.layerTest),
       ),
+    // Native owner bundling, schema cloning and the MIXED arrangement exceed the 30-second default on CI.
+    120_000,
   );
 }
