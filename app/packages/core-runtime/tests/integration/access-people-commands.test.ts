@@ -672,8 +672,21 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
         // The edit was checked against nobody, but the colleague holds the role now: refused, nothing moved.
         const stale = yield* Effect.flip(edit(uid(501), []));
         expect(stale.code).toBe('access_changes_revision_stale');
-        // Checked against the colleague it is, the same edit commits.
-        yield* edit(uid(502), [held]).pipe(Effect.orDie);
+        // A holder whose assignment starts later is moved by the same edit, so it must be checked too.
+        const later = yield* tenant.newIncarnationId;
+        yield* tenant.admin
+          .unsafe(
+            `insert into core.access_assignments
+               (incarnation_id, tenant_id, scope_id, principal_id, role_id, role_revision_id, status, valid_from,
+                assigned_by) values
+               ('${later}', '${tenant.tenantId}', '${companyScope}', '${teammate}', '${role.roleId}',
+                '${role.roleRevisionId}', 'active', now() + interval '1 day', '${owner}')`,
+          )
+          .pipe(Effect.orDie);
+        const notYetStarted = yield* Effect.flip(edit(uid(502), [held]));
+        expect(notYetStarted.code).toBe('access_changes_revision_stale');
+        // Checked against both holders, the same edit commits.
+        yield* edit(uid(503), [held, later]).pipe(Effect.orDie);
       }),
     ),
   );

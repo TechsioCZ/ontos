@@ -396,8 +396,8 @@ export const planMembershipGrant = (
     );
   }
   // The slot (scope, person, kind) holds one non-revoked row. An expired row is history and is retired
-  // in this same plan so the person can rejoin; a suspended or not-yet-started row is not, because a
-  // fresh grant would lift a suspension or race a membership that is already on its way.
+  // in this same plan so the person can rejoin; a live suspension or a not-yet-started row is not,
+  // because a fresh grant would lift the suspension or race a membership that is already on its way.
   const occupying = request.memberships.filter(
     (row) =>
       row.scopeId === request.scopeId &&
@@ -405,9 +405,8 @@ export const planMembershipGrant = (
       row.status !== 'revoked' &&
       personOf(row.holder) === holder,
   );
-  const expired = occupying.filter(
-    (row) => row.status === 'active' && row.validUntil !== undefined && row.validUntil <= request.at,
-  );
+  // An expired row is history whether it ended active or suspended; a live suspension still refuses.
+  const expired = occupying.filter((row) => row.validUntil !== undefined && row.validUntil <= request.at);
   if (expired.length !== occupying.length) {
     return Effect.fail(
       peopleRefusal(

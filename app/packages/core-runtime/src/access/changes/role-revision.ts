@@ -45,7 +45,7 @@ import {
   namesRoleTemplate,
 } from '../model.ts';
 import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
-import { configureAuthorityIssue } from './authority.ts';
+import { configureAuthorityIssue, configureBasisCoversRole } from './authority.ts';
 import { cellsWith, cellsWithout, toSortedCells } from './cells.ts';
 import { compareText } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
@@ -730,7 +730,15 @@ export const writeRoleRevision = Effect.fn('RoleRevision.writeRoleRevision')(fun
   }
   // An edit only a delegation authorizes was checked against the role's holders as they stood; the
   // store re-checks them under the role's lock so an assignment made meanwhile is never reached.
-  const delegatedOnly = bases.every((basis) => Predicate.isTagged(basis, 'DelegatedManager'));
+  // Only a permanent basis that covers this very role makes the holder check unnecessary; one that
+  // administers another company does not authorize this edit at all.
+  const editedRole = findRole(changes.roles, request.edit.roleId)?.role;
+  const delegatedOnly = bases.every(
+    (basis) =>
+      Predicate.isTagged(basis, 'DelegatedManager') ||
+      editedRole === undefined ||
+      !configureBasisCoversRole(basis, editedRole),
+  );
   const recordInput = {
     catalogSnapshotId: request.catalogSnapshotId,
     decidedAt: request.decidedAt,
