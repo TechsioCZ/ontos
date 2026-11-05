@@ -43,13 +43,13 @@ A named Promotion activated by its declared eligibility without an entered Vouch
 _Avoid_: automatic product discount as Promotion, generic targeting engine.
 
 **Free-shipping Promotion**:
-A Promotion whose benefit entitles an eligible explicit Shipping target to free shipping. The merchant configures an automatic or Voucher-triggered activation, optional minimum purchase checked on merchandise value after product and the selected cart monetary discounts, supported Delivery/Shipping methods, and an Effective Period. Its immutable published meaning includes these eligibility settings. Promotion owns entitlement; Delivery/Shipping owns the actual customer-charged Shipping amount and its evidence.
-_Avoid_: merchandise-cart monetary discount, threshold on the pre-discount basket, Shipping charge as a Promotion-owned price, missing Shipping amount as zero, carrier cost as customer charge.
+A Promotion whose benefit entitles the selected, downstream-owned Delivery Offer / Shipping component of an exact purchase to free shipping. The merchant configures automatic or Voucher-triggered activation, optional minimum purchase checked on merchandise value after product and the selected cart monetary discounts, supported Delivery/Shipping methods, and an Effective Period. The threshold uses the same already-resolved GROSS/NET monetary basis as merchandise benefits (B2C GROSS, B2B according to accepted purchase policy). Published eligibility meaning remains immutable. Promotion owns entitlement; Delivery/Shipping owns the chosen Delivery Offer identity, method, actual customer-charged Shipping amount and its evidence. Delivery Offer and carrier detail belongs to roadmap #253 step 30, shipment execution to steps 36–38; Promotion does not define a new ShippingTarget resource.
+_Avoid_: merchandise-cart monetary discount, threshold on the pre-discount basket, second B2B GROSS/NET selector, a new canonical ShippingTarget object, Shipping charge as a Promotion-owned price, missing Shipping amount as zero, carrier cost as customer charge.
 
 ### Eligibility, selection and application order
 
 **Promotion Target**:
-The exact business subject receiving a benefit: a Purchase Demand Occurrence, the merchandise cart, or an explicit Shipping target. It is distinct from eligibility conditions and from the recipients of a cart allocation.
+The exact business subject receiving a benefit: a Purchase Demand Occurrence, the merchandise cart, or the downstream-selected Delivery Offer / Shipping component for free shipping. "Shipping target" in C18 is a descriptive reference to that future Delivery-owned choice, not a new canonical resource. It is distinct from eligibility conditions and from the recipients of a cart allocation.
 _Avoid_: eligibility filter as benefit target, allocation recipient as another Promotion.
 
 **Promotion Eligibility**:
@@ -61,12 +61,12 @@ The explicit merchant-managed ranking used to select at most one eligible mercha
 _Avoid_: best-price winner, database order as priority, eligibility as a conflict by itself, fixed-first as a second arithmetic layer.
 
 **Free-shipping Priority**:
-The separate merchant-managed ranking of eligible free-shipping Promotions, whether automatic or Voucher-triggered, for one explicit Shipping target. At most one offer is selected per target; ambiguous required ranking is a configuration conflict rather than a best-price or DB-order fallback. This ranking is not the merchandise-cart monetary priority.
+The separate merchant-managed ranking of eligible free-shipping Promotions, whether automatic or Voucher-triggered, for the chosen downstream-owned Delivery Offer / Shipping component of one exact purchase. At most one offer is selected per target; ambiguous required ranking is a configuration conflict rather than a best-price or DB-order fallback. This ranking is not the merchandise-cart monetary priority.
 _Avoid_: free-shipping offers sharing the monetary cart slot, multiple selected shipping offers for the same target, arbitrary winner.
 
 **Free-shipping Minimum**:
-An optional merchant-configured merchandise purchase threshold for a free-shipping Promotion. When present, the threshold is evaluated from the eligible merchandise value after Product Voucher applications and the one selected cart monetary Promotion; it excludes the Shipping charge. The precise publication/rounding boundary for small values and B2B gross/net thresholds must align with the accepted monetary owner contract.
-_Avoid_: pre-discount basket threshold, including Shipping in the threshold, inventing a second Tax or Pricing rounding rule.
+An optional merchant-configured merchandise purchase threshold for a free-shipping Promotion. When present, it is evaluated on merchandise value after Product Voucher applications and the one selected cart monetary Promotion, in the **same purchase-level resolved GROSS/NET basis** as those benefits. It excludes the Shipping charge. There is no additional basis selector for free shipping; exact monetary publication/rounding precision remains aligned with #1169.
+_Avoid_: pre-discount basket threshold, a second B2B NET/GROSS decision, including Shipping in the threshold, inventing a separate Tax or Pricing rounding rule.
 
 **Promotion Application Order**:
 The fixed product-before-cart sequence: Product Vouchers apply to their occurrences before the selected merchandise-cart monetary Promotion. Free-shipping eligibility with an optional purchase minimum follows the completed merchandise discounts. Fixed-amount and percentage effect kinds do not reverse the monetary layers.
