@@ -1,4 +1,4 @@
-import { Match, Result, Schema } from 'effect';
+import { Match, Predicate, Result, Schema } from 'effect';
 
 import { CapabilityKeySchema, RoleIdSchema } from '../ids.ts';
 import type { CapabilityKey, PrincipalId, RoleId } from '../ids.ts';
@@ -19,12 +19,15 @@ import {
 } from '../model.ts';
 import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
 import { configureAuthorityIssue, deciderIssue } from './authority.ts';
+import { withOptional } from '../decision/optional.ts';
 import { compareText } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
 import { accessChangesError } from './errors.ts';
 import type { AdoptionPreview } from './preview.ts';
 import {
   AdoptionPreviewSchema,
+  checkedHoldersOf,
+  CheckedHoldersSchema,
   previewAdoption,
   previewHasAgent,
   previewPrincipals,
@@ -68,6 +71,8 @@ export const UndoSelectionSchema = Schema.Struct({
 export type UndoSelection = typeof UndoSelectionSchema.Type;
 
 export const UndoPlanSchema = Schema.Struct({
+  /** Present when a delegation authorized the plan: the holders its envelope checked, per edited role. */
+  checkedHolders: Schema.optionalKey(CheckedHoldersSchema),
   decisions: Schema.Array(AccessChangeDecisionSchema),
   items: Schema.Array(AccessChangeItemSchema),
   preview: AdoptionPreviewSchema,
@@ -528,13 +533,25 @@ export const planUndo = (request: UndoRequest): Result.Result<UndoPlan, AccessCh
     });
   }
   return Result.mapError(
-    decodeUndoPlan({
-      decisions,
-      items: request.selections.map(({ item }) => ({ ...item, status: 'undone' })),
-      preview,
-      roleEdits: edits.success,
-      skipped: ordered.flatMap(({ skips }) => skips),
-    }),
+    decodeUndoPlan(
+      withOptional(
+        {
+          decisions,
+          items: request.selections.map(({ item }) => ({ ...item, status: 'undone' })),
+          preview,
+          roleEdits: edits.success,
+          skipped: ordered.flatMap(({ skips }) => skips),
+        },
+        'checkedHolders',
+        Predicate.isTagged(request.authority, 'DelegatedManager')
+          ? checkedHoldersOf(
+              request.assignments,
+              edits.success.map(({ roleId }) => roleId),
+              request.decidedAt,
+            )
+          : undefined,
+      ),
+    ),
     (issue) => accessChangesError('access_changes_item_invalid', issue.message),
   );
 };

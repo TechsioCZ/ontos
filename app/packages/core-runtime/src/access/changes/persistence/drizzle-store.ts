@@ -1,6 +1,8 @@
 import { and, asc, desc, eq, gt, isNull, lte, or } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
+
+import { withOptional } from '../../decision/optional.ts';
 import type { SqlError } from 'effect/sql/SqlError';
 
 import { isDatabaseIntegrityRefusal, isDatabaseUnavailableFailure } from '../../../database/driver-failure.ts';
@@ -626,6 +628,8 @@ const recordRevision = Effect.fn('AccessChangesStore.recordRevision')(function* 
 interface DecisionBatch {
   /** The release a written revision is pinned to; required as soon as the batch writes a revision. */
   readonly catalogSnapshotId?: CatalogSnapshotId;
+  /** The holders a delegated envelope checked, per edited role; re-checked under each role's lock. */
+  readonly checkedHolders?: readonly { readonly incarnationIds: readonly string[]; readonly roleId: string }[];
   readonly decisions: readonly AccessChangeDecision[];
   readonly expected: AccessChangeDecisionKind;
   readonly expectedStatus: AccessChangeItemStatus;
@@ -721,14 +725,19 @@ const writeDecisionBatchTransaction = Effect.fn('AccessChangesStore.writeDecisio
     if (catalogSnapshotId !== undefined) {
       yield* Effect.forEach(
         batch.roleEdits,
-        (edit) =>
-          recordRevision(transaction, {
+        (edit) => {
+          const write = {
             catalogSnapshotId,
             decidedAt: decided.decidedAt,
             decidedBy: decided.decidedBy,
             edit,
             tenantId: scope.tenantId,
-          }),
+          };
+          const checked = batch.checkedHolders?.find(({ roleId }) => roleId === edit.roleId);
+          // A delegated batch that names no holders for an edited role checked nobody there.
+          const expectedHolders = batch.checkedHolders === undefined ? undefined : (checked?.incarnationIds ?? []);
+          return recordRevision(transaction, expectedHolders === undefined ? write : { ...write, expectedHolders });
+        },
         { concurrency: 1, discard: true },
       );
     }
@@ -1146,14 +1155,21 @@ export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): 
 
   const recordAdoption: AccessChangesStoreService['recordAdoption'] = Effect.fn('AccessChangesStore.recordAdoption')(
     function* recordAdoptionEffect({ catalogSnapshotId, plan, scope }: RecordAdoptionInput) {
-      return yield* writeDecisionBatch(scope, {
-        catalogSnapshotId,
-        decisions: plan.decisions,
-        expected: 'adopt',
-        expectedStatus: 'adopted',
-        items: plan.items,
-        roleEdits: plan.roleEdits,
-      });
+      return yield* writeDecisionBatch(
+        scope,
+        withOptional(
+          {
+            catalogSnapshotId,
+            decisions: plan.decisions,
+            expected: 'adopt' as const,
+            expectedStatus: 'adopted' as const,
+            items: plan.items,
+            roleEdits: plan.roleEdits,
+          },
+          'checkedHolders',
+          plan.checkedHolders,
+        ),
+      );
     },
   );
 
@@ -1171,14 +1187,21 @@ export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): 
 
   const recordUndo: AccessChangesStoreService['recordUndo'] = Effect.fn('AccessChangesStore.recordUndo')(
     function* recordUndoEffect({ catalogSnapshotId, plan, scope }: RecordUndoInput) {
-      return yield* writeDecisionBatch(scope, {
-        catalogSnapshotId,
-        decisions: plan.decisions,
-        expected: 'undo',
-        expectedStatus: 'undone',
-        items: plan.items,
-        roleEdits: plan.roleEdits,
-      });
+      return yield* writeDecisionBatch(
+        scope,
+        withOptional(
+          {
+            catalogSnapshotId,
+            decisions: plan.decisions,
+            expected: 'undo' as const,
+            expectedStatus: 'undone' as const,
+            items: plan.items,
+            roleEdits: plan.roleEdits,
+          },
+          'checkedHolders',
+          plan.checkedHolders,
+        ),
+      );
     },
   );
 

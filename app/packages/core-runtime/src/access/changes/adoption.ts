@@ -1,4 +1,4 @@
-import { Match, Result, Schema } from 'effect';
+import { Match, Predicate, Result, Schema } from 'effect';
 
 import { AccessChangeItemIdSchema } from '../ids.ts';
 import type { CapabilityKey, PrincipalId, RoleId } from '../ids.ts';
@@ -6,11 +6,20 @@ import type { AccessChangeItem, AccessRisk, Assignment, CatalogSnapshotEntry, Ce
 import { ACCESS_MODEL_PARSE_OPTIONS, AccessChangeDecisionSchema, AccessChangeItemSchema } from '../model.ts';
 import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
 import { configureAuthorityIssue, deciderIssue, liveDelegation } from './authority.ts';
+import { withOptional } from '../decision/optional.ts';
 import { compareText, higherRisk } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
 import { accessChangesError } from './errors.ts';
 import type { AdoptionPreview } from './preview.ts';
-import { AdoptionPreviewSchema, isAgentHolder, previewAdoption, previewScopeIds, samePreview } from './preview.ts';
+import {
+  AdoptionPreviewSchema,
+  checkedHoldersOf,
+  CheckedHoldersSchema,
+  isAgentHolder,
+  previewAdoption,
+  previewScopeIds,
+  samePreview,
+} from './preview.ts';
 import type { RoleCellEditDraft, RoleWithRevision } from './role-edits.ts';
 import {
   cellsOfCapability,
@@ -30,6 +39,8 @@ export const AdoptionSelectionSchema = Schema.Struct({
 export type AdoptionSelection = typeof AdoptionSelectionSchema.Type;
 
 export const AdoptionPlanSchema = Schema.Struct({
+  /** Present when a delegation authorized the plan: the holders its envelope checked, per edited role. */
+  checkedHolders: Schema.optionalKey(CheckedHoldersSchema),
   decisions: Schema.Array(AccessChangeDecisionSchema),
   items: Schema.Array(AccessChangeItemSchema),
   preview: AdoptionPreviewSchema,
@@ -480,12 +491,24 @@ export const planAdoption = (request: AdoptionRequest): Result.Result<AdoptionPl
     return Result.fail(decisions.failure);
   }
   return Result.mapError(
-    decodeAdoptionPlan({
-      decisions: decisions.success,
-      items: resolved.map(({ item }) => ({ ...item, status: 'adopted' })),
-      preview,
-      roleEdits: edits.success,
-    }),
+    decodeAdoptionPlan(
+      withOptional(
+        {
+          decisions: decisions.success,
+          items: resolved.map(({ item }) => ({ ...item, status: 'adopted' })),
+          preview,
+          roleEdits: edits.success,
+        },
+        'checkedHolders',
+        Predicate.isTagged(request.authority, 'DelegatedManager')
+          ? checkedHoldersOf(
+              request.assignments,
+              edits.success.map(({ roleId }) => roleId),
+              request.decidedAt,
+            )
+          : undefined,
+      ),
+    ),
     (issue) => accessChangesError('access_changes_item_invalid', issue.message),
   );
 };
