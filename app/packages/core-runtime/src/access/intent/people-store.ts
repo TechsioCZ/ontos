@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { Context, Effect, Layer, Match, Option, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
@@ -392,7 +392,9 @@ const endMembership = (
       and(
         eq(accessMemberships.tenantId, scope.tenantId),
         eq(accessMemberships.membershipId, write.membershipId),
-        eq(accessMemberships.status, 'active'),
+        // The compare-and-set admits exactly the transitions the model allows: a suspension from an
+        // active row, a revocation from an active or a suspended one.
+        inArray(accessMemberships.status, write.status === 'revoked' ? ['active', 'suspended'] : ['active']),
       ),
     )
     .returning({ membershipId: accessMemberships.membershipId })
@@ -404,7 +406,7 @@ const endMembership = (
           : Effect.fail(
               intentConflict(
                 'access_intent_record_conflict',
-                `membership ${write.membershipId} is not an active membership this command may end`,
+                `membership ${write.membershipId} is not a membership this command may move to ${write.status}`,
               ),
             ),
       ),
