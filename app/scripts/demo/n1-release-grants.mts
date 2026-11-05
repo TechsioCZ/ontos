@@ -7,6 +7,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { Command } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
@@ -74,7 +75,10 @@ if (import.meta.main) {
     ).pipe(
       Effect.provide(
         Layer.mergeAll(
-          ActiveApplicationCompositionConfigLive.pipe(Layer.provide(ActiveApplicationCompositionSourceLive)),
+          ActiveApplicationCompositionConfigLive.pipe(
+            Layer.provide(ActiveApplicationCompositionSourceLive),
+            Layer.provide(FetchHttpClient.layer),
+          ),
           ProcessDatabasePoolsLive,
           NodeServices.layer,
         ),
