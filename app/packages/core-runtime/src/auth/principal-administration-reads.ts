@@ -19,10 +19,10 @@ const paginationInput = {
   offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 };
 const bindingMetadata = Schema.Struct({
-  authBindingId: AuthBindingIdSchema,
-  createdAt: Schema.DateTimeUtc,
-  revokedAt: Schema.OptionFromNullOr(Schema.DateTimeUtc),
-  status: BindingStatusSchema,
+  authBindingId: Schema.optionalKey(AuthBindingIdSchema),
+  createdAt: Schema.optionalKey(Schema.DateTimeUtc),
+  revokedAt: Schema.optionalKey(Schema.OptionFromNullOr(Schema.DateTimeUtc)),
+  status: Schema.optionalKey(BindingStatusSchema),
 });
 const PaginationInput = Schema.Struct(paginationInput);
 const SelfResult = Schema.Struct({
@@ -30,11 +30,11 @@ const SelfResult = Schema.Struct({
   nextOffset: Schema.OptionFromNullOr(Schema.Finite),
 });
 const ManagedItem = Schema.Struct({
-  authBindingId: Schema.OptionFromNullOr(AuthBindingIdSchema),
-  bindingCreatedAt: Schema.OptionFromNullOr(Schema.DateTimeUtc),
-  bindingRevokedAt: Schema.OptionFromNullOr(Schema.DateTimeUtc),
-  bindingStatus: Schema.OptionFromNullOr(BindingStatusSchema),
-  displayName: Schema.String,
+  authBindingId: Schema.optionalKey(Schema.OptionFromNullOr(AuthBindingIdSchema)),
+  bindingCreatedAt: Schema.optionalKey(Schema.OptionFromNullOr(Schema.DateTimeUtc)),
+  bindingRevokedAt: Schema.optionalKey(Schema.OptionFromNullOr(Schema.DateTimeUtc)),
+  bindingStatus: Schema.optionalKey(Schema.OptionFromNullOr(BindingStatusSchema)),
+  displayName: Schema.optionalKey(Schema.String),
   kind: Schema.Literals(['service', 'integration']),
   principalId: PrincipalIdSchema,
   principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
@@ -208,13 +208,32 @@ export const selfApiKeyBindingsRead = defineRead<
   never
 >(
   {
+    accessDeclaration: {
+      key: 'core.identity.self-api-key.list',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // Credential linkage/status metadata is security-sensitive (O58): the parent admin read decides
+    // the record, and this group governs the authentication-metadata fields of its list.
+    accessFieldGroups: [
+      {
+        fieldClass: 'authentication_metadata',
+        fields: ['items.authBindingId', 'items.createdAt', 'items.revokedAt', 'items.status'],
+        key: 'core.identity.self-api-key.read-authentication-metadata',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'list',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: {
-        kind: 'context_permission',
-        permission: 'module.access',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.self-api-key-bindings',
       moduleKey: 'core.identity',
       role: 'api',
@@ -226,7 +245,6 @@ export const selfApiKeyBindingsRead = defineRead<
     inputSchema: PaginationInput,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'core.identity.self-api-key-bindings',
     resultSchema: SelfResult,
@@ -248,7 +266,6 @@ export const selfApiKeyBindingsRead = defineRead<
           }),
         )
       : Effect.succeed(services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );
 
 export const managedPrincipalsRead = defineRead<
@@ -260,13 +277,42 @@ export const managedPrincipalsRead = defineRead<
   never
 >(
   {
+    accessDeclaration: {
+      key: 'core.identity.principal.list-managed',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // Human principal names are personal data and the credential linkage/status metadata is
+    // security-sensitive (O58); each is its own group over this managed-principal list.
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['items.displayName'],
+        key: 'core.identity.principal.read-personal-data',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+      {
+        fieldClass: 'authentication_metadata',
+        fields: ['items.authBindingId', 'items.bindingCreatedAt', 'items.bindingRevokedAt', 'items.bindingStatus'],
+        key: 'core.identity.principal.read-authentication-metadata',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'identity', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'list',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: {
-        kind: 'context_permission',
-        permission: 'module.access',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.managed-principals',
       moduleKey: 'core.identity',
       role: 'api',
@@ -278,7 +324,6 @@ export const managedPrincipalsRead = defineRead<
     inputSchema: PaginationInput,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'core.identity.managed-principals',
     resultSchema: ManagedResult,
@@ -312,5 +357,4 @@ export const managedPrincipalsRead = defineRead<
     }
     return Effect.succeed(services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId));
   },
-  () => ({ kind: 'tenant', permission: 'manage_identity' }),
 );

@@ -12,7 +12,7 @@ import {
 import type { DefinePriceActionServices } from '../../src/actions/define-price.action.ts';
 import type { CommercialContextAssessment } from '../../src/integrations/commercial-context-evidence.ts';
 import { PricePersistenceUnavailable } from '../../src/services/price-persistence.service.ts';
-import { PricingCommercialContextUnavailable } from '../../shared/domain/commercial-context-gateway-credential.ts';
+import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
 import {
   preparePriceSourceEvidence,
   priceSourceFactFingerprint,

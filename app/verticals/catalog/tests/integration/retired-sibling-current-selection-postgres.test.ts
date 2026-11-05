@@ -4,7 +4,9 @@ import {
   SelectionEvidenceForbiddenProblemSchema,
   SelectionEvidenceUnavailableProblemSchema,
 } from '../../shared/apis/selection-evidence.ts';
+import { RetireVariantResultSchema } from '../../shared/actions/retire-variant.ts';
 import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { makeRetiredSiblingFixture, retiredSiblingTestServices } from '../support/retired-sibling-receiver.fixture.ts';
 
 it.live(
@@ -13,6 +15,7 @@ it.live(
     Effect.gen(function* retiredSiblingNative() {
       const {
         alternate,
+        deniedAccess,
         fixture,
         nativeRead,
         noDirectProduct,
@@ -26,6 +29,9 @@ it.live(
       expect((yield* read(noDirectProduct.alternate)).evidence).toMatchObject({ status: 'VALID' });
       yield* retire(noDirectProduct.selected);
       expect((yield* read(noDirectProduct.alternate)).evidence).toMatchObject({ status: 'VALID' });
+      // v2: the one access gate decides this read (O62), so the principal with no assignment is
+      // named on the fixture's own per-request owner seam (see `live-access-authority`).
+      deniedAccess.deny(fixture.denied.principalId, 'commerce.catalog.selection-evidence.read');
       expect(
         Schema.is(SelectionEvidenceForbiddenProblemSchema)(yield* read(alternate, fixture.denied).pipe(Effect.flip)),
       ).toBe(true);
@@ -45,7 +51,7 @@ it.live(
       expect((yield* read(selected)).evidence).toMatchObject({ status: 'VALID' });
       expect((yield* read(alternate)).evidence).toMatchObject({ status: 'VALID' });
       expect((yield* read(packageSelection)).evidence).toMatchObject({ status: 'VALID' });
-      const retired = yield* retire();
+      const retired = yield* requireExecutionResult(RetireVariantResultSchema, retire());
       expect(retired.variant).toMatchObject({ lifecycle: 'RETIRED', variantRef: selected.variantRef });
       expect((yield* nativeRead(alternate)).evidence).toMatchObject({ status: 'VALID' });
       const healthy = yield* read(alternate);

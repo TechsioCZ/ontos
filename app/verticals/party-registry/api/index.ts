@@ -1,5 +1,5 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
+import { CorePersistenceLive, makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
@@ -55,6 +55,11 @@ import {
   partyRegistryCorsAllowedOrigins,
   resolvePartyRegistryShellOrigin,
 } from './read-server-support.ts';
+import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
+  TenantIntentLoaderLive,
+} from '@app/core-runtime/actions/runtime-wiring';
 
 export { partyRegistryFoundationLive } from './party-registry-foundation.ts';
 
@@ -85,14 +90,21 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(partyRegistryDatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer, accessEnforcementLive)),
 );
 const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
   Layer.provide(partyRegistryDatabaseConfigLive),
 );
 const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer, accessEnforcementLive)),
 );
 
 type PartyRegistryApiRuntimeArguments = readonly [

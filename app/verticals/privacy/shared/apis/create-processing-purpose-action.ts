@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug create-processing-purpose
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/create-processing-purpose.ts';
 
 export { CreateProcessingPurposePayloadSchema } from '../actions/create-processing-purpose.ts';
-
 export const CreateProcessingPurposeActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateProcessingPurposeActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const CreateProcessingPurposeActionForbiddenProblemSchema = makeProblemDe
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const createProcessingPurposeActionGroupDefinition = HttpApiGroup.make('c
     HttpApiEndpoint.post('execute', '/privacy/actions/create-processing-purpose', {
       error: actionErrors,
       payload: Schema.toEncoded(CreateProcessingPurposePayloadSchema),
-      success: CreateProcessingPurposeResultSchema,
+      success: [ActionProposalAcceptedSchema, CreateProcessingPurposeResultSchema],
     }),
   )
   .middleware(CreateProcessingPurposeActionSchemaErrorMiddleware);

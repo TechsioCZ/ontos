@@ -55,6 +55,14 @@ export const handleAssertSizeEquivalence = Effect.fn('AssertSizeEquivalenceActio
 
 export const assertSizeEquivalenceAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.size-equivalence.assert',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'size-equivalence', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.assert-size-equivalence.access.v1',
@@ -66,7 +74,7 @@ export const assertSizeEquivalenceAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey: catalogModuleKey,
       role: 'action',

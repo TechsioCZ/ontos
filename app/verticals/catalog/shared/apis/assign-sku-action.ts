@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug assign-sku
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { AssignSkuPayloadSchema, AssignSkuResultSchema } from '../actions/assign-sku.ts';
 
 export { AssignSkuPayloadSchema } from '../actions/assign-sku.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const AssignSkuActionInvalidProblemSchema = makeProblemDetailsSchema('AssignSkuActionInvalidProblem', 400);
 export const AssignSkuActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -15,6 +17,7 @@ export const AssignSkuActionAuthenticationProblemSchema = makeProblemDetailsSche
 );
 export const AssignSkuActionForbiddenProblemSchema = makeProblemDetailsSchema('AssignSkuActionForbiddenProblem', 403, {
   code: Schema.Literals([
+    'action_approval_required',
     'action_permission_denied',
     'module_state_denied',
     'operation_context_denied',
@@ -115,7 +118,7 @@ export const AssignSkuActionApi = HttpApi.make('AssignSkuActionApi').add(
       HttpApiEndpoint.post('execute', '/catalog/actions/assign-sku', {
         error: actionErrors,
         payload: Schema.toEncoded(AssignSkuPayloadSchema),
-        success: AssignSkuResultSchema,
+        success: [ActionProposalAcceptedSchema, AssignSkuResultSchema],
       }),
     )
     .middleware(AssignSkuActionSchemaErrorMiddleware),

@@ -11,11 +11,14 @@ import {
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
@@ -24,6 +27,7 @@ import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, HttpRouter } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
+import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { pricingApi, pricingOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
@@ -32,12 +36,6 @@ import { pricingOrdinaryCurrentPublicationLive } from '../src/integrations/mater
 import { manageQuotationFreshCurrentAuthorityLive } from '../src/actions/manage-quotation.action.ts';
 import { currentPricingDecisionEvaluationFactoryLive } from '../src/services/current-pricing-decision-evaluation.service.ts';
 import { ExternalPriceInputBoundaryFactoryLive } from '../src/services/external-price-input-boundary.service.ts';
-import { catalogSelectionGatewayCredentialLive } from './catalog-selection-gateway-credential.ts';
-import { commercialContextGatewayCredentialLive } from './commercial-context-gateway-credential.ts';
-import {
-  commercePriceGroupResolutionGatewayCredentialLive,
-  priceGroupCompatibilityGatewayCredentialLive,
-} from './price-group-owner-gateway-credential.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive as GovernedGatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
@@ -115,8 +113,15 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
 
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
@@ -130,9 +135,12 @@ const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, 
       moduleStateGateLive,
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
+      accessEnforcementLive,
     ),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(DatabaseConfigLive),
+  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
+  Layer.provideMerge(nodeCryptoLayer),
 );
 /** Production Action composition with server-owned owner-client credential issuers. */
 export const productionActionRuntimeLive = pricingActionRuntimeLive.pipe(
@@ -143,14 +151,6 @@ export const productionActionRuntimeLive = pricingActionRuntimeLive.pipe(
   Layer.provideMerge(currentPricingDecisionEvaluationFactoryLive),
   Layer.provideMerge(pricingOrdinaryCurrentPublicationLive),
   Layer.provideMerge(pricingCurrentDecisionOwnerFinalFenceGatewaysLive),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      catalogSelectionGatewayCredentialLive,
-      commercePriceGroupResolutionGatewayCredentialLive,
-      commercialContextGatewayCredentialLive,
-      priceGroupCompatibilityGatewayCredentialLive,
-    ),
-  ),
 );
 const governedActionRuntimeLive = productionActionRuntimeLive;
 const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(Layer.provide(governedActionRuntimeLive));
@@ -159,11 +159,14 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   ContextAccessLive,
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
+  accessEnforcementLive,
 );
 const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
   Layer.provide(readRuntimeDependenciesLive),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(DatabaseConfigLive),
   Layer.provide(activeApplicationCompositionLive),
+  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
+  Layer.provideMerge(nodeCryptoLayer),
 );
 
 const governedReadRuntimeLive = readRuntimeLive;
@@ -185,7 +188,6 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
     Layer.provide(currentPricingDecisionEvaluationFactoryLive),
     Layer.provide(pricingOrdinaryCurrentPublicationLive),
     Layer.provide(pricingCurrentDecisionOwnerFinalFenceGatewaysLive),
-    Layer.provide(commercePriceGroupResolutionGatewayCredentialLive),
   ),
   currentSupportedCurrenciesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   defineCommercialFeeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -223,17 +225,21 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
   Layer.provide(compositionSourceLive),
 );
 type PricingApiGroups = (typeof pricingApi.groups)[keyof typeof pricingApi.groups];
+// Crypto is provided once, below, by nodeCryptoLayer; it is not a requirement of the handler runtime.
 type PricingHandlerRequirements =
-  | (typeof governedReadApiHandlersLive extends Layer.Layer<infer _Services, infer _Error, infer Requirements>
-      ? Requirements
-      : never)
+  | Exclude<
+      typeof governedReadApiHandlersLive extends Layer.Layer<infer _Services, infer _Error, infer Requirements>
+        ? Requirements
+        : never,
+      Crypto.Crypto
+    >
   | HttpRouter.HttpRouter;
 const resolvedApiHandlersLive: EffectBffRuntimeAssembly<
   'PricingApi',
   PricingApiGroups,
   PricingHandlerRequirements
 >['handlers'] = governedReadApiHandlersLive.pipe(
-  Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+  Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
   Layer.orDie,
 );
 

@@ -21,7 +21,7 @@ interface ApplicableTaxRuleSetServices {
 
 const applicableTaxRuleSetEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'tax.governed.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.tax.api.applicable-tax-rule-set',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -45,6 +45,17 @@ export const readApplicableTaxRuleSet = (
 
 export const applicableTaxRuleSetRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.tax-rule-set.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'tax-rules', level: 'basic' },
+      // The set carries each applicable revision's `ratePercent`: a published Tax rate is financial
+      // materiality, so reading it is at least sensitive (O21). A rate is not a personal datum and not
+      // a Tax identifier, so it needs no field group of its own.
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: applicableTaxRuleSetEntrypoint,
     evidencePolicy: {
@@ -54,7 +65,6 @@ export const applicableTaxRuleSetRead = defineRead(
     inputSchema: ApplicableTaxRuleSetRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.tax.api.applicable-tax-rule-set',
     resultSchema: ApplicableTaxRuleSetResponseSchema,
@@ -62,5 +72,4 @@ export const applicableTaxRuleSetRead = defineRead(
   },
   readApplicableTaxRuleSet,
   (transaction, scope) => Effect.succeed({ governed: taxGovernedReadsForScope(transaction, scope) }),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

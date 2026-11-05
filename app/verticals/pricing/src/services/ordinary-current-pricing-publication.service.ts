@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import type { PricingCurrencySubject } from '@app/pricing-contracts/current-supported-currencies';
 import { PricingCurrencySubjectSchema } from '@app/pricing-contracts/current-supported-currencies';
@@ -253,6 +254,7 @@ const finalizationIndeterminate = (
 export const authorizeOrdinaryCurrentPricingPublication = Effect.fn('OrdinaryCurrentPricingPublication.authorize')(
   function* authorizeOrdinaryCurrentPricingPublicationProgram(
     request: PricingOrdinaryCurrentPublicationRequest,
+    scope: OperationalScope,
   ): Effect.fn.Return<
     PricingOrdinaryCurrentAuthorizedPublication,
     PricingOrdinaryCurrentPublicationIndeterminate,
@@ -329,7 +331,7 @@ export const authorizeOrdinaryCurrentPricingPublication = Effect.fn('OrdinaryCur
           } as const);
 
     const authorization: PricingMaterialEvidencePublicationAuthorization =
-      yield* finalizePricingMaterialEvidenceForPublication({ request: request.materialEvidence }).pipe(
+      yield* finalizePricingMaterialEvidenceForPublication({ request: request.materialEvidence, scope }).pipe(
         Effect.mapError((cause) => finalizationIndeterminate(request, cause)),
       );
     const internalEvidence = yield* handoffPricingSourceEvidenceToAuthorizedInternalConsumer(
@@ -362,12 +364,13 @@ export const authorizeOrdinaryCurrentPricingPublication = Effect.fn('OrdinaryCur
 export const publishOrdinaryCurrentPricingForCustomer = Effect.fn('OrdinaryCurrentPricingPublication.publishCustomer')(
   function* publishOrdinaryCurrentPricingForCustomerProgram(
     request: PricingOrdinaryCurrentPublicationRequest,
+    scope: OperationalScope,
   ): Effect.fn.Return<
     PricingCommercialTotalSafeProjection,
     PricingOrdinaryCurrentPublicationIndeterminate,
     PricingExternalOwnerEvidenceValidation | PricingMaterialEvidenceOwnerFinalFence
   > {
-    const authorization = yield* authorizeOrdinaryCurrentPricingPublication(request);
+    const authorization = yield* authorizeOrdinaryCurrentPricingPublication(request, scope);
     return yield* projectPricingMaterialEvidenceForCustomer(authorization.internalEvidence.materialEvidence).pipe(
       Effect.mapError((cause) =>
         indeterminate(

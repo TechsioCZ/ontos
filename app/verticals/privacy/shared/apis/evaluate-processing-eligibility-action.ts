@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug evaluate-processing-eligibility
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/evaluate-processing-eligibility.ts';
 
 export { EvaluateProcessingEligibilityPayloadSchema } from '../actions/evaluate-processing-eligibility.ts';
-
 export const EvaluateProcessingEligibilityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'EvaluateProcessingEligibilityActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const EvaluateProcessingEligibilityActionForbiddenProblemSchema = makePro
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -144,7 +145,7 @@ export const evaluateProcessingEligibilityActionGroupDefinition = HttpApiGroup.m
     HttpApiEndpoint.post('execute', '/privacy/actions/evaluate-processing-eligibility', {
       error: actionErrors,
       payload: Schema.toEncoded(EvaluateProcessingEligibilityPayloadSchema),
-      success: EvaluateProcessingEligibilityResultSchema,
+      success: [ActionProposalAcceptedSchema, EvaluateProcessingEligibilityResultSchema],
     }),
   )
   .middleware(EvaluateProcessingEligibilityActionSchemaErrorMiddleware);

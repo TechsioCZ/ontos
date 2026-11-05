@@ -1,7 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
@@ -9,7 +9,7 @@ import {
   CartOpenSelectionPopulationEvidenceSchema,
   CartOpenSelectionPopulationService,
   CartOpenSelectionPopulationUnavailable,
-  cartOpenSelectionPopulationFromEnvironment,
+  cartOpenSelectionPopulationForScope,
   readCartOpenSelectionPopulation,
 } from '../../shared/domain/catalog-open-selection-population.ts';
 import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
@@ -65,15 +65,25 @@ const untouchedTransaction = {
 };
 
 describe('Catalog open-selection impact', () => {
-  it.effect('resolves the exact deployment-provided Cart port and preserves an absent binding', () =>
+  it.effect('binds the deployment-provided Cart owner to the operation scope and preserves an absent binding', () =>
     Effect.gen(function* deploymentBinding() {
-      const port = population([]);
-      expect(yield* cartOpenSelectionPopulationFromEnvironment).toBeUndefined();
-      expect(
-        yield* cartOpenSelectionPopulationFromEnvironment.pipe(
-          Effect.provideService(CartOpenSelectionPopulationService, port),
-        ),
-      ).toBe(port);
+      expect(Option.isNone(yield* cartOpenSelectionPopulationForScope(scope))).toBe(true);
+      const received: { readonly scope: unknown; readonly tenantId: string }[] = [];
+      const owner = {
+        read: (input: { readonly scope: unknown; readonly tenantId: string }) => {
+          received.push(input);
+          return population([]).read();
+        },
+      };
+      const bound = yield* cartOpenSelectionPopulationForScope(scope).pipe(
+        Effect.provideService(CartOpenSelectionPopulationService, owner),
+      );
+      expect(Option.isSome(bound)).toBe(true);
+      if (Option.isNone(bound)) {
+        return;
+      }
+      yield* bound.value.read({ tenantId });
+      expect(received).toEqual([{ scope, tenantId }]);
     }),
   );
 

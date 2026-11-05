@@ -1,5 +1,19 @@
 import { isOwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import { Array as EffectArray, Effect, Schema, Predicate } from 'effect';
+import { declaredAccessCarrier } from '../authorization/access-declaration.ts';
+import { fieldWriteGroupSchemaIssue } from '../authorization/field-group-paths.ts';
+import type {
+  AccessAmount,
+  AccessDeclaration,
+  AccessDeclarationInput,
+  AccessFieldGroup,
+  AccessFieldGroupInput,
+  AccessTarget,
+  AccessActor,
+  AccessActorInput,
+  AccessWorkload,
+  AccessWorkloadInput,
+} from '../authorization/access-declaration.ts';
 import type { ActionHandlerContext, CommittedActionDomainRejection } from './context.ts';
 import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
 import type { ActionCollectorError, ActionCoreError } from './errors.ts';
@@ -15,6 +29,7 @@ import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ResourceAccessTarget } from '../permissions/context-access.ts';
 import type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/owner-permission-contract.ts';
 import type { TenantPermissionKey } from '../permissions/context-permissions.ts';
+import type { OwnerAccessFacts } from '../access/enforcement/owner-overlay.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
 const actionResourcePermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/resource-permission');
@@ -74,6 +89,28 @@ export type ActionDeniedAuditEvidenceResolver<Payload> = (
   payload: Payload,
   scope: OperationalScope,
 ) => ActionDeniedAuditEvidenceValue;
+/**
+ * The one record a record-scoped Action acts on, derived from the decoded payload and the trusted
+ * scope (O9, O27). The module is the record's own owner, never the capability key's prefix.
+ */
+export type ActionAccessTargetResolver<Payload> = (payload: Payload, scope: OperationalScope) => AccessTarget;
+/**
+ * The money value an amount ceiling applies to when `amountInput` names a server-derived total
+ * (O18). A composite total is computed server-side and never taken from the client.
+ */
+export type ActionAccessAmountResolver<Payload> = (payload: Payload, scope: OperationalScope) => AccessAmount;
+/**
+ * The owner-local facts this Action hands to the owner overlay, derived from the decoded payload and
+ * the trusted scope (O70). They name the records the owner's own business rule is about; they are
+ * never authority and never reach the decision engine.
+ */
+export type ActionOwnerFactsResolver<Payload> = (payload: Payload, scope: OperationalScope) => OwnerAccessFacts;
+/**
+ * Whether this exact payload only *reduces* the acting person's own authority (O35, O71). It is not
+ * a capability and grants nothing: a true answer stops the grant decision from blocking an act that
+ * takes authority away, and every other payload still needs the declaration's grant.
+ */
+export type ActionReducesAuthorityResolver<Payload> = (payload: Payload) => boolean;
 export interface ActionDeniedAuditEvidenceDeclaration<Payload> {
   readonly resolve: ActionDeniedAuditEvidenceResolver<Payload>;
   readonly schema: Schema.ConstraintDecoder<unknown>;
@@ -154,14 +191,74 @@ const ActionOwnerPermissionDeclarationSchema = Schema.instanceOf(ActionPrivateSt
   ),
 );
 
+/** The access carriers of an Action as a module writes them; `defineAction` decodes them (O5, O58, O59). */
+export interface AuthoredActionAccessCarriers {
+  /** Module-to-module calls this Action receives; the calling module is the actor (D5). */
+  readonly accessActor?: AccessActorInput;
+  /** Optional report-only catalog metadata; never grants Action execution. Authoring shape. */
+  readonly accessDeclaration?: AccessDeclarationInput;
+  /** Sensitive payload field groups written by this Action, each a `field_write` declaration (O58). */
+  readonly accessFieldGroups?: readonly AccessFieldGroupInput[];
+  /**
+   * Marks an Action only trusted machine workloads may run (O29, O59). Beside `accessDeclaration`
+   * it means both paths exist and stay disjoint: the workload path never admits humans and the
+   * declaration path never admits workloads (O67-Q4).
+   */
+  readonly accessWorkload?: AccessWorkloadInput;
+}
+
+/** The decoded, frozen carriers a registration exposes; no request decodes them again (O5, O58, O59). */
+export interface DeclaredActionAccessCarriers {
+  readonly accessActor?: AccessActor;
+  readonly accessDeclaration?: AccessDeclaration;
+  readonly accessFieldGroups?: readonly AccessFieldGroup[];
+  readonly accessWorkload?: AccessWorkload;
+}
+
 export interface ActionDescriptor<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string,
+  Carriers extends AuthoredActionAccessCarriers | DeclaredActionAccessCarriers = AuthoredActionAccessCarriers,
 > {
+  /** Module-to-module calls this Action receives; the calling module is the actor (D5). */
+  readonly accessActor?: Carriers['accessActor'];
+  /**
+   * The money value of the governed command when the declaration's `amountInput` names a
+   * server-derived total, e.g. `derived.purchaseValue` (O18).
+   */
+  readonly accessAmount?: ActionAccessAmountResolver<PayloadSchema['Type']>;
+  /** Optional report-only catalog metadata; never grants Action execution. Authoring shape. */
+  readonly accessDeclaration?: Carriers['accessDeclaration'];
   readonly accessEvidencePolicy: ActionAccessEvidencePolicy;
+  /** Sensitive payload field groups written by this Action, each a `field_write` declaration (O58). */
+  readonly accessFieldGroups?: Carriers['accessFieldGroups'];
+  /**
+   * The owner-local facts this Action hands to the owner overlay (O70), e.g. the counterparty whose
+   * own grant the owner rule checks. They grant nothing and never reach the decision engine.
+   */
+  readonly accessOwnerFacts?: ActionOwnerFactsResolver<PayloadSchema['Type']>;
+  /**
+   * Whether this exact payload *reduces* the acting person's own authority, so no grant may block it
+   * (O35, O71): ending an impersonation, revoking one's own credential, withdrawing one's own
+   * proposal. Only a true answer skips the grant decision, and only on a descriptor that declares its
+   * own `accessDeclaration`; the request still needs an authenticated principal in a resolved scope
+   * and the act is still recorded.
+   */
+  readonly accessReducesAuthority?: ActionReducesAuthorityResolver<PayloadSchema['Type']>;
+  /**
+   * The one record this Action acts on when its declaration is record-scoped (O9, O27); a
+   * scope-wide Action has no target and the gate never asks for one.
+   */
+  readonly accessTarget?: ActionAccessTargetResolver<PayloadSchema['Type']>;
+  /**
+   * Marks an Action only trusted machine workloads may run (O29, O59). Beside `accessDeclaration`
+   * it means both paths exist and stay disjoint: the workload path never admits humans and the
+   * declaration path never admits workloads (O67-Q4).
+   */
+  readonly accessWorkload?: Carriers['accessWorkload'];
   /**
    * Stable, globally unique authorization identity for this Action. Core maps
    * it losslessly to SpiceDB's object-id alphabet. Once relationships reference
@@ -315,8 +412,29 @@ export type ActionRegistration<
   readonly _handlerRequirements?: HandlerRequirements;
   readonly _services?: Services;
   readonly [actionRegistration]: true;
-  readonly descriptor: Readonly<ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>>;
+  readonly descriptor: Readonly<
+    DeclaredActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>
+  >;
 };
+
+/**
+ * The descriptor a registration exposes: the authored carriers replaced by the decoded, frozen ones
+ * (O5, O58, O59). A runtime decides and records with exactly what definition time validated, so no
+ * request decodes the declaration, its field groups or the workload marker again.
+ */
+export type DeclaredActionDescriptor<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+> = Readonly<
+  Omit<
+    ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+    'accessActor' | 'accessDeclaration' | 'accessFieldGroups' | 'accessWorkload'
+  > &
+    DeclaredActionAccessCarriers
+>;
 
 /**
  * Existential public view of an Action registration. Keeping only the deployment-contract
@@ -333,6 +451,10 @@ export interface AnyActionRegistration {
         DomainEventContractMap,
         string
       >,
+      | 'accessActor'
+      | 'accessDeclaration'
+      | 'accessFieldGroups'
+      | 'accessWorkload'
       | 'actionKey'
       | 'auditProfile'
       | 'entrypoint'
@@ -358,6 +480,14 @@ export type ActionRequirements<Registration> =
     : never;
 
 export interface ActionDescriptorValidationInput<Policy> {
+  readonly accessActor?: AccessActorInput;
+  readonly accessAmount?: unknown;
+  readonly accessDeclaration?: AccessDeclarationInput;
+  readonly accessFieldGroups?: readonly AccessFieldGroupInput[];
+  readonly accessOwnerFacts?: unknown;
+  readonly accessReducesAuthority?: unknown;
+  readonly accessTarget?: unknown;
+  readonly accessWorkload?: AccessWorkloadInput;
   readonly entrypoint: ModuleEntrypointDescriptor;
   readonly legalEntityPermission?: unknown;
   readonly legalEntityScope: string;
@@ -423,8 +553,76 @@ const validateActionPolicies = <Policy>(
     }
   }
 };
+const derivedAmountInputPrefix = 'derived.';
+
+/**
+ * The record target and the amount resolver are bound to the declaration they serve: a target exists
+ * only for a record-scoped capability (Q2), and a derived amount only where the declaration names a
+ * server-derived total (O18). Both are authoring mistakes worth failing at definition time (O5).
+ */
+const validateActionAccessBinding = <Policy>(
+  descriptor: ActionDescriptorValidationInput<Policy>,
+  declaration: AccessDeclaration | undefined,
+): void => {
+  const { accessAmount, accessOwnerFacts, accessReducesAuthority, accessTarget } = descriptor;
+  if (accessTarget !== undefined && !Predicate.isFunction(accessTarget)) {
+    return failActionDefinition('Action access target must be a resolver function');
+  }
+  if (accessAmount !== undefined && !Predicate.isFunction(accessAmount)) {
+    return failActionDefinition('Action access amount must be a resolver function');
+  }
+  if (accessReducesAuthority !== undefined) {
+    if (!Predicate.isFunction(accessReducesAuthority)) {
+      return failActionDefinition('Action access reduces-authority declaration must be a resolver function');
+    }
+    if (declaration === undefined) {
+      return failActionDefinition(
+        'Action accessReducesAuthority requires the descriptor to declare its own accessDeclaration',
+      );
+    }
+  }
+  if (accessOwnerFacts !== undefined) {
+    if (!Predicate.isFunction(accessOwnerFacts)) {
+      return failActionDefinition('Action access owner facts must be a resolver function');
+    }
+    if (declaration === undefined) {
+      return failActionDefinition(
+        'Action accessOwnerFacts requires the descriptor to declare its own accessDeclaration',
+      );
+    }
+  }
+  if (accessTarget !== undefined) {
+    if (declaration === undefined) {
+      return failActionDefinition('Action accessTarget requires the descriptor to declare its own accessDeclaration');
+    }
+    if (declaration.selectors.length === 0) {
+      return failActionDefinition(
+        'Action accessTarget requires a record-scoped declaration: a scope-wide capability acts on no single record (Q2)',
+      );
+    }
+  }
+  if (accessAmount === undefined) {
+    return;
+  }
+  if (declaration === undefined) {
+    return failActionDefinition('Action accessAmount requires the descriptor to declare its own accessDeclaration');
+  }
+  const { amountInput } = declaration;
+  if (amountInput === undefined) {
+    return failActionDefinition('Action accessAmount requires the declaration to declare its amountInput');
+  }
+  if (!amountInput.startsWith(derivedAmountInputPrefix)) {
+    return failActionDefinition(
+      `Action accessAmount requires amountInput to name a server-derived total (${derivedAmountInputPrefix}*), never a client-supplied amount (O18)`,
+    );
+  }
+};
+
 export const validateActionDescriptorInput = <Policy>(descriptor: ActionDescriptorValidationInput<Policy>): void => {
   validateActionEntrypoint(descriptor);
+  // Decodes the declaration, its field groups and the workload marker against the entrypoint (O5).
+  const carriers = declaredAccessCarrier(descriptor);
+  validateActionAccessBinding(descriptor, carriers.accessDeclaration);
   validateActionLegalEntityScope(descriptor);
   validateActionPolicies(descriptor, descriptor.policies);
 };
@@ -605,9 +803,29 @@ export function defineAction<
       HandlerRequirements | PostAttemptRequirements
     > {
   validateActionDescriptorInput(descriptor);
+  const carriers = declaredAccessCarrier(descriptor);
+  const fieldGroupIssue = fieldWriteGroupSchemaIssue(carriers.accessFieldGroups ?? [], descriptor.payloadSchema);
+  if (fieldGroupIssue !== undefined) {
+    return failActionDefinition(`Action ${descriptor.actionKey}: ${fieldGroupIssue}`);
+  }
 
-  const frozenDescriptor = Object.freeze({
-    ...descriptor,
+  const {
+    accessActor: _authoredActor,
+    accessDeclaration: _authoredDeclaration,
+    accessFieldGroups: _authoredFieldGroups,
+    accessWorkload: _authoredWorkload,
+    ...descriptorRest
+  } = descriptor;
+  const frozenDescriptor: DeclaredActionDescriptor<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner
+  > = Object.freeze({
+    // The authored carriers are replaced by their decoded form below; they are never registered as written.
+    ...descriptorRest,
+    ...carriers,
     accessEvidencePolicy: Object.freeze({ ...descriptor.accessEvidencePolicy }),
     domainEvents: Object.freeze({ ...descriptor.domainEvents }),
     entrypoint: descriptor.entrypoint,
@@ -798,6 +1016,90 @@ export const getActionOwnerPermissionTargetResolver = <
         }
         return targets;
       };
+
+/** The record target resolver of a record-scoped Action, or undefined for a scope-wide one (O9, Q2). */
+export const getActionAccessTargetResolver = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+): ActionAccessTargetResolver<PayloadSchema['Type']> | undefined => registration.descriptor.accessTarget;
+
+/** The owner-local facts resolver of an Action handed to the owner overlay, when declared (O70). */
+export const getActionOwnerFactsResolver = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+): ActionOwnerFactsResolver<PayloadSchema['Type']> | undefined => registration.descriptor.accessOwnerFacts;
+
+/** The server-derived money value resolver of an amount ceiling, when one is declared (O18). */
+export const getActionAccessAmountResolver = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+): ActionAccessAmountResolver<PayloadSchema['Type']> | undefined => registration.descriptor.accessAmount;
+
+/** The "this payload only reduces authority" resolver of an Action, when one is declared (O35, O71). */
+export const getActionReducesAuthorityResolver = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+): ActionReducesAuthorityResolver<PayloadSchema['Type']> | undefined => registration.descriptor.accessReducesAuthority;
 
 const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
   Object.defineProperty(failure, 'cause', {

@@ -23,7 +23,7 @@ type ExactPriceResolutionResponse = typeof ExactPriceResolutionResponseSchema.Ty
 
 const exactPriceResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'pricing.exact_price_resolution.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.exact-price-resolution',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -177,6 +177,14 @@ const exactPriceResolutionServiceForScope = (
 
 export const exactPriceResolutionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.price.resolve-exact',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'prices', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: exactPriceResolutionEntrypoint,
     evidencePolicy: {
@@ -186,7 +194,6 @@ export const exactPriceResolutionRead = defineRead(
     inputSchema: ExactPriceResolutionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.exact-price-resolution',
     resultSchema: ExactPriceResolutionResponseSchema,
@@ -209,5 +216,4 @@ export const exactPriceResolutionRead = defineRead(
       })),
     ),
   exactPriceResolutionServiceForScope,
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

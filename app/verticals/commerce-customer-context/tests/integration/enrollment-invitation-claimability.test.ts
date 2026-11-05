@@ -75,10 +75,6 @@ const KEY_ID = 'enrollment-invitation-claimability';
 const PORTAL_PASSWORD = 'P'.repeat(24);
 const DISPLAY_NAME = 'Counterparty invitation claimability recipient';
 
-const START_ACTION_KEY = 'commerce.customer-context.start-portal-enrollment';
-/** A COUNTERPARTY_INVITATION start also runs the claim-transition Action on the Storefront's behalf. */
-const CLAIM_TRANSITION_ACTION_KEY = 'commerce.customer-context.claim-portal-enrollment-transition';
-
 const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
   Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
@@ -256,10 +252,7 @@ const claimabilityScenario = Effect.fnUntraced(function* claimabilityScenario() 
   const tenantId = randomUUID();
   const compositionRevision = yield* enrollmentApplicationCompositionRevision;
   const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
-  const realm = yield* makeCounterpartyInvitationRealm(fixture, {
-    recipientActionKeys: [],
-    storefrontActionKeys: [START_ACTION_KEY, CLAIM_TRANSITION_ACTION_KEY],
-  });
+  const realm = yield* makeCounterpartyInvitationRealm(fixture);
   const gateway = yield* makeAcceptanceGatewayIssuer(ISSUER, KEY_ID);
   const runtime = yield* deployedRuntime(gateway);
   const scenario: ClaimabilityScenario = { fixture, gateway, realm, runtime, tenantId };
@@ -327,10 +320,7 @@ it.live(
           { tenantId: randomUUID() },
           scenario.fixture.compositionRevision,
         );
-        const foreignRealm = yield* makeCounterpartyInvitationRealm(foreignFixture, {
-          recipientActionKeys: [],
-          storefrontActionKeys: [],
-        });
+        const foreignRealm = yield* makeCounterpartyInvitationRealm(foreignFixture);
         const capture = makeCapturingCounterpartyInvitationProofDelivery();
         const foreignInvitation = yield* issueCounterpartyAccessInvitation(
           foreignRealm,

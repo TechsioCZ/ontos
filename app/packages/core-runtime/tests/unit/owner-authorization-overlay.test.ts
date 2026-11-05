@@ -3,10 +3,11 @@ import { fixtureOwnerContract, fixtureOwnerModule, ownerPermissionTarget } from 
 import { DateTime } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import type { OwnerAuthorizationInput } from '../../src/permissions/owner-authorization-overlay.ts';
-import { failClosedOwnerAuthorizationDecision } from '../../src/permissions/owner-authorization-overlay.ts';
+import type { OwnerAuthorizationInput } from '../../src/access/enforcement/owner-overlay.ts';
+import { failClosedOwnerAuthorizationDecision } from '../../src/access/enforcement/owner-overlay.ts';
 
 const input = (target: OwnerAuthorizationInput['targets'][number]): OwnerAuthorizationInput => ({
+  capabilityKey: 'commerce.assortment.create-closed-assortment-boundary',
   operation: 'action',
   operationAt: DateTime.makeUnsafe(0),
   operationKey: 'commerce.fixture.create',

@@ -97,6 +97,14 @@ const handle = Effect.fn('OpenProfileReconciliationAction.handle')(function* han
 });
 export const openProfileReconciliationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.profile-reconciliation.open',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.open-profile-reconciliation.access.v1',
@@ -109,7 +117,7 @@ export const openProfileReconciliationAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.open-profile-reconciliation',
       moduleKey: MODULE_KEY,
       role: 'action',

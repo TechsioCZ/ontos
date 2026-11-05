@@ -1,3 +1,5 @@
+import { CapabilityKeySchema } from '@app/core-runtime/access/ids';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import { priceGroupCurrentInputGuard } from './price-group-current-input.ts';
 import { Socket } from 'effect/socket';
@@ -98,6 +100,8 @@ const BootstrapSchema = Schema.Struct({
   actor: TrustedPrincipalContextSchema,
   composition: ActiveApplicationCompositionSnapshotSchema,
   database: DatabaseCertificateSchema,
+  /** The Catalog capabilities the receiving gate refuses; every other declared capability it allows. */
+  deniedCapabilityKeys: Schema.Array(CapabilityKeySchema),
   issuer: text,
   jwks: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16_384)),
   spiceDb: Schema.Struct({
@@ -359,7 +363,17 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
   const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
   const gate = ModuleStateGateLive.pipe(Layer.provide(states));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
-  const scopes = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
+  // The owned database carries no v2 access intent, so the one gate is scripted: it allows the admitted
+  // actor every Catalog capability except the ones the parent withholds, exactly as a missing grant refuses.
+  const access = makeTestAccessGateLayers({
+    spec: {
+      answers: Object.fromEntries(bootstrap.deniedCapabilityKeys.map((key) => [key, { outcome: 'DENIED' as const }])),
+      defaultAnswer: { outcome: 'ALLOWED' },
+    },
+  });
+  const scopes = OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
+  );
   const namespace = staffAuthenticationNamespaceRegistryLayer(['price-group-catalog']);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(bootstrap.composition));
   const common = Layer.mergeAll(
@@ -370,6 +384,7 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
     scopes,
     namespace,
     composition,
+    access,
     priceGroupCatalogOwnerAuthorizationOverlayLive,
   );
   const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, priceGroupCatalogRegistration).pipe(

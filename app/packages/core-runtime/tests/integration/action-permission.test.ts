@@ -58,6 +58,7 @@ import {
   staffAuthenticationNamespaceId,
 } from '../support/action-permission-suite.ts';
 import type { PermissionSuiteFixture } from '../support/action-permission-suite.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 /** Bind the exact late-created TEST definition; original controlled options and native bindings stay explicit. */
 const makeRegisteredTestActionRuntime = (
@@ -209,6 +210,7 @@ type PermissionActionContext = ActionHandlerContext<typeof NoDomainEvents, Permi
 const registration = (actionKey: string, moduleStateKey: string, onExecute: () => void) =>
   defineAction(
     {
+      accessDeclaration: fixtureActionAccess('core.shell'),
       accessEvidencePolicy: {
         captureMode: 'metadata_only',
         policyKey: 'action-permission.integration.v1',

@@ -604,10 +604,14 @@ const snapshotConfiguration = Effect.fn('qualityAudit.snapshotConfiguration')(fu
     const source = yield* fs.readFileString(target);
     const config = yield* decodeReport(KnipConfigSchema, source, target);
     const model = yield* buildKnipModel(root, config, consumerPath);
-    if (model.consumerSource !== undefined && consumerPath !== undefined) {
-      yield* fs.writeFileString(consumerPath, model.consumerSource);
-      yield* fs.copyFile(consumerPath, path.join(directory, 'knip-consumers.mts'));
-    }
+    yield* Effect.forEach(
+      model.consumerFiles,
+      (file) =>
+        fs
+          .writeFileString(file.path, file.source)
+          .pipe(Effect.andThen(fs.copyFile(file.path, path.join(directory, path.basename(file.path))))),
+      { concurrency: 'unbounded' },
+    );
     yield* writeJson(target, model.config);
     yield* writeJson(path.join(directory, 'knip-model.json'), model.evidence);
   }

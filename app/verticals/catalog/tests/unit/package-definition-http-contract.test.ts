@@ -31,10 +31,10 @@ describe('Package Definition HTTP Actions', () => {
       expect(api).toBeDefined();
       expect(client).toBeDefined();
       expect(catalogPublicOperationContracts[key]).toEqual({
+        accessKind: 'action',
         authorityBundle: 'CATALOG_DEFINITION_MANAGER',
         businessTarget: 'package-definition',
         permission: key,
-        permissionKind: 'action_execution',
         scope: 'tenant',
         version: '1',
       });

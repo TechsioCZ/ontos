@@ -2,6 +2,7 @@ import { OperationContextUnavailable, ReadHandlerUnavailable } from '@app/core-r
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import type { FinalCartCandidate } from '@app/commerce-cart-finalization-contracts/final-candidate';
 import { DateTime, Effect, Schema, Predicate } from 'effect';
+import type { Crypto } from 'effect';
 import { PaymentTermsResolutionRequestSchema } from '../../shared/apis/payment-terms-resolution.ts';
 import type { PaymentTermsResolutionResponse } from '../../shared/apis/payment-terms-resolution.ts';
 import type { PurchaseApprovalRequest } from '../../shared/domain/purchasing-approval.ts';
@@ -80,7 +81,11 @@ export const resolveOrderFinalizationPaymentTerms = Effect.fn('OrderFinalization
     approvedRequest: PurchaseApprovalRequest,
     candidate: FinalCartCandidate,
     compositionRevision: string,
-  ): Effect.fn.Return<PaymentTermsResolutionResponse, ReadHandlerUnavailable | OperationContextUnavailable> {
+  ): Effect.fn.Return<
+    PaymentTermsResolutionResponse,
+    ReadHandlerUnavailable | OperationContextUnavailable,
+    Crypto.Crypto
+  > {
     const { legalEntityId } = actualScope;
     if (legalEntityId === undefined) {
       return yield* new OperationContextUnavailable({
@@ -113,9 +118,9 @@ export const resolveOrderFinalizationPaymentTerms = Effect.fn('OrderFinalization
     const { catalog, policyService } = yield* Effect.all(
       {
         catalog: paymentTermCatalogPortFromEnvironment({
-          compositionRevision,
           legalEntityId,
           requestCorrelation: actualScope.correlationId,
+          subject: { _tag: 'Assertion', scope: actualScope },
         }),
         policyService: customerCommercePolicyAdministrationServiceFactory(
           transaction,

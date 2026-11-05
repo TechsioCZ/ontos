@@ -9,7 +9,7 @@ import type { ReadHandlerContext, OperationalScope, ScopedTransactionExecutor } 
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
 import type { PricingQuotationIssued } from '@app/pricing-contracts/domain/quotation';
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import {
   QuotationVerificationRequestSchema,
   QuotationVerificationResponseSchema,
@@ -44,8 +44,9 @@ const servicesForScope = Effect.fn('PricingQuotationVerification.servicesForScop
     if (compositionRevision === undefined) {
       return yield* unavailable('The active composition revision is required');
     }
+    const crypto = yield* Crypto.Crypto;
     const owners = () =>
-      pricingFinalizationOwnerGateways(scope, compositionRevision).pipe(Effect.mapError(unavailable));
+      pricingFinalizationOwnerGateways(scope, compositionRevision, crypto).pipe(Effect.mapError(unavailable));
     const authority = currentPricingDecisionCustomerContextSubjectAuthorityForIssuer(
       {
         issue: () =>
@@ -197,7 +198,7 @@ const readVerification = Effect.fn('PricingQuotationVerification.read')(function
 
 const quotationVerificationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.quotation-verification',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -205,6 +206,19 @@ const quotationVerificationEntrypoint = defineTenantModuleEntrypoint({
 
 export const quotationVerificationRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context', 'commerce-order'],
+      reason: 'Customer Context and Order verify an issued Quotation for the buyer they act for.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.pricing.quotation.verify',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'commercial-commitments', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: quotationVerificationEntrypoint,
     evidencePolicy: {
@@ -214,7 +228,6 @@ export const quotationVerificationRead = defineRead(
     inputSchema: QuotationVerificationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.quotation-verification',
     resultSchema: QuotationVerificationResponseSchema,
@@ -222,5 +235,4 @@ export const quotationVerificationRead = defineRead(
   },
   readVerification,
   servicesForScope,
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

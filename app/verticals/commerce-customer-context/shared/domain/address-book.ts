@@ -58,9 +58,16 @@ export const SavedAddressOriginSchema = Schema.Union([
         : 'The Party and Contact Point must belong to the same Tenant',
     ),
   ),
-  Schema.Struct({ kind: Schema.Literal('COMMERCE_ONLY'), postalAddress: PostalAddressSchema }),
+  Schema.Struct({ kind: Schema.Literal('COMMERCE_ONLY'), postalAddress: Schema.optional(PostalAddressSchema) }),
 ]);
 export type SavedAddressOrigin = typeof SavedAddressOriginSchema.Type;
+
+/**
+ * The Commerce-only postal address is optional on the decoded model so a read that withholds the
+ * `personal_data` field group can project it out of its own result without the payload failing to
+ * re-encode (O17, O58, O74). A command that writes one still states it: the address Actions require
+ * it through their payload filters, and persistence cannot build a Commerce-only origin without it.
+ */
 
 export const SavedAddressSchema = Schema.Struct({
   label: Schema.optional(NonEmptyText),

@@ -1,6 +1,7 @@
 import { defineSystemModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
   canonicalPath: '/modules/:moduleId',
   descriptionKey: 'shell.moduleTarget.seoDescription',
   entrypoint: defineSystemModuleEntrypoint({
@@ -22,7 +23,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'shell.moduleTarget.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

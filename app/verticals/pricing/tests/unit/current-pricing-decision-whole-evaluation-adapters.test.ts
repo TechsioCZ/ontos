@@ -20,6 +20,8 @@ import { PricingSourceEvidenceVerifiedAbsentSchema } from '@app/pricing-contract
 import { PricingEvaluationAttemptSchema } from '@app/pricing-contracts/domain/material-change';
 import type { PricingRawCompositionReady } from '@app/pricing-contracts/domain/line-composition';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { NodeCrypto } from '@effect/platform-node';
+import type { Crypto } from 'effect';
 import { Cause, Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { SqlError, UniqueViolation } from 'effect/sql/SqlError';
 import { assert, describe, expect, it } from 'effect-rstest';
@@ -68,6 +70,14 @@ import { composePricingRawLines } from '../../src/services/line-value-compositio
 import { unitPriceCalculationAttempt } from './support/unit-price-calculation.fixture.ts';
 import { makeIssue787Snapshot } from './support/issue-787-material-change.fixture.ts';
 import { calculatePricingUnitPrice } from '../../src/services/unit-price-calculation.service.ts';
+
+/** Scoped owner adapters need the Crypto service that the production runtime provides at its root. */
+const itWithCrypto = {
+  effect: (name: string, body: () => Effect.Effect<void, unknown, Crypto.Crypto>) =>
+    it.layer(NodeCrypto.layer)(name, (suite) => {
+      suite.effect(name, body);
+    }),
+};
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -430,7 +440,7 @@ const attemptSourceScenario = Effect.fn('test.attemptSourceScenario')(function* 
 });
 
 describe('Current Pricing Decision whole-evaluation production adapters #790', () => {
-  it.effect('reads one ordered ZERO_FLOOR Current set for each stable line meaning', () =>
+  itWithCrypto.effect('reads one ordered ZERO_FLOOR Current set for each stable line meaning', () =>
     Effect.gen(function* perLineZeroFloorAuthority() {
       const firstFixture = yield* makeIssue779Scenario({
         discounts: ['40', '40', '40'],
@@ -579,43 +589,47 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
     }),
   );
 
-  it.effect('binds exact Price candidate-set authority receipts for resolved and authoritative-absence paths', () =>
-    Effect.gen(function* candidateSetReceipts() {
-      const resolved = yield* attemptSourceScenario('RESOLVED');
-      const absent = yield* attemptSourceScenario('ABSENT');
+  itWithCrypto.effect(
+    'binds exact Price candidate-set authority receipts for resolved and authoritative-absence paths',
+    () =>
+      Effect.gen(function* candidateSetReceipts() {
+        const resolved = yield* attemptSourceScenario('RESOLVED');
+        const absent = yield* attemptSourceScenario('ABSENT');
 
-      expect(resolved.candidateSetReads).toEqual([
-        {
-          effectiveAt: resolved.exactLookupRequest.effectiveAt,
-          exactKey: resolved.exactLookupRequest.exactKey,
-        },
-      ]);
-      expect(resolved.loaded.exactPriceLines[0].priceCandidateSetAuthorities).toEqual([
-        {
-          authority: resolved.expectedAuthority,
-          factProofs: resolved.expectedFactProofs,
-          lookupEvidence: resolved.lookupEvidence,
-        },
-      ]);
-      expect(absent.candidateSetReads).toHaveLength(1);
-      expect(absent.loaded.exactPriceLines[0].priceCandidateSetAuthorities).toEqual([
-        { authority: absent.expectedAuthority, factProofs: [], lookupEvidence: absent.lookupEvidence },
-      ]);
-    }),
+        expect(resolved.candidateSetReads).toEqual([
+          {
+            effectiveAt: resolved.exactLookupRequest.effectiveAt,
+            exactKey: resolved.exactLookupRequest.exactKey,
+          },
+        ]);
+        expect(resolved.loaded.exactPriceLines[0].priceCandidateSetAuthorities).toEqual([
+          {
+            authority: resolved.expectedAuthority,
+            factProofs: resolved.expectedFactProofs,
+            lookupEvidence: resolved.lookupEvidence,
+          },
+        ]);
+        expect(absent.candidateSetReads).toHaveLength(1);
+        expect(absent.loaded.exactPriceLines[0].priceCandidateSetAuthorities).toEqual([
+          { authority: absent.expectedAuthority, factProofs: [], lookupEvidence: absent.lookupEvidence },
+        ]);
+      }),
   );
 
-  it.effect('rejects missing native bindings, changed exact owner state, and stale observations (#1279)', () =>
-    Effect.gen(function* invalidNativeProofBindings() {
-      for (const bridge of ['MISSING', 'CHANGED_REVISION', 'STALE'] as const) {
-        for (const kind of ['ABSENT', 'RESOLVED'] as const) {
-          const failure = yield* attemptSourceScenario(kind, bridge).pipe(Effect.flip);
-          expect(failure).toMatchObject({ kind: 'UNVERIFIABLE' });
+  itWithCrypto.effect(
+    'rejects missing native bindings, changed exact owner state, and stale observations (#1279)',
+    () =>
+      Effect.gen(function* invalidNativeProofBindings() {
+        for (const bridge of ['MISSING', 'CHANGED_REVISION', 'STALE'] as const) {
+          for (const kind of ['ABSENT', 'RESOLVED'] as const) {
+            const failure = yield* attemptSourceScenario(kind, bridge).pipe(Effect.flip);
+            expect(failure).toMatchObject({ kind: 'UNVERIFIABLE' });
+          }
         }
-      }
-    }),
+      }),
   );
 
-  it.effect('builds canonical NO_APPLICABLE_PRICE only from the owner-proven absence path', () =>
+  itWithCrypto.effect('builds canonical NO_APPLICABLE_PRICE only from the owner-proven absence path', () =>
     Effect.scoped(
       Effect.gen(function* ownerProvenAbsence() {
         const scenario = yield* attemptSourceScenario('ABSENT');
@@ -649,7 +663,7 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
     ),
   );
 
-  it.effect('keeps ordinary Promotion unselected and exposes no fabricated Promotion success', () =>
+  itWithCrypto.effect('keeps ordinary Promotion unselected and exposes no fabricated Promotion success', () =>
     Effect.scoped(
       Effect.gen(function* ordinaryPromotion() {
         const { compositionRequest } = yield* makeIssue779Scenario();
@@ -675,7 +689,7 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
     ),
   );
 
-  it.effect('provides exactly the nine evaluator services from one owner-local aggregate Layer', () =>
+  itWithCrypto.effect('provides exactly the nine evaluator services from one owner-local aggregate Layer', () =>
     Effect.scoped(
       Effect.gen(function* aggregateLayer() {
         const adapters = yield* adaptersForScope();
@@ -696,7 +710,7 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
     ),
   );
 
-  it.effect('keeps missing atomic snapshot authority as an explicit typed unavailable result', () =>
+  itWithCrypto.effect('keeps missing atomic snapshot authority as an explicit typed unavailable result', () =>
     Effect.gen(function* typedUnavailable() {
       const { compositionRequest } = yield* makeIssue779Scenario();
       const request = yield* Schema.decodeEffect(CurrentPricingDecisionRequestSchema)({
@@ -754,7 +768,7 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
     }),
   );
 
-  it.effect('does not encode an assigned Discount audience with retained contributions as nonselection', () =>
+  itWithCrypto.effect('does not encode an assigned Discount audience with retained contributions as nonselection', () =>
     Effect.gen(function* assignedAudience() {
       const commercialTotal = yield* assignedCommercialTotal();
       const request = yield* Schema.decodeEffect(CurrentPricingDecisionRequestSchema)({
@@ -781,7 +795,7 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
     }),
   );
 
-  it.effect('rejects forged Guest CCC evidence for a Profile Discount audience decision', () =>
+  itWithCrypto.effect('rejects forged Guest CCC evidence for a Profile Discount audience decision', () =>
     Effect.gen(function* forgedGuestEvidence() {
       const commercialTotal = yield* assignedCommercialTotal();
       const request = yield* Schema.decodeEffect(CurrentPricingDecisionRequestSchema)({
@@ -812,7 +826,7 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
     }),
   );
 
-  it.effect('rejects forged Profile CCC evidence for a Guest Discount audience decision', () =>
+  itWithCrypto.effect('rejects forged Profile CCC evidence for a Guest Discount audience decision', () =>
     Effect.gen(function* forgedProfileEvidence() {
       const commercialTotal = yield* assignedCommercialTotal();
       const request = yield* Schema.decodeEffect(CurrentPricingDecisionRequestSchema)({
@@ -840,7 +854,7 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
     }),
   );
 
-  it.effect('constructs the scoped whole evaluator without retaining a global transaction service', () =>
+  itWithCrypto.effect('constructs the scoped whole evaluator without retaining a global transaction service', () =>
     Effect.gen(function* scopedWholeEvaluator() {
       const service = yield* evaluationForScope();
       expect(service.loadFresh).toBeTypeOf('function');
@@ -913,11 +927,12 @@ const preproposalIssuanceScenario = Effect.fn('test.preproposalIssuanceScenario'
             }),
         }),
       },
+      legalEntityId: trusted.legalEntityId,
       pricingOwnerFinalFence: {
         confirmObservedGenerationsThrough: () => Effect.die('Injected evaluator does not call final fence'),
         verifyOpaqueProofsAgainstCurrentState: () => Effect.die('Injected evaluator does not call final fence'),
       },
-      scope: { ...scope, legalEntityId: trusted.legalEntityId },
+      scope,
       source: { loadFresh: () => Effect.die('Real attempt source already exercised above') },
       subjectAuthority: {
         verify: (input) =>
@@ -948,111 +963,113 @@ const preproposalIssuanceScenario = Effect.fn('test.preproposalIssuanceScenario'
   },
 );
 
-it.effect('carries the real preproposal candidate through registered issuance and basis completion verification', () =>
-  Effect.gen(function* preproposalProducerBinding() {
-    const scenario = yield* preproposalIssuanceScenario();
-    const writes: string[] = [];
-    const services = {
-      lookupInvocation: () => Effect.succeedNone,
-      resolveFresh: scenario.resolver,
-    };
-    const result = yield* applyQuotationManagement(scenario.payload, scenario.trusted, {
-      ...services,
-      store: ({ quotation }) => {
-        writes.push(quotation.binding.candidateRef);
-        return Effect.succeed(quotation);
-      },
-    });
-    expect(result.quotation.binding.candidateRef).toBe(scenario.actualCandidateRef);
-    expect(result.quotation.binding.candidateRef).not.toBe(scenario.sourceRef);
-    expect(scenario.actualCandidateRef).toBe(currentPricingDecisionCandidateRef(scenario.currentDecision));
-    expect(result.quotation.quotationRef).toBe(`pricing:quotation:${scenario.trusted.actionInvocationId}`);
-    expect(pricingQuotationMatchesCurrentDecision(result.quotation, scenario.currentDecision)).toBe(true);
-    assert(scenario.currentDecision.subject.kind === 'PROFILE');
-    const selector = { sourceRef: scenario.sourceRef, sourceRevision: '1' };
-    const retained = {
-      legalEntityId: scenario.trusted.legalEntityId,
-      pricingCandidateRef: scenario.actualCandidateRef,
-      pricingInput: scenario.currentDecision,
-      profileRef: scenario.currentDecision.subject.profileRef,
-      retainedPricingInput: scenario.currentDecision,
-      ...selector,
-      tenantId: scenario.trusted.tenantId,
-    };
-    yield* verifyPreapprovalQuotationBinding(selector, retained, result.quotation, result.quotation.issuedAt);
-    for (const changed of [
-      { ...selector, sourceRef: scenario.actualCandidateRef },
-      { ...selector, sourceRef: '55555555-5555-4555-8555-555555555555' },
-      { ...selector, sourceRevision: '2' },
-    ]) {
-      const failure = yield* verifyPreapprovalQuotationBinding(
-        changed,
-        retained,
-        result.quotation,
-        result.quotation.issuedAt,
-      ).pipe(Effect.flip);
-      expect(failure).toMatchObject({ code: 'read_handler_unavailable' });
-    }
-    for (const changed of [
-      { ...retained, tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
-      { ...retained, legalEntityId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
-      { ...retained, pricingCandidateRef: scenario.sourceRef },
-      { ...retained, profileRef: { ...retained.profileRef, resourceId: 'foreign-profile' } },
-    ]) {
-      const failure = yield* verifyPreapprovalQuotationBinding(
-        selector,
-        changed,
-        result.quotation,
-        result.quotation.issuedAt,
-      ).pipe(Effect.flip);
-      expect(failure).toMatchObject({ code: 'read_handler_unavailable' });
-    }
+itWithCrypto.effect(
+  'carries the real preproposal candidate through registered issuance and basis completion verification',
+  () =>
+    Effect.gen(function* preproposalProducerBinding() {
+      const scenario = yield* preproposalIssuanceScenario();
+      const writes: string[] = [];
+      const services = {
+        lookupInvocation: () => Effect.succeedNone,
+        resolveFresh: scenario.resolver,
+      };
+      const result = yield* applyQuotationManagement(scenario.payload, scenario.trusted, {
+        ...services,
+        store: ({ quotation }) => {
+          writes.push(quotation.binding.candidateRef);
+          return Effect.succeed(quotation);
+        },
+      });
+      expect(result.quotation.binding.candidateRef).toBe(scenario.actualCandidateRef);
+      expect(result.quotation.binding.candidateRef).not.toBe(scenario.sourceRef);
+      expect(scenario.actualCandidateRef).toBe(currentPricingDecisionCandidateRef(scenario.currentDecision));
+      expect(result.quotation.quotationRef).toBe(`pricing:quotation:${scenario.trusted.actionInvocationId}`);
+      expect(pricingQuotationMatchesCurrentDecision(result.quotation, scenario.currentDecision)).toBe(true);
+      assert(scenario.currentDecision.subject.kind === 'PROFILE');
+      const selector = { sourceRef: scenario.sourceRef, sourceRevision: '1' };
+      const retained = {
+        legalEntityId: scenario.trusted.legalEntityId,
+        pricingCandidateRef: scenario.actualCandidateRef,
+        pricingInput: scenario.currentDecision,
+        profileRef: scenario.currentDecision.subject.profileRef,
+        retainedPricingInput: scenario.currentDecision,
+        ...selector,
+        tenantId: scenario.trusted.tenantId,
+      };
+      yield* verifyPreapprovalQuotationBinding(selector, retained, result.quotation, result.quotation.issuedAt);
+      for (const changed of [
+        { ...selector, sourceRef: scenario.actualCandidateRef },
+        { ...selector, sourceRef: '55555555-5555-4555-8555-555555555555' },
+        { ...selector, sourceRevision: '2' },
+      ]) {
+        const failure = yield* verifyPreapprovalQuotationBinding(
+          changed,
+          retained,
+          result.quotation,
+          result.quotation.issuedAt,
+        ).pipe(Effect.flip);
+        expect(failure).toMatchObject({ code: 'read_handler_unavailable' });
+      }
+      for (const changed of [
+        { ...retained, tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+        { ...retained, legalEntityId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+        { ...retained, pricingCandidateRef: scenario.sourceRef },
+        { ...retained, profileRef: { ...retained.profileRef, resourceId: 'foreign-profile' } },
+      ]) {
+        const failure = yield* verifyPreapprovalQuotationBinding(
+          selector,
+          changed,
+          result.quotation,
+          result.quotation.issuedAt,
+        ).pipe(Effect.flip);
+        expect(failure).toMatchObject({ code: 'read_handler_unavailable' });
+      }
 
-    const rejected = yield* applyQuotationManagement(
-      { ...scenario.payload, candidateRef: scenario.sourceRef },
-      scenario.trusted,
-      { ...services, store: () => Effect.die('UUID candidate must fail before issuance/storage') },
-    ).pipe(Effect.flip);
-    expect(rejected).toMatchObject({ code: 'manage_quotation_current_authority_unavailable' });
-    expect(writes).toEqual([scenario.actualCandidateRef]);
-    for (const purchasingContext of [
-      {
-        ...scenario.currentDecision.decision.purchasingContext,
-        contextRef: 'ccc:preproposal:55555555-5555-4555-8555-555555555555',
-      },
-      { ...scenario.currentDecision.decision.purchasingContext, contextRevision: 'foreign-revision' },
-      {
-        ...scenario.currentDecision.decision.purchasingContext,
-        actor: { kind: 'PRINCIPAL' as const, principalId: 'foreign-buyer' },
-      },
-    ]) {
+      const rejected = yield* applyQuotationManagement(
+        { ...scenario.payload, candidateRef: scenario.sourceRef },
+        scenario.trusted,
+        { ...services, store: () => Effect.die('UUID candidate must fail before issuance/storage') },
+      ).pipe(Effect.flip);
+      expect(rejected).toMatchObject({ code: 'manage_quotation_current_authority_unavailable' });
+      expect(writes).toEqual([scenario.actualCandidateRef]);
+      for (const purchasingContext of [
+        {
+          ...scenario.currentDecision.decision.purchasingContext,
+          contextRef: 'ccc:preproposal:55555555-5555-4555-8555-555555555555',
+        },
+        { ...scenario.currentDecision.decision.purchasingContext, contextRevision: 'foreign-revision' },
+        {
+          ...scenario.currentDecision.decision.purchasingContext,
+          actor: { kind: 'PRINCIPAL' as const, principalId: 'foreign-buyer' },
+        },
+      ]) {
+        expect(
+          pricingQuotationMatchesCurrentDecision(result.quotation, {
+            ...scenario.currentDecision,
+            decision: { ...scenario.currentDecision.decision, purchasingContext },
+          }),
+        ).toBe(false);
+      }
       expect(
         pricingQuotationMatchesCurrentDecision(result.quotation, {
           ...scenario.currentDecision,
-          decision: { ...scenario.currentDecision.decision, purchasingContext },
+          decision: { ...scenario.currentDecision.decision, tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
         }),
       ).toBe(false);
-    }
-    expect(
-      pricingQuotationMatchesCurrentDecision(result.quotation, {
-        ...scenario.currentDecision,
-        decision: { ...scenario.currentDecision.decision, tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
-      }),
-    ).toBe(false);
-    // Identity and amount alone cannot prove the Cart/material input, even if the caller leaves total unchanged.
-    expect(
-      pricingQuotationMatchesCurrentDecision(result.quotation, {
-        ...scenario.currentDecision,
-        decision: {
-          ...scenario.currentDecision.decision,
-          lines: scenario.currentDecision.decision.lines.map((line) => ({
-            ...line,
-            catalog: { ...line.catalog, quantity: { ...line.catalog.quantity, resulting: '2' } },
-          })),
-        },
-      }),
-    ).toBe(false);
-  }),
+      // Identity and amount alone cannot prove the Cart/material input, even if the caller leaves total unchanged.
+      expect(
+        pricingQuotationMatchesCurrentDecision(result.quotation, {
+          ...scenario.currentDecision,
+          decision: {
+            ...scenario.currentDecision.decision,
+            lines: scenario.currentDecision.decision.lines.map((line) => ({
+              ...line,
+              catalog: { ...line.catalog, quantity: { ...line.catalog.quantity, resulting: '2' } },
+            })),
+          },
+        }),
+      ).toBe(false);
+    }),
 );
 
 const counterpartyRef = {
@@ -1305,7 +1322,7 @@ const profileEvidenceFor = (request: CurrentPricingDecisionRequest) =>
   });
 
 describe('Counterparty Discount verified-empty evidence', () => {
-  it.effect('retains the verified-empty whole-purchase set as Discount evidence', () =>
+  itWithCrypto.effect('retains the verified-empty whole-purchase set as Discount evidence', () =>
     Effect.gen(function* verifiedEmpty() {
       const request = yield* counterpartyRequest();
       const empty = currentSetFor(wholePurchasePredicate(request));
@@ -1318,7 +1335,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('retains each exact line basis before the whole purchase in material-evidence order', () =>
+  itWithCrypto.effect('retains each exact line basis before the whole purchase in material-evidence order', () =>
     Effect.gen(function* verifiedEmptyPerBasis() {
       const request = yield* counterpartyRequest();
       const unitPrice = yield* calculatePricingUnitPrice(
@@ -1360,7 +1377,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('keeps the next applicability boundary of a verified-empty set', () =>
+  itWithCrypto.effect('keeps the next applicability boundary of a verified-empty set', () =>
     Effect.gen(function* retainedBoundary() {
       const request = yield* counterpartyRequest();
       const boundary = '2026-09-28T13:00:00.000Z';
@@ -1375,7 +1392,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('selects the Counterparty Discount audience on an owner NONE Price path', () =>
+  itWithCrypto.effect('selects the Counterparty Discount audience on an owner NONE Price path', () =>
     Effect.gen(function* counterpartyAudienceSelected() {
       const counterpartyTotal = yield* ownerNoneCommercialTotal({
         ...counterpartySubject.profileRef,
@@ -1415,7 +1432,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('publishes a verified-empty set as VERIFIED_ABSENT bounded by its next boundary', () =>
+  itWithCrypto.effect('publishes a verified-empty set as VERIFIED_ABSENT bounded by its next boundary', () =>
     Effect.gen(function* boundaryNotCrossed() {
       const request = yield* counterpartyRequest();
       const boundary = '2026-09-28T13:00:00.000Z';
@@ -1436,7 +1453,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('fails STALE when the whole attempt completes at the next applicability boundary', () =>
+  itWithCrypto.effect('fails STALE when the whole attempt completes at the next applicability boundary', () =>
     Effect.gen(function* boundaryCrossed() {
       const request = yield* counterpartyRequest();
       const scheduled = currentSetFor(wholePurchasePredicate(request), [], counterpartyBoundaryAttempt.completedAt);
@@ -1452,7 +1469,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('fails closed when a Discount exists for the Counterparty audience', () =>
+  itWithCrypto.effect('fails closed when a Discount exists for the Counterparty audience', () =>
     Effect.gen(function* presentDiscount() {
       const request = yield* counterpartyRequest();
       const predicate = wholePurchasePredicate(request);
@@ -1467,7 +1484,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('fails closed without any lookup when a Price Group audience is assigned', () =>
+  itWithCrypto.effect('fails closed without any lookup when a Price Group audience is assigned', () =>
     Effect.gen(function* assignedAudience() {
       const request = yield* counterpartyRequest();
       const { compositionRequest } = yield* makeIssue779Scenario();
@@ -1488,7 +1505,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('fails closed when the owner returns no verification for the Current set', () =>
+  itWithCrypto.effect('fails closed when the owner returns no verification for the Current set', () =>
     Effect.gen(function* verificationAbsent() {
       const request = yield* counterpartyRequest();
       const failure = yield* withReader([{ kind: 'NO_ROWS' }], ({ reader }) =>
@@ -1499,7 +1516,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('fails closed when the owner proof binds a different predicate than the one requested', () =>
+  itWithCrypto.effect('fails closed when the owner proof binds a different predicate than the one requested', () =>
     Effect.gen(function* driftedPredicate() {
       const request = yield* counterpartyRequest();
       const drifted = yield* Schema.decodeEffect(PricingContractualDiscountSetPredicateSchema)({
@@ -1514,7 +1531,7 @@ describe('Counterparty Discount verified-empty evidence', () => {
     }),
   );
 
-  it.effect('fails closed when the owner read itself is unavailable', () =>
+  itWithCrypto.effect('fails closed when the owner read itself is unavailable', () =>
     Effect.gen(function* ownerUnavailable() {
       const request = yield* counterpartyRequest();
       const failure = yield* withReader([{ kind: 'FAIL' }], ({ reader }) =>

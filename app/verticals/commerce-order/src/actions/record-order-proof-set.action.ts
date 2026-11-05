@@ -30,6 +30,20 @@ const handleRecordOrderProofSet = Effect.fn('RecordOrderProofSet.handle')(functi
 });
 export const recordOrderProofSetAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'The Order finalization worker records the proof set of the proof intent it was delivered.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      ephemeral: true,
+      key: 'commerce.order.proof-set.record',
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'order-finalization', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.order.record-order-proof-set.access.v1',
@@ -40,7 +54,7 @@ export const recordOrderProofSetAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.order.record-order-proof-set',
       moduleKey,
       role: 'action',

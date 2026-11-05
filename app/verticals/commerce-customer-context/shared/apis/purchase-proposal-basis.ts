@@ -44,15 +44,11 @@ export const PreparePurchaseProposalBasisPayloadSchema = Schema.Struct({
   ),
   proposal: PurchaseProposalRevisionSchema,
 });
-export const PreparePurchaseProposalBasisResultSchema: Schema.Codec<PurchaseProposalBasis, unknown> =
-  PurchaseProposalBasisSchema;
 export const CompletePurchaseProposalBasisPayloadSchema = Schema.Struct({
   pricingIssuanceInvocationId: ActionInvocationIdSchema,
   sourceRef: Schema.String,
   sourceRevision: Schema.String,
 });
-export const CompletePurchaseProposalBasisResultSchema: Schema.Codec<PurchaseProposalBasis, unknown> =
-  PurchaseProposalBasisSchema;
 
 export const PurchaseProposalBasisRequestSchema = Schema.Struct({
   operation: Schema.Literals(['PRICING_INPUT', 'CURRENT']),

@@ -1,8 +1,8 @@
 import { requireModuleOperation } from '@app/core-runtime';
 import { Effect } from 'effect';
 
-import { PricingCatalogSelectionUnavailable } from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import { PricingCommercialContextUnavailable } from '../../shared/domain/commercial-context-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
+import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
 import {
   CurrentPricingDecisionSubjectAuthority,
   CurrentPricingDecisionSubjectAuthorityUnavailable,

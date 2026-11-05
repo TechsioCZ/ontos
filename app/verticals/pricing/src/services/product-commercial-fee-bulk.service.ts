@@ -14,6 +14,7 @@ import type {
   PricingCommercialFeeScheduleAcknowledgement,
 } from '@app/pricing-contracts/domain/commercial-fee';
 import { priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
+import type { Crypto } from 'effect';
 import { Effect, Match, Schema } from 'effect';
 
 import type {
@@ -567,60 +568,60 @@ export const makeProductCommercialFeeBulkCommandPort = (
       ),
   });
 
-export const productCommercialFeeBulkServiceForScope: ActionServiceFactory<ProductCommercialFeeBulkActionServices> =
-  Effect.fn('ProductCommercialFeeBulkService.forScope')(
-    function* makeProductCommercialFeeBulkActionServices(transaction, scope, compositionRevision) {
-      const { legalEntityId } = scope;
-      if (legalEntityId === undefined) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Commercial Fee Product bulk management requires a trusted Selling Legal Entity',
-        });
-      }
-      const { catalogSnapshot, catalogTarget, currencySupport, persistence } = yield* Effect.all(
-        {
-          catalogSnapshot: productCommercialFeeBulkCatalogSnapshotPortFromEnvironment({
-            compositionRevision,
-            legalEntityId,
-            requestCorrelation: scope.correlationId,
-          }),
-          catalogTarget: commercialFeeCatalogTargetAssessmentPortFromEnvironment({
-            compositionRevision,
-            legalEntityId,
-            requestCorrelation: scope.correlationId,
-          }),
-          currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
-          persistence: commercialFeePersistenceForScope(transaction, scope),
-        },
-        { concurrency: 4 },
-      );
-      const catalogRequirement = 'commerce.pricing.requirement.manage-product-commercial-fees-bulk-catalog';
-      const commandOptions: ProductCommercialFeeBulkCommandOptions = {
-        defineServices: {
-          define: persistence.define,
-          loadCurrencySupport: currencySupport.loadCurrent,
-          validateCatalogTarget: (input) =>
-            requirePricingCatalogOperation(catalogRequirement).pipe(
-              Effect.andThen(() => catalogTarget.validate(input)),
-            ),
-        },
-        persistence,
-        reviseServices: {
-          loadCurrencySupport: currencySupport.loadForCanonicalAdmission,
-          revise: persistence.revise,
-          validateCatalogTarget: (input) =>
-            requirePricingCatalogOperation(catalogRequirement).pipe(
-              Effect.andThen(() => catalogTarget.validate(input)),
-            ),
-        },
-      };
-      const { execute } = makeProductCommercialFeeBulkService(makeProductCommercialFeeBulkCommandPort(commandOptions));
-      return {
-        execute,
-        validateCurrentCatalogSnapshot: (input) =>
-          requirePricingCatalogOperation(catalogRequirement).pipe(
-            Effect.andThen(() => catalogSnapshot.validateCurrent(input)),
-          ),
-      } satisfies ProductCommercialFeeBulkActionServices;
-    },
-  );
+export const productCommercialFeeBulkServiceForScope: ActionServiceFactory<
+  ProductCommercialFeeBulkActionServices,
+  Crypto.Crypto
+> = Effect.fn('ProductCommercialFeeBulkService.forScope')(
+  function* makeProductCommercialFeeBulkActionServices(transaction, scope, compositionRevision) {
+    const { legalEntityId } = scope;
+    if (legalEntityId === undefined) {
+      return yield* new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Commercial Fee Product bulk management requires a trusted Selling Legal Entity',
+      });
+    }
+    const { catalogSnapshot, catalogTarget, currencySupport, persistence } = yield* Effect.all(
+      {
+        catalogSnapshot: productCommercialFeeBulkCatalogSnapshotPortFromEnvironment({
+          compositionRevision,
+          legalEntityId,
+          requestCorrelation: scope.correlationId,
+          scope,
+        }),
+        catalogTarget: commercialFeeCatalogTargetAssessmentPortFromEnvironment({
+          compositionRevision,
+          legalEntityId,
+          requestCorrelation: scope.correlationId,
+          scope,
+        }),
+        currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
+        persistence: commercialFeePersistenceForScope(transaction, scope),
+      },
+      { concurrency: 4 },
+    );
+    const catalogRequirement = 'commerce.pricing.requirement.manage-product-commercial-fees-bulk-catalog';
+    const commandOptions: ProductCommercialFeeBulkCommandOptions = {
+      defineServices: {
+        define: persistence.define,
+        loadCurrencySupport: currencySupport.loadCurrent,
+        validateCatalogTarget: (input) =>
+          requirePricingCatalogOperation(catalogRequirement).pipe(Effect.andThen(() => catalogTarget.validate(input))),
+      },
+      persistence,
+      reviseServices: {
+        loadCurrencySupport: currencySupport.loadForCanonicalAdmission,
+        revise: persistence.revise,
+        validateCatalogTarget: (input) =>
+          requirePricingCatalogOperation(catalogRequirement).pipe(Effect.andThen(() => catalogTarget.validate(input))),
+      },
+    };
+    const { execute } = makeProductCommercialFeeBulkService(makeProductCommercialFeeBulkCommandPort(commandOptions));
+    return {
+      execute,
+      validateCurrentCatalogSnapshot: (input) =>
+        requirePricingCatalogOperation(catalogRequirement).pipe(
+          Effect.andThen(() => catalogSnapshot.validateCurrent(input)),
+        ),
+    } satisfies ProductCommercialFeeBulkActionServices;
+  },
+);

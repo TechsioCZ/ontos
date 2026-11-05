@@ -15,6 +15,11 @@ export interface ConsumePurchaseApprovalActionClientOptions {
   readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
+  /**
+   * O80: ask for a parked proposal instead of an immediate write. Omitted means the ordinary run, so a
+   * refusal is never turned into a proposal on the caller's behalf.
+   */
+  readonly intent?: 'propose';
   // eslint-disable-next-line effect-native/no-threaded-correlation-parameter -- Generated action-client compatibility option; this field is not threaded into the request and remains part of the published client signature. expires: 2027-03-31.
   readonly traceId?: string;
 }
@@ -39,6 +44,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       credential,
       defaultApiPrefix: '/commerce-customer-context-api',
       idempotencyKey: options.idempotencyKey,
+      intent: options.intent,
       requestCorrelation,
     },
     options,

@@ -16,7 +16,7 @@ const commerceMarketCatalogModuleKey = 'commerce.market-catalog';
 
 const marketHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.market-catalog.api.market-history',
   moduleKey: commerceMarketCatalogModuleKey,
   role: 'api',
@@ -55,6 +55,14 @@ export const handleMarketHistory = Effect.fn('MarketHistoryRead.handle')(functio
 
 export const marketHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market-history.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'markets', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: marketHistoryEntrypoint,
     evidencePolicy: {
@@ -64,14 +72,12 @@ export const marketHistoryRead = defineRead(
     inputSchema: MarketHistoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: commerceMarketCatalogModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.market-catalog.api.market-history',
     resultSchema: MarketHistoryResponseSchema,
     schemaVersion: '1',
   },
   handleMarketHistory,
-  (transaction, scope, compositionRevision) =>
-    marketCatalogReadPersistenceForScope(transaction, scope, compositionRevision),
-  () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
+  (transaction, scope, compositionRevision, listAccess) =>
+    marketCatalogReadPersistenceForScope(transaction, scope, compositionRevision, listAccess),
 );

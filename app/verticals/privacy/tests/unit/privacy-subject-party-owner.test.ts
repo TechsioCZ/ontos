@@ -39,7 +39,6 @@ const valid = {
       value: 'PERSON',
     },
   ],
-  factHistory: null,
   party: {
     archivedAt: null,
     businessName: null,

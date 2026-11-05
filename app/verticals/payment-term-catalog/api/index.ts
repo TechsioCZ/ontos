@@ -10,11 +10,14 @@ import {
 } from '@app/core-runtime';
 import type { ReadRuntime, GatewayAssertionRedemptionService, ActionRuntime } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -105,14 +108,27 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
 
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const operationalScopeResolverLive = Layer.provide(
   OperationalScopeResolverLive,
-  Layer.mergeAll(CorePersistenceLive, ContextAccessLive),
+  Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, paymentTermCatalogRegistration).pipe(
   Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+    Layer.mergeAll(
+      CorePersistenceLive,
+      ContextAccessLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
@@ -133,6 +149,7 @@ const paymentTermCatalogActionRuntime = makeActionRuntimeLive(
       moduleStateGateLive,
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
+      accessEnforcementLive,
     ),
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),

@@ -140,6 +140,7 @@ const evaluationHttp = Effect.fn('ImportedNonPayerTest.evaluationHttp')(function
   scope: OperationalScope,
 ) {
   const harness = yield* makeReadTestHarness({
+    access: 'allowed',
     executeOwnerQuery: (query) =>
       runtimeClient.withTransaction(
         runtimeClient
@@ -155,7 +156,6 @@ const evaluationHttp = Effect.fn('ImportedNonPayerTest.evaluationHttp')(function
     operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-02-01T00:00:00.000Z')),
     ownerAuthorizationDecision: 'allowed',
     ownerRegistration: taxRegistration,
-    permissionDecision: 'allowed',
     scope,
   });
   const builtContext = yield* Layer.build(harness.layer);

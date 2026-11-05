@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug upsert-retention-rule
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpsertRetentionRulePayloadSchema, UpsertRetentionRuleResultSchema } from '../actions/upsert-retention-rule.ts';
 
 export { UpsertRetentionRulePayloadSchema } from '../actions/upsert-retention-rule.ts';
-
 export const UpsertRetentionRuleActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpsertRetentionRuleActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const UpsertRetentionRuleActionForbiddenProblemSchema = makeProblemDetail
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const upsertRetentionRuleActionGroupDefinition = HttpApiGroup.make('upser
     HttpApiEndpoint.post('execute', '/privacy/actions/upsert-retention-rule', {
       error: actionErrors,
       payload: Schema.toEncoded(UpsertRetentionRulePayloadSchema),
-      success: UpsertRetentionRuleResultSchema,
+      success: [ActionProposalAcceptedSchema, UpsertRetentionRuleResultSchema],
     }),
   )
   .middleware(UpsertRetentionRuleActionSchemaErrorMiddleware);

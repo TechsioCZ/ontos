@@ -86,8 +86,9 @@ it('Official Identifier writes require tenant Party identity authority and idemp
   ]) {
     expect(action.descriptor.legalEntityScope).toBe('optional');
     expect(action.descriptor.idempotency).toBe('required');
-    // SAFETY: these permission selectors are payload-independent; no handler receives this sentinel.
-    expect(action.descriptor.tenantPermission?.({} as never)).toBe('manage_party_identity');
+    // The one gate decides these Actions from their own declaration, naming the record they act on.
+    expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(action.descriptor.accessTarget).toBeDefined();
   }
 });
 

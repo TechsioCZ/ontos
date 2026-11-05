@@ -2,8 +2,11 @@ import { requireModuleOperation } from '@app/core-runtime';
 import type { ModuleOperationRequirementError, OperationalScope } from '@app/core-runtime';
 import type { Crypto } from 'effect';
 import type { executePartyContactPointDetail } from '@app/party-registry/api/client';
-import { GatewayRelaySourceError } from '@app/shared-contracts/gateway-context-server';
-import { acquireOwnerGatewayContext } from './server-owner-gateway.ts';
+import type { GatewayContextClientError } from '@app/shared-contracts';
+import {
+  GatewayDelegationSourceError,
+  acquireDelegatedGatewayContext,
+} from '@app/shared-contracts/gateway-context-server';
 import {
   PartyContactPointDetailForbiddenProblemSchema,
   PartyContactPointDetailInvalidProblemSchema,
@@ -12,7 +15,7 @@ import {
   PartyContactPointDetailPolicyProblemSchema,
   executePartyContactPointDetailWithAuthorization,
 } from '@app/party-registry/api/client';
-import { Context, Redacted, Effect, Function as EffectFunction, Schema } from 'effect';
+import { Context, Effect, Function as EffectFunction, Schema } from 'effect';
 
 import type { AddSavedAddressPayload, UpdateSavedAddressPayload } from '../../shared/domain/address-actions.ts';
 import type { PostalAddress, SavedAddress } from '../../shared/domain/address-book.ts';
@@ -32,7 +35,8 @@ type PartyContactPointDetailExecutor = (
 ) => Effect.Effect<
   Effect.Success<ReturnType<typeof executePartyContactPointDetail>>,
   | Effect.Error<ReturnType<typeof executePartyContactPointDetail>>
-  | GatewayRelaySourceError
+  | GatewayDelegationSourceError
+  | GatewayContextClientError
   | ModuleOperationRequirementError
 >;
 // A trusted composition may supply an authenticated owner transport explicitly.
@@ -120,11 +124,12 @@ const sourceIdentityFailure = (
   return undefined;
 };
 
-const postalAddressFromContactPoint = (contactPoint: PartyContactPointDetailResponse): PostalAddress | undefined => {
-  if (contactPoint.value.type !== 'ADDRESS') {
+// A contact point whose value the buyer may not read carries no value, so it yields no postal address.
+const postalAddressFromContactPoint = ({ value }: PartyContactPointDetailResponse): PostalAddress | undefined => {
+  if (value?.type !== 'ADDRESS') {
     return undefined;
   }
-  const { addressLine1, addressLine2, city, countryCode, postalCode, region } = contactPoint.value.address;
+  const { addressLine1, addressLine2, city, countryCode, postalCode, region } = value.address;
   if (addressLine1 === null || city === null || postalCode === null) {
     return undefined;
   }
@@ -144,7 +149,7 @@ const postalAddressFromContactPoint = (contactPoint: PartyContactPointDetailResp
 };
 
 const isCurrentPostalContactPoint = (contactPoint: PartyContactPointDetailResponse): boolean =>
-  contactPoint.current && contactPoint.state === 'ACTIVE' && contactPoint.value.type === 'ADDRESS';
+  contactPoint.current && contactPoint.state === 'ACTIVE' && contactPoint.value?.type === 'ADDRESS';
 
 const postalSourceFailure = (
   origin: PartyBackedAddressOrigin,
@@ -180,7 +185,7 @@ export const partyBackedAddressSourceValidator =
     return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
       Effect.flatMap((client: PartyContactPointDetailExecutor | undefined) =>
         client === undefined
-          ? Effect.fail(new GatewayRelaySourceError({ reason: 'An explicit Party owner transport is required' }))
+          ? Effect.fail(new GatewayDelegationSourceError({ reason: 'An explicit Party owner transport is required' }))
           : client({ contactPointRef: origin.contactPointRef }, requestCorrelation),
       ),
       Effect.mapError(validatorFailure),
@@ -230,18 +235,21 @@ export const partyBackedPostalAddressResolver =
   (requestCorrelation: string, execute?: PartyContactPointDetailExecutor) =>
   (address: SavedAddress): Effect.Effect<AddressLookup<ResolvedSavedPostalAddress>, AddressBookUnavailable> => {
     if (address.origin.kind === 'COMMERCE_ONLY') {
-      return Effect.succeed(
-        found({
-          kind: 'COMMERCE_ONLY' as const,
-          postalAddress: address.origin.postalAddress,
-        }),
-      );
+      const { postalAddress } = address.origin;
+      return postalAddress === undefined
+        ? Effect.succeed(notFound<ResolvedSavedPostalAddress>())
+        : Effect.succeed(
+            found({
+              kind: 'COMMERCE_ONLY' as const,
+              postalAddress,
+            }),
+          );
     }
     const { origin } = address;
     return (execute === undefined ? PartyAddressSourceExecutor : Effect.succeed(execute)).pipe(
       Effect.flatMap((client: PartyContactPointDetailExecutor | undefined) =>
         client === undefined
-          ? Effect.fail(new GatewayRelaySourceError({ reason: 'An explicit Party owner transport is required' }))
+          ? Effect.fail(new GatewayDelegationSourceError({ reason: 'An explicit Party owner transport is required' }))
           : client({ contactPointRef: origin.contactPointRef }, requestCorrelation),
       ),
       Effect.map((contactPoint) => resolvePartyBackedPostalAddress(origin, contactPoint)),
@@ -271,20 +279,20 @@ const partyContactPointExecutorForScope =
         if (execute !== undefined) {
           return execute(payload, correlation);
         }
-        return acquireOwnerGatewayContext(scope, crypto, {
-          audience: 'party-registry',
-          operationKey: 'party.registry.api.party-contact-point-detail',
-        }).pipe(
+        return acquireDelegatedGatewayContext(
+          {
+            audience: 'party-registry',
+            legalEntityScope: 'subject',
+            requestCorrelation: scope.correlationId,
+            subject: { _tag: 'Assertion', scope },
+          },
+          crypto,
+        ).pipe(
           Effect.flatMap((issued) =>
-            executePartyContactPointDetailWithAuthorization(
-              payload,
-              Redacted.value(issued.authorization),
-              scope.correlationId,
-              {
-                baseUrl: issued.apiUrl,
-                compositionRevision: issued.compositionRevision,
-              },
-            ),
+            executePartyContactPointDetailWithAuthorization(payload, issued.authorization, scope.correlationId, {
+              baseUrl: new URL(issued.apiBaseUrl),
+              compositionRevision: issued.compositionRevision,
+            }),
           ),
         );
       }),

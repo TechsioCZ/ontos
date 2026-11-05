@@ -65,6 +65,7 @@ import { privacyOperationRepositoryForScope } from '../../src/persistence/privac
 it.live('rejects resolved person admission without authoritative Party proof in the native owner factory', () =>
   Effect.gen(function* unprovenPersonNative() {
     const native = yield* makeNativeReadTestContext({
+      access: 'allowed',
       contextPermissions: ['privacy.subjects.read'],
       moduleId: 'privacy.core',
       ownerFixtureRetention: 'retain-complete-context',
@@ -119,6 +120,7 @@ it.live('rejects resolved person admission without authoritative Party proof in 
 it.live('foreign-only Subject references cannot select all trusted-Tenant records', () =>
   Effect.gen(function* exactForeignSubjectSelection() {
     const native = yield* makeNativeReadTestContext({
+      access: 'allowed',
       contextPermissions: ['privacy.subjects.read'],
       moduleId: 'privacy.core',
       ownerFixtureRetention: 'retain-complete-context',
@@ -390,6 +392,7 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
       }
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [
             'party.registry.create-party',
             'party.registry.archive-party',

@@ -183,13 +183,18 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       navigation: [
         // <generated-module-shell-navigation>
         navigationContribution({
+          accessDeclaration: {
+            key: 'party.registry.contacts-page.open',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'parties', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
           contributionKey: 'party.registry.navigation.contacts',
           entrypoint: {
             access: 'read',
-            authorization: {
-              kind: 'context_permission',
-              permission: 'module.access',
-            },
+            authorization: { kind: 'protected' },
             entrypointKey: 'party.registry.page.contacts',
             moduleKey: 'party.registry',
             role: 'page',
@@ -204,14 +209,19 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       pages: [
         // <generated-module-shell-pages>
         pageContribution({
+          accessDeclaration: {
+            key: 'party.registry.contacts-page.open',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'parties', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
           componentKey: 'party.registry.page-contacts',
           contributionKey: 'party.registry.page.contacts',
           entrypoint: {
             access: 'read',
-            authorization: {
-              kind: 'context_permission',
-              permission: 'module.access',
-            },
+            authorization: { kind: 'protected' },
             entrypointKey: 'party.registry.page.contacts',
             moduleKey: 'party.registry',
             role: 'page',
@@ -234,13 +244,18 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       search: [
         // <generated-module-shell-search>
         searchContribution({
+          accessDeclaration: {
+            key: 'party.registry.counterparty.search',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'counterparties', level: 'basic' },
+            risk: 'sensitive',
+            selectors: ['all'],
+          },
           contributionKey: 'party.registry.search.counterparties',
           entrypoint: {
             access: 'read',
-            authorization: {
-              kind: 'context_permission',
-              permission: 'module.access',
-            },
+            authorization: { kind: 'protected' },
             entrypointKey: 'party.registry.search.counterparties',
             moduleKey: 'party.registry',
             role: 'search',
@@ -249,13 +264,18 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
           searchKey: 'party.registry.counterparties',
         }),
         searchContribution({
+          accessDeclaration: {
+            key: 'party.registry.party.search',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'party-identity', level: 'basic' },
+            risk: 'sensitive',
+            selectors: ['all'],
+          },
           contributionKey: 'party.registry.search.parties',
           entrypoint: {
             access: 'read',
-            authorization: {
-              kind: 'context_permission',
-              permission: 'module.access',
-            },
+            authorization: { kind: 'protected' },
             entrypointKey: 'party.registry.search.parties',
             moduleKey: 'party.registry',
             role: 'search',

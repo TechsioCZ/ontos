@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug remove-variant-localized-facts
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/remove-variant-localized-facts.ts';
 
 export { RemoveVariantLocalizedFactsPayloadSchema } from '../actions/remove-variant-localized-facts.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RemoveVariantLocalizedFactsActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveVariantLocalizedFactsActionInvalidProblem',
@@ -24,6 +26,7 @@ export const RemoveVariantLocalizedFactsActionForbiddenProblemSchema = makeProbl
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const RemoveVariantLocalizedFactsActionApi = HttpApi.make('RemoveVariantL
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-variant-localized-facts', {
         error: actionErrors,
         payload: Schema.toEncoded(RemoveVariantLocalizedFactsPayloadSchema),
-        success: RemoveVariantLocalizedFactsResultSchema,
+        success: [ActionProposalAcceptedSchema, RemoveVariantLocalizedFactsResultSchema],
       }),
     )
     .middleware(RemoveVariantLocalizedFactsActionSchemaErrorMiddleware),

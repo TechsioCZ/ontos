@@ -101,6 +101,14 @@ export const handleRetireProduct = Effect.fn('RetireProductAction.execute')(func
 
 export const retireProductAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.retire-product.access.v1',
@@ -112,7 +120,7 @@ export const retireProductAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.retire-product',
       moduleKey: 'commerce.catalog',
       role: 'action',

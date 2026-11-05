@@ -1,6 +1,7 @@
-import { Effect, Schema, Predicate } from 'effect';
+import { Effect, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { OntosOutboxSubscriptionContractSchema } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   defineOutboxWorker,
@@ -200,4 +201,67 @@ it('validates and freezes the schema-free installed subscription catalog', () =>
       reason: expect.stringMatching(/duplicate Outbox Worker key/u),
     }),
   );
+});
+
+it('forbids a catalog access declaration on an owner-local background Worker', () => {
+  const worker = makeWorker();
+  expect(() =>
+    defineOutboxWorker(
+      {
+        // @ts-expect-error Owner-local background work is never a user capability.
+        accessDeclaration: {
+          key: 'consumer.message-logger.record',
+          kind: 'action' as const,
+          modes: ['run'] as const,
+          placement: { group: 'messages', level: 'basic' as const },
+          risk: 'routine' as const,
+          selectors: [] as const,
+        },
+        consumerModuleKey: 'consumer',
+        entrypoint: worker.descriptor.entrypoint,
+        leaseDurationMs: 30_000,
+        legalEntityScope: 'required',
+        payloadSchema,
+        producerModuleKey: 'producer',
+        retryPolicy: worker.descriptor.retryPolicy,
+        topic: 'producer.message-created',
+        workerKey: 'consumer.message-logger',
+      },
+      (payload) => Effect.sync(() => expect(Predicate.isString(payload.messageKey)).toBe(true)),
+    ),
+  ).toThrow(OutboxWorkerDescriptorError);
+});
+
+it('rejects an access declaration on a published Worker subscription contract', () => {
+  const subscription = {
+    consumerModuleKey: 'consumer.messages',
+    entrypoint: {
+      access: 'background' as const,
+      authorization: { kind: 'owner_local_background' as const },
+      entrypointKey: 'consumer.messages.message-logger',
+      moduleKey: 'consumer.messages',
+      role: 'worker' as const,
+      scope: 'tenant' as const,
+    },
+    producerModuleKey: 'producer.catalog',
+    topic: 'producer.catalog.message-created',
+    workerKey: 'consumer.messages.message-logger',
+  };
+  const decode = Schema.decodeUnknownResult(OntosOutboxSubscriptionContractSchema, { onExcessProperty: 'error' });
+  expect(Result.isSuccess(decode(subscription))).toBe(true);
+  expect(
+    Result.isFailure(
+      decode({
+        ...subscription,
+        accessDeclaration: {
+          key: 'consumer.messages.message-logger.record',
+          kind: 'action',
+          modes: ['run'],
+          placement: { group: 'messages', level: 'basic' },
+          risk: 'routine',
+          selectors: [],
+        },
+      }),
+    ),
+  ).toBe(true);
 });

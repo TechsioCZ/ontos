@@ -26,7 +26,7 @@ interface TaxPrivacyOwnerCoverageServices {
 
 const taxPrivacyOwnerCoverageEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'tax.evidence.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.tax.api.tax-privacy-owner-coverage',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -65,6 +65,14 @@ export const readTaxPrivacyOwnerCoverage = (
 
 export const taxPrivacyOwnerCoverageRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.tax-privacy-coverage.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'privacy-evidence', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: taxPrivacyOwnerCoverageEntrypoint,
     evidencePolicy: {
@@ -74,7 +82,6 @@ export const taxPrivacyOwnerCoverageRead = defineRead(
     inputSchema: TaxPrivacyOwnerCoverageRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.tax.api.tax-privacy-owner-coverage',
     resultSchema: TaxPrivacyOwnerCoverageResponseSchema,
@@ -82,5 +89,4 @@ export const taxPrivacyOwnerCoverageRead = defineRead(
   },
   readTaxPrivacyOwnerCoverage,
   (transaction, scope) => Effect.succeed({ privacy: taxPrivacyCoverageForScope(transaction, scope) }),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

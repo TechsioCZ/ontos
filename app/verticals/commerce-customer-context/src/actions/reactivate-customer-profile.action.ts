@@ -78,6 +78,14 @@ const handle = Effect.fn('ReactivateCustomerProfileAction.handle')(function* han
 });
 export const reactivateCustomerProfileAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-profile.reactivate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.reactivate-customer-profile.access.v1',
@@ -90,7 +98,7 @@ export const reactivateCustomerProfileAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.reactivate-customer-profile',
       moduleKey: MODULE_KEY,
       role: 'action',

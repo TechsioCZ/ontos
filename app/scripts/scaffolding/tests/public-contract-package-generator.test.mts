@@ -10,7 +10,6 @@ import { readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mt
 
 const paymentVertical = 'payment-term-catalog';
 const moduleApiKind = 'module-api';
-const paymentReadPermission = 'payment.term_catalog.read';
 
 const appRoot = path.resolve(import.meta.dirname, '../../..');
 const paymentVerticalPath = 'verticals/payment-term-catalog';
@@ -176,9 +175,8 @@ it.effect(
   Effect.fn(function* publicContractPackageIdempotence() {
     const before = yield* Effect.promise(loadPaymentContractSources);
     const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
-      authorization: 'context_permission',
+      authorization: 'protected',
       name: 'current-payment-terms',
-      permission: paymentReadPermission,
       vertical: paymentVertical,
     }).pipe(Effect.provide(NodeServices.layer));
     const after = yield* Effect.promise(loadPaymentContractSources);
@@ -215,9 +213,8 @@ it.effect(
     ]) {
       expect(changed).not.toBe(original);
       const error = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
-        authorization: 'context_permission',
+        authorization: 'protected',
         name: 'current-payment-terms',
-        permission: paymentReadPermission,
         vertical: paymentVertical,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, {
@@ -271,9 +268,8 @@ it.effect(
   Effect.fn(function* customerPublicContractPackageIdempotence() {
     const before = yield* Effect.promise(loadCustomerContractSources);
     const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
-      authorization: 'context_permission',
+      authorization: 'protected',
       name: 'payment-term-affected-use-assessment',
-      permission: paymentReadPermission,
       vertical: 'commerce-customer-context',
     }).pipe(Effect.provide(NodeServices.layer));
     const after = yield* Effect.promise(loadCustomerContractSources);

@@ -1,3 +1,4 @@
+import type { CoreSearchAuthorization } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -7,6 +8,8 @@ import { loadPartySearch, partiesRead } from '../../src/search/parties.provider.
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000002';
+/** What a read's own gate answered for a caller entitled to the whole scope and every name surface. */
+const authorization = { hiddenTextFields: [], listAccess: { groups: [] } } as const satisfies CoreSearchAuthorization;
 const tenantScope = {
   authMethod: 'system',
   authContextRef: 'job:party-search:run:provider-test',
@@ -16,45 +19,54 @@ const tenantScope = {
 } as const;
 const legalEntityScope = { ...tenantScope, legalEntityId } as const;
 
-it('Party provider declares optional Legal Entity context and tenant Party-read authority', () => {
+it('Party provider declares optional Legal Entity context and its own Party search declaration', () => {
   expect(partiesRead.descriptor.accessKind).toBe('search');
   expect(partiesRead.descriptor.legalEntityScope).toBe('optional');
-  expect(partiesRead.descriptor.permissionTarget).toBe('tenant');
+  expect(partiesRead.descriptor.accessDeclaration?.key).toBe('party.registry.party.search');
 });
 
-it('Counterparty provider requires trusted Legal Entity context and candidate authorization', () => {
+it('Counterparty provider requires trusted Legal Entity context and its own Counterparty search declaration', () => {
   expect(counterpartiesRead.descriptor.accessKind).toBe('search');
   expect(counterpartiesRead.descriptor.legalEntityScope).toBe('required');
-  expect(counterpartiesRead.descriptor.permissionTarget).toBe('legal_entity');
+  expect(counterpartiesRead.descriptor.accessDeclaration?.key).toBe('party.registry.counterparty.search');
 });
 
 it.effect('Party provider sends only trusted tenant scope to the Core projection gateway', () =>
   Effect.gen(function* trustedPartyScope() {
-    const calls: (readonly [unknown, unknown])[] = [];
+    const calls: (readonly [unknown, unknown, unknown])[] = [];
     const gateway: PartySearchProjectionGatewayService = {
       searchCounterparties: () => Effect.succeed([]),
-      searchParties: (input, scope) =>
+      searchParties: (input, scope, queryAuthorization) =>
         Effect.sync(() => {
-          calls.push([input, scope]);
+          calls.push([input, scope, queryAuthorization]);
           return [];
         }),
     };
 
-    const result = yield* loadPartySearch(gateway, tenantScope, { includeArchived: true, query: 'ACME' });
+    const result = yield* loadPartySearch(
+      gateway,
+      tenantScope,
+      { includeArchived: true, query: 'ACME' },
+      authorization,
+    );
     expect(result).toEqual([]);
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual([{ includeArchived: true, query: 'ACME', tenantId }, tenantScope]);
+    expect(calls[0]?.slice(0, 2)).toEqual([{ includeArchived: true, query: 'ACME', tenantId }, tenantScope]);
     expect(calls[0]?.[1]).toBe(tenantScope);
+    // The read's own gate answer travels with the query, never as a caller-selected option.
+    expect(calls[0]?.[2]).toBe(authorization);
   }),
 );
 
 it.effect('Counterparty provider derives Legal Entity from trusted scope and never from payload', () =>
   Effect.gen(function* trustedCounterpartyScope() {
     const calls: unknown[] = [];
+    const seen: unknown[] = [];
     const gateway: PartySearchProjectionGatewayService = {
-      searchCounterparties: (input, scope) =>
+      searchCounterparties: (input, scope, queryAuthorization) =>
         Effect.sync(() => {
           calls.push(input);
+          seen.push(queryAuthorization);
           expect(scope).toBe(legalEntityScope);
           return [];
         }),
@@ -67,8 +79,10 @@ it.effect('Counterparty provider derives Legal Entity from trusted scope and nev
       legalEntityId,
       { includeArchived: false, query: 'ACME', role: 'SUPPLIER' },
       '2026-09-03T12:00:00.000Z',
+      authorization,
     );
     expect(result).toEqual([]);
+    expect(seen).toEqual([authorization]);
     expect(calls).toEqual([
       {
         effectiveAt: '2026-09-03T12:00:00.000Z',
@@ -93,7 +107,7 @@ it.effect('Counterparty provider preserves typed normalization failures and omit
       searchParties: () => Effect.succeed([]),
     };
     const error = yield* Effect.flip(
-      loadCounterpartySearch(gateway, legalEntityScope, legalEntityId, { query: 'ACME' }, 'invalid'),
+      loadCounterpartySearch(gateway, legalEntityScope, legalEntityId, { query: 'ACME' }, 'invalid', authorization),
     );
     assert.equal(error.code, 'party_search_projection_unavailable');
     assert.equal(error.reason, 'Counterparty Search effective time is invalid');

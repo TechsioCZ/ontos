@@ -171,8 +171,10 @@ it.layer(NodeFileSystem.layer)('keeps identity provisioning grants out of bootst
       const expectedSchemaBlock = `schema: |-\n${ONTOS_SPICEDB_SCHEMA.split('\n')
         .map((line) => (line.length === 0 ? '' : `  ${line}`))
         .join('\n')}`;
-      expect(bootstrapSources[0].startsWith(expectedSchemaBlock)).toBeTruthy();
-      expect(bootstrapSources[1].trimEnd()).toBe(expectedSchemaBlock);
+      // Each file opens with its generated-file header comment, then the schema block.
+      const [development, stage] = bootstrapSources.map((source) => source.replace(/^(?:#[^\n]*\n)+/u, ''));
+      expect(development?.startsWith(expectedSchemaBlock)).toBeTruthy();
+      expect(stage?.trimEnd()).toBe(expectedSchemaBlock);
 
       for (const source of bootstrapSources) {
         expect(source).not.toMatch(/identity_namespace:[^\n]*#(?:provisioner|tenant)@/u);

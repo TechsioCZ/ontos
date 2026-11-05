@@ -7,7 +7,6 @@ import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
-  ContextAccessLive,
   OntosModuleDeploymentContractSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -69,7 +68,6 @@ import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -81,6 +79,7 @@ import {
 } from '../support/price-group-temporal-protocol.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+const GUEST_PARTY_RESOLVE_CAPABILITY = 'party.registry.guest-party.resolve';
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -302,6 +301,7 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     const scopeGrantRegistrar = makeGatewayScopeGrantRegistrar(Context.get(issuerContext, PgClient.PgClient));
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
+        access: 'allowed',
         actionExecutor: 'manager-only',
         actionKeys: [
           'party.registry.create-party',
@@ -362,6 +362,15 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReadySchema))(first.value);
     expect(ready.marker).toEqual(marker);
     const baseUrl = `http://127.0.0.1:${ready.port}/party-registry-api`;
+    // The Party fixture's own gate allows every capability until a suite revokes one over this control.
+    const partyControl = (path: 'grant-party-read' | 'revoke-party-read', capabilityPrefix: string) =>
+      Effect.promise(async () => {
+        const response = await fetch(
+          `http://127.0.0.1:${ready.port}/__1258/${path}?capabilityPrefix=${encodeURIComponent(capabilityPrefix)}`,
+          { method: 'POST' },
+        );
+        return response.status;
+      });
     const authorization = Effect.fn('GuestAuthorityTest.authorization')(function* authorization(actor = principal) {
       const id = yield* nextId;
       // Registration checks this same owned PostgreSQL clock; sample it once for both exact claims.
@@ -444,6 +453,7 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
     const anotherTenant = Effect.fn('GuestAuthorityTest.anotherTenant')(function* anotherTenant() {
       const other = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionExecutor: 'manager-only',
           actionKeys: [
             'party.registry.create-party',
@@ -492,7 +502,6 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       guestFactory,
       profileCounterpartyRoleEligibilityResolverFactoryLive,
       partyRegistryRetailPartyResolverFactoryLive,
-      profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive)),
       profileReactivationEligibilityEvaluatorFactoryLive.pipe(
         Layer.provide(profileReconfirmationPolicyUnavailableLive),
       ),
@@ -541,19 +550,19 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)))(row?.rows);
     });
     const permissions = Effect.fn('GuestAuthorityTest.permissionCounts')(function* permissionCounts(actor = principal) {
-      const [row] = yield* admin.execute<{ grantCount: number; mutationCount: number }>(
+      const [row] = yield* admin.execute<{ bindingCount: number; grantCount: number }>(
         sql`
         select (select count(*)::integer from commerce_customer_context.counterparty_commerce_access_grants
           where tenant_id = ${actor.tenantId} and legal_entity_id = ${actor.legalEntityId}) as "grantCount",
-          (select count(*)::integer from commerce_customer_context.retail_portal_profile_binding_permission_mutations
-          where tenant_id = ${actor.tenantId} and legal_entity_id = ${actor.legalEntityId}) as "mutationCount"
+          (select count(*)::integer from commerce_customer_context.retail_portal_profile_bindings
+          where tenant_id = ${actor.tenantId} and legal_entity_id = ${actor.legalEntityId}) as "bindingCount"
       `,
         'objects',
       );
       const counts = yield* Schema.decodeUnknownEffect(
-        Schema.Struct({ grantCount: Schema.Int, mutationCount: Schema.Int }),
+        Schema.Struct({ bindingCount: Schema.Int, grantCount: Schema.Int }),
       )(row);
-      expect(counts).toEqual({ grantCount: 0, mutationCount: 0 });
+      expect(counts).toEqual({ bindingCount: 0, grantCount: 0 });
       return counts;
     });
     const resolve = (
@@ -674,6 +683,7 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       fixture,
       legalEntityRef,
       options,
+      partyControl,
       permissions,
       principal,
       profiles,
@@ -704,6 +714,7 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
       fixture,
       legalEntityRef,
       options,
+      partyControl,
       profiles,
       snapshot,
     } = test;
@@ -799,6 +810,8 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
     expect((yield* attribute(`wrong-${provenRoot}`, evidenceRef, yield* nextId, requestedAt)).outcome).toBe(
       'PARTY_INVALID',
     );
+    // A caller without the guest-resolution right is refused by the Party owner itself.
+    expect(yield* partyControl('revoke-party-read', GUEST_PARTY_RESOLVE_CAPABILITY)).toBe(204);
     const denied = yield* executeGuestPartyResolutionWithAuthorization(
       {
         correlationRoot: provenRoot,
@@ -806,10 +819,11 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
         legalEntityRef,
         requestedAt: yield* DateTime.now,
       },
-      yield* authorization({ ...fixture.legalEntityOnly, legalEntityId: fixture.legalEntityId }),
+      yield* authorization(),
       yield* nextId,
       { baseUrl, compositionRevision: snapshot.composition.revision },
     ).pipe(Effect.flip);
+    expect(yield* partyControl('grant-party-read', GUEST_PARTY_RESOLVE_CAPABILITY)).toBe(204);
     expect(Predicate.isTagged(denied, 'GuestPartyResolutionForbiddenProblem')).toBe(true);
     expect(yield* profiles()).toHaveLength(initialProfiles.length + 1);
     const secondKey = Brand.nominal<

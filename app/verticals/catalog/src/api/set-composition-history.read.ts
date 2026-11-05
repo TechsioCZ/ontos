@@ -16,7 +16,7 @@ import { setCompositionPersistenceForScope } from '../persistence/set-compositio
 
 const setCompositionHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.set-composition-history' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.set-composition-history',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -70,6 +70,14 @@ export const readSetCompositionHistory = Effect.fn('SetCompositionHistoryRead.re
 
 export const setCompositionHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.set-composition-history.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'set-composition', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: setCompositionHistoryEntrypoint,
     evidencePolicy: {
@@ -79,7 +87,6 @@ export const setCompositionHistoryRead = defineRead(
     inputSchema: SetCompositionHistoryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.set-composition-history',
     resultSchema: SetCompositionHistoryResponseSchema,
@@ -90,5 +97,4 @@ export const setCompositionHistoryRead = defineRead(
     context: ReadHandlerContext<ReturnType<typeof setCompositionPersistenceForScope>>,
   ) => Effect.suspend(() => readSetCompositionHistory(input, context.scope.tenantId, context.services)),
   (transaction, scope) => Effect.succeed(setCompositionPersistenceForScope(transaction, scope)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

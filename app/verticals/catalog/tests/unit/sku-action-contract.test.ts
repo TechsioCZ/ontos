@@ -60,10 +60,7 @@ describe('governed SKU Action contracts', () => {
     for (const action of [assignSkuAction, renameSkuAction, correctSkuAction]) {
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
     expect(assignSkuAction.descriptor.actionKey).toBe('commerce.catalog.assign-sku');
     expect(renameSkuAction.descriptor.actionKey).toBe('commerce.catalog.rename-sku');
@@ -71,8 +68,8 @@ describe('governed SKU Action contracts', () => {
     expect(correctSkuAction.descriptor.actionKey).not.toBe(assignSkuAction.descriptor.actionKey);
     expect(correctSkuAction.descriptor.actionKey).not.toBe(renameSkuAction.descriptor.actionKey);
     expect(catalogPublicOperationContracts['commerce.catalog.correct-sku']).toMatchObject({
+      accessKind: 'action',
       permission: 'commerce.catalog.correct-sku',
-      permissionKind: 'action_execution',
       scope: 'tenant',
     });
     const grantsWithoutCorrection = new Set<string>(

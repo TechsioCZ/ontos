@@ -15,6 +15,11 @@ export interface ManageCommitmentConfirmationActionClientOptions {
   readonly baseUrl?: string | URL;
   readonly compositionRevision?: string;
   readonly idempotencyKey: string;
+  /**
+   * O80: ask for a parked proposal instead of an immediate write. Omitted means the ordinary run, so a
+   * refusal is never turned into a proposal on the caller's behalf.
+   */
+  readonly intent?: 'propose';
   readonly [traceIdOption]?: string;
 }
 
@@ -36,6 +41,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       credential,
       defaultApiPrefix: '/pricing-api',
       idempotencyKey: options.idempotencyKey,
+      intent: options.intent,
       requestCorrelation,
     },
     options,

@@ -15,10 +15,7 @@ const entries = [
     surface: 'route' as const,
   },
   {
-    authorization: {
-      kind: 'action_execution' as const,
-      provisioning: 'tenant_membership_default' as const,
-    },
+    authorization: { kind: 'protected' as const },
     deployment: 'contacts',
     entrypointKey: 'contacts.create-contact',
     owner: 'contacts',
@@ -45,6 +42,33 @@ it('inventory normalization, hashing, and serialization are deterministic', () =
   expect(left.inventoryHash).not.toBe(makeProtectedEntrypointInventory('revision', entries).inventoryHash);
   expect(left.entries.map((entry) => entry.surface)).toEqual(['action', 'route']);
   expect(left.businessPermissions.map(({ key }) => key)).toEqual([pricingReadPermission, pricingRetirePermission]);
+});
+
+it('accepts the v2 protected classification and refuses legacy classification data', () => {
+  const inventory = makeProtectedEntrypointInventory('revision', [
+    {
+      authorization: { kind: 'protected' as const },
+      deployment: 'contacts',
+      entrypointKey: 'contacts.contacts-page',
+      owner: 'contacts',
+      surface: 'route' as const,
+    },
+  ]);
+  expect(inventory.entries[0]?.authorization).toStrictEqual({ kind: 'protected' });
+  // The v2 union no longer admits the legacy protected kinds (O62); excess classification data is
+  // refused at decode, so a stale `action_execution{provisioning}` payload cannot pass silently.
+  const legacyPayload = { kind: 'protected' as const, provisioning: 'tenant_membership_default' };
+  expect(() =>
+    makeProtectedEntrypointInventory('revision', [
+      {
+        authorization: legacyPayload,
+        deployment: 'contacts',
+        entrypointKey: 'contacts.contacts-page',
+        owner: 'contacts',
+        surface: 'route' as const,
+      },
+    ]),
+  ).toThrow(/classification is invalid/u);
 });
 
 it('business permission inventory rejects duplicate and unsafe permission identities', () => {
@@ -81,14 +105,16 @@ it('inventory rejects malformed and excess authorization classification data', (
       },
     ]),
   ).toThrow(/classification is invalid/u);
+  const credentialWithExcessData = {
+    credential: 'api_key' as const,
+    kind: 'capability_issuance' as const,
+    provisioning: 'explicit',
+  };
   expect(() =>
     makeProtectedEntrypointInventory('revision', [
       {
         ...entries[0],
-        authorization: {
-          kind: 'context_permission',
-          permission: 'tenant@example.com',
-        },
+        authorization: credentialWithExcessData,
       },
     ]),
   ).toThrow(/classification is invalid/u);

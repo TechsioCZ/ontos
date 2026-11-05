@@ -90,6 +90,14 @@ const handleCreateCounterpartyPurchasingProfile = Effect.fn('CreateCounterpartyP
 );
 export const createCounterpartyPurchasingProfileAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-purchasing-profile.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.create-counterparty-purchasing-profile.access.v1',
@@ -103,7 +111,7 @@ export const createCounterpartyPurchasingProfileAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.create-counterparty-purchasing-profile',
       moduleKey: MODULE_KEY,
       role: 'action',

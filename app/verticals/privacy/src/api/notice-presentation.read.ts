@@ -50,7 +50,7 @@ const readFailure = (cause: PrivacyNoticeAcknowledgementError) => {
 const MODULE_KEY = 'privacy.core' as const;
 const noticePresentationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.notice-presentation',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -58,6 +58,14 @@ const noticePresentationEntrypoint = defineTenantModuleEntrypoint({
 
 export const noticePresentationRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.notice.presentation.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'notices', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     domainErrorSchema: Schema.Union([ReadInputValidationError, ReadPolicyDenied]),
     entrypoint: noticePresentationEntrypoint,
@@ -68,7 +76,6 @@ export const noticePresentationRead = defineRead(
     inputSchema: NoticePresentationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.notice-presentation',
     resultSchema: NoticePresentationResponseSchema,
@@ -80,5 +87,4 @@ export const noticePresentationRead = defineRead(
       Effect.mapError(readFailure),
     ),
   (transaction, scope) => noticePresentationServicesForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

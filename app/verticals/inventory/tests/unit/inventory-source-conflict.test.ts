@@ -1,7 +1,6 @@
 import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
 import type { ImportSourceAssertionResult } from '../../shared/actions/import-source-assertion.ts';
 import {
@@ -47,8 +46,6 @@ import { makeInventorySourceImportService } from '../../src/services/inventory-s
 import { makeInventorySourceConflictService } from '../../src/services/inventory-source-conflict.service.ts';
 import type { InventorySourceConflictPersistence } from '../../src/services/inventory-source-conflict.service.ts';
 import { resolveInventorySourceConflictAction } from '../../src/actions/resolve-inventory-source-conflict.action.ts';
-
-const compositionRevision = 'a'.repeat(64);
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const configurationId = '00000000-0000-4000-8000-000000000002';
@@ -368,46 +365,15 @@ const makeConflictAwareImportHarness = (
 /* oxlint-enable sonarjs/no-nested-functions */
 
 describe('Inventory external source conflicts', () => {
-  it('requires Inventory Recovery permission for the exact conflict target', () => {
-    const { conflictRef } = factValueCandidate();
-    const input = Schema.decodeUnknownSync(InventorySourceConflictResolutionInputSchema)({
-      conflictRef,
-      expectedRevision: 1,
-      ownerEvidenceRef: 'owner-resolution-evidence',
-      resolution: {
-        _tag: 'BACKEND_CONFIGURATION',
-        configurationId,
-      },
-      resolvedAt: '2026-09-24T11:00:00.000Z',
+  it('declares the scope-wide conflict-resolution capability instead of a per-target permission', () => {
+    expect(resolveInventorySourceConflictAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    // O67-Q2: resolving a source conflict is the Action's own scope-wide recovery capability.
+    expect(resolveInventorySourceConflictAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.inventory.source-conflict.resolve',
+      kind: 'action',
+      selectors: [],
     });
-    const scope = trustVerifiedGatewayPrincipalContext(
-      {
-        authBindingId: '00000000-0000-4000-8000-000000000018',
-        authContextRef: 'test:inventory-source-conflict',
-        authMethod: 'api_key',
-        correlationId: 'inventory-source-conflict',
-        principalId: '00000000-0000-4000-8000-000000000019',
-        tenantId,
-      },
-      compositionRevision,
-    );
-
-    expect(
-      getActionOwnerPermissionTargetResolver(resolveInventorySourceConflictAction)?.(input, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.recovery.execute',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: conflictRef.moduleId,
-          resourceId: conflictRef.resourceId,
-          resourceType: conflictRef.resourceType,
-        },
-        tenantId,
-      },
-    });
+    expect(getActionOwnerPermissionTargetResolver(resolveInventorySourceConflictAction)).toBeUndefined();
   });
 
   it('requires non-empty exact conflict refs for typed import conflict outcomes', () => {

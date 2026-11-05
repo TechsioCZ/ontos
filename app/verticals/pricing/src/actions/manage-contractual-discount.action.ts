@@ -289,6 +289,17 @@ export const handleManageContractualDiscount = Effect.fn('ManageContractualDisco
 
 export const manageContractualDiscountAction = defineAction(
   {
+    // O18: this payload is a union whose RETIRE branch states no money value, so the declaration
+    // names no governed amount. Under an amount ceiling the gate refuses `deny.amount_required`
+    // rather than trusting a caller-supplied total; a per-branch amount needs a contract change.
+    accessDeclaration: {
+      key: 'commerce.pricing.contractual-discount.manage',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'discounts', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.manage-contractual-discount.access.v1',
@@ -316,7 +327,7 @@ export const manageContractualDiscountAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.manage-contractual-discount',
       moduleKey: MODULE_KEY,
       role: 'action',

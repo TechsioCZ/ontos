@@ -1,10 +1,13 @@
 import type { OutboxMessage } from '@app/core-runtime';
 import {
+  OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-activated-v1';
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-retail-portal-profile-binding-activated-v1';
 
+export const BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxPayloadSchema =
+  OutboxPayloadSchema;
 const BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxProducerModuleKey =
   outboxProducerModuleKey;
 const BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxTopic = outboxTopic;

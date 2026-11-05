@@ -57,6 +57,7 @@ export type {
 } from './privacy-owner-contract.ts';
 
 export {
+  DELEGATED_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
@@ -68,10 +69,13 @@ export {
   GatewayContextApiGroup,
   GatewayContextClaimsSchema,
   GatewayContextV2ClaimsSchema,
+  GatewayContextV3ClaimsSchema,
+  GatewayActorClaimSchema,
+  GatewayDelegatedContextRequestSchema,
+  GatewayDelegatedSubjectSchema,
   SupportedGatewayContextClaimsSchema,
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
-  GatewayRelayRequestSchema,
   GatewayContextResponseSchema,
   GatewayInternalProblemSchema,
   GatewayReloadRequiredProblemSchema,
@@ -90,7 +94,11 @@ export type {
   GatewayContextClientError,
   GatewayContextClientOptions,
   GatewayContextClaims,
+  GatewayActorClaim,
   GatewayContextV2Claims,
+  GatewayContextV3Claims,
+  GatewayDelegatedContextRequest,
+  GatewayDelegatedSubject,
   SupportedGatewayContextClaims,
   GatewayContextProblem,
   GatewayContextProtectedHeader,
@@ -415,5 +423,3 @@ export const onUltramodernPerformanceSignal = (
     event: CustomEvent<UltramodernPerformanceSignalPayload>,
   ) => void,
 ) => onUltramodernWorkspaceEvent(target, ultramodernWorkspaceEventNames.performanceSignal, handler);
-
-export type { GatewayRelayRequest } from './gateway-context.ts';

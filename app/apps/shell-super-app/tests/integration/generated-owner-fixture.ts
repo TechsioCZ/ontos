@@ -200,11 +200,19 @@ const addResourceType = Effect.fn('addResourceType')(function* addResourceTypeEf
     '      resourceDetails: [],',
     `      resourceDetails: [
         {
+          accessDeclaration: {
+            key: '${GENERATED_OWNER.moduleId}.resource-detail.read',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'fixtures', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
           apiKey: '${GENERATED_OWNER.moduleId}.resource-detail',
           contributionKey: '${GENERATED_OWNER.moduleId}.detail.record',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'protected' },
             entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-detail',
             moduleKey: '${GENERATED_OWNER.moduleId}',
             role: 'api',
@@ -221,11 +229,19 @@ const addResourceType = Effect.fn('addResourceType')(function* addResourceTypeEf
       '      timelines: [],',
       `      timelines: [
         {
+          accessDeclaration: {
+            key: '${GENERATED_OWNER.moduleId}.resource-list.read',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'fixtures', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
           apiKey: '${GENERATED_OWNER.moduleId}.resource-list',
           contributionKey: '${GENERATED_OWNER.moduleId}.timeline.record',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'protected' },
             entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-list',
             moduleKey: '${GENERATED_OWNER.moduleId}',
             role: 'api',
@@ -322,7 +338,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const resourceDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-detail',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'api',
@@ -330,13 +346,20 @@ export const resourceDetailEntrypoint = defineTenantModuleEntrypoint({
 
 export const resourceDetailRead = defineRead(
   {
+    accessDeclaration: {
+      key: '${GENERATED_OWNER.moduleId}.resource-detail.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: resourceDetailEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: '${GENERATED_OWNER.moduleId}.api.resource-detail.evidence.v1' },
     inputSchema: ResourceDetailRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: '${GENERATED_OWNER.moduleId}',
-    permissionTarget: 'resource',
     policies: [],
     readKey: '${GENERATED_OWNER.moduleId}.api.resource-detail',
     resultSchema: ResourceDetailResponseSchema,
@@ -356,10 +379,6 @@ export const resourceDetailRead = defineRead(
       };
     }),
   (transaction) => Effect.succeed(makeOwnerRepository(transaction)),
-  ({ resourceId }) => ({
-    kind: 'resource',
-    resource: { moduleId: '${GENERATED_OWNER.moduleId}', resourceId, resourceType: '${GENERATED_OWNER.resourceType}' },
-  }),
 );
 `;
 
@@ -373,7 +392,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const resourceListEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-list',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'api',
@@ -381,13 +400,20 @@ export const resourceListEntrypoint = defineTenantModuleEntrypoint({
 
 export const resourceListRead = defineRead(
   {
+    accessDeclaration: {
+      key: '${GENERATED_OWNER.moduleId}.resource-list.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'list',
     entrypoint: resourceListEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: '${GENERATED_OWNER.moduleId}.api.resource-list.evidence.v1' },
     inputSchema: ResourceListRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: '${GENERATED_OWNER.moduleId}',
-    permissionTarget: 'resource',
     policies: [],
     readKey: '${GENERATED_OWNER.moduleId}.api.resource-list',
     resultSchema: ResourceListResponseSchema,
@@ -410,10 +436,6 @@ export const resourceListRead = defineRead(
       };
     }),
   (transaction) => Effect.succeed(makeOwnerRepository(transaction)),
-  ({ resourceId }) => ({
-    kind: 'resource',
-    resource: { moduleId: '${GENERATED_OWNER.moduleId}', resourceId, resourceType: '${GENERATED_OWNER.resourceType}' },
-  }),
 );
 `;
 
@@ -428,7 +450,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.search.records',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'search',
@@ -436,13 +458,20 @@ export const recordsEntrypoint = defineTenantModuleEntrypoint({
 
 export const recordsRead = defineRead(
   {
+    accessDeclaration: {
+      key: '${GENERATED_OWNER.moduleId}.records.search',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'search',
     entrypoint: recordsEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: '${GENERATED_OWNER.moduleId}.search.records.evidence.v1' },
     inputSchema: RecordsProviderRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: '${GENERATED_OWNER.moduleId}',
-    permissionTarget: 'module',
     policies: [],
     readKey: '${GENERATED_OWNER.moduleId}.search.records',
     resultSchema: RecordsProviderResponseSchema,
@@ -462,8 +491,6 @@ export const recordsRead = defineRead(
       return { evidence: { resultCount: result.length }, result };
     }),
   (transaction) => Effect.succeed(makeOwnerRepository(transaction)),
-  () => ({ kind: 'module', moduleId: '${GENERATED_OWNER.moduleId}' }),
-  (result) => result.map(({ ref }) => ref),
 );
 `;
 
@@ -490,6 +517,14 @@ export class CreateRecordRejected extends Schema.TaggedError<CreateRecordRejecte
 
 export const createRecordAction = defineAction(
   {
+    accessDeclaration: {
+      key: '${GENERATED_OWNER.moduleId}.fixture.action',
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: '${GENERATED_OWNER.actionKey}.access.v1' },
     actionKey: '${GENERATED_OWNER.actionKey}',
     auditProfile: 'standard',
@@ -497,7 +532,7 @@ export const createRecordAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: { kind: 'protected' },
       entrypointKey: '${GENERATED_OWNER.actionKey}',
       moduleKey: '${GENERATED_OWNER.moduleId}',
       role: 'action',
@@ -585,56 +620,25 @@ export const createGeneratedOwnerFixture = Effect.fn('createGeneratedOwnerFixtur
         '--action',
         'create-record',
         '--authorization',
-        'action_execution',
+        'protected',
         '--legal-entity-scope',
         'required',
-        '--provisioning',
-        'tenant_membership_default',
       ],
       { workspaceRoot: root },
     );
     yield* runScaffoldEffect(
       'module-api',
-      [
-        '--vertical',
-        GENERATED_OWNER.slug,
-        '--name',
-        'resource-detail',
-        '--authorization',
-        'context_permission',
-        '--permission',
-        'module.access',
-      ],
+      ['--vertical', GENERATED_OWNER.slug, '--name', 'resource-detail', '--authorization', 'protected'],
       { workspaceRoot: root },
     );
     yield* runScaffoldEffect(
       'module-api',
-      [
-        '--vertical',
-        GENERATED_OWNER.slug,
-        '--name',
-        'resource-list',
-        '--authorization',
-        'context_permission',
-        '--permission',
-        'module.access',
-      ],
+      ['--vertical', GENERATED_OWNER.slug, '--name', 'resource-list', '--authorization', 'protected'],
       { workspaceRoot: root },
     );
     yield* runScaffoldEffect(
       'search-provider',
-      [
-        '--vertical',
-        GENERATED_OWNER.slug,
-        '--name',
-        'records',
-        '--resource',
-        'record',
-        '--authorization',
-        'context_permission',
-        '--permission',
-        'module.access',
-      ],
+      ['--vertical', GENERATED_OWNER.slug, '--name', 'records', '--resource', 'record', '--authorization', 'protected'],
       { workspaceRoot: root },
     );
     yield* adaptGeneratedOwner(root, schemaName);

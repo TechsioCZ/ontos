@@ -1,5 +1,6 @@
 import { OperationContextUnavailable } from '@app/core-runtime';
-import type { ContextAccess, OperationalScope, PrincipalEligibility } from '@app/core-runtime';
+import type { OperationalScope, PrincipalEligibility } from '@app/core-runtime';
+import type { AccessPortalTransaction } from '@app/core-runtime/access/portal';
 import { Effect } from 'effect';
 import type { Crypto } from 'effect';
 import type {
@@ -10,12 +11,12 @@ import { counterpartyAccessPortForScopedTransaction } from './persistence/access
 import type { CounterpartyAccessScopedRoutineInvoker } from './persistence/access-persistence.ts';
 
 export const counterpartyAccessServicesForTransaction = (
-  transaction: CounterpartyAccessScopedRoutineInvoker,
+  transaction: CounterpartyAccessScopedRoutineInvoker & AccessPortalTransaction,
   scope: OperationalScope,
 ): Effect.Effect<
   CounterpartyAccessPortService,
   OperationContextUnavailable,
-  ContextAccess | CounterpartyInvitationProofDelivery | Crypto.Crypto | PrincipalEligibility
+  CounterpartyInvitationProofDelivery | Crypto.Crypto | PrincipalEligibility
 > => {
   if (scope.legalEntityId === undefined) {
     return Effect.fail(

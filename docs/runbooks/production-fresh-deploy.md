@@ -91,19 +91,13 @@ doesn't know yet: add its value to the file by hand.
 5. **Domain (5 min).** Add the custom domain to the `shellsuperapp` service in Zerops and point
    DNS at it. It must be the origin you used in the secrets file and step 4.
 
-6. **Pass the authorization gate (blocks step 7).** The deploy plan refuses production until
-   production has exact-build enforced authorization evidence and an approved production context
-   in `topology/authorization-contexts/`. Neither exists yet: issue #173 (implementation) and
-   issue #369 (approval). Until both are done, step 7 fails. See
-   [Fail-closed authorization promotion](../../app/docs/architecture/DEPLOYMENT.md#fail-closed-authorization-promotion).
-
-7. **Dispatch the first deploy (1 min).** The first deploy has no base, so it must be `full=true`:
+6. **Dispatch the first deploy (1 min).** The first deploy has no base, so it must be `full=true`:
 
    ```sh
    gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true
    ```
 
-Steps 1–5 and 7 take about 45–60 minutes; step 6 is a separate governance task. The first full deploy then runs on its own: each Zerops unit
+Steps 1–6 take about 45–60 minutes. The first full deploy then runs on its own: each Zerops unit
 builds remotely and units deploy one by one, so expect it to take a few hours on the current
 pipeline. Later deploys only push what changed.
 
@@ -115,6 +109,21 @@ pipeline. Later deploys only push what changed.
   [release sequence](../../app/docs/architecture/DEPLOYMENT.md#release-sequence) (steps 8–12) requires.
 - **Composition refresh.** The scheduled `refresh-production` lane starts publishing once production
   has deployed.
+
+## Pinned access catalog artifact
+
+Every deploy ships `app/topology/authorization-catalog.json`, the committed snapshot of the installed
+modules' declarations that the stage and local bootstraps compile a tenant's release from (O69). The
+gates (`module-entrypoints:check`, `authorization:inventory:check`, `test:deployment-impact`) fail with
+`AccessCatalogArtifactError` when it drifts from the tree, so a change to any `accessDeclaration`,
+`accessFieldGroups` or `accessWorkload` must regenerate it **in the same commit**:
+
+```sh
+cd app && mise exec -- pnpm authorization:catalog:artifact
+```
+
+Never hand-edit the JSON. Because the artifact is a snapshot of the whole composition, the wave gate
+regenerates it last, after every declaration change has landed.
 
 ## HA production vs low-cost stage
 

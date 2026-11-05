@@ -18,6 +18,7 @@ import {
   renderActionHttpClient,
   renderActionHttpContract,
   renderActionHttpProblems,
+  renderActionHttpServer,
 } from '../action-http/scaffold.mts';
 import {
   GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
@@ -154,7 +155,7 @@ it('renders one exact typed Action endpoint and exhaustive domain mapping', () =
       value: 'ManualRateUnavailable',
     },
   ];
-  const contract = renderActionHttpContract(vertical, action, errors);
+  const contract = renderActionHttpContract(vertical, action, errors, false);
   const problems = renderActionHttpProblems(vertical, action, errors);
   expect(contract).toContain("HttpApiEndpoint.post('execute', '/pricing-policy/actions/change-rate'");
   expect(contract).not.toMatch(/actions\/:|catch-all|generic/u);
@@ -169,6 +170,29 @@ it('renders one exact typed Action endpoint and exhaustive domain mapping', () =
   expect(problems).toContain("ManualRateConflict: () => changeRateActionProblem.conflict('manual_rate_conflict')");
   expect(problems).toContain('Match.exhaustive');
 });
+
+it.live(
+  'preserves the existing Action runtime position among owner-specific injected services',
+  Effect.fn(function* ownerRuntimeArgumentPosition() {
+    const source = yield* Effect.promise(() =>
+      readFile(path.join(appRoot, 'verticals/party-registry/api/index.ts'), 'utf-8'),
+    );
+    const invocation = `const apiRuntime = makePartyRegistryApiRuntime(
+  productionReadRuntimeLive,
+  partyRegistryAresSubjectServiceLive,
+  productionSearchProjectionGatewayLive,
+  productionActionRuntimeLive,
+  gatewayAssertionRedemptionLive,
+);`;
+    expect(source).toContain(invocation);
+    const patched = patchRuntimeRoot(
+      source,
+      { ...vertical, appId: 'party-registry', moduleId: 'party.registry', slug: 'party-registry' },
+      'executePrivacyMeasureActionApiLive',
+    );
+    expect(patched).toContain(invocation);
+  }),
+);
 
 it('renders exact secondary reason-code mappings without collapsing HTTP semantics', () => {
   const errors = [
@@ -194,7 +218,7 @@ it('renders exact secondary reason-code mappings without collapsing HTTP semanti
       value: 'REQUEST_NOT_ELIGIBLE',
     },
   ];
-  const contract = renderActionHttpContract(vertical, 'submit-fulfillment-request', errors);
+  const contract = renderActionHttpContract(vertical, 'submit-fulfillment-request', errors, false);
   const problems = renderActionHttpProblems(vertical, 'submit-fulfillment-request', errors);
 
   expect(contract).not.toMatch(/headers:|HeadersSchema/u);
@@ -483,9 +507,7 @@ export const createPricingPolicyClient = options => makeEffectHttpApiClient(pric
       '--legal-entity-scope',
       'required',
       AUTHORIZATION_FLAG,
-      'action_execution',
-      '--provisioning',
-      'explicit',
+      'protected',
     ]);
     // A generated Action starts the artifact. Its public schemas are then owned once and imported by the private descriptor.
     yield* write(
@@ -515,6 +537,126 @@ const withPublishedClientFixture = (shared: boolean) => (run: (root: string) => 
   withCreatedFixture(Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-published-action-client-'))))((root) =>
     initializePublishedClientFixture(root, shared).pipe(Effect.andThen(run(root))),
   );
+
+for (const proposable of [false, true]) {
+  it.live(
+    `proposal-only preserves an owner-named result when proposable=${proposable}`,
+    Effect.fn(function* ownerNamedResultProgram() {
+      yield* withPublishedClientFixture(true)(
+        Effect.fn(function* ownerNamedResultFixture(root) {
+          const contractPath = `${OWNER_DIRECTORY}/shared/apis/change-rate-action.ts`;
+          // Render without importing the fixture: an earlier import would cache the old schema names
+          // and conceal a validation bug after the files below change.
+          yield* write(root, contractPath, renderActionHttpContract(vertical, FIXTURE_ACTION, [], false));
+          yield* write(
+            root,
+            `${OWNER_DIRECTORY}/api/change-rate-action-server.ts`,
+            renderActionHttpServer(vertical, FIXTURE_ACTION, false),
+          );
+          yield* write(
+            root,
+            `${OWNER_DIRECTORY}/src/api/change-rate-action-client.ts`,
+            renderActionHttpClient(vertical, FIXTURE_ACTION, true),
+          );
+          for (const file of [PUBLIC_ACTION_PATH, PRIVATE_ACTION_PATH, contractPath]) {
+            const source = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
+            expect(source).toContain('ChangeRateResultSchema');
+            yield* write(root, file, source.replaceAll('ChangeRateResultSchema', 'SharedRateResultSchema'));
+          }
+          if (!proposable) {
+            const source = yield* Effect.promise(() => readFile(path.join(root, PRIVATE_ACTION_PATH), 'utf-8'));
+            const modes = "modes: ['run', 'propose', 'approve'],";
+            expect(source).toContain(modes);
+            expect(source).toContain("kind: 'action',");
+            // Like the retail-portal binding, administration is run-only even at sensitive risk.
+            yield* write(
+              root,
+              PRIVATE_ACTION_PATH,
+              source.replace(modes, "modes: ['run'],").replace("kind: 'action',", "kind: 'admin',"),
+            );
+          }
+          const before = yield* snapshotTree(root, ['node_modules']);
+          const upgrade = () =>
+            scaffoldFixture(root, ACTION_HTTP_COMMAND, [
+              VERTICAL_FLAG,
+              OWNER_SLUG,
+              '--action',
+              FIXTURE_ACTION,
+              '--proposal-only',
+            ]);
+          yield* upgrade();
+          const after = yield* snapshotTree(root, ['node_modules']);
+          if (proposable) {
+            expect(after[contractPath]).toContain('success: [ActionProposalAcceptedSchema, SharedRateResultSchema]');
+            expect(after[contractPath]).not.toContain('ChangeRateResultSchema');
+          } else {
+            expect(after).toEqual(before);
+          }
+          yield* upgrade();
+          expect(yield* snapshotTree(root, ['node_modules'])).toEqual(after);
+        }),
+      );
+    }),
+  );
+}
+
+it.live(
+  'Action HTTP accepts typed exported registrations without requiring one constructor spelling',
+  Effect.fn(function* typedActionRegistrationProgram() {
+    yield* withPublishedClientFixture(true)(
+      Effect.fn(function* typedActionRegistrationFixture(root) {
+        const source = yield* Effect.promise(() => readFile(path.join(root, PRIVATE_ACTION_PATH), 'utf-8'));
+        const declaration = 'export const changeRateAction = defineAction(';
+        expect(source).toContain(declaration);
+        yield* write(
+          root,
+          PRIVATE_ACTION_PATH,
+          `${source.replace(declaration, 'const registeredChangeRate = defineAction(')}
+export const changeRateAction: typeof registeredChangeRate = registeredChangeRate;
+`,
+        );
+        yield* scaffoldHttp(root);
+        const server = yield* Effect.promise(() =>
+          readFile(path.join(root, OWNER_DIRECTORY, 'api/change-rate-action-server.ts'), 'utf-8'),
+        );
+        expect(server).toContain('registration: changeRateAction');
+      }),
+    );
+  }),
+);
+
+it.live(
+  'Action HTTP accepts public schema aliases exported from another shared contract',
+  Effect.fn(function* aliasedPublicSchemasProgram() {
+    yield* withPublishedClientFixture(true)(
+      Effect.fn(function* aliasedPublicSchemasFixture(root) {
+        yield* write(
+          root,
+          `${OWNER_DIRECTORY}/shared/actions/rate-schemas.ts`,
+          `import { Schema } from 'effect';
+export const InputSchema = Schema.Struct({ rate: Schema.Number });
+export const OutputSchema = Schema.Struct({ accepted: Schema.Boolean });
+`,
+        );
+        yield* write(
+          root,
+          PUBLIC_ACTION_PATH,
+          `export {
+  InputSchema as ChangeRatePayloadSchema,
+  OutputSchema as ChangeRateResultSchema,
+} from './rate-schemas.ts';
+`,
+        );
+        yield* scaffoldHttp(root);
+        const contract = yield* Effect.promise(() =>
+          readFile(path.join(root, OWNER_DIRECTORY, 'shared/apis/change-rate-action.ts'), 'utf-8'),
+        );
+        expect(contract).toContain('ChangeRatePayloadSchema');
+        expect(contract).toContain('ChangeRateResultSchema');
+      }),
+    );
+  }),
+);
 
 it.live(
   'adopts canonical shared schemas without duplicating or replacing the existing Action',
@@ -908,9 +1050,7 @@ export type { ChangeRateActionClientOptions } from '${target}';`;
             '--legal-entity-scope',
             'required',
             AUTHORIZATION_FLAG,
-            'action_execution',
-            '--provisioning',
-            'explicit',
+            'protected',
           ]);
           yield* write(
             root,

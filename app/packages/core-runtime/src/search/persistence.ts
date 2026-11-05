@@ -1,7 +1,8 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
+import { PrincipalIdSchema } from '../access/ids.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
@@ -37,10 +38,13 @@ import {
 } from './projection.ts';
 
 import { coreSearchQueryMatchesScope } from './projection-store.ts';
+import type { CoreSearchAuthorization } from './visibility.ts';
+import { searchVisibilitySql } from './visibility.ts';
 
 const PersistedDocumentPayloadSchema = Schema.Struct({
   aliases: Schema.optionalKey(Schema.Array(CoreSearchAliasSchema).check(Schema.isMaxLength(100))),
   archived: Schema.Boolean,
+  assignedPrincipalId: Schema.optionalKey(PrincipalIdSchema),
   facets: Schema.Array(CoreSearchFacetSchema),
   matchedRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   matchedSubjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
@@ -67,6 +71,7 @@ type SearchIndexEntry = typeof searchIndexEntries.$inferSelect;
 interface PersistedDocumentInput {
   aliases?: PersistedDocumentPayload['aliases'];
   archived: boolean;
+  assignedPrincipalId?: string;
   facets: PersistedDocumentPayload['facets'];
   matchedRef?: PersistedDocumentPayload['matchedRef'];
   matchedSubjectRef?: PersistedDocumentPayload['matchedSubjectRef'];
@@ -119,6 +124,9 @@ const payload = (document: CoreSearchProjectionDocument): PersistedDocumentPaylo
     metadata: document.metadata,
     schemaVersion: '1',
   };
+  if (document.assignedPrincipalId !== undefined) {
+    persisted.assignedPrincipalId = document.assignedPrincipalId;
+  }
   if (document.aliases !== undefined) {
     persisted.aliases = document.aliases;
   }
@@ -189,6 +197,22 @@ const persistedDeleteMutation = (
   return mutation;
 };
 
+/**
+ * `body_text` is the normalized title followed by the normalized searchable text (`bodyText()`), so
+ * the title portion is recovered exactly. A denied title is then absent from the document instead of
+ * being re-read as searchable text, and no stored row has to change shape (O25).
+ */
+const searchableTextOfRow = (row: SearchIndexEntry): readonly string[] => {
+  const normalizedTitle = normalize(row.title);
+  let remainder = row.bodyText;
+  if (row.bodyText.startsWith(`${normalizedTitle}\n`)) {
+    remainder = row.bodyText.slice(normalizedTitle.length + 1);
+  } else if (row.bodyText === normalizedTitle) {
+    remainder = '';
+  }
+  return remainder.length === 0 ? [] : [remainder];
+};
+
 const decodeRow = (row: SearchIndexEntry): CoreSearchProjectionDocument => {
   const decoded = Result.getOrThrow(
     decodePersistedPayload(row.facetsJson).pipe(
@@ -206,9 +230,12 @@ const decodeRow = (row: SearchIndexEntry): CoreSearchProjectionDocument => {
       resourceType: row.sourceResourceType,
       tenantId: row.tenantId,
     },
-    searchableText: [row.bodyText],
+    searchableText: searchableTextOfRow(row),
     title: row.title,
   };
+  if (decoded.assignedPrincipalId !== undefined) {
+    document.assignedPrincipalId = decoded.assignedPrincipalId;
+  }
   if (decoded.aliases !== undefined) {
     document.aliases = decoded.aliases;
   }
@@ -547,6 +574,7 @@ const makeTransactionOperations = () => {
       transaction: CoreTransaction,
       input: CoreSearchQuery,
       scope: OperationalScope,
+      authorization?: CoreSearchAuthorization,
     ) {
       // A query may narrow a tenant-wide scope, or select global rows under an entity scope.
       if (!coreSearchQueryMatchesScope(input, scope)) {
@@ -556,19 +584,40 @@ const makeTransactionOperations = () => {
       yield* installOperationalScope(transaction, scope).pipe(
         Effect.catchTag('OperationContextUnavailable', (failure) => Effect.fail(unavailable(failure))),
       );
-      const query = transaction.query.searchIndexEntries.findMany({
-        // Match the bounded rebuild unit; never silently truncate before evidence filtering.
-        limit: 10_001,
-        orderBy: (table, { asc }) => [asc(table.title), asc(table.sourceResourceId)],
-        where: {
-          deleted: false,
-          legalEntityId: input.selectedLegalEntityId ?? { isNull: true },
-          sourceModuleKey: input.moduleId,
-          sourceResourceType: input.resourceType,
-          tenantId: input.tenantId,
-        },
-      });
-      const rows = yield* query.execute.bind(query)().pipe(Effect.mapError(unavailable));
+      const listAccess = authorization?.listAccess;
+      const titleHidden = authorization?.hiddenTextFields?.includes('title') === true;
+      // Authorization belongs in WHERE, before the candidate bound and before any ordering: a row the
+      // caller may not read is never a candidate, so it can neither be counted nor displace a visible
+      // one. The assignee is an owner-authored private index fact, never result metadata.
+      const rows = yield* transaction
+        .select()
+        .from(searchIndexEntries)
+        .where(
+          and(
+            eq(searchIndexEntries.deleted, false),
+            input.selectedLegalEntityId === undefined
+              ? isNull(searchIndexEntries.legalEntityId)
+              : eq(searchIndexEntries.legalEntityId, input.selectedLegalEntityId),
+            eq(searchIndexEntries.sourceModuleKey, input.moduleId),
+            eq(searchIndexEntries.sourceResourceType, input.resourceType),
+            eq(searchIndexEntries.tenantId, input.tenantId),
+            listAccess === undefined
+              ? undefined
+              : searchVisibilitySql(listAccess, {
+                  assignedPrincipalId: sql`${searchIndexEntries.facetsJson}->>'assignedPrincipalId'`,
+                  recordKey: searchIndexEntries.sourceResourceId,
+                }),
+          ),
+        )
+        // A denied title takes no part in ordering either: the database orders by the resource key the
+        // caller may read, so no hidden name is read to choose the candidate window.
+        .orderBy(
+          ...(titleHidden
+            ? [asc(searchIndexEntries.sourceResourceId)]
+            : [asc(searchIndexEntries.title), asc(searchIndexEntries.sourceResourceId)]),
+        )
+        .limit(10_001)
+        .pipe(Effect.mapError(unavailable));
       if (rows.length > 10_000) {
         return yield* unavailable();
       }
@@ -625,9 +674,13 @@ export const makePostgresCoreSearchProjectionStore = (
   );
   const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = Effect.fn(
     'CoreSearchProjectionStore.queryCandidatesPostgres',
-  )(function* queryCoreSearchCandidates(input: CoreSearchQuery, scope: OperationalScope) {
+  )(function* queryCoreSearchCandidates(
+    input: CoreSearchQuery,
+    scope: OperationalScope,
+    authorization?: CoreSearchAuthorization,
+  ) {
     const transactionBody = (transaction: CoreTransaction) =>
-      transactionOperations.queryCandidatesTransaction(transaction, input, scope);
+      transactionOperations.queryCandidatesTransaction(transaction, input, scope, authorization);
     const documents = yield* runTransaction(transactionBody);
     return yield* Schema.decodeEffect(Schema.Array(CoreSearchProjectionDocumentSchema))(documents).pipe(
       Effect.mapError(unavailable),

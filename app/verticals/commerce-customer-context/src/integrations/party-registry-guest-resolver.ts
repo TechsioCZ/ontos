@@ -1,13 +1,14 @@
 import type { OperationalScope } from '@app/core-runtime';
 import type { Crypto } from 'effect';
 import type { executeGuestPartyResolution } from '@app/party-registry/api/client';
-import type { GatewayRelaySourceError } from '@app/shared-contracts/gateway-context-server';
-import { acquireOwnerGatewayContext } from './server-owner-gateway.ts';
+import type { GatewayContextClientError } from '@app/shared-contracts';
+import type { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-context-server';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import {
   GuestPartyResolutionResponseSchema,
   executeGuestPartyResolutionWithAuthorization,
 } from '@app/party-registry/api/client';
-import { Redacted, Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
@@ -19,7 +20,9 @@ type GuestPartyResolutionExecutor = (
   correlation: string,
 ) => Effect.Effect<
   Effect.Success<ReturnType<typeof executeGuestPartyResolution>>,
-  Effect.Error<ReturnType<typeof executeGuestPartyResolution>> | GatewayRelaySourceError
+  | Effect.Error<ReturnType<typeof executeGuestPartyResolution>>
+  | GatewayDelegationSourceError
+  | GatewayContextClientError
 >;
 
 export interface PartyRegistryGuestResolverFactoryInput {
@@ -132,20 +135,20 @@ export const partyRegistryGuestResolverFactoryLive = Layer.succeed(
       makePartyRegistryGuestResolver(
         { legalEntityId: scope.legalEntityId ?? '', requestCorrelation: scope.correlationId, tenantId: scope.tenantId },
         (payload) =>
-          acquireOwnerGatewayContext(scope, crypto, {
-            audience: 'party-registry',
-            operationKey: 'party.registry.api.guest-party-resolution',
-          }).pipe(
+          acquireDelegatedGatewayContext(
+            {
+              audience: 'party-registry',
+              legalEntityScope: 'subject',
+              requestCorrelation: scope.correlationId,
+              subject: { _tag: 'Assertion', scope },
+            },
+            crypto,
+          ).pipe(
             Effect.flatMap((issued) =>
-              executeGuestPartyResolutionWithAuthorization(
-                payload,
-                Redacted.value(issued.authorization),
-                scope.correlationId,
-                {
-                  baseUrl: issued.apiUrl,
-                  compositionRevision: issued.compositionRevision,
-                },
-              ),
+              executeGuestPartyResolutionWithAuthorization(payload, issued.authorization, scope.correlationId, {
+                baseUrl: new URL(issued.apiBaseUrl),
+                compositionRevision: issued.compositionRevision,
+              }),
             ),
           ),
       ),

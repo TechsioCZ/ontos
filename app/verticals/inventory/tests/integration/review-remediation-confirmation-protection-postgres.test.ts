@@ -27,6 +27,8 @@ import { makeActionRepository } from '../../../../packages/core-runtime/src/acti
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   applicationCompositionAuthority,
   auditEvents,
@@ -54,10 +56,19 @@ import {
 import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outbox/repository.ts';
 import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
+import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
+import {
+  inertAccessEnforcementPorts,
+  makeScriptedBoundAccessGate,
+} from '../../../../packages/core-runtime/src/testing/access-gate.ts';
+import type { AccessDecision } from '../../../../packages/core-runtime/src/access/decision/contract.ts';
+import type { GateInput } from '../../../../packages/core-runtime/src/access/enforcement/contract.ts';
+import { makeTestAccessDecision } from '../../../../packages/core-runtime/src/access/enforcement/testing.ts';
+import type { BoundAccessGate } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
+import { bindAccessGate } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
@@ -162,6 +173,8 @@ const compositionSubscriptions = extractOutboxWorkerSubscriptions(inventoryWorke
 const tenantId = 'd1000000-0000-4000-8000-000000000001';
 const legalEntityId = 'd2000000-0000-4000-8000-000000000001';
 const principalId = 'd3000000-0000-4000-8000-000000000001';
+const tenantScopeId = 'e7000000-0000-4000-8000-000000000001';
+const legalEntityScopeId = 'e7000000-0000-4000-8000-000000000002';
 const authBindingId = 'd4000000-0000-4000-8000-000000000001';
 const configurationId = 'd5000000-0000-4000-8000-000000000001';
 const reservationId = 'd6000000-0000-4000-8000-000000000001';
@@ -370,28 +383,53 @@ const cleanupCore = (database: CoreDatabase) =>
       yield* transaction.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
       yield* transaction.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId));
       yield* transaction.delete(principals).where(eq(principals.tenantId, tenantId));
-      yield* transaction.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
-      yield* transaction.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      // Core retains access intent (D27), so the Tenant, its company and their access scopes stay.
     }),
   );
 
 const seedCore = (database: CoreDatabase) =>
   Effect.gen(function* seedReviewRemediationCore() {
-    yield* database.insert(tenants).values({
-      defaultLocale: 'en',
-      name: 'Inventory review remediation acceptance',
-      slug: `inventory-review-remediation-${tenantId}`,
-      status: 'active',
-      tenantId,
-    });
-    yield* database.insert(legalEntities).values({
-      legalEntityId,
-      legalName: 'Inventory review remediation legal entity',
-      registrationCountry: 'CZ',
-      registrationNumber: `REVIEW-${legalEntityId}`,
-      status: 'active',
-      tenantId,
-    });
+    yield* database
+      .insert(tenants)
+      .values({
+        defaultLocale: 'en',
+        name: 'Inventory review remediation acceptance',
+        slug: `inventory-review-remediation-${tenantId}`,
+        status: 'active',
+        tenantId,
+      })
+      .onConflictDoNothing();
+    yield* database
+      .insert(legalEntities)
+      .values({
+        legalEntityId,
+        legalName: 'Inventory review remediation legal entity',
+        registrationCountry: 'CZ',
+        registrationNumber: `REVIEW-${legalEntityId}`,
+        status: 'active',
+        tenantId,
+      })
+      .onConflictDoNothing();
+    // The runner re-decides every protected Action under its access scope's shared fence. Seed the
+    // tenant context scope and the company scope with a Ready fence each, as Core bootstrap does.
+    yield* database
+      .insert(accessScopes)
+      .values([
+        { scopeId: tenantScopeId, tenantContextId: tenantId, tenantId },
+        { legalEntityId, scopeId: legalEntityScopeId, tenantId },
+      ])
+      .onConflictDoNothing();
+    yield* database
+      .insert(accessScopeFences)
+      .values(
+        [tenantScopeId, legalEntityScopeId].map((scopeId) => ({
+          revision: 1,
+          scopeId,
+          state: 'Ready' as const,
+          tenantId,
+        })),
+      )
+      .onConflictDoNothing();
     yield* database.insert(principals).values({
       displayName: 'Inventory review remediation operator',
       kind: 'human',
@@ -616,6 +654,7 @@ const makeAdmittedInventoryOutbox = (
 
 const makeActionScenario = Effect.fn('ReviewRemediationPostgres.makeActionScenario')(function* makeActionScenario(
   access: ContextAccessService = contextAccess,
+  accessDecision: BoundAccessGate = makeScriptedBoundAccessGate('allowed').bound,
 ) {
   const snapshotPath = yield* Config.String('NATIVE_1290_COMPOSITION_SNAPSHOT_PATH');
   const fs = yield* FileSystem.FileSystem;
@@ -692,6 +731,7 @@ const makeActionScenario = Effect.fn('ReviewRemediationPostgres.makeActionScenar
     testOperationalScopeResolver,
     {
       ...openActionRuntimeOptions,
+      accessDecision,
       contextAccess: access,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: inventoryRegistration,
@@ -703,7 +743,11 @@ const makeActionScenario = Effect.fn('ReviewRemediationPostgres.makeActionScenar
     openModuleEntrypointGateway,
     testOperationalScopeResolver,
     contextAccess,
-    { ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay, ownerRegistration: inventoryRegistration },
+    {
+      accessDecision: makeScriptedBoundAccessGate('allowed').bound,
+      ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      ownerRegistration: inventoryRegistration,
+    },
   );
   const outbox = makeAdmittedInventoryOutbox(
     makeOutboxRuntime(makeOutboxRepository(runtimeDatabase, crypto)),
@@ -1401,6 +1445,40 @@ for (const [dimension, fixture] of contradictoryOwnerContexts) {
   );
 }
 
+/**
+ * The v2 access gate decides per Principal: only the allowed Principal's question is answered ALLOWED,
+ * every other Principal is DENIED on the same declaration, whatever the Stock scope context says.
+ */
+const principalScopedAccessGate = (
+  allowedPrincipalId: string,
+  checked: { readonly actor: string; readonly declaration: string }[],
+): BoundAccessGate => {
+  const scripted = makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } });
+  const decide = (input: GateInput): Effect.Effect<AccessDecision> =>
+    Effect.suspend(() => {
+      checked.push({
+        actor: input.scope.principalId,
+        declaration: input.carrier.accessDeclaration?.key ?? '',
+      });
+      return input.scope.principalId === allowedPrincipalId
+        ? scripted.decide(input)
+        : Effect.succeed<AccessDecision>({
+            evidence: [],
+            outcome: 'DENIED',
+            reasons: [{ code: 'deny.insufficient_grant' }],
+            selectors: [],
+          });
+    });
+  return bindAccessGate(
+    {
+      decide,
+      list: scripted.list,
+      selectableLegalEntities: scripted.selectableLegalEntities,
+    },
+    inertAccessEnforcementPorts(),
+  );
+};
+
 it.live('authorizes two Principals independently when their Stock Sharing Eligibility context is identical', () =>
   Semaphore.withPermits(
     scenarioSemaphore,
@@ -1408,21 +1486,9 @@ it.live('authorizes two Principals independently when their Stock Sharing Eligib
   )(
     Effect.scoped(
       Effect.gen(function* separatePrincipalPermissionFromStockScope() {
-        const checked: { readonly actor: string; readonly permission: string }[] = [];
-        // This permission port is an explicit owner-level Core lifecycle fixture, not a live grant claim.
-        const scenario = yield* makeActionScenario({
-          ...contextAccess,
-          ownerPermissions: (input) =>
-            Effect.sync(() =>
-              input.targets.map((target) => {
-                checked.push({ actor: input.principal.principalId, permission: target.target.definition.key });
-                return {
-                  decision: input.principal.principalId === principalId ? ('allowed' as const) : ('denied' as const),
-                  key: target.target.key,
-                };
-              }),
-            ),
-        });
+        const checked: { readonly actor: string; readonly declaration: string }[] = [];
+        // This access gate is an explicit owner-level Core lifecycle fixture, not a live grant claim.
+        const scenario = yield* makeActionScenario(contextAccess, principalScopedAccessGate(principalId, checked));
         const secondPrincipalId = 'd3000000-0000-4000-8000-000000000002';
         const secondBindingId = 'd4000000-0000-4000-8000-000000000002';
         yield* scenario.coreAdmin.insert(principals).values({
@@ -1465,10 +1531,10 @@ it.live('authorizes two Principals independently when their Stock Sharing Eligib
         expect(allowed.outcome).toBe('PENDING');
         expect(Schema.is(ActionPermissionDenied)(denied)).toBe(true);
         expect(denied).toMatchObject({ code: 'action_permission_denied' });
-        expect(checked).toEqual([
-          { actor: principalId, permission: 'inventory.reservation.establish' },
-          { actor: secondPrincipalId, permission: 'inventory.reservation.establish' },
-        ]);
+        expect([...new Set(checked.map(({ actor }) => actor))]).toEqual([principalId, secondPrincipalId]);
+        expect(
+          checked.every(({ declaration }) => declaration === 'commerce.inventory.inventory-reservation.create'),
+        ).toBe(true);
         expect(yield* Ref.get(resolutions)).toBe(1);
         const effects = yield* scenario.admin
           .select()

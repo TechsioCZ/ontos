@@ -3,6 +3,7 @@
 // @ontos-action-slug claim-counterparty-access-invitation
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { commitActionThenReject, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { reconcileAccessPortalAfterAttempt } from '@app/core-runtime/access/portal';
 import { Effect, Match } from 'effect';
 import {
   ClaimCounterpartyAccessInvitationPayloadSchema,
@@ -24,13 +25,12 @@ import {
   requireAccessLegalEntity,
 } from './access-action-support.ts';
 import {
-  ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxPayloadSchema as AuthorizationMutationRequestedEventSchema,
-  createClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimAuthorizationMutationRequestedV1OutboxMessage as createAuthorizationMutationRequestedOutboxMessage,
-} from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claim-authorization-mutation-requested-v1.outbox-message.ts';
+  ClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimedV1OutboxPayloadSchema as InvitationClaimedEventSchema,
+  createClaimCounterpartyAccessInvitationCommerceCustomerContextCounterpartyAccessInvitationClaimedV1OutboxMessage as createInvitationClaimedOutboxMessage,
+} from './claim-counterparty-access-invitation.commerce-customer-context-counterparty-access-invitation-claimed-v1.outbox-message.ts';
 
 const domainEvents = {
-  'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1':
-    AuthorizationMutationRequestedEventSchema,
+  'commerce.customer-context.counterparty-access-invitation-claimed.v1': InvitationClaimedEventSchema,
 } as const;
 
 interface Services {
@@ -112,10 +112,7 @@ const handle = Effect.fn('ClaimCounterpartyAccessInvitation.handle')(function* h
   yield* context.recordAuditEvidence(
     auditEvidence({
       actor,
-      claimAttestationReference:
-        result.outcome === 'CLAIMED' || result.outcome === 'RECONCILIATION_REQUIRED'
-          ? result.attestation.attestationReference
-          : undefined,
+      claimAttestationReference: result.outcome === 'CLAIMED' ? result.attestation.attestationReference : undefined,
       counterpartyRef: invitation.counterpartyRef,
       invitationRef: invitation.invitationRef,
       outcome: result.outcome,
@@ -126,40 +123,43 @@ const handle = Effect.fn('ClaimCounterpartyAccessInvitation.handle')(function* h
   if (result.outcome === 'REJECTED') {
     return commitActionThenReject(claimRejection(result.rejection));
   }
-  if (result.outcome === 'RECONCILIATION_REQUIRED' && result.reconciliation.staged) {
+  if (result.outcome === 'CLAIMED') {
+    const { attestation } = result;
     const eventPayload = {
+      attestationReference: attestation.attestationReference,
       catalogVersion: invitation.catalogVersion,
+      claimedBy: payload.claimant,
       counterpartyRef: invitation.counterpartyRef,
+      grantProgress: invitation.grantProgress,
+      intendedPermissions: invitation.intendedPermissions,
       invitationRef: invitation.invitationRef,
-      legalEntityId,
-      mutationId: result.reconciliation.mutationId,
-      operation: result.reconciliation.operation,
-      permissionMutations: result.reconciliation.permissionMutations.map(
-        ({ grantRef, mutationId, operation, permission }) => ({
-          grantRef,
-          mutationId,
-          operation,
-          permission,
-        }),
-      ),
-      schemaVersion: '1' as const,
+      revision: invitation.revision,
       scope: invitation.scope,
+      verifiedAt: attestation.verifiedAt,
     };
     const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.counterparty-access-invitation-claim-authorization-mutation-requested.v1',
+      eventType: 'commerce.customer-context.counterparty-access-invitation-claimed.v1',
       payloadJson: eventPayload,
       producerModuleKey: invitation.invitationRef.moduleId,
       subjectModuleKey: invitation.invitationRef.moduleId,
       subjectResourceId: invitation.invitationRef.resourceId,
       subjectResourceType: invitation.invitationRef.resourceType,
     });
-    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
+    yield* context.addOutboxMessage(event, createInvitationClaimedOutboxMessage(eventPayload));
   }
   return result;
 });
 
 export const claimCounterpartyAccessInvitationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.counterparty-access-invitation.claim',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'counterparty-access', level: 'extended' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.claim-counterparty-access-invitation.access.v1',
@@ -183,7 +183,7 @@ export const claimCounterpartyAccessInvitationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.claim-counterparty-access-invitation',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -201,4 +201,7 @@ export const claimCounterpartyAccessInvitationAction = defineAction(
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(
       Effect.map((port) => ({ claim: port.claimInvitation })),
     ),
+  undefined,
+  // The claim committed the recipient's grants and ended its invitee access; the engine follows once it committed.
+  reconcileAccessPortalAfterAttempt(),
 );

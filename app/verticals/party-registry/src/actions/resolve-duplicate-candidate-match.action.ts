@@ -78,6 +78,15 @@ const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(function
 });
 export const resolveDuplicateCandidateMatchAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.duplicate-candidate.resolve-match',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'identity-review', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all', 'assigned'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.caseRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.resolve-duplicate-candidate-match.access.v1',
@@ -88,10 +97,7 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.resolve-duplicate-candidate-match',
       moduleKey: 'party.registry',
       role: 'action',
@@ -103,7 +109,6 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
     policies: [],
     resultSchema: ResolveDuplicateCandidateMatchResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'review_party_identity',
   },
   handle,
   (transaction, scope) =>

@@ -28,14 +28,30 @@ export interface GatewayScopeAssertion {
   readonly audience: string;
 }
 
+/**
+ * The calling module of a delegated (version 3) gateway assertion. Only the Shell signs it, so a receiver can
+ * trust it as the module that made the call, separately from the subject the call is done for.
+ */
+export interface VerifiedGatewayActor {
+  readonly appId: string;
+  readonly buildMarker: string;
+  readonly principalId: string;
+}
+
 interface RedeemedGatewayProvenance {
+  readonly actor?: VerifiedGatewayActor | undefined;
   readonly compositionRevision: string;
-  readonly scopeAssertion?: GatewayScopeAssertion;
+  readonly scopeAssertion?: GatewayScopeAssertion | undefined;
 }
 
 const GatewayScopeAssertionSchema = Schema.Struct({
   assertion: Schema.Redacted(Schema.String),
   audience: Schema.String.check(Schema.isMinLength(1)),
+});
+const VerifiedGatewayActorSchema = Schema.Struct({
+  appId: Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('GatewayActorAppId')),
+  buildMarker: Schema.String.check(Schema.isMinLength(1)),
+  principalId: Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('GatewayActorPrincipalId')),
 });
 
 const PrincipalContextProvenanceInvariant = Schema.TaggedError<Error>()('PrincipalContextProvenanceInvariant', {
@@ -113,6 +129,7 @@ export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrin
   context: Context,
   compositionRevision: string,
   scopeAssertion?: GatewayScopeAssertion,
+  actor?: VerifiedGatewayActor,
 ): Context => {
   if (!Schema.is(CompositionRevisionSchema)(compositionRevision)) {
     return failProvenanceInvariant('Verified gateway provenance requires its signed composition revision');
@@ -120,14 +137,20 @@ export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrin
   if (scopeAssertion !== undefined && !Schema.is(GatewayScopeAssertionSchema)(scopeAssertion)) {
     return failProvenanceInvariant('A gateway scope assertion requires its audience and redacted assertion');
   }
-  const redeemedGateway: RedeemedGatewayProvenance = Object.freeze(
-    scopeAssertion === undefined
-      ? { compositionRevision }
-      : {
-          compositionRevision,
-          scopeAssertion: Object.freeze({ assertion: scopeAssertion.assertion, audience: scopeAssertion.audience }),
-        },
-  );
+  if (actor !== undefined && !Schema.is(VerifiedGatewayActorSchema)(actor)) {
+    return failProvenanceInvariant('A gateway actor requires its app identifier, build marker and principal');
+  }
+  const redeemedGateway: RedeemedGatewayProvenance = Object.freeze({
+    actor:
+      actor === undefined
+        ? undefined
+        : Object.freeze({ appId: actor.appId, buildMarker: actor.buildMarker, principalId: actor.principalId }),
+    compositionRevision,
+    scopeAssertion:
+      scopeAssertion === undefined
+        ? undefined
+        : Object.freeze({ assertion: scopeAssertion.assertion, audience: scopeAssertion.audience }),
+  });
   return Object.freeze(
     attachPrincipalContextProvenance(context, { redeemedGateway, token: redeemedGatewayProvenance }),
   );
@@ -140,6 +163,10 @@ export const readVerifiedGatewayCompositionRevision = <Context>(context: Context
 /** Returns the redeemed gateway assertion carried by this exact verified context, if any. */
 export const readVerifiedGatewayScopeAssertion = <Context>(context: Context): GatewayScopeAssertion | undefined =>
   readRedeemedGatewayProvenance(context)?.scopeAssertion;
+
+/** Returns the calling module that a delegated gateway assertion names, if this context carries one. */
+export const readVerifiedGatewayActor = <Context>(context: Context): VerifiedGatewayActor | undefined =>
+  readRedeemedGatewayProvenance(context)?.actor;
 
 export const isVerifiedGatewayPrincipalContext = <Context>(context: Context): boolean =>
   hasRedeemedGatewayProvenance(context);
@@ -182,6 +209,7 @@ export const preserveSystemPrincipalContextTrust = <Source, Context extends Trus
       context,
       redeemedGateway.compositionRevision,
       redeemedGateway.scopeAssertion,
+      redeemedGateway.actor,
     );
   }
   const recoveryActionRegistration = readSupportRecoveryAction(source);

@@ -3,14 +3,15 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
   isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayActor,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadHandlerContext } from '@app/core-runtime';
+import type { OperationalScope, ReadHandlerContext, ReadServiceFactory } from '@app/core-runtime';
 import { readFailure } from './order-commitment-read-support.ts';
 import { makeOrderCommitmentPersistence } from '../services/order-commitment-persistence.ts';
 import type { OrderCommitmentPersistence } from '../services/order-commitment-persistence.ts';
-import { Config, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect } from 'effect';
 import {
   CommittedOrderApprovalEvidenceRequestSchema,
   CommittedOrderApprovalEvidenceResponseSchema,
@@ -20,40 +21,26 @@ const moduleKey = 'commerce.order' as const;
 
 const committedOrderApprovalEvidenceEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.order.api.committed-order-approval-evidence',
   moduleKey,
   role: 'api',
 });
 
-const committedEvidenceVerifier = Effect.fn('CommittedOrderApprovalEvidenceRead.verifier')(
+export const committedEvidenceVerifier = Effect.fn('CommittedOrderApprovalEvidenceRead.verifier')(
   function* committedEvidenceVerifierEffect(scope: OperationalScope) {
-    const configured = yield* Config.all({
-      namespace: Config.String('ONTOS_ORDER_CCC_VERIFIER_AUTHENTICATION_NAMESPACE_ID'),
-      principalId: Config.schema(Schema.String.check(Schema.isUUID()), 'ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID'),
-    }).pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
-    if (Option.isNone(configured)) {
-      return yield* new ReadHandlerUnavailable({
-        code: 'read_handler_unavailable',
-        reason: 'The committed Order verifier is not configured',
-      });
-    }
+    const actor = readVerifiedGatewayActor(scope);
     if (
-      scope.authMethod !== 'api_key' ||
-      scope.authBindingId === undefined ||
-      scope.authContextRef === undefined ||
-      scope.impersonatedByPrincipalId !== undefined ||
-      scope.principalId !== configured.value.principalId ||
-      scope.authenticationNamespaceId !== configured.value.namespace ||
-      configured.value.namespace.trim().length === 0 ||
-      !isVerifiedGatewayPrincipalContext(scope)
+      !isVerifiedGatewayPrincipalContext(scope) ||
+      actor === undefined ||
+      actor.appId !== 'commerce-customer-context'
     ) {
       return yield* new ReadPermissionDenied({
         code: 'read_permission_denied',
-        reason: 'The configured CCC verifier is required',
+        reason: 'The Customer Context module is required to verify this Order approval',
       });
     }
-    return configured.value.principalId;
+    return yield* Effect.void;
   },
 );
 
@@ -63,8 +50,40 @@ type VerifiedPersistence = Effect.Effect<
 >;
 const committedEvidenceServices = (persistence: VerifiedPersistence) => Effect.succeed({ persistence });
 
+/**
+ * The read's owner persistence factory. It is a named `ReadServiceFactory`, so the composition root
+ * sees the request's scoped transaction rather than a constructor imported into the read body.
+ */
+const committedEvidenceReadServices: ReadServiceFactory<
+  Effect.Success<ReturnType<typeof committedEvidenceServices>>
+> = (transaction, scope) =>
+  committedEvidenceServices(
+    committedEvidenceVerifier(scope).pipe(
+      Effect.map(() =>
+        makeOrderCommitmentPersistence(transaction, {
+          operationId: scope.correlationId,
+          scope,
+        }),
+      ),
+    ),
+  );
+
 export const committedOrderApprovalEvidenceRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason:
+        'Customer Context reads the committed Order approval evidence when it consumes or verifies a purchase approval.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.order.approval-evidence.read-committed',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'order-finalization', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: committedOrderApprovalEvidenceEntrypoint,
     evidencePolicy: {
@@ -74,7 +93,6 @@ export const committedOrderApprovalEvidenceRead = defineRead(
     inputSchema: CommittedOrderApprovalEvidenceRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.order.api.committed-order-approval-evidence',
     resultSchema: CommittedOrderApprovalEvidenceResponseSchema,
@@ -119,17 +137,5 @@ export const committedOrderApprovalEvidenceRead = defineRead(
     };
   }),
   // The Read runtime's scoped transaction builds persistence only for the configured verifier.
-  (transaction, scope) =>
-    committedEvidenceServices(
-      committedEvidenceVerifier(scope).pipe(
-        Effect.map((committedEvidencePrincipalId) =>
-          makeOrderCommitmentPersistence(transaction, {
-            committedEvidencePrincipalId,
-            operationId: scope.correlationId,
-            scope,
-          }),
-        ),
-      ),
-    ),
-  () => ({ kind: 'module', moduleId: moduleKey }),
+  committedEvidenceReadServices,
 );

@@ -1,5 +1,4 @@
-import { BusinessPermissionCodeSchema, defineBusinessPermissionCatalog } from '@app/core-runtime';
-import { Result, Schema } from 'effect';
+import { Schema } from 'effect';
 
 const COUNTERPARTY_APPROVAL_DECIDE_PERMISSION = 'counterparty.approval.decide' as const;
 const PURCHASING_APPROVAL_CAPABILITY = 'commerce.customer-context.purchasing-approval' as const;
@@ -318,37 +317,3 @@ export const permissionAllowsScope = (
   permission: CounterpartyPermissionCode,
   scope: 'counterparty' | 'storefront',
 ): boolean => permissionDescriptor(permission).allowedScopes.includes(scope);
-
-const businessPermissionCode = (permission: CounterpartyPermissionCode) =>
-  Result.getOrThrow(Schema.decodeResult(BusinessPermissionCodeSchema)(permission));
-
-/**
- * Core-compatible catalog boundary. This is the only adapter from Commerce's
- * domain scope names to the authorization runtime scope vocabulary.
- */
-export const COUNTERPARTY_BUSINESS_PERMISSION_CATALOG = defineBusinessPermissionCatalog({
-  authorityGroups: Object.fromEntries(
-    Object.entries(COUNTERPARTY_AUTHORITY_GROUPS).map(([group, permissions]) => [
-      group,
-      permissions.map(businessPermissionCode),
-    ]),
-  ),
-  catalogVersion: '1',
-  permissions: COUNTERPARTY_PERMISSION_CODES.map((permission) => {
-    const metadata = permissionDescriptor(permission);
-    return {
-      allowedScopeKinds: metadata.allowedScopes.map((scope) =>
-        scope === 'counterparty' ? 'counterparty' : 'counterparty_storefront',
-      ),
-      auditSensitivity: metadata.evidenceSensitivity === 'standard' ? ('standard' as const) : ('sensitive' as const),
-      authorityGroups: [...metadata.authorityGroups],
-      customerDelegable: metadata.customerDelegable,
-      internalGrantable: metadata.internalGrantable,
-      key: businessPermissionCode(permission),
-      meaning: metadata.meaning,
-      owningCapability: metadata.owningCapability,
-      protectedEntrypoints: [...metadata.protectedEntrypoints],
-      schemaVersion: '1',
-    };
-  }),
-});

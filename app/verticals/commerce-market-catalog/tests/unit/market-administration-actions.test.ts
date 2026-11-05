@@ -3,10 +3,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import {
-  getActionHandler,
-  getActionResourcePermissionTargetResolver,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { activateMarketAction } from '../../src/actions/activate-market.action.ts';
 import { associateStorefrontAction } from '../../src/actions/associate-storefront.action.ts';
 import { CreateMarketPayloadSchema, createMarketAction } from '../../src/actions/create-market.action.ts';
@@ -211,7 +208,7 @@ describe('Market administration Actions', () => {
     for (const action of actions) {
       expect(action.descriptor.entrypoint).toMatchObject({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'explicit' },
+        authorization: { kind: 'protected' },
         moduleKey: 'commerce.market-catalog',
         role: 'action',
         scope: 'tenant',
@@ -221,17 +218,15 @@ describe('Market administration Actions', () => {
     }
   });
 
-  it('targets exact catalog authority and fails closed on a mismatched trusted seller scope', () => {
-    const resolve = getActionResourcePermissionTargetResolver(createMarketAction);
-    expect(resolve?.(createPayload, scope)).toEqual({
-      permission: 'write',
-      resource: {
-        moduleId: 'commerce.market-catalog',
-        resourceId: sellerId,
-        resourceType: 'commerce.market-catalog.market-catalog-root',
-      },
+  it('declares one scope-wide Market capability whose seller is the trusted legal-entity scope', () => {
+    // v2 expresses staff catalog authority as a scope-wide capability (Q2); the seller of a Market is
+    // the selected legal entity, so the trusted scope can never name another seller.
+    expect(createMarketAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.market-catalog.market.create',
+      kind: 'action',
+      selectors: [],
     });
-    expect(() => resolve?.(createPayload, { ...scope, legalEntityId: marketId })).toThrow();
+    expect(createMarketAction.descriptor.legalEntityScope).toBe('required');
   });
 
   it.effect('emits audit, data-access, domain, and outbox evidence once and emits no event on replay', () =>
@@ -406,15 +401,14 @@ describe('Market administration Actions', () => {
           registration: createMarketAction,
           transport: { correlationId: 'market-permission-gate', idempotencyKey: 'create-market-cz-main' },
         } as const;
-        for (const resourcePermission of ['denied', 'unavailable'] as const) {
+        for (const access of ['denied', 'unavailable'] as const) {
           const harness = yield* makeActionTestHarness({
-            actionPermission: 'allowed',
+            access,
             ownerRegistration: commerceMarketCatalogRegistration,
-            resourcePermission,
           });
           const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);
           expect(
-            resourcePermission === 'denied'
+            access === 'denied'
               ? Predicate.isTagged(failure, 'ActionPermissionDenied')
               : Predicate.isTagged(failure, 'ActionPermissionCheckError'),
           ).toBe(true);

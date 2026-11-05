@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import type {
   PricingPurposeEquivalenceRequest,
   PricingPurposeEquivalenceResponse,
@@ -20,14 +21,11 @@ import type {
 } from '@app/pricing-contracts/domain/quantity-tier-aggregation';
 import { CatalogPricingPurposeEquivalenceResolutionSchema } from '@app/pricing-contracts/domain/quantity-tier-aggregation';
 import { PricingCommercialScopeSchema } from '@app/pricing-contracts/domain/pricing-commercial-scope';
-import { Context, Effect, Option, Redacted, Schema } from 'effect';
+import { Context, Crypto, Effect, Redacted, Schema } from 'effect';
 
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import {
-  CatalogSelectionGatewayCredentialService,
-  PricingCatalogSelectionUnavailable,
-  unavailableCatalogSelectionGatewayCredentialIssuer,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
 type ClientEffect = ReturnType<typeof executePricingPurposeEquivalenceWithAuthorization>;
 type ClientFailure = ClientEffect extends Effect.Effect<unknown, infer Failure, unknown> ? Failure : never;
@@ -240,15 +238,16 @@ const projectResolution = (response: PricingPurposeEquivalenceResponse) => {
     : { evidenceRef: response.evidenceRef, outcome: 'CATALOG_EQUIVALENCE_UNVERIFIABLE' as const };
 };
 
-const makePort = (dependencies: {
+export const makeCatalogPricingPurposeEquivalencePort = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
     readonly tenantId: string;
   };
   readonly execute: Executor;
-  readonly issuer: CatalogSelectionGatewayCredentialIssuer;
 }): CatalogPricingPurposeEquivalencePort =>
   CatalogPricingPurposeEquivalenceService.of({
     resolve: Effect.fn('CatalogPricingPurposeEquivalencePort.resolve')(function* resolve(attempt) {
@@ -279,12 +278,13 @@ const makePort = (dependencies: {
           'Catalog Pricing-purpose equivalence Price scope differs from the trusted candidate Market',
         );
       }
-      const { baseUrl, credential } = yield* dependencies.issuer
-        .issue({
+      const { baseUrl, credential } = yield* dependencies
+        .acquire({
           audience: 'catalog',
           compositionRevision: dependencies.context.compositionRevision,
-          legalEntityId: dependencies.context.legalEntityId,
+          legalEntityScope: 'subject',
           requestCorrelation: dependencies.context.requestCorrelation,
+          scope: dependencies.context.scope,
         })
         .pipe(Effect.mapError((cause) => unavailable('Catalog Pricing-purpose equivalence is unavailable', cause)));
       const rawResponse = yield* dependencies
@@ -311,21 +311,22 @@ const makePort = (dependencies: {
     }),
   });
 
-export const catalogPricingPurposeEquivalencePortFromEnvironment = (
+export const catalogPricingPurposeEquivalencePortFromEnvironment = Effect.fn(
+  'catalogPricingPurposeEquivalencePortFromEnvironment',
+)(function* catalogPricingPurposeEquivalencePortFromEnvironment(
   context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
     readonly tenantId: string;
   },
   execute: Executor = executeAuthorized,
-): Effect.Effect<CatalogPricingPurposeEquivalencePort> =>
-  Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      makePort({
-        context,
-        execute,
-        issuer: Option.isSome(issuerOption) ? issuerOption.value : unavailableCatalogSelectionGatewayCredentialIssuer,
-      }),
-    ),
-  );
+): Effect.fn.Return<CatalogPricingPurposeEquivalencePort, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
+  return makeCatalogPricingPurposeEquivalencePort({
+    acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+    context,
+    execute,
+  });
+});

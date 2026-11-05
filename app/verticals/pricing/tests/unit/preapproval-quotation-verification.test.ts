@@ -2,27 +2,25 @@ import { expect, it } from 'effect-rstest';
 import { Option, Schema } from 'effect';
 import { QuotationVerificationRequestSchema } from '@app/pricing-contracts/quotation-verification';
 import {
-  preapprovalQuotationScopeMatches,
+  preapprovalIssuerPrincipalIdFor,
+  preapprovalQuotationActorMatches,
   preapprovalQuotationWindowIsCurrent,
 } from '../../src/services/preapproval-quotation-verification.service.ts';
 
 const principalId = '11111111-1111-4111-8111-111111111111';
-it('uses the configured issuer actor and namespace without treating the buyer as that service', () => {
-  const service = {
-    authenticationNamespaceId: 'service:preapproval',
-    authMethod: 'api_key' as const,
-    legalEntityId: '22222222-2222-4222-8222-222222222222',
-    principalId,
-  };
-  const config = {
-    namespace: service.authenticationNamespaceId,
-    principalId,
-  };
-  expect(preapprovalQuotationScopeMatches(service, config)).toBe(true);
-  expect(preapprovalQuotationScopeMatches({ ...service, principalId: 'buyer' }, config)).toBe(false);
-  expect(preapprovalQuotationScopeMatches({ ...service, authenticationNamespaceId: 'foreign' }, config)).toBe(false);
-  expect(preapprovalQuotationScopeMatches({ ...service, authMethod: 'session' }, config)).toBe(false);
-  expect(preapprovalQuotationScopeMatches({ ...service, impersonatedByPrincipalId: 'operator' }, config)).toBe(false);
+it('admits only the Customer Context preproposal caller as the actor', () => {
+  expect(preapprovalQuotationActorMatches({ appId: 'commerce-customer-context' })).toBe(true);
+  expect(preapprovalQuotationActorMatches({ appId: 'commerce-order' })).toBe(false);
+  expect(preapprovalQuotationActorMatches({ appId: 'commerce-customer-context-other' })).toBe(false);
+  expect(preapprovalQuotationActorMatches()).toBe(false);
+});
+it('records the verified subject, which is the buyer, as the preapproval issuer', () => {
+  expect(Option.getOrUndefined(preapprovalIssuerPrincipalIdFor(principalId, principalId))).toBe(principalId);
+});
+it('denies a preapproval issuer when the buyer is not the subject of the call', () => {
+  expect(Option.isNone(preapprovalIssuerPrincipalIdFor('22222222-2222-4222-8222-222222222222', principalId))).toBe(
+    true,
+  );
 });
 it('preserves the original quotation half-open window and actual issuance time', () => {
   const quote = {

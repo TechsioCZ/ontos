@@ -2,7 +2,7 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq, inArray } from 'drizzle-orm';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Option } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import type {
@@ -10,7 +10,7 @@ import type {
   CatalogSelectionEvidenceReader,
 } from '../../shared/domain/catalog-open-selection-population.ts';
 import {
-  cartOpenSelectionPopulationFromEnvironment,
+  cartOpenSelectionPopulationForScope,
   readCartOpenSelectionPopulation,
 } from '../../shared/domain/catalog-open-selection-population.ts';
 import type { ProductTypeImpactRule } from '../../shared/domain/product-type-impact.ts';
@@ -339,7 +339,8 @@ export const productTypeImpactScanForScope = (
     readonly expectedCurrentRevision: number;
     readonly productTypeId: string;
   }) {
-    const openSelections = authoritativeBasis.openSelections ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+    const openSelections =
+      authoritativeBasis.openSelections ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     if (openSelections === undefined) {
       return yield* incomplete('Authoritative open-selection reader is required');
     }

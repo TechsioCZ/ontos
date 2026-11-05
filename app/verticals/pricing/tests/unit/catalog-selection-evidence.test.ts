@@ -3,9 +3,9 @@ import { CatalogSelectionOwnerAssessmentResultSchema } from '@app/catalog/domain
 import { Effect, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { makeCatalogSelectionGatewayCredentialIssuer } from '../../api/catalog-selection-gateway-credential.ts';
-import { CatalogSelectionGatewayCredentialService } from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import { catalogSelectionAssessmentPortFromEnvironment } from '../../src/integrations/catalog-selection-evidence.ts';
+import { makeCatalogSelectionAssessmentPort } from '../../src/integrations/catalog-selection-evidence.ts';
+import type { OwnerGatewayConnectionAcquire } from '../../src/integrations/owner-gateway-connection.ts';
+import { ownerConnectionStub, verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 
 const tenantId = '22222222-2222-4222-8222-222222222222';
 const compositionRevision = '1'.repeat(64);
@@ -56,19 +56,40 @@ const evidence = Schema.decodeSync(CatalogSelectionOwnerAssessmentResultSchema)(
   status: 'VALID',
 });
 
-const gateway = {
-  issue: () =>
-    Effect.succeed({
-      baseUrl: new URL('https://catalog.example.test'),
-      credential: Redacted.make('Bearer catalog-owner-assertion'),
+const principalId = '44444444-4444-4444-8444-444444444444';
+const catalogOwner = ownerConnectionStub('Bearer catalog-owner-assertion', 'https://catalog.example.test');
+
+/** Builds the port from a provenance-bearing verified scope, the way the receiving request does. */
+const portFromEnvironment = (
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  },
+  execute: Parameters<typeof makeCatalogSelectionAssessmentPort>[0]['execute'],
+  acquire: OwnerGatewayConnectionAcquire = catalogOwner,
+) =>
+  Effect.succeed(
+    makeCatalogSelectionAssessmentPort({
+      acquire,
+      context: {
+        ...context,
+        scope: verifiedTestScope({
+          correlationId: context.requestCorrelation,
+          legalEntityId: context.legalEntityId,
+          principalId,
+          tenantId,
+        }),
+      },
+      execute,
     }),
-};
+  );
 
 describe('Pricing Catalog selection evidence integration', () => {
   it.effect('sends only the exact selection with PRICING purpose through the generated Catalog client seam', () =>
     Effect.gen(function* assessExactTarget() {
       const requests: unknown[] = [];
-      const port = yield* catalogSelectionAssessmentPortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'define-price-correlation' },
         (payload, credential, requestCorrelation, options) =>
           Effect.sync(() => {
@@ -88,12 +109,12 @@ describe('Pricing Catalog selection evidence integration', () => {
           requestCorrelation: 'define-price-correlation',
         },
       ]);
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('rejects a Catalog response that does not attest the requested exact selection', () =>
     Effect.gen(function* rejectSubstitutedTarget() {
-      const port = yield* catalogSelectionAssessmentPortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'define-price-correlation' },
         () =>
           Effect.succeed({
@@ -107,48 +128,6 @@ describe('Pricing Catalog selection evidence integration', () => {
 
       const failure = yield* port.assess(selection).pipe(Effect.flip);
       expect(failure).toMatchObject({ code: 'pricing_catalog_selection_unavailable', retryable: true });
-    }).pipe(Effect.provideService(CatalogSelectionGatewayCredentialService, gateway)),
-  );
-
-  it.effect('issues a fresh Legal-Entity-bound catalog assertion and returns the Catalog service URL', () =>
-    Effect.gen(function* issueCatalogAssertion() {
-      const requests: unknown[] = [];
-      const issuer = makeCatalogSelectionGatewayCredentialIssuer(
-        {
-          apiKey: Redacted.make('pricing-service-key'),
-          shellBaseUrl: new URL('https://shell.example.test'),
-        },
-        (payload, options) =>
-          Effect.sync(() => {
-            requests.push({ options, payload });
-            return {
-              apiBaseUrl: '/api/testing',
-              compositionRevision,
-              expiresAt: 1_700_000_300,
-              token: 'catalog-owner-assertion',
-            };
-          }),
-      );
-
-      const connection = yield* issuer.issue({
-        audience: 'catalog',
-        compositionRevision,
-        legalEntityId,
-        requestCorrelation: 'define-price-correlation',
-      });
-
-      expect(connection.baseUrl).toEqual(new URL('https://shell.example.test/api/testing'));
-      expect(Redacted.value(connection.credential)).toBe('Bearer catalog-owner-assertion');
-      expect(requests).toEqual([
-        {
-          options: {
-            apiKey: expect.anything(),
-            baseUrl: new URL('https://shell.example.test'),
-            requestCorrelation: 'define-price-correlation',
-          },
-          payload: { audience: 'catalog', compositionRevision, legalEntityId },
-        },
-      ]);
     }),
   );
 });

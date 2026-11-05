@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { FetchHttpClient } from 'effect/http';
 import {
   PricingCurrentMarketEvidenceRequestSchema,
@@ -5,6 +6,7 @@ import {
 } from '@app/commerce-market-catalog/api/pricing-current-market-evidence';
 import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog/api/pricing-purpose-equivalence';
 import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-purpose-equivalence';
+import type { Crypto } from 'effect';
 import { DateTime, Redacted, Context, Effect, Exit, Layer, Schema } from 'effect';
 import { pricingCommercialFeeCurrentSetPredicateRef } from '@app/pricing-contracts/domain/commercial-fee';
 import { ReadCurrentCommercialFeeSetPersistenceOutcomeSchema } from '../../src/services/commercial-fee-persistence.service.ts';
@@ -56,6 +58,22 @@ import {
 } from '../../src/services/quantity-tier-persistence.service.ts';
 import { ReadExactPriceCandidateSetPersistenceOutcomeSchema } from '../../src/services/price-persistence.service.ts';
 import { makeIssue787SourceEvidence, makeIssue787Snapshot } from './support/issue-787-material-change.fixture.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
+
+/** The owner final-fence factories resolve their connections through the Crypto service the runtime provides. */
+const itWithCrypto = {
+  effect: (name: string, body: () => Effect.Effect<void, unknown, Crypto.Crypto>) =>
+    it.layer(NodeCrypto.layer)(name, (suite) => {
+      suite.effect(name, body);
+    }),
+};
+
+const subjectScope = verifiedTestScope({
+  correlationId: 'owner-final-fence-790',
+  legalEntityId: '33333333-3333-4333-8333-333333333390',
+  principalId: '44444444-4444-4444-8444-444444444390',
+  tenantId: '22222222-2222-4222-8222-222222222390',
+});
 
 const services = [
   ['commerce.pricing', PricingPricingMaterialEvidenceFenceGateway],
@@ -76,6 +94,7 @@ const assertUnavailable = (
       .verifyOpaqueProofsAgainstCurrentState({
         candidateRef: 'candidate:790',
         compositionRevision: 'revision:790',
+        scope: subjectScope,
         sources: [],
       })
       .pipe(Effect.flip);
@@ -84,6 +103,7 @@ const assertUnavailable = (
         candidateRef: 'candidate:790',
         compositionRevision: 'revision:790',
         observations: [],
+        scope: subjectScope,
         through: '2026-09-28T12:00:00.000Z',
       })
       .pipe(Effect.flip);
@@ -165,7 +185,7 @@ const successfulGateway = (completedAt: string): PricingOwnerMaterialEvidenceFen
 });
 
 describe('Current Pricing Decision production owner final-fence adapters #790', () => {
-  it.effect(
+  itWithCrypto.effect(
     'confirms ZERO_FLOOR with the retained witness and rejects changed generation or expired boundary (#1277)',
     () =>
       Effect.gen(function* retainedZeroFloorObservation() {
@@ -314,6 +334,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
                 tenantId: snapshot.decision.tenantId,
               },
             ],
+            scope: subjectScope,
             through,
             typedSources: [source],
             verificationContext: {
@@ -341,7 +362,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       }),
   );
 
-  it.effect('confirms Fee history with original observation despite a later fresh read (#1242)', () =>
+  itWithCrypto.effect('confirms Fee history with original observation despite a later fresh read (#1242)', () =>
     Effect.gen(function* retainedFeeObservation() {
       const snapshot = makeIssue787Snapshot();
       const [line] = snapshot.decision.lines;
@@ -459,6 +480,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
               tenantId: snapshot.decision.tenantId,
             },
           ],
+          scope: subjectScope,
           through,
           typedSources: [source],
           verificationContext: {
@@ -482,7 +504,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     }),
   );
 
-  it.effect(
+  itWithCrypto.effect(
     'confirms Price history with the retained original observation when the fresh read follows aggregate completion (#1279)',
     () =>
       Effect.gen(function* retainedPriceObservation() {
@@ -584,6 +606,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
                 tenantId: snapshot.decision.tenantId,
               },
             ],
+            scope: subjectScope,
             through,
             typedSources: [source],
             verificationContext: {
@@ -607,7 +630,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       }),
   );
 
-  it.effect('accepts a fresh Tier receipt and verifies the original proof through completion', () => {
+  itWithCrypto.effect('accepts a fresh Tier receipt and verifies the original proof through completion', () => {
     const tenantId = '10000000-0000-4000-8000-000000000001';
     const effectiveAt = '2026-09-28T08:58:00.000Z';
     const originalAt = '2026-09-28T08:59:00.000Z';
@@ -841,6 +864,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       const first = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
         candidateRef: 'candidate:790',
         compositionRevision: 'revision:790',
+        scope: subjectScope,
         sources: [expectation],
         typedSources: [source],
         verificationContext,
@@ -854,6 +878,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         candidateRef: 'candidate:790',
         compositionRevision: 'revision:790',
         observations: first.observations,
+        scope: subjectScope,
         through,
         typedSources: [source],
         verificationContext,
@@ -862,7 +887,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     });
   });
 
-  it.effect('rebinds an absent Discount set to durable proof and confirms its generation', () => {
+  itWithCrypto.effect('rebinds an absent Discount set to durable proof and confirms its generation', () => {
     const tenantId = '10000000-0000-4000-8000-000000000001';
     const legalEntityId = '10000000-0000-4000-8000-000000000002';
     const effectiveAt = '2026-09-28T08:58:00.000Z';
@@ -1019,6 +1044,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       const first = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
         candidateRef: 'candidate:790',
         compositionRevision: 'revision:790',
+        scope: subjectScope,
         sources: [expectation],
         typedSources: [source],
         verificationContext,
@@ -1033,6 +1059,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         candidateRef: 'candidate:790',
         compositionRevision: 'revision:790',
         observations: first.observations,
+        scope: subjectScope,
         through,
         typedSources: [source],
         verificationContext,
@@ -1041,7 +1068,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     });
   });
 
-  it.effect(
+  itWithCrypto.effect(
     'resolves Currency Support original generation from durable owner history before its fresh Current read',
     () => {
       const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -1222,6 +1249,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         const first = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
           candidateRef: 'candidate:790',
           compositionRevision: 'revision:790',
+          scope: subjectScope,
           sources: [expectation],
           typedSources: [source],
           verificationContext,
@@ -1235,6 +1263,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
           candidateRef: 'candidate:790',
           compositionRevision: 'revision:790',
           observations: first.observations,
+          scope: subjectScope,
           through,
           typedSources: [source],
           verificationContext,
@@ -1245,7 +1274,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     },
   );
 
-  it.effect('requires exact typed source material before any Pricing owner read or proof resolution', () => {
+  itWithCrypto.effect('requires exact typed source material before any Pricing owner read or proof resolution', () => {
     const gateway = makePricingCurrentDecisionPricingOwnerFinalFenceGateway({
       currencySupport: {
         loadCurrent: forbiddenOwnerPersistence,
@@ -1275,6 +1304,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         .verifyOpaqueProofsAgainstCurrentState({
           candidateRef: 'candidate:790',
           compositionRevision: 'revision:790',
+          scope: subjectScope,
           sources: [],
         })
         .pipe(Effect.flip);
@@ -1283,6 +1313,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
           candidateRef: 'candidate:790',
           compositionRevision: 'revision:790',
           observations: [],
+          scope: subjectScope,
           through: '2026-09-28T12:00:00.000Z',
         })
         .pipe(Effect.flip);
@@ -1291,7 +1322,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     });
   });
 
-  it.effect('provides all owner tags and keeps every unavailable authority fail-closed', () =>
+  itWithCrypto.effect('provides all owner tags and keeps every unavailable authority fail-closed', () =>
     Effect.scoped(
       Effect.gen(function* allOwnersFailClosed() {
         const context = yield* Layer.build(
@@ -1322,6 +1353,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
           .verifyOpaqueProofsAgainstCurrentState({
             candidateRef: 'candidate:790',
             compositionRevision: 'revision:790',
+            scope: subjectScope,
             sources: [],
           })
           .pipe(Effect.flip);
@@ -1331,7 +1363,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     ),
   );
 
-  it.effect('accepts real owner adapters and permits an unchanged five-owner aggregate fence', () => {
+  itWithCrypto.effect('accepts real owner adapters and permits an unchanged five-owner aggregate fence', () => {
     const realGateways = makePricingCurrentDecisionOwnerFinalFenceGatewaysLive({
       catalog: successfulGateway('2026-09-28T12:00:10.200Z'),
       customerContext: successfulGateway('2026-09-28T12:00:10.400Z'),
@@ -1358,6 +1390,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         const fence = Context.get(context, PricingMaterialEvidenceOwnerFinalFence);
         const result = yield* fence.verifyImmediatelyBeforePublication({
           candidateRef: 'candidate:790',
+          scope: subjectScope,
           sources: expectations,
         });
 
@@ -1372,7 +1405,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     );
   });
 
-  it.effect('invokes the source-free Promotion owner when Promotion was not selected', () => {
+  itWithCrypto.effect('invokes the source-free Promotion owner when Promotion was not selected', () => {
     const realGateways = makePricingCurrentDecisionOwnerFinalFenceGatewaysLive({
       catalog: successfulGateway('2026-09-28T12:00:10.200Z'),
       customerContext: successfulGateway('2026-09-28T12:00:10.400Z'),
@@ -1400,6 +1433,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         const fence = Context.get(context, PricingMaterialEvidenceOwnerFinalFence);
         const result = yield* fence.verifyImmediatelyBeforePublication({
           candidateRef: 'candidate:790',
+          scope: subjectScope,
           sources: ordinarySources,
         });
 
@@ -1410,7 +1444,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     );
   });
 
-  it.effect('routes the source-free Purchase Context singleton without treating it as set evidence', () => {
+  itWithCrypto.effect('routes the source-free Purchase Context singleton without treating it as set evidence', () => {
     const pricingExpectation = expectations.find(({ ownerModuleId }) => ownerModuleId === 'commerce.pricing');
     if (pricingExpectation === undefined) {
       return Effect.die('Pricing expectation fixture is missing');
@@ -1571,6 +1605,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       const failure = yield* fence
         .verifyImmediatelyBeforePublication({
           candidateRef: verificationRequest.candidateRef,
+          scope: subjectScope,
           sources: [routedPricingExpectation],
           verificationRequest,
         })
@@ -1581,7 +1616,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
   });
 });
 
-it.effect('Catalog final replay preserves distinct occurrence material with identical proof refs #1225', () =>
+itWithCrypto.effect('Catalog final replay preserves distinct occurrence material with identical proof refs #1225', () =>
   Effect.gen(function* catalogCollisionReplay() {
     const snapshot = makeIssue787Snapshot();
     const [line] = snapshot.decision.lines;
@@ -1683,18 +1718,16 @@ it.effect('Catalog final replay preserves distinct occurrence material with iden
     const calls: string[] = [];
     let credentials = 0;
     const gateway = makePricingCurrentDecisionCatalogOwnerFinalFenceGateway({
+      acquire: () =>
+        Effect.sync(() => {
+          credentials += 1;
+          return { baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make(`TEST:${credentials}`) };
+        }),
       equivalence: (request) =>
         Effect.sync(() => {
           calls.push(request.members[0]?.occurrenceId ?? 'missing');
           return responseFor(request);
         }),
-      issuer: {
-        issue: () =>
-          Effect.sync(() => {
-            credentials += 1;
-            return { baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make(`TEST:${credentials}`) };
-          }),
-      },
       quantity: () => Effect.die('Quantity replay is outside this exact equivalence-source fixture'),
     });
     const verificationContext = {
@@ -1707,6 +1740,7 @@ it.effect('Catalog final replay preserves distinct occurrence material with iden
     const verified = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
       candidateRef: 'candidate:1225',
       compositionRevision: 'test:1225',
+      scope: subjectScope,
       sources: [expected, expected],
       typedSources,
       verificationContext,
@@ -1716,6 +1750,7 @@ it.effect('Catalog final replay preserves distinct occurrence material with iden
       candidateRef: 'candidate:1225',
       compositionRevision: 'test:1225',
       observations: verified.observations,
+      scope: subjectScope,
       through: observedAt,
       typedSources,
       verificationContext,
@@ -1728,7 +1763,7 @@ it.effect('Catalog final replay preserves distinct occurrence material with iden
 
 describe('native generated Market client wire boundary #1250', () => {
   for (const invalidObservedAt of [false, true]) {
-    it.effect(`preserves actual client dates for strict readers; invalid wire=${invalidObservedAt}`, () =>
+    itWithCrypto.effect(`preserves actual client dates for strict readers; invalid wire=${invalidObservedAt}`, () =>
       Effect.gen(function* preservesGeneratedMarketClientWire() {
         const rawRequest = {
           commercialScope: {

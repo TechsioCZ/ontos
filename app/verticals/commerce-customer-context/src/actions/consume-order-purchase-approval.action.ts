@@ -165,6 +165,20 @@ const handleConsumeOrderPurchaseApproval = Effect.fn('ConsumeOrderPurchaseApprov
 
 export const consumeOrderPurchaseApprovalAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason:
+        'The Order service consumes an order purchase approval for the buyer after the order commitment it authorizes',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.order-purchase-approval.consume',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'purchasing-approval', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.consume-order-purchase-approval.access.v1',
@@ -178,7 +192,7 @@ export const consumeOrderPurchaseApprovalAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.consume-order-purchase-approval',
       moduleKey: MODULE_KEY,
       role: 'action',

@@ -80,6 +80,14 @@ const toSnapshotFailure = (cause: unknown): ActionTransactionError => {
 };
 export const retireControlledAttributeValueAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.controlled-attribute-value.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'controlled-attribute-value', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.retire-controlled-attribute-value.access.v1',
@@ -95,7 +103,7 @@ export const retireControlledAttributeValueAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: CATALOG_MODULE_KEY,
       role: 'action',

@@ -102,6 +102,14 @@ const handleReorderCatalogMedia = Effect.fn('ReorderCatalogMediaAction.handle')(
 
 export const reorderCatalogMediaAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.catalog-media.reorder',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.reorder-catalog-media.access.v1',
@@ -113,7 +121,7 @@ export const reorderCatalogMediaAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

@@ -2,6 +2,7 @@ import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { Reactivity } from 'effect/reactivity';
 import { PgClient } from '@effect/sql-pg';
 import { makeLiveOperationFixture, makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
+import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -290,6 +291,7 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
   }
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         'party.registry.create-party',
@@ -432,9 +434,23 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
     });
     return `Bearer ${token}`;
   });
-  const context = yield* Layer.build(fixture.layer);
+  // The one access gate this suite scripts (the native database carries no v2 access intent and
+  // reaches no engine), plus the per-principal refusals it names (see `live-access-authority`).
+  const deniedAccess = createPrivacyDeniedAccess();
+  const context = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
   const runtime = yield* ReadRuntime.pipe(Effect.provideContext(context));
-  return { authorization, baseUrl, context, coreEvidenceExecutor, fixture, nextId, principal, runtime, snapshot };
+  return {
+    authorization,
+    baseUrl,
+    context,
+    coreEvidenceExecutor,
+    deniedAccess,
+    fixture,
+    nextId,
+    principal,
+    runtime,
+    snapshot,
+  };
 });
 
 const produceCanonicalController = Effect.fn('ControllerOwnerTest.produceCanonicalParty')(
@@ -517,7 +533,7 @@ const produceCanonicalController = Effect.fn('ControllerOwnerTest.produceCanonic
 const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangement')(
   function* proveControllerArrangement(kind: 'PERSON' | 'ORGANIZATION' | 'LEGAL_ENTITY' | 'MIXED') {
     const owner = yield* makeControllerOwner();
-    const { context, coreEvidenceExecutor, fixture, nextId, principal, runtime } = owner;
+    const { context, coreEvidenceExecutor, deniedAccess, fixture, nextId, principal, runtime } = owner;
     const canonical =
       kind === 'LEGAL_ENTITY'
         ? undefined
@@ -858,6 +874,9 @@ const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangeme
                 }),
               ),
       };
+      // v2: the one access gate decides this read (O62); the removed legacy permission tuples
+      // no longer refuse anyone, so the suite flips the fixture's own gate answer instead.
+      deniedAccess.deny(principal.principalId, 'privacy.core.processing-activity.read');
       expect(
         yield* Effect.flip(
           runtime
@@ -870,7 +889,7 @@ const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangeme
             .pipe(Effect.provideContext(context)),
         ),
       ).toMatchObject({ code: 'read_permission_denied' });
-      yield* fixture.grantResourceAccess(activity.activityRef, principal.principalId, 'writer');
+      deniedAccess.allow(principal.principalId, 'privacy.core.processing-activity.read');
       const beforeResponsibilities = yield* runtime
         .runRead({
           input: { asOf: at, scopeRefs: [scopeRef.scopeId] },
@@ -929,6 +948,9 @@ const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangeme
           ...fixture.legalEntityOnly,
           legalEntityId: fixture.legalEntityId,
         });
+        // v2: the one access gate decides this Action (O62); a principal without the executor
+        // assignment is refused by the gate, named on the fixture's own per-request owner seam.
+        deniedAccess.deny(noExecutor.principalId, 'privacy.core.processing-activity.transition');
         expect(
           yield* Effect.flip(
             runAction({ ...transition, principal: noExecutor, transport: yield* transport() }).pipe(

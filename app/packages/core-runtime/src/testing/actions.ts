@@ -25,6 +25,7 @@ import type {
   RejectPermissionDeniedInput,
 } from '../actions/repository.ts';
 import type { ActionRuntimeOptions, ActionRuntimeStage } from '../actions/runtime.ts';
+import type { ActionMandateDispatch } from '../access/approvals/action-mandate-dispatch.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
 import { DatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
@@ -33,6 +34,7 @@ import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gatewa
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
 import type { TenantModuleState } from '../modules/tenant-module-state-service.ts';
+import type { BoundAccessGate } from '../operations/access-gate.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import type {
@@ -40,6 +42,10 @@ import type {
   ContextAccessService,
   OwnerPermissionAccessTarget,
 } from '../permissions/context-access.ts';
+import { failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
+import type { OwnerAuthorizationDecision, OwnerAuthorizationInput } from '../access/enforcement/owner-overlay.ts';
+import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from './access-gate.ts';
+import type { TestAccessOutcome } from './access-gate.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 
 /** Test-only: bind the existing issuer registrar to an explicitly scoped fixture pool. */
@@ -120,12 +126,24 @@ export interface ActionTestHarnessOptions extends Pick<
   ActionRuntimeOptions,
   'applicationComposition' | 'expectedDeployment' | 'ownerRegistration'
 > {
+  /** The access gate's scripted answer for every protected Action (a v2 carrier decides here). */
+  readonly access?: TestAccessOutcome | Readonly<Record<string, TestAccessOutcome>>;
+  /** A fully bound gate (the real seam with faked ports) instead of a scripted answer. */
+  readonly accessDecision?: BoundAccessGate;
   readonly actionPermission?: ContextAccessDecision;
   /** Persist the first commit, then simulate a database connection losing its acknowledgement. */
   readonly commitAcknowledgement?: 'indeterminate-once';
   readonly legalEntityAccess?: ContextAccessDecision;
   readonly legalEntityPermission?: ContextAccessDecision;
+  /** Test-only fence lock; defaults to an in-memory no-op because this database has no fence SQL. */
+  readonly lockAccessExecutionFence?: NonNullable<ActionRuntimeOptions['lockAccessExecutionFence']>;
+  readonly mandateDispatch?: ActionMandateDispatch;
   readonly moduleState?: TenantModuleState;
+  /**
+   * Observes the owner overlay input the runner builds inside the transaction and answers it (O70).
+   * Omitting it keeps the fail-closed owner-neutral overlay.
+   */
+  readonly onOwnerAuthorization?: (input: OwnerAuthorizationInput) => OwnerAuthorizationDecision;
   /** Scripted Current decisions in exact target order; omitted positions remain unavailable. */
   readonly ownerPermissionDecisions?: readonly ContextAccessDecision[];
   readonly resourcePermission?: ContextAccessDecision;
@@ -422,6 +440,10 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
           })),
         ),
     };
+    const scopeAccess = makeTestOperationalScopeAccess({ decision: options.legalEntityAccess ?? 'allowed' });
+    // Transitional: a suite that still states the legacy executor decision describes the same
+    // authority a v2 carrier asks for, until the codemod renames the option to `access` (C05).
+    const boundAccess = makeScriptedBoundAccessGate(options.access ?? options.actionPermission ?? 'denied');
     const scopeResolver = yield* makeOperationalScopeResolver(
       {
         load: (principal) =>
@@ -448,7 +470,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
                 tenantStatus: 'active',
               }),
       },
-      contextAccess,
+      scopeAccess,
     );
     const moduleStateGate: ModuleStateGateService = {
       check: checkModuleEntrypoint,
@@ -504,15 +526,26 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       }
       return () => Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
     };
+    const mandateOptions: Pick<ActionRuntimeOptions, 'mandateDispatch'> =
+      options.mandateDispatch === undefined ? {} : { mandateDispatch: options.mandateDispatch };
     let runtimeOptions: ActionRuntimeOptions = {
+      accessDecision: options.accessDecision ?? boundAccess.bound,
       contextAccess,
       // This scripted harness rejects owner SQL and tests the Action lifecycle only.
+      lockAccessExecutionFence: options.lockAccessExecutionFence ?? (() => Effect.void),
       lockCompositionAuthority: () => Effect.succeed([]),
+      ...mandateOptions,
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
       onStage: (stage) => {
         stages.push(stage);
       },
+      ownerAuthorizationOverlay:
+        options.onOwnerAuthorization === undefined
+          ? failClosedOwnerAuthorizationOverlay
+          : {
+              authorize: (_transaction, input) => Effect.succeed(options.onOwnerAuthorization?.(input) ?? 'denied'),
+            },
       resolveServiceFactory,
     };
     if (options.applicationComposition !== undefined) {

@@ -1,12 +1,5 @@
-import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { assortmentRegistration } from '../../vertical.registration.ts';
-import {
-  toAssortmentPermissionAccessKey,
-  toAssortmentPermissionAccessObjectId,
-  toAssortmentPermissionAccessObjectIdForTargets,
-} from '../../src/permissions/authorization-targets.ts';
 import type { DomainEvent, DomainEventReference, OperationalScope, OutboxMessage } from '@app/core-runtime';
-import { DateTime, Effect, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   CreateApplicabilityBindingPayloadSchema,
@@ -33,17 +26,14 @@ import {
 } from '../../src/services/policy-administration.service.ts';
 import type { AssortmentPolicyPersistence } from '../../src/services/policy-administration.service.ts';
 import {
-  createBindingPermissionTarget,
-  replaceBindingPermissionTargets,
+  createBindingCurrentnessTarget,
+  replaceBindingCurrentnessTarget,
 } from '../../src/actions/policy-administration-support.ts';
 import { handleCreateRule } from '../../src/actions/create-rule.action.ts';
 import { handleCreateApplicabilityBinding } from '../../src/actions/create-applicability-binding.action.ts';
 import { handleCreateRuleRevision } from '../../src/actions/create-rule-revision.action.ts';
 import { handleEndApplicabilityBinding } from '../../src/actions/end-applicability-binding.action.ts';
-import {
-  replaceApplicabilityBindingAction,
-  handleReplaceApplicabilityBinding,
-} from '../../src/actions/replace-applicability-binding.action.ts';
+import { handleReplaceApplicabilityBinding } from '../../src/actions/replace-applicability-binding.action.ts';
 import { handleRetireRule } from '../../src/actions/retire-rule.action.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -371,70 +361,22 @@ it.effect('End Binding fails closed before the handler service when Legal Entity
   }),
 );
 
-it('resolves replacement as two exact conjunctive targets at one effective time', () => {
-  const targets = replaceBindingPermissionTargets(replacePayload, scope);
-  expect(targets).toHaveLength(2);
-  expect(targets[0]).toMatchObject({ mode: 'end', permission: 'assortment.binding.end' });
-  expect(targets[1]).toMatchObject({ mode: 'create', permission: 'assortment.binding.create' });
-  expect(targets[1].effectiveFrom).toBe('2026-09-22T12:00:00.000Z');
-  expect({
-    conjunction: toAssortmentPermissionAccessObjectIdForTargets(scope.tenantId, scope.legalEntityId, targets),
-    reversed: toAssortmentPermissionAccessObjectIdForTargets(scope.tenantId, scope.legalEntityId, [
-      targets[1],
-      targets[0],
-    ]),
-    targets: targets.map((target) => ({
-      key: toAssortmentPermissionAccessKey(scope.tenantId, scope.legalEntityId, target),
-      objectId: toAssortmentPermissionAccessObjectId(scope.tenantId, scope.legalEntityId, target),
-      target,
-    })),
-  }).toMatchInlineSnapshot(`
-    {
-      "conjunction": "asp_1ebaf436f966008d51b0ed9b54de4594b027ec9ff3422a4bb00d587d8939d646",
-      "reversed": "asp_c7eec4c4f7337efc00c5b6cb54963d7861c7b10607fd258541bad567e73099e4",
-      "targets": [
-        {
-          "key": "10000000-0000-4000-8000-000000000001:legal_entity:30000000-0000-4000-8000-000000000001:assortment.binding.end:assortment_binding:end:commerce.assortment:commerce.assortment.applicability-binding:binding-1",
-          "objectId": "asp_1eca4d8d883aaabd07c255295948e225101232d9db3ac633d5d8ac5c31cf38c9",
-          "target": {
-            "binding": {
-              "moduleId": "commerce.assortment",
-              "resourceId": "binding-1",
-              "resourceType": "commerce.assortment.applicability-binding",
-            },
-            "kind": "assortment_binding",
-            "mode": "end",
-            "permission": "assortment.binding.end",
-          },
-        },
-        {
-          "key": "10000000-0000-4000-8000-000000000001:legal_entity:30000000-0000-4000-8000-000000000001:assortment.binding.create:assortment_binding:create:commerce.assortment:commerce.assortment.rule-revision:rule-revision-1:SHARED:channel:commerce.channel:commerce.channel.channel:channel-1:market:none:storefront:none:2026-09-22T12:00:00.000Z",
-          "objectId": "asp_5f327a07d10a62d7940e7dd4b8e1e90879740d92229d33fee654358732b1feb4",
-          "target": {
-            "audience": {
-              "kind": "SHARED",
-            },
-            "commercialScope": {
-              "channel": {
-                "moduleId": "commerce.channel",
-                "resourceId": "channel-1",
-                "resourceType": "commerce.channel.channel",
-              },
-            },
-            "effectiveFrom": "2026-09-22T12:00:00.000Z",
-            "kind": "assortment_binding",
-            "mode": "create",
-            "permission": "assortment.binding.create",
-            "ruleRevision": {
-              "moduleId": "commerce.assortment",
-              "resourceId": "rule-revision-1",
-              "resourceType": "commerce.assortment.rule-revision",
-            },
-          },
-        },
-      ],
-    }
-  `);
+it('resolves replacement as one conjunctive Current question naming both the live Binding and the Revision', () => {
+  const target = replaceBindingCurrentnessTarget(replacePayload, scope);
+  expect(target).toStrictEqual({
+    binding: {
+      moduleId: 'commerce.assortment',
+      resourceId: replacePayload.existingBindingRef.resourceId,
+      resourceType: 'commerce.assortment.applicability-binding',
+    },
+    kind: 'assortment_binding',
+    mode: 'replace',
+    ruleRevision: {
+      moduleId: 'commerce.assortment',
+      resourceId: replacePayload.proposedRuleRevisionRef.sourceRef.resourceId,
+      resourceType: 'commerce.assortment.rule-revision',
+    },
+  });
 });
 
 it('rejects a cross-tenant Binding target before authorization can use it', () => {
@@ -451,7 +393,7 @@ it('rejects a cross-tenant Binding target before authorization can use it', () =
     reason: 'Reject a cross-tenant target',
     ruleRevisionRef: revisionRef,
   });
-  expect(() => createBindingPermissionTarget(foreignPayload, scope)).toThrow(AssortmentPolicyTargetInvariant);
+  expect(() => createBindingCurrentnessTarget(foreignPayload, scope)).toThrow(AssortmentPolicyTargetInvariant);
 });
 
 it('canonicalizes nested meaning objects before fingerprinting', () => {
@@ -697,50 +639,3 @@ it('requires exact replay identity for all six policy mutations', () => {
     expect(matchesReplacementReplay(replayReplaceBinding, replayReplaceEnd, changed)).toBe(false);
   }
 });
-
-it.effect('denies the actual binding Replace before owner effects when proposed Create lacks Current permission', () =>
-  Effect.gen(function* checksActualReplaceConjunction() {
-    const encodedPayload = yield* Schema.encodeEffect(ReplaceApplicabilityBindingPayloadSchema)(replacePayload);
-    let ownerEffects = 0;
-    const service = services({
-      replaceBinding: () => {
-        ownerEffects += 1;
-        return Effect.die('Denied replacement reached owner effects');
-      },
-    });
-    for (const proposed of ['denied', 'unavailable', 'absent'] as const) {
-      const options = {
-        actionPermission: 'allowed' as const,
-        ownerRegistration: assortmentRegistration,
-        services: [bindActionTestServices(replaceApplicabilityBindingAction, service)],
-      };
-      const harness = yield* makeActionTestHarness(
-        proposed === 'absent' ? options : { ...options, ownerPermissionDecisions: ['allowed', proposed] },
-      );
-      const failure = yield* Effect.flip(
-        harness.runtime.runAction({
-          payload: encodedPayload,
-          principal: { ...scope, authBindingId: '40000000-0000-4000-8000-000000000001' },
-          registration: replaceApplicabilityBindingAction,
-          transport: { correlationId: 'assortment-binding-conjunction', idempotencyKey: `replace-${proposed}` },
-        }),
-      );
-      expect(
-        Predicate.isTagged(failure, proposed === 'denied' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError'),
-      ).toBe(true);
-      const snapshot = harness.snapshot();
-      expect(snapshot.ownerPermissionTargets.map((target) => target.definition.key)).toEqual([
-        'assortment.binding.end',
-        'assortment.binding.create',
-      ]);
-      expect(snapshot.ownerPermissionTargets.map((target) => target.transportObjectId)).toEqual([
-        'asp_1ebaf436f966008d51b0ed9b54de4594b027ec9ff3422a4bb00d587d8939d646',
-        'asp_1ebaf436f966008d51b0ed9b54de4594b027ec9ff3422a4bb00d587d8939d646',
-      ]);
-      expect(snapshot.stages.includes('handler_executed')).toBe(false);
-      expect(snapshot.committed).toEqual([]);
-      expect(snapshot.permissionDenials).toHaveLength(proposed === 'denied' ? 1 : 0);
-      expect(ownerEffects).toBe(0);
-    }
-  }),
-);

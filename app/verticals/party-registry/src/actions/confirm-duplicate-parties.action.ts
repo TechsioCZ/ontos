@@ -15,6 +15,15 @@ import {
 
 export const confirmDuplicatePartiesAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.duplicate-candidate.confirm',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'identity-review', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all', 'assigned'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.caseRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.confirm-duplicate-parties.access.v1',
@@ -25,10 +34,7 @@ export const confirmDuplicatePartiesAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.confirm-duplicate-parties',
       moduleKey: 'party.registry',
       role: 'action',
@@ -40,7 +46,6 @@ export const confirmDuplicatePartiesAction = defineAction(
     policies: [],
     resultSchema: ConfirmDuplicatePartiesResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'review_party_identity',
   },
   handleDuplicateCaseResolution,
   (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'CONFIRMED_DUPLICATE_PARTIES'),

@@ -4,6 +4,7 @@ import type {
 } from '@app/pricing-contracts/domain/commitment-confirmation';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import type { DataAccessEventInput } from '@app/core-runtime';
+import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -448,86 +449,90 @@ describe('issue #800 Pricing Commitment Confirmation Action audit', () => {
     }),
   );
 
-  it.effect('rolls back an unavailable owner read and retries the same open Action invocation', () =>
-    Effect.gen(function* retryOpenInvocation() {
-      const trustedRuntimeAt = '2026-09-28T12:00:01.000Z';
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(trustedRuntimeAt)));
-      const total = yield* makeIssue788CommercialTotal();
-      const binding = makeIssue788Binding(total);
-      const quotation = makeIssue788Quotation(total);
-      const confirmation = makeIssue788IssuedConfirmation(total, {
-        confirmationRef: 'pricing-confirmation:800:retry',
-        quotation,
-      });
-      let readAttempts = 0;
-      let issuanceAttempts = 0;
-      const actionServices = services({
-        issueQuotation: () =>
-          Effect.sync(() => {
-            issuanceAttempts += 1;
-            return { _tag: 'ISSUED' as const, confirmation };
-          }),
-        readQuotation: () =>
-          Effect.suspend(() => {
-            readAttempts += 1;
-            return readAttempts === 1
-              ? Effect.fail(new QuotationPersistenceUnavailable({ reason: 'owner read unavailable' }))
-              : Effect.succeedSome(quotation);
-          }),
-        store: (storedConfirmation) => Effect.succeed({ confirmation: storedConfirmation, outcome: 'STORED' as const }),
-      });
-      const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
-        legalEntityAccess: 'allowed',
-        legalEntityPermission: 'allowed',
-        ownerRegistration: pricingRegistration,
-        services: [bindActionTestServices(manageCommitmentConfirmationAction, actionServices)],
-      });
-      const principal = {
-        authBindingId: '80000000-0000-4000-8000-000000000010',
-        authContextRef: 'api-key:pricing-confirmation-worker',
-        authMethod: 'api_key' as const,
-        legalEntityId,
-        principalId: actorPrincipalId,
-        tenantId,
-      };
-      const request = {
-        payload: {
-          binding,
-          kind: 'ISSUE_QUOTATION_BACKED_CONFIRMATION' as const,
-          quotationRef: quotation.quotationRef,
-          reason: 'Issue the exact accepted customer Quotation proof',
-          schemaVersion: '1' as const,
-        },
-        principal,
-        registration: manageCommitmentConfirmationAction,
-        transport: {
-          correlationId: 'pricing-confirmation-runtime:retry',
-          idempotencyKey: 'pricing-confirmation-runtime:retry:same-invocation',
-        },
-      };
-      const provideActionServices = provideProductionServices(actionServices);
+  it.layer(NodeCrypto.layer)(
+    'rolls back an unavailable owner read and retries the same open Action invocation',
+    (suite) => {
+      suite.effect('rolls back an unavailable owner read and retries the same open Action invocation', () =>
+        Effect.gen(function* retryOpenInvocation() {
+          const trustedRuntimeAt = '2026-09-28T12:00:01.000Z';
+          yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(trustedRuntimeAt)));
+          const total = yield* makeIssue788CommercialTotal();
+          const binding = makeIssue788Binding(total);
+          const quotation = makeIssue788Quotation(total);
+          const confirmation = makeIssue788IssuedConfirmation(total, {
+            confirmationRef: 'pricing-confirmation:800:retry',
+            quotation,
+          });
+          let readAttempts = 0;
+          let issuanceAttempts = 0;
+          const actionServices = services({
+            issueQuotation: () =>
+              Effect.sync(() => {
+                issuanceAttempts += 1;
+                return { _tag: 'ISSUED' as const, confirmation };
+              }),
+            readQuotation: () =>
+              Effect.suspend(() => {
+                readAttempts += 1;
+                return readAttempts === 1
+                  ? Effect.fail(new QuotationPersistenceUnavailable({ reason: 'owner read unavailable' }))
+                  : Effect.succeedSome(quotation);
+              }),
+            store: (storedConfirmation) =>
+              Effect.succeed({ confirmation: storedConfirmation, outcome: 'STORED' as const }),
+          });
+          const harness = yield* makeActionTestHarness({
+            access: 'allowed',
+            ownerRegistration: pricingRegistration,
+            services: [bindActionTestServices(manageCommitmentConfirmationAction, actionServices)],
+          });
+          const principal = {
+            authBindingId: '80000000-0000-4000-8000-000000000010',
+            authContextRef: 'api-key:pricing-confirmation-worker',
+            authMethod: 'api_key' as const,
+            legalEntityId,
+            principalId: actorPrincipalId,
+            tenantId,
+          };
+          const request = {
+            payload: {
+              binding,
+              kind: 'ISSUE_QUOTATION_BACKED_CONFIRMATION' as const,
+              quotationRef: quotation.quotationRef,
+              reason: 'Issue the exact accepted customer Quotation proof',
+              schemaVersion: '1' as const,
+            },
+            principal,
+            registration: manageCommitmentConfirmationAction,
+            transport: {
+              correlationId: 'pricing-confirmation-runtime:retry',
+              idempotencyKey: 'pricing-confirmation-runtime:retry:same-invocation',
+            },
+          };
+          const provideActionServices = provideProductionServices(actionServices);
 
-      const firstFailure = yield* provideActionServices(harness.runtime.runAction(request)).pipe(Effect.flip);
-      expect(firstFailure).toBeInstanceOf(QuotationPersistenceUnavailable);
-      const openSnapshot = harness.snapshot();
-      const originalInvocationId = openSnapshot.invocations[0]?.actionInvocationId;
-      expect(openSnapshot.invocations).toHaveLength(1);
-      expect(openSnapshot.invocations[0]?.status).toBe('running');
-      expect(openSnapshot.committed).toHaveLength(0);
-      expect(openSnapshot.transactionCount).toBe(1);
+          const firstFailure = yield* provideActionServices(harness.runtime.runAction(request)).pipe(Effect.flip);
+          expect(firstFailure).toBeInstanceOf(QuotationPersistenceUnavailable);
+          const openSnapshot = harness.snapshot();
+          const originalInvocationId = openSnapshot.invocations[0]?.actionInvocationId;
+          expect(openSnapshot.invocations).toHaveLength(1);
+          expect(openSnapshot.invocations[0]?.status).toBe('running');
+          expect(openSnapshot.committed).toHaveLength(0);
+          expect(openSnapshot.transactionCount).toBe(1);
 
-      const retryResult = yield* provideActionServices(harness.runtime.runAction(request));
-      expect(retryResult).toMatchObject({ kind: request.payload.kind, outcome: { _tag: 'ISSUED' } });
-      const committedSnapshot = harness.snapshot();
-      expect(committedSnapshot.invocations).toHaveLength(1);
-      expect(committedSnapshot.invocations[0]?.actionInvocationId).toBe(originalInvocationId);
-      expect(committedSnapshot.invocations[0]?.status).toBe('succeeded');
-      expect(committedSnapshot.committed).toHaveLength(1);
-      expect(committedSnapshot.transactionCount).toBe(2);
-      expect(readAttempts).toBe(2);
-      expect(issuanceAttempts).toBe(1);
-    }),
+          const retryResult = yield* provideActionServices(harness.runtime.runAction(request));
+          expect(retryResult).toMatchObject({ kind: request.payload.kind, outcome: { _tag: 'ISSUED' } });
+          const committedSnapshot = harness.snapshot();
+          expect(committedSnapshot.invocations).toHaveLength(1);
+          expect(committedSnapshot.invocations[0]?.actionInvocationId).toBe(originalInvocationId);
+          expect(committedSnapshot.invocations[0]?.status).toBe('succeeded');
+          expect(committedSnapshot.committed).toHaveLength(1);
+          expect(committedSnapshot.transactionCount).toBe(2);
+          expect(readAttempts).toBe(2);
+          expect(issuanceAttempts).toBe(1);
+        }),
+      );
+    },
   );
 
   it.effect('records previous/new identity and source lineage for both renewal paths', () =>
@@ -601,130 +606,136 @@ describe('issue #800 Pricing Commitment Confirmation Action audit', () => {
     }),
   );
 
-  it.effect('persists standard Action evidence for successful Quotation issuance and Current verification', () =>
-    Effect.gen(function* realActionRuntime() {
-      const trustedRuntimeAt = '2026-09-28T12:00:01.000Z';
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(trustedRuntimeAt)));
-      const total = yield* makeIssue788CommercialTotal();
-      const binding = makeIssue788Binding(total);
-      const quotation = makeIssue788Quotation(total);
-      const quotationConfirmation = makeIssue788IssuedConfirmation(total, {
-        confirmationRef: 'pricing-confirmation:800:quotation:runtime',
-        quotation,
-      });
-      const currentConfirmation = makeIssue788CurrentConfirmation(total, {
-        confirmationRef: 'pricing-confirmation:800:current:runtime',
-      });
-      const actionServices = services({
-        issueQuotation: () => Effect.succeed({ _tag: 'ISSUED', confirmation: quotationConfirmation }),
-        readQuotation: (quotationRef) =>
-          Effect.succeed(quotationRef === quotation.quotationRef ? Option.some(quotation) : Option.none()),
-        recoverConfirmation: (confirmationRef) =>
-          Effect.succeed(
-            confirmationRef === currentConfirmation.confirmationRef
-              ? { confirmation: currentConfirmation, outcome: 'FOUND' as const }
-              : { confirmationRef, outcome: 'ABSENT' as const },
-          ),
-        store: (confirmation) => Effect.succeed({ confirmation, outcome: 'STORED' }),
-        verify: () =>
-          Effect.succeed({
-            _tag: 'VERIFIED',
-            authenticityEvidence: {
-              authenticityRef: `pricing-confirmation-authenticity:${currentConfirmation.confirmationRef}`,
-              confirmationRef: currentConfirmation.confirmationRef,
-              issuerRef: currentConfirmation.authenticity.issuerRef,
-              keyRef: currentConfirmation.authenticity.keyRef,
-              keyStatus: 'ACTIVE',
-              keyVersion: currentConfirmation.authenticity.keyVersion,
-              lineageRef: currentConfirmation.authenticity.lineageRef,
-              payloadDigest: currentConfirmation.authenticity.payloadDigest,
-              proofRef: currentConfirmation.authenticity.proofRef,
-              proofVersion: currentConfirmation.authenticity.proofVersion,
-              verifiedAt: issue788IssuedAt,
-            },
-            confirmation: currentConfirmation,
-            verifiedAt: issue788IssuedAt,
-          }),
-      });
-      const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
-        legalEntityAccess: 'allowed',
-        legalEntityPermission: 'allowed',
-        ownerRegistration: pricingRegistration,
-        services: [bindActionTestServices(manageCommitmentConfirmationAction, actionServices)],
-      });
-      const principal = {
-        authBindingId: '80000000-0000-4000-8000-000000000010',
-        authContextRef: 'api-key:pricing-confirmation-worker',
-        authMethod: 'api_key' as const,
-        legalEntityId,
-        principalId: actorPrincipalId,
-        tenantId,
-      };
+  it.layer(NodeCrypto.layer)(
+    'persists standard Action evidence for successful Quotation issuance and Current verification',
+    (suite) => {
+      suite.effect('persists standard Action evidence for successful Quotation issuance and Current verification', () =>
+        Effect.gen(function* realActionRuntime() {
+          const trustedRuntimeAt = '2026-09-28T12:00:01.000Z';
+          yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(trustedRuntimeAt)));
+          const total = yield* makeIssue788CommercialTotal();
+          const binding = makeIssue788Binding(total);
+          const quotation = makeIssue788Quotation(total);
+          const quotationConfirmation = makeIssue788IssuedConfirmation(total, {
+            confirmationRef: 'pricing-confirmation:800:quotation:runtime',
+            quotation,
+          });
+          const currentConfirmation = makeIssue788CurrentConfirmation(total, {
+            confirmationRef: 'pricing-confirmation:800:current:runtime',
+          });
+          const actionServices = services({
+            issueQuotation: () => Effect.succeed({ _tag: 'ISSUED', confirmation: quotationConfirmation }),
+            readQuotation: (quotationRef) =>
+              Effect.succeed(quotationRef === quotation.quotationRef ? Option.some(quotation) : Option.none()),
+            recoverConfirmation: (confirmationRef) =>
+              Effect.succeed(
+                confirmationRef === currentConfirmation.confirmationRef
+                  ? { confirmation: currentConfirmation, outcome: 'FOUND' as const }
+                  : { confirmationRef, outcome: 'ABSENT' as const },
+              ),
+            store: (confirmation) => Effect.succeed({ confirmation, outcome: 'STORED' }),
+            verify: () =>
+              Effect.succeed({
+                _tag: 'VERIFIED',
+                authenticityEvidence: {
+                  authenticityRef: `pricing-confirmation-authenticity:${currentConfirmation.confirmationRef}`,
+                  confirmationRef: currentConfirmation.confirmationRef,
+                  issuerRef: currentConfirmation.authenticity.issuerRef,
+                  keyRef: currentConfirmation.authenticity.keyRef,
+                  keyStatus: 'ACTIVE',
+                  keyVersion: currentConfirmation.authenticity.keyVersion,
+                  lineageRef: currentConfirmation.authenticity.lineageRef,
+                  payloadDigest: currentConfirmation.authenticity.payloadDigest,
+                  proofRef: currentConfirmation.authenticity.proofRef,
+                  proofVersion: currentConfirmation.authenticity.proofVersion,
+                  verifiedAt: issue788IssuedAt,
+                },
+                confirmation: currentConfirmation,
+                verifiedAt: issue788IssuedAt,
+              }),
+          });
+          const harness = yield* makeActionTestHarness({
+            access: 'allowed',
+            ownerRegistration: pricingRegistration,
+            services: [bindActionTestServices(manageCommitmentConfirmationAction, actionServices)],
+          });
+          const principal = {
+            authBindingId: '80000000-0000-4000-8000-000000000010',
+            authContextRef: 'api-key:pricing-confirmation-worker',
+            authMethod: 'api_key' as const,
+            legalEntityId,
+            principalId: actorPrincipalId,
+            tenantId,
+          };
 
-      const provideActionServices = provideProductionServices(actionServices);
+          const provideActionServices = provideProductionServices(actionServices);
 
-      yield* provideActionServices(
-        harness.runtime.runAction({
-          payload: {
-            binding,
-            kind: 'ISSUE_QUOTATION_BACKED_CONFIRMATION',
+          yield* provideActionServices(
+            harness.runtime.runAction({
+              payload: {
+                binding,
+                kind: 'ISSUE_QUOTATION_BACKED_CONFIRMATION',
+                quotationRef: quotation.quotationRef,
+                reason: 'Issue the exact accepted customer Quotation proof',
+                schemaVersion: '1',
+              },
+              principal,
+              registration: manageCommitmentConfirmationAction,
+              transport: {
+                correlationId: 'pricing-confirmation-runtime:quotation',
+                idempotencyKey: 'pricing-confirmation-runtime:quotation:once',
+              },
+            }),
+          );
+          yield* provideActionServices(
+            harness.runtime.runAction({
+              payload: {
+                confirmationRef: currentConfirmation.confirmationRef,
+                kind: 'VERIFY_COMMITMENT_CONFIRMATION',
+                reason: 'Use the exact Current-backed proof at acceptance',
+                requestedBinding: binding,
+                schemaVersion: '1',
+              },
+              principal,
+              registration: manageCommitmentConfirmationAction,
+              transport: {
+                correlationId: 'pricing-confirmation-runtime:current-verification',
+                idempotencyKey: 'pricing-confirmation-runtime:current-verification:once',
+              },
+            }),
+          );
+
+          const { committed } = harness.snapshot();
+          expect(committed).toHaveLength(2);
+          expect(committed.map(({ auditProfile }) => auditProfile)).toEqual(['standard', 'standard']);
+          expect(committed.map(({ principal: committedPrincipal }) => committedPrincipal)).toEqual([
+            principal,
+            principal,
+          ]);
+          expect(committed.map(({ transport }) => transport.correlationId)).toEqual([
+            'pricing-confirmation-runtime:quotation',
+            'pricing-confirmation-runtime:current-verification',
+          ]);
+          expect(committed.map(({ evidence }) => evidence.dataAccessEvents.length)).toEqual([1, 1]);
+          expect(committed[0]?.evidence.auditEvidence).toMatchObject({
+            confirmationRef: quotationConfirmation.confirmationRef,
+            outcome: 'ISSUED',
             quotationRef: quotation.quotationRef,
-            reason: 'Issue the exact accepted customer Quotation proof',
-            schemaVersion: '1',
-          },
-          principal,
-          registration: manageCommitmentConfirmationAction,
-          transport: {
-            correlationId: 'pricing-confirmation-runtime:quotation',
-            idempotencyKey: 'pricing-confirmation-runtime:quotation:once',
-          },
-        }),
-      );
-      yield* provideActionServices(
-        harness.runtime.runAction({
-          payload: {
+            sourceKind: 'QUOTATION_BACKED',
+          });
+          expect(committed[1]?.evidence.auditEvidence).toMatchObject({
             confirmationRef: currentConfirmation.confirmationRef,
-            kind: 'VERIFY_COMMITMENT_CONFIRMATION',
-            reason: 'Use the exact Current-backed proof at acceptance',
-            requestedBinding: binding,
-            schemaVersion: '1',
-          },
-          principal,
-          registration: manageCommitmentConfirmationAction,
-          transport: {
-            correlationId: 'pricing-confirmation-runtime:current-verification',
-            idempotencyKey: 'pricing-confirmation-runtime:current-verification:once',
-          },
+            effectiveAt: trustedRuntimeAt,
+            outcome: 'VERIFIED',
+            sourceKind: 'CURRENT_BACKED',
+          });
+          for (const { evidence } of committed) {
+            const encodedAuditEvidence = yield* encodeJson(evidence.auditEvidence);
+            expect(new TextEncoder().encode(encodedAuditEvidence).byteLength).toBeLessThan(4096);
+          }
         }),
       );
-
-      const { committed } = harness.snapshot();
-      expect(committed).toHaveLength(2);
-      expect(committed.map(({ auditProfile }) => auditProfile)).toEqual(['standard', 'standard']);
-      expect(committed.map(({ principal: committedPrincipal }) => committedPrincipal)).toEqual([principal, principal]);
-      expect(committed.map(({ transport }) => transport.correlationId)).toEqual([
-        'pricing-confirmation-runtime:quotation',
-        'pricing-confirmation-runtime:current-verification',
-      ]);
-      expect(committed.map(({ evidence }) => evidence.dataAccessEvents.length)).toEqual([1, 1]);
-      expect(committed[0]?.evidence.auditEvidence).toMatchObject({
-        confirmationRef: quotationConfirmation.confirmationRef,
-        outcome: 'ISSUED',
-        quotationRef: quotation.quotationRef,
-        sourceKind: 'QUOTATION_BACKED',
-      });
-      expect(committed[1]?.evidence.auditEvidence).toMatchObject({
-        confirmationRef: currentConfirmation.confirmationRef,
-        effectiveAt: trustedRuntimeAt,
-        outcome: 'VERIFIED',
-        sourceKind: 'CURRENT_BACKED',
-      });
-      for (const { evidence } of committed) {
-        const encodedAuditEvidence = yield* encodeJson(evidence.auditEvidence);
-        expect(new TextEncoder().encode(encodedAuditEvidence).byteLength).toBeLessThan(4096);
-      }
-    }),
+    },
   );
 
   it.effect('decodes exactly the versioned contract for all four operations', () =>
@@ -797,4 +808,11 @@ describe('issue #800 Pricing Commitment Confirmation Action audit', () => {
       }).pipe(Effect.flip);
     }),
   );
+});
+
+it('declares Order as the only module caller of the commitment confirmation action, acting for identity', () => {
+  expect(manageCommitmentConfirmationAction.descriptor.accessActor).toMatchObject({
+    callers: ['commerce-order'],
+    subject: 'identity',
+  });
 });

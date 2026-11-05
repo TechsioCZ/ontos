@@ -63,7 +63,7 @@ const recoverReviseProductType = Effect.fn('ReviseProductTypeRecoveryRead.recove
 
 const reviseProductTypeRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.revise-product-type-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.revise-product-type-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const reviseProductTypeRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const reviseProductTypeRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.revise-product-type-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-type', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: reviseProductTypeRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const reviseProductTypeRecoveryRead = defineRead(
     inputSchema: ReviseProductTypeRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.revise-product-type-recovery',
     resultSchema: ReviseProductTypeRecoveryResponseSchema,
@@ -90,5 +97,4 @@ export const reviseProductTypeRecoveryRead = defineRead(
     recoverReviseProductType(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

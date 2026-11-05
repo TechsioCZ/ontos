@@ -1,9 +1,11 @@
-import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
-import { getActionOwnerPermissionTargetResolver, getActionHandler } from '@app/core-runtime/testing/actions';
+import {
+  getActionOwnerFactsResolver,
+  getActionHandler,
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   TriggerPurchaseApprovalPayloadSchema,
   TriggerPurchaseApprovalResultSchema,
@@ -137,38 +139,20 @@ const proposalEvidence = Schema.decodeUnknownSync(PurchaseApprovalProposalEviden
   state: 'CURRENT',
 });
 
-it('declares exact submit authorization without promoting an untrusted Storefront', () => {
-  const resolver = getActionOwnerPermissionTargetResolver(triggerPurchaseApprovalAction);
-  if (resolver === undefined) {
-    throw new Error('Trigger Purchase Approval must declare business authorization');
-  }
-  expect(resolver(payload, scopeWithoutTrustedStorefront)).toEqual([
-    customerOwnerPermissionTarget(
-      {
-        permission: 'counterparty.purchase.submit',
-        target: {
-          counterpartyId: counterpartyRef.resourceId,
-          kind: 'counterparty_storefront',
-          legalEntityId,
-          storefrontId,
-          tenantId,
-        },
-      },
-      'action',
-    ),
-  ]);
-  expect(resolver(payload, { ...scope, trustedStorefrontId: 'storefront:other' })).toMatchObject([
-    {
-      requiredStorefrontId: storefrontId,
-      target: { storefrontId },
-    },
-  ]);
-  expect(resolver(payload, scope)).toMatchObject([
-    {
-      requiredStorefrontId: storefrontId,
-      target: { storefrontId },
-    },
-  ]);
+it('names the Counterparty and Storefront for the owner rule without promoting an untrusted Storefront', () => {
+  // The v2 declaration gates the submit capability; the owner facts name the Counterparty and its
+  // Storefront so the overlay checks the Counterparty's own grant (O67-Q1, O70).
+  const resolveOwnerFacts = getActionOwnerFactsResolver(triggerPurchaseApprovalAction);
+  expect(resolveOwnerFacts).toBeDefined();
+  expect(resolveOwnerFacts?.(payload, scopeWithoutTrustedStorefront)).toEqual({
+    counterpartyId: counterpartyRef.resourceId,
+    storefrontId,
+  });
+  // The facts name the payload's Storefront; a trusted scope value is never promoted into them (O64).
+  expect(resolveOwnerFacts?.(payload, { ...scope, trustedStorefrontId: 'storefront:other' })).toEqual({
+    counterpartyId: counterpartyRef.resourceId,
+    storefrontId,
+  });
 });
 
 it.effect('collects audit/read evidence and publishes the owner-returned approval request ref', () =>

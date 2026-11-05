@@ -61,16 +61,27 @@ export type { TrustedPrincipalContext } from './principal-context.ts';
 
 const CorrelationIdSchema = decodedStringBrand(transportIdentifier, 'CorrelationId');
 const IdempotencyKeySchema = decodedStringBrand(nonEmptyString, 'IdempotencyKey');
+/** A mandate is only a lookup handle; possession never confers execution authority. */
+const MandateIdSchema = decodedStringBrand(Schema.String.check(Schema.isUUID()), 'MandateId');
 const TraceIdSchema = decodedStringBrand(transportIdentifier, 'TraceId');
 
 export const ActionTransportMetadataSchema = Schema.Struct({
   correlationId: CorrelationIdSchema,
   idempotencyKey: Schema.optionalKey(IdempotencyKeySchema),
+  /** Explicitly request approval; ordinary NEEDS_APPROVAL never creates a proposal. */
+  intent: Schema.optionalKey(Schema.Literal('propose')),
+  mandateId: Schema.optionalKey(MandateIdSchema),
   targetModuleKey: Schema.optionalKey(TargetModuleKeySchema),
   targetResourceId: Schema.optionalKey(TargetResourceIdSchema),
   targetResourceType: Schema.optionalKey(nonEmptyString),
   traceId: Schema.optionalKey(TraceIdSchema),
-});
+}).check(
+  Schema.makeFilter((transport) =>
+    transport.intent === 'propose' && transport.mandateId !== undefined
+      ? [{ issue: 'A proposal intent cannot carry an execution mandate', path: ['mandateId'] }]
+      : [],
+  ),
+);
 
 export type ActionTransportMetadata = Schema.Schema.Type<typeof ActionTransportMetadataSchema>;
 

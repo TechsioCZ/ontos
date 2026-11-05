@@ -1,7 +1,9 @@
-import { Cause, Crypto, Effect, Option, Redacted, Schema } from 'effect';
+import { Cause, Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/http';
 
-import { ContextAccess, ActionTransportMetadataSchema } from '@app/core-runtime';
+import { ActionTransportMetadataSchema } from '@app/core-runtime';
+import { AccessPortalProjection, portalPrincipalInLegalEntity } from '@app/core-runtime/access/portal';
+import { AccessPortalAdmissions } from '@app/core-runtime/access/portal/runtime';
 import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
 import type { ActionRuntime, OperationalScope, PrincipalEligibility } from '@app/core-runtime';
 
@@ -57,6 +59,8 @@ import {
   readCounterpartyAccessInvitationForScope,
 } from '../../../src/persistence/access-persistence.ts';
 import { counterpartyInvitationClaimRedemptionForTransaction } from '../../../src/persistence/invitation-claim-authority-persistence.ts';
+import { COUNTERPARTY_INVITEE_PORTAL_ROLE } from '../../../src/portal-access/portal-roles.ts';
+import { counterpartyInvitationRedemptionSource } from '../../../src/portal-access/portal-sources.ts';
 import type { CounterpartyInvitationProofDelivery } from '../../../shared/domain/access-port.ts';
 import { CounterpartyAccessContractViolation } from '../../../shared/domain/access-error.ts';
 import type { CounterpartyAccessDomainError } from '../../../shared/domain/access-error.ts';
@@ -237,7 +241,19 @@ interface EnrollmentAcceptedClaimIdentity {
   readonly principalId: string;
 }
 
+/** What a redemption proved: the recipient holds this proof of this invitation until the proof expires. */
+interface RedeemedClaimProof {
+  readonly invitationId: string;
+  readonly proofReference: string;
+  readonly validUntil: Date;
+}
+
 interface ClaimSeams {
+  /**
+   * Admits the recipient a redemption just proved into the invitation's Selling Legal Entity, so the claim
+   * can run there: Core gives it the invitee portal role until the proof expires or the claim consumes it.
+   */
+  readonly admitRecipient: (redeemed: RedeemedClaimProof) => Effect.Effect<void, ClaimOwnerFailure>;
   readonly crypto: Crypto.Crypto;
   readonly run: CommerceEnrollmentOwnerTransactionRun;
   /** The authenticated scope the redemption stamps its claimant from; never a caller-named value. */
@@ -262,7 +278,6 @@ export const claimInvitationEffect = Effect.fn('CommercePortalAuthEnrollment.cla
     ) => Effect.Effect<typeof ClaimCounterpartyAccessInvitationResultSchema.Type, ClaimOwnerFailure>,
   ): Effect.fn.Return<CommerceEnrollmentOwnerEffectOutcome, ClaimOwnerFailure> {
     const { crypto, run, trustedScope } = seams;
-    const contextAccess = Option.getOrUndefined(yield* Effect.serviceOption(ContextAccess));
     const { legalEntityId, principalId, tenantId } = trustedScope;
     const invitationRef = {
       moduleId: 'commerce.customer-context' as const,
@@ -291,6 +306,11 @@ export const claimInvitationEffect = Effect.fn('CommercePortalAuthEnrollment.cla
     if (redemption.kind === 'refused') {
       return yield* ownerFailureFor(redemption.failure);
     }
+    yield* seams.admitRecipient({
+      invitationId: input.invitationId,
+      proofReference: redemption.resolved.redeemed.proofReference,
+      validUntil: DateTime.toDateUtc(DateTime.makeUnsafe(redemption.resolved.redeemed.expiresAt)),
+    });
     const result = yield* runClaimAction({
       claimant: { principalId, tenantId },
       claimProofReference: redemption.resolved.redeemed.proofReference,
@@ -299,29 +319,22 @@ export const claimInvitationEffect = Effect.fn('CommercePortalAuthEnrollment.cla
       invitationRef,
       scope: redemption.resolved.redeemed.scope,
     });
-    let current = false;
-    let reference = result.outcome === 'ALREADY_CLAIMED' ? undefined : result.attestation.attestationReference;
-    if (result.outcome !== 'RECONCILIATION_REQUIRED') {
-      const identity: EnrollmentAcceptedClaimIdentity = {
-        invitationId: input.invitationId,
-        principalId,
-      };
-      if (reference !== undefined) {
-        identity.expectedAttestation = reference;
-      }
-      const accepted = yield* run({ legalEntityId, tenantId }, (transaction) =>
-        readEnrollmentInvitationClaimCurrent(transaction, { legalEntityId, tenantId }, identity, contextAccess).pipe(
-          Effect.mapError((failure) => attemptUnavailable(failure.reason)),
-        ),
-      ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason)));
-      if (Option.isNone(accepted)) {
-        return yield* claimUnavailable('The invitation names no original accepted claim');
-      }
-      ({ attestationReference: reference, current } = accepted.value);
+    const identity: EnrollmentAcceptedClaimIdentity = {
+      invitationId: input.invitationId,
+      principalId,
+    };
+    if (result.outcome === 'CLAIMED') {
+      identity.expectedAttestation = result.attestation.attestationReference;
     }
-    if (reference === undefined) {
-      return yield* claimUnavailable('The accepted invitation claim names no attestation');
+    const accepted = yield* run({ legalEntityId, tenantId }, (transaction) =>
+      readEnrollmentInvitationClaimCurrent(transaction, { legalEntityId, tenantId }, identity).pipe(
+        Effect.mapError((failure) => attemptUnavailable(failure.reason)),
+      ),
+    ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason)));
+    if (Option.isNone(accepted)) {
+      return yield* claimUnavailable('The invitation names no original accepted claim');
     }
+    const { attestationReference: reference, current } = accepted.value;
     const verdict = current
       ? {
           outcomeCode: INVITATION_CLAIMED_OUTCOME_CODE,
@@ -500,11 +513,15 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
     // terminal are all answered exactly as an absent Attempt is.
     return yield* Effect.fail(commercePortalAuthEnrollmentNotFoundProblem());
   }
-  if (principal.legalEntityId !== String(targetLegalEntityId)) {
+  if (principal.legalEntityId !== undefined && principal.legalEntityId !== String(targetLegalEntityId)) {
     // The claim Action is Legal Entity scoped, and the only Legal Entity this Attempt may claim
-    // into is the one its own intent named.
+    // into is the one its own intent named. A recipient that is not yet admitted there presents a
+    // Tenant assertion, and the claim runs in the Attempt's company once the redemption admitted it.
     return yield* Effect.fail(commercePortalAuthEnrollmentNotFoundProblem());
   }
+  const claimPrincipal = yield* Effect.fromResult(
+    portalPrincipalInLegalEntity(principal, String(targetLegalEntityId)),
+  ).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
 
   const operations = yield* Effect.forEach(
     [
@@ -566,15 +583,17 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
     return commercePortalAuthEnrollmentAttemptProjection(attempt);
   }
 
-  const runActionHttp = bindGovernedActionHttp({ authenticate: () => Effect.succeed(principal) });
+  const runActionHttp = bindGovernedActionHttp({ authenticate: () => Effect.succeed(claimPrincipal) });
   /**
    * The claim Action's own service graph, captured here rather than left in the dispatch's
    * requirements: the owner driver dispatches one external effect with nothing ambient behind it,
    * so the services this route was composed with travel into that effect explicitly.
    */
   const claimActionServices = yield* Effect.context<
-    ActionRuntime | ContextAccess | CounterpartyInvitationProofDelivery | Crypto.Crypto | PrincipalEligibility
+    AccessPortalProjection | ActionRuntime | CounterpartyInvitationProofDelivery | Crypto.Crypto | PrincipalEligibility
   >();
+  const admissions = yield* AccessPortalAdmissions;
+  const projection = yield* AccessPortalProjection;
   const runClaimAction = (claimPayload: ClaimCounterpartyAccessInvitationPayload) =>
     runActionHttp({
       endpointHeaders: { idempotencyKey: claimIdempotencyKey, traceId: request.headers['x-trace-id'] },
@@ -618,14 +637,34 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
     transitionKey: CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
   }).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
 
+  const trustedScope = {
+    ...principal,
+    correlationId: claimCorrelation,
+    legalEntityId: String(targetLegalEntityId),
+  };
   const seams: ClaimSeams = {
+    admitRecipient: (redeemed) =>
+      admissions
+        .grant(trustedScope, {
+          legalEntityId: trustedScope.legalEntityId,
+          principalId: trustedScope.principalId,
+          role: COUNTERPARTY_INVITEE_PORTAL_ROLE,
+          source: counterpartyInvitationRedemptionSource(redeemed.invitationId, redeemed.proofReference),
+          validUntil: redeemed.validUntil,
+        })
+        .pipe(
+          Effect.andThen(projection.project(trustedScope)),
+          Effect.mapError((failure) =>
+            Object.defineProperty(
+              claimUnavailable('The invited recipient could not be admitted to the Selling Legal Entity'),
+              'cause',
+              { value: failure },
+            ),
+          ),
+        ),
     crypto,
     run: runner.run,
-    trustedScope: {
-      ...principal,
-      correlationId: claimCorrelation,
-      legalEntityId: String(targetLegalEntityId),
-    },
+    trustedScope,
   };
   const claimReconciliation = yield* counterpartyInvitationClaimReconciliationFor(runner.run, {
     boundPrincipalId: String(actorPrincipalId),

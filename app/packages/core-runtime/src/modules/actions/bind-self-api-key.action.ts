@@ -52,6 +52,16 @@ const handle = Effect.fn('BindSelfApiKeyAction.handle')(function* bindSelfApiKey
 });
 export const bindSelfApiKeyAction = defineAction(
   {
+    // Self-service bounds the target, but minting an API-key credential for yourself is still authority
+    // creation: it stays administrative and can never be run by an agent.
+    accessDeclaration: {
+      key: 'core.identity.self-api-key.bind',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.bind-self-api-key.access.v1',
@@ -62,10 +72,7 @@ export const bindSelfApiKeyAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.bind-self-api-key',
       moduleKey: 'core.identity',
       role: 'action',

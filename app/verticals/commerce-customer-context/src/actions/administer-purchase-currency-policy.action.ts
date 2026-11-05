@@ -117,6 +117,14 @@ const handleAdministerPurchaseCurrencyPolicy = Effect.fn('AdministerPurchaseCurr
 
 export const administerPurchaseCurrencyPolicyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.purchase-currency-policy.administer',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'commerce-policy', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.administer-purchase-currency-policy.access.v1',
@@ -128,7 +136,7 @@ export const administerPurchaseCurrencyPolicyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.administer-purchase-currency-policy',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -142,7 +150,8 @@ export const administerPurchaseCurrencyPolicyAction = defineAction(
     schemaVersion: '1',
   },
   handleAdministerPurchaseCurrencyPolicy,
-  customerCommercePolicyAdministrationServiceFactory,
+  (transaction, scope, compositionRevision) =>
+    customerCommercePolicyAdministrationServiceFactory(transaction, scope, compositionRevision),
 );
 
 // <generated-outbox-message-exports>

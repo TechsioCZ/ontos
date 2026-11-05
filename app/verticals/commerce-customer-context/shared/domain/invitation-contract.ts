@@ -24,7 +24,6 @@ const CounterpartyAccessInvitationStateSchema = Schema.Literals([
   'CLAIMED',
   'REVOKED',
   'EXPIRED',
-  'RECONCILIATION_REQUIRED',
 ]);
 export type CounterpartyAccessInvitationState = typeof CounterpartyAccessInvitationStateSchema.Type;
 
@@ -58,7 +57,7 @@ export const InvitationGrantProgressSchema = Schema.Union([
   Schema.Struct({
     grantRef: CounterpartyCommerceAccessGrantRefSchema,
     permission: CounterpartyPermissionCodeSchema,
-    state: Schema.Literals(['ACTIVE', 'RECONCILIATION_REQUIRED']),
+    state: Schema.Literal('ACTIVE'),
   }),
 ]);
 export type InvitationGrantProgress = typeof InvitationGrantProgressSchema.Type;
@@ -78,15 +77,13 @@ const progressHasExactCoverage = (
   );
 };
 
+/** The claim state exact grant progress implies, or none when the progress does not cover the claim. */
 const completionState = (
   intendedPermissions: readonly (typeof CounterpartyPermissionCodeSchema.Type)[],
   progress: readonly InvitationGrantProgress[],
-): CounterpartyAccessInvitationState => {
+): 'CLAIMED' | 'CLAIMING' | undefined => {
   if (!hasUniquePermissions(intendedPermissions) || !progressHasExactCoverage(intendedPermissions, progress)) {
-    return 'RECONCILIATION_REQUIRED';
-  }
-  if (progress.some(({ state }) => state === 'RECONCILIATION_REQUIRED')) {
-    return 'RECONCILIATION_REQUIRED';
+    return undefined;
   }
   return progress.every(({ state }) => state === 'ACTIVE') ? 'CLAIMED' : 'CLAIMING';
 };
@@ -160,7 +157,7 @@ export const invitationCanBeResent = (invitation: CounterpartyAccessInvitation, 
   invitation.state === 'PENDING' && now < invitation.expiresAt;
 
 export const invitationCanBeRevoked = (invitation: CounterpartyAccessInvitation): boolean =>
-  invitation.state === 'PENDING' || invitation.state === 'CLAIMING' || invitation.state === 'RECONCILIATION_REQUIRED';
+  invitation.state === 'PENDING';
 
 export const invitationCanBeginClaim = (invitation: CounterpartyAccessInvitation, now: string): boolean =>
   invitation.state === 'PENDING' && now < invitation.expiresAt;
@@ -168,14 +165,13 @@ export const invitationCanBeginClaim = (invitation: CounterpartyAccessInvitation
 export const invitationCompletionState = (
   intendedPermissions: readonly (typeof CounterpartyPermissionCodeSchema.Type)[],
   progress: readonly InvitationGrantProgress[],
-): CounterpartyAccessInvitationState => completionState(intendedPermissions, progress);
+): 'CLAIMED' | 'CLAIMING' | undefined => completionState(intendedPermissions, progress);
 
 const invitationTransitions = Object.freeze({
   CLAIMED: Object.freeze([]),
-  CLAIMING: Object.freeze(['CLAIMED', 'RECONCILIATION_REQUIRED', 'REVOKED']),
+  CLAIMING: Object.freeze(['CLAIMED', 'PENDING', 'EXPIRED']),
   EXPIRED: Object.freeze([]),
   PENDING: Object.freeze(['CLAIMING', 'EXPIRED', 'REVOKED']),
-  RECONCILIATION_REQUIRED: Object.freeze(['CLAIMING', 'CLAIMED', 'REVOKED']),
   REVOKED: Object.freeze([]),
 } satisfies Readonly<Record<CounterpartyAccessInvitationState, readonly CounterpartyAccessInvitationState[]>>);
 

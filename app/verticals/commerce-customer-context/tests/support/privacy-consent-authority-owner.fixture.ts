@@ -1,11 +1,7 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { RetailPortalProfileBindingReadRequestSchema } from '../../shared/apis/retail-portal-profile-binding-read.ts';
-import {
-  ProfileRetailPermissionReaderFactory,
-  profileRetailPermissionReaderFactoryLive,
-} from '../../src/integrations/retail-permission-reader.ts';
-import type { ProfileRetailPermissionReaderFactoryService } from '../../src/integrations/retail-permission-reader.ts';
 import { CommerceEnrollmentAttemptUnavailable } from '../../src/enrollment/attempts/errors.ts';
 import type { ActiveApplicationCompositionServiceContract } from '@app/core-runtime/modules/active-application-composition';
 import type { PartyRegistryRetailPartyResolverFactoryInput } from '../../src/integrations/party-registry-retail-party-resolver.ts';
@@ -16,7 +12,7 @@ import {
 } from '@app/core-runtime/modules/active-application-composition';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import { executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { ResendEmailDeliveryConfigLive, RESEND_EMAILS_ENDPOINT } from '@app/email-delivery/resend';
 import {
   PartyRegistryRetailPartyResolverFactory,
@@ -362,9 +358,10 @@ const serverPartyObservationSchema = Schema.TaggedStruct('server-party-observati
     'RESOLVED',
   ]),
 });
+const BindingObservationStateSchema = Schema.Literals(['ACTIVE', 'REVOKED']);
 const bindingObservationSchema = Schema.TaggedStruct(bindingObservationStage, {
-  authorizationState: Schema.Literals(['ACTIVE', 'REVOKED', 'PENDING_GRANT', 'PENDING_REVOKE']),
-  bindingState: Schema.Literals(['ACTIVE', 'REVOKED']),
+  authorizationState: BindingObservationStateSchema,
+  bindingState: BindingObservationStateSchema,
   current: Schema.Boolean,
   manageAllowed: Schema.Boolean,
   profileReadAllowed: Schema.Boolean,
@@ -673,7 +670,7 @@ const retainedPartyAppId = 'party-registry';
 const actualPartyModule = (entry: { readonly deployment: { readonly appId: string } }) =>
   entry.deployment.appId === retainedPartyAppId;
 type RetainedServerPartyFailure =
-  | Effect.Error<ReturnType<typeof issueApiKeyGatewayContext>>
+  | Effect.Error<ReturnType<typeof acquireDelegatedGatewayContext>>
   | Effect.Error<ReturnType<typeof executePartyDetailWithAuthorization>>
   | Effect.Error<ActiveApplicationCompositionServiceContract['load']>
   | ProfilePersistenceDependencyFailure;
@@ -693,8 +690,8 @@ const observePartyDetailReturned = Effect.sync(() => {
 });
 const resolveRetainedParty = (
   scope: typeof retainedServerScopeSchema.Type,
-  apiKey: Redacted.Redacted,
-  shellBaseUrl: URL,
+  crypto: Crypto.Crypto,
+  currentScope: OperationalScope,
   authority: ActiveApplicationCompositionServiceContract,
   input: PartyRegistryRetailPartyResolverFactoryInput,
   request: Parameters<ReturnType<typeof makePartyRegistryRetailPartyResolver>>[0],
@@ -714,26 +711,28 @@ const resolveRetainedParty = (
         reason: 'The owned Party server scope is not admitted',
       });
     }
-    const gateway = yield* issueApiKeyGatewayContext(
+    // The request's verified scope is the subject: the Party read acts for the person who asked for it.
+    const gateway = yield* acquireDelegatedGatewayContext(
       {
         audience: retainedPartyAppId,
-        compositionRevision: scope.compositionRevision,
-        legalEntityId: scope.legalEntityId,
+        legalEntityScope: 'subject',
+        requestCorrelation: input.requestCorrelation,
+        subject: { _tag: 'Assertion', scope: currentScope },
       },
-      { apiKey, baseUrl: shellBaseUrl, requestCorrelation: input.requestCorrelation },
+      crypto,
     );
     serverPartyObservation.stage = 'GATEWAY_ISSUED';
     if (
       gateway.compositionRevision !== scope.compositionRevision ||
-      gateway.apiBaseUrl !== moduleReleaseApiBaseUrl(retainedPartyAppId, party.deployment.buildMarker)
+      new URL(gateway.apiBaseUrl).pathname !== moduleReleaseApiBaseUrl(retainedPartyAppId, party.deployment.buildMarker)
     ) {
       return yield* new ProfilePersistenceDependencyFailure({
         reason: 'The actual Party gateway release does not match the owned server scope',
       });
     }
     const resolved = yield* makePartyRegistryRetailPartyResolver(input, (payload, correlation) =>
-      executePartyDetailWithAuthorization(payload, `Bearer ${gateway.token}`, correlation, {
-        baseUrl: new URL(gateway.apiBaseUrl, shellBaseUrl),
+      executePartyDetailWithAuthorization(payload, gateway.authorization, correlation, {
+        baseUrl: new URL(gateway.apiBaseUrl),
         compositionRevision: scope.compositionRevision,
       }).pipe(Effect.tap(observePartyDetailReturned), Effect.tapError(observeServerPartyFailure)),
     )(request);
@@ -755,18 +754,16 @@ const retainedPartyResolverFactoryLive = Layer.effect(
       Schema.fromJsonString(retainedServerScopeSchema),
       'ONTOS_RETAINED_CONSENT_SERVER_SCOPE',
     );
-    const apiKey = yield* Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY');
-    const shellBaseUrl = yield* Config.schema(Schema.URLFromString, 'ONTOS_SHELL_GATEWAY_BASE_URL');
     const authority = yield* ActiveApplicationCompositionService;
     serverPartyObservation.stage = 'FACTORY_BUILT';
     return PartyRegistryRetailPartyResolverFactory.of({
-      make: ({ scope: currentScope }) => {
+      make: ({ crypto, scope: currentScope }) => {
         serverPartyObservation.stage = 'FACTORY_MADE';
         return (request) =>
           resolveRetainedParty(
             scope,
-            apiKey,
-            shellBaseUrl,
+            crypto,
+            currentScope,
             authority,
             { requestCorrelation: currentScope.correlationId, tenantId: currentScope.tenantId },
             request,
@@ -777,7 +774,6 @@ const retainedPartyResolverFactoryLive = Layer.effect(
 );
 const readOwnedBinding = Effect.fn('RetainedConsentOwner.readOwnedBinding')(function* readOwnedBinding(
   command: typeof observeBindingCommand.Type,
-  reader: ProfileRetailPermissionReaderFactoryService,
 ) {
   const expected = yield* Config.schema(
     Schema.fromJsonString(retainedServerScopeSchema),
@@ -813,21 +809,11 @@ const readOwnedBinding = Effect.fn('RetainedConsentOwner.readOwnedBinding')(func
   const result = yield* runner.run(
     { legalEntityId: expected.legalEntityId, tenantId: principal.tenantId },
     (transaction) =>
-      profilePersistenceServicesForTransaction(
-        transaction,
-        {
-          legalEntityId: expected.legalEntityId,
-          principalId: principal.principalId,
-          tenantId: principal.tenantId,
-        },
-        {
-          readRetailPermissions: reader.make({
-            legalEntityId: expected.legalEntityId,
-            principalId: command.principalId,
-            tenantId: principal.tenantId,
-          }),
-        },
-      )
+      profilePersistenceServicesForTransaction(transaction, {
+        legalEntityId: expected.legalEntityId,
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      })
         .retailPortalProfileBindingRead.readBinding(request, command.principalId, principal.tenantId)
         .pipe(
           Effect.mapError(
@@ -1076,10 +1062,6 @@ const serve = Effect.scoped(
       PartyRegistryRetailPartyResolverFactory,
       Context.get(serverPartyContext, PartyRegistryRetailPartyResolverFactory),
     );
-    const permissionReaderContext = yield* Layer.build(
-      profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive)),
-    );
-    const permissionReader = Context.get(permissionReaderContext, ProfileRetailPermissionReaderFactory);
     const configuredRealm = commercePortalAuthRealmLive.pipe(
       Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
     );
@@ -1210,7 +1192,7 @@ const serve = Effect.scoped(
           return privateReply(writer, serverPartyObservationSchema.make(serverPartyObservation));
         }
         if (Schema.is(observeBindingCommand)(command)) {
-          return readOwnedBinding(command, permissionReader).pipe(
+          return readOwnedBinding(command).pipe(
             Effect.provide(ownerTransactions),
             Effect.provide(ActionPrincipalVerifierLive.pipe(Layer.provide(compositionSource))),
             Effect.flatMap((value) => privateReply(writer, value)),

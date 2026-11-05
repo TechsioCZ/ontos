@@ -15,6 +15,7 @@ import { DateTime, Effect, Match, Schema } from 'effect';
 import { DefinePricePayloadSchema, DefinePriceResultSchema } from '../../shared/actions/define-price.ts';
 import type { DefinePricePayload } from '../../shared/actions/define-price.ts';
 
+import { pricingAccessAmount } from '../services/access-amount.ts';
 import type { PricePersistence } from '../services/price-persistence.service.ts';
 import { PricePersistenceUnavailable, pricePersistenceForScope } from '../services/price-persistence.service.ts';
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
@@ -26,8 +27,8 @@ import {
   requirePricingCommercialContextOperation,
 } from '../integrations/pricing-operation-requirements.ts';
 import type { CatalogSelectionAssessmentPort } from '../integrations/catalog-selection-evidence.ts';
-import { PricingCatalogSelectionUnavailable } from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import { PricingCommercialContextUnavailable } from '../../shared/domain/commercial-context-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
+import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
 import { commercialContextAssessmentPortFromEnvironment } from '../integrations/commercial-context-evidence.ts';
 import type { CommercialContextAssessmentPort } from '../integrations/commercial-context-evidence.ts';
 import { DefinePriceConflict } from './define-price-conflict.ts';
@@ -335,6 +336,18 @@ export const handleDefinePrice = Effect.fn('DefinePriceAction.handle')(function*
 
 export const definePriceAction = defineAction(
   {
+    // O18: the governed amount is the configured price in minor units, derived server-side from
+    // the decoded payload; a caller-supplied total never governs the ceiling.
+    accessAmount: (payload: DefinePricePayload) => pricingAccessAmount(payload.monetaryAmount),
+    accessDeclaration: {
+      amountInput: 'derived.monetaryAmount',
+      key: 'commerce.pricing.price.define',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'prices', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.define-price.access.v1',
@@ -346,7 +359,7 @@ export const definePriceAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.define-price',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -379,11 +392,13 @@ export const definePriceAction = defineAction(
             compositionRevision,
             legalEntityId,
             requestCorrelation: scope.correlationId,
+            scope,
           }),
           commercialContext: commercialContextAssessmentPortFromEnvironment({
             compositionRevision,
             legalEntityId,
             requestCorrelation: scope.correlationId,
+            scope,
           }),
           currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
           persistence: pricePersistenceForScope(transaction, scope),

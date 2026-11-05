@@ -34,6 +34,14 @@ const handleCreateNoticeVersion = Effect.fn('CreateNoticeVersionAction.handle')(
 
 export const createNoticeVersionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.notice-version.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'notices', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.create-notice-version.access.v1',
@@ -45,7 +53,7 @@ export const createNoticeVersionAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.create-notice-version',
       moduleKey: 'privacy.core',
       role: 'action',

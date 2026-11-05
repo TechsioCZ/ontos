@@ -1,3 +1,4 @@
+import { DECISION_REASON_CODES } from '@app/core-runtime/access/decision/contract';
 import { DateTime, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -7,6 +8,8 @@ import {
   AvailableLegalEntitiesResponseSchema,
   AvailableTenantsResponseSchema,
   ApiKeyLifecycleResponseSchema,
+  ApiKeyListItemSchema,
+  ManagedApiKeyListItemSchema,
   ChangePrincipalStatusPayloadSchema,
   IdentityRequestHeadersSchema,
   SignInPayloadSchema,
@@ -20,6 +23,12 @@ import {
   TenantCapabilityUnavailableProblemSchema,
   shellAuthenticationApiContract,
 } from '../../shared/api.ts';
+import {
+  AccessDecisionReasonCodeSchema,
+  DecideAccessChangesPayloadSchema,
+  PreviewAccessChangesPayloadSchema,
+} from '../../shared/access-admin-api.ts';
+import { LegalEntityDetailResponseSchema } from '../../shared/core-reads/legal-entity-detail.ts';
 
 type TenantEndpoint =
   | typeof ShellAuthenticationApi.groups.tenants.endpoints.availableTenants
@@ -53,7 +62,11 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   const externalIdentityEndpoints = Object.keys(ShellAuthenticationApi.groups.externalIdentity.endpoints).toSorted();
 
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
-  expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext', 'issueRelayedGatewayContext']);
+  expect(gatewayEndpoints).toEqual([
+    'issueGatewayContext',
+    'issueApiKeyGatewayContext',
+    'issueDelegatedGatewayContext',
+  ]);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
     'createNonHumanPrincipal',
@@ -87,30 +100,51 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     ),
   ).toEqual({
     activatePrincipalBinding: '/auth/identity/external/bindings/activate',
+    assignAccessRole: '/shell/access/people/assign',
     attachMedia: '/shell/resource/media-attachment',
     availableLegalEntities: '/auth/legal-entities',
     availableTenants: '/auth/tenants',
     changePrincipalBindingStatus: '/auth/identity/external/binding/status',
     changePrincipalStatus: '/auth/identity/principal-status',
+    createAccessDelegation: '/shell/access/people/delegate',
+    createAccessRole: '/shell/access/roles/create',
     createNonHumanPrincipal: '/auth/identity/principals',
     currentSession: '/auth/session',
+    decideAccessApproval: '/shell/access/approvals/decide',
+    decideAccessChanges: '/shell/access/changes/decide',
+    executeAccessApproval: '/shell/access/approvals/execute',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
+    explainAccess: '/shell/access/explain',
+    getAccessRole: '/shell/access/roles/detail',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
+    issueDelegatedGatewayContext: '/auth/delegated/gateway-context',
     issueExternalGatewayContext: '/auth/identity/external/gateway-context',
     issueGatewayContext: '/auth/gateway-context',
     issueManagedApiKey: '/auth/identity/api-keys/managed',
-    issueRelayedGatewayContext: '/auth/relay/gateway-context',
     issueSelfApiKey: '/auth/identity/api-keys/self',
+    listAccessApprovals: '/shell/access/approvals/list',
+    listAccessAssignments: '/shell/access/people/assignments',
+    listAccessChanges: '/shell/access/changes/list',
+    listAccessPeople: '/shell/access/people/list',
+    listAccessPeopleOptions: '/shell/access/people/options',
+    listAccessRoles: '/shell/access/roles/list',
+    listAccessRoleTemplates: '/shell/access/roles/templates',
     listManagedApiKeys: '/auth/identity/api-keys/managed/list',
     listSelfApiKeys: '/auth/identity/api-keys/self/list',
+    previewAccessChanges: '/shell/access/changes/preview',
+    previewAccessRoleEdit: '/shell/access/roles/preview',
     readPrincipalBinding: '/auth/identity/external/bindings/read',
     reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
     resolveExternalSubject: '/auth/identity/external/resolve',
     resolveModuleTarget: '/shell/module-target',
     resourceDetail: '/shell/resource',
+    revokeAccessAssignment: '/shell/access/people/revoke-assignment',
+    revokeAccessDelegation: '/shell/access/people/revoke-delegation',
     rotateManagedApiKey: '/auth/identity/api-keys/managed/rotate',
     rotateSelfApiKey: '/auth/identity/api-keys/self/rotate',
+    saveAccessRoleEdit: '/shell/access/roles/save',
     search: '/shell/search',
+    setAccessTeamMembership: '/shell/access/people/team-membership',
     setManagedApiKeyStatus: '/auth/identity/api-keys/managed/status',
     setSelfApiKeyStatus: '/auth/identity/api-keys/self/status',
     shellComposition: '/shell/composition',
@@ -120,6 +154,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     stopSupportImpersonation: '/auth/identity/impersonation/stop',
     switchLegalEntity: '/auth/legal-entity/switch',
     switchTenant: '/auth/tenant/switch',
+    transferAccessOwnership: '/shell/access/people/transfer-ownership',
   });
   expect(shellAuthenticationApiContract).toEqual({
     apiPrefix: '/shell-super-app-api',
@@ -127,6 +162,55 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
   });
   expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(/testing|actionKey/u);
+});
+
+it('requires an explicit tenant or company target for every Novinky preview and decision', () => {
+  const base = {
+    catalogSnapshotId: '11111111-1111-4111-8111-111111111111',
+    decision: 'adopt',
+    itemIds: ['22222222-2222-4222-8222-222222222222'],
+  };
+  expect(Schema.is(PreviewAccessChangesPayloadSchema)(base)).toBe(false);
+  expect(Schema.is(PreviewAccessChangesPayloadSchema)({ ...base, legalEntityId: null })).toBe(true);
+  expect(
+    Schema.is(PreviewAccessChangesPayloadSchema)({
+      ...base,
+      legalEntityId: '33333333-3333-4333-8333-333333333333',
+    }),
+  ).toBe(true);
+  expect(Schema.is(DecideAccessChangesPayloadSchema)({ ...base, decision: 'decline' })).toBe(false);
+  expect(Schema.is(DecideAccessChangesPayloadSchema)({ ...base, decision: 'decline', legalEntityId: null })).toBe(true);
+});
+
+it('recognizes every Core decision reason without inventing a browser-only code', () => {
+  for (const code of DECISION_REASON_CODES) {
+    expect(Schema.is(AccessDecisionReasonCodeSchema)(code)).toBe(true);
+  }
+  expect(Schema.is(AccessDecisionReasonCodeSchema)('allow.unpublished')).toBe(false);
+});
+
+it('omits ungranted identity fields without weakening API-key mutation responses', () => {
+  expect(Schema.decodeUnknownSync(ApiKeyListItemSchema)({})).toEqual({});
+  expect(
+    Schema.decodeUnknownSync(ManagedApiKeyListItemSchema)({
+      key: null,
+      kind: 'service',
+      principalId: '11111111-1111-4111-8111-111111111111',
+      principalStatus: 'active',
+    }),
+  ).not.toHaveProperty('displayName');
+  expect(
+    Schema.decodeUnknownSync(LegalEntityDetailResponseSchema)({
+      legalEntityRef: {
+        moduleId: 'core.identity',
+        resourceId: '11111111-1111-4111-8111-111111111111',
+        resourceType: 'core.identity.legal-entity',
+        tenantId: '22222222-2222-4222-8222-222222222222',
+      },
+      status: 'active',
+    }),
+  ).not.toHaveProperty('legalName');
+  expect(() => Schema.decodeUnknownSync(ApiKeyLifecycleResponseSchema)({})).toThrow();
 });
 
 it('preserves migrated Shell Problem Details wire shapes and ordered membership', () => {

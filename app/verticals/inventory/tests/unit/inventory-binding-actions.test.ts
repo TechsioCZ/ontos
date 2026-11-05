@@ -8,7 +8,7 @@ import { createActionCollector } from '../../../../packages/core-runtime/src/act
 import {
   getActionOwnerPermissionTargetResolver,
   getActionResourcePermissionTargetResolver,
-} from '@app/core-runtime/testing/actions';
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 
 import {
   CorrectCatalogToStockBindingPayloadSchema,
@@ -139,15 +139,7 @@ describe('Catalog-to-Stock Binding Actions', () => {
     ]) {
       expect(() => decode({ ...correctPayload, candidate: invalid })).toThrow();
     }
-    expect(
-      getActionOwnerPermissionTargetResolver(correctCatalogToStockBindingAction)?.(replacement, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual(
-      getActionOwnerPermissionTargetResolver(correctCatalogToStockBindingAction)?.(correctPayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    );
+    expect(getActionOwnerPermissionTargetResolver(correctCatalogToStockBindingAction)).toBeUndefined();
   });
 
   it('publishes three explicit, tenant-scoped, idempotent owner lifecycle operations', () => {
@@ -163,44 +155,34 @@ describe('Catalog-to-Stock Binding Actions', () => {
         legalEntityScope: 'forbidden',
         owningModuleKey: 'commerce.inventory',
       });
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(action.descriptor.accessDeclaration).toMatchObject({ kind: 'action', selectors: [] });
       expect(action.descriptor.auditEvidenceSchema).toBeDefined();
     }
   });
 
   it('requires the exact manage authority and keeps tenant-global correction free of a Legal Entity Resource gate', () => {
-    const businessTarget = {
-      permission: 'inventory.catalog_to_stock_binding.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: bindingRef.moduleId,
-          resourceId: bindingRef.resourceId,
-          resourceType: bindingRef.resourceType,
-        },
-        tenantId,
-      },
-    };
+    // O67-Q2: the three lifecycle writes share the scope-wide capability family and carry no
+    // per-binding business or resource target any more; the one gate decides in the Tenant context.
     expect([
-      getActionOwnerPermissionTargetResolver(establishCatalogToStockBindingAction)?.(establishPayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-      getActionOwnerPermissionTargetResolver(correctCatalogToStockBindingAction)?.(correctPayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-      getActionOwnerPermissionTargetResolver(endCatalogToStockBindingAction)?.(endPayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ]).toEqual([businessTarget, businessTarget, businessTarget]);
-    const resourceTarget = { permission: 'write', resource: establishPayload.bindingRef };
+      getActionOwnerPermissionTargetResolver(establishCatalogToStockBindingAction),
+      getActionOwnerPermissionTargetResolver(correctCatalogToStockBindingAction),
+      getActionOwnerPermissionTargetResolver(endCatalogToStockBindingAction),
+    ]).toEqual([undefined, undefined, undefined]);
     expect([
-      getActionResourcePermissionTargetResolver(establishCatalogToStockBindingAction)?.(establishPayload, scope),
-      getActionResourcePermissionTargetResolver(correctCatalogToStockBindingAction)?.(correctPayload, scope),
-      getActionResourcePermissionTargetResolver(endCatalogToStockBindingAction)?.(endPayload, scope),
-    ]).toEqual([resourceTarget, undefined, resourceTarget]);
+      getActionResourcePermissionTargetResolver(establishCatalogToStockBindingAction),
+      getActionResourcePermissionTargetResolver(correctCatalogToStockBindingAction),
+      getActionResourcePermissionTargetResolver(endCatalogToStockBindingAction),
+    ]).toEqual([undefined, undefined, undefined]);
+    expect(
+      [establishCatalogToStockBindingAction, correctCatalogToStockBindingAction, endCatalogToStockBindingAction].map(
+        ({ descriptor }) => descriptor.accessDeclaration?.key,
+      ),
+    ).toEqual([
+      'commerce.inventory.catalog-to-stock-binding.establish',
+      'commerce.inventory.catalog-to-stock-binding.correct',
+      'commerce.inventory.catalog-to-stock-binding.end',
+    ]);
   });
 
   it('rejects a proposed binding identity outside the exact Selection Tenant at decoding', () => {

@@ -73,13 +73,18 @@ const prepareExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeasureWor
   ) {
     return yield* invalid('Owner scope is INDETERMINATE because resource references do not identify one Legal Entity');
   }
+  const { originatorInvocationId } = context;
+  if (originatorInvocationId === undefined) {
+    return yield* invalid('Owner work has no originating action invocation to act for');
+  }
+  const originator = { actionInvocationId: originatorInvocationId, tenantId: payload.handoff.tenantId };
   const gateway = yield* PrivacyMeasureOwnerGateway;
   const correlation = context.correlationId ?? context.messageId;
   const fingerprint = fingerprintPrivacyMeasureHandoff(payload.handoff);
-  const receipt = yield* gateway.load(payload.handoff, legalEntityId, correlation, context.compositionRevision);
+  const receipt = yield* gateway.load(payload.handoff, correlation, context.compositionRevision, originator);
   let outcome: OwnerExecutionOutcome;
   if (Option.isNone(receipt)) {
-    outcome = yield* gateway.execute(payload.handoff, legalEntityId, correlation, context.compositionRevision);
+    outcome = yield* gateway.execute(payload.handoff, correlation, context.compositionRevision, originator);
   } else {
     const { handoffFingerprint, outcome: durableOutcome } = receipt.value;
     if (handoffFingerprint !== fingerprint) {
@@ -90,7 +95,7 @@ const prepareExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeasureWor
   if (!outcomeMatches(payload, outcome)) {
     return yield* conflict('The owner outcome does not exactly partition the approved resource scope');
   }
-  return Option.some({ correlation, legalEntityId, outcome });
+  return Option.some({ correlation, originator, outcome });
 });
 
 export const handleExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeasureWorker.handle')(function* handle(
@@ -104,9 +109,9 @@ export const handleExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeas
   const gateway = yield* PrivacyMeasureOwnerGateway;
   return yield* gateway.report(
     prepared.value.outcome,
-    prepared.value.legalEntityId,
     prepared.value.correlation,
     context.compositionRevision,
+    prepared.value.originator,
   );
 });
 
@@ -156,9 +161,9 @@ export const executePrivacyMeasureWorker = defineOutboxWorker(
     const gateway = yield* PrivacyMeasureOwnerGateway;
     return yield* gateway.report(
       prepared.value.outcome,
-      prepared.value.legalEntityId,
       prepared.value.correlation,
       context.compositionRevision,
+      prepared.value.originator,
     );
   }),
 );

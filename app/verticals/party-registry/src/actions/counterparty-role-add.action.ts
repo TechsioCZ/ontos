@@ -2,12 +2,7 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug counterparty-role-add
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-  OperationContextUnavailable,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 
 import {
@@ -29,7 +24,7 @@ import { roleEvidenceIsSufficient } from '../../shared/domain/counterparty-role-
 import { OutboxPayloadSchema as CounterpartyRoleAddedEventSchema } from '../../shared/outbox/party-registry-counterparty-role-added-v1.ts';
 import { addCounterpartyRoleRecord } from '../services/counterparty-persistence.service.ts';
 import type { AddCounterpartyRoleResult as PersistenceResult } from '../services/counterparty-persistence.service.ts';
-import { counterpartyRoleWritePermission, failCounterpartyNotFound } from './counterparty-role-action-support.ts';
+import { failCounterpartyNotFound } from './counterparty-role-action-support.ts';
 import { createCounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxMessage } from './counterparty-role-add.party-registry-counterparty-role-added-v1.outbox-message.ts';
 
 export {
@@ -141,6 +136,15 @@ const handleCounterpartyRoleAdd = Effect.fn('CounterpartyRoleAddAction.handleCou
 
 export const counterpartyRoleAddAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.counterparty-role.add',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'counterparties', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.counterpartyRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.counterparty-role-add.access.v1',
@@ -154,10 +158,7 @@ export const counterpartyRoleAddAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.counterparty-role-add',
       moduleKey: 'party.registry',
       role: 'action',
@@ -167,7 +168,6 @@ export const counterpartyRoleAddAction = defineAction(
     owningModuleKey: 'party.registry',
     payloadSchema: CounterpartyRoleAddPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CounterpartyRoleAddPayload>(counterpartyRoleWritePermission),
     resultSchema: CounterpartyRoleAddResultSchema,
     schemaVersion: '1',
   },

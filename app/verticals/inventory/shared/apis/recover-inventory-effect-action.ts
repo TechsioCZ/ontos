@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug recover-inventory-effect
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/recover-inventory-effect.ts';
 
 export { RecoverInventoryEffectPayloadSchema } from '../actions/recover-inventory-effect.ts';
-
 const RecoverInventoryEffectActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -28,6 +28,7 @@ export const RecoverInventoryEffectActionForbiddenProblemSchema = makeProblemDet
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -159,7 +160,7 @@ type RecoverInventoryEffectActionEndpointContract = HttpApiEndpoint.HttpApiEndpo
   never,
   Schema.toCodecJson<Schema.toEncoded<typeof RecoverInventoryEffectPayloadSchema>>,
   Schema.toCodecStringTree<typeof RecoverInventoryEffectActionHeadersSchema>,
-  Schema.toCodecJson<typeof RecoverInventoryEffectResultSchema>,
+  Schema.toCodecJson<typeof RecoverInventoryEffectResultSchema | typeof ActionProposalAcceptedSchema>,
   Schema.toCodecJson<(typeof actionErrors)[number]>
 >;
 
@@ -170,7 +171,7 @@ const recoverInventoryEffectActionEndpoint: RecoverInventoryEffectActionEndpoint
     error: actionErrors,
     headers: RecoverInventoryEffectActionHeadersSchema,
     payload: Schema.toEncoded(RecoverInventoryEffectPayloadSchema),
-    success: RecoverInventoryEffectResultSchema,
+    success: [ActionProposalAcceptedSchema, RecoverInventoryEffectResultSchema],
   },
 );
 

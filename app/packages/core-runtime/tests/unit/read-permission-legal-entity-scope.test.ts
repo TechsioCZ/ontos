@@ -5,6 +5,7 @@ import { expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineRead } from '../../src/reads/definition.ts';
+import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
 import type { AnyReadRegistration } from '../../src/reads/definition.ts';
 import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
@@ -47,10 +48,18 @@ const resourceResolver = () => ({
   resource: { moduleId: MODULE_KEY, resourceId: 'conflict-1', resourceType: 'probe.inventory.conflict' },
 });
 
+/**
+ * O62: only a protected entrypoint carries access metadata, so the fixture declares one exactly when
+ * its classification is `context_permission`.
+ */
+const accessCarrier = (moduleKey: string, authorization: RegistrationInput['authorization']) =>
+  authorization.kind === 'context_permission' ? { accessDeclaration: fixtureReadAccess(moduleKey) } : {};
+
 const registration = (input: RegistrationInput) => {
   const moduleKey = input.entrypointScope === 'system' ? 'core.shell' : MODULE_KEY;
   return defineRead(
     {
+      ...accessCarrier(moduleKey, input.authorization),
       accessKind: 'detail',
       entrypoint:
         input.entrypointScope === 'system'

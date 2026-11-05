@@ -2,12 +2,14 @@ import { GatewayScopeGrantRegistrar } from '@app/core-runtime';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 
 import {
+  DELEGATED_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
+  GatewayActorClaimSchema,
   GatewayTrustedPrincipalContextSchema,
 } from '@app/shared-contracts';
-import type { GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
+import type { GatewayActorClaim, GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
 import {
   Cache,
   Clock,
@@ -62,11 +64,13 @@ export { GatewayIssuerErrorConstructor as GatewayIssuerError };
 export type GatewayIssuerError = Schema.Schema.Type<typeof GatewayIssuerErrorSchema>;
 
 export interface IssueGatewayAssertionInput<Principal = GatewayTrustedPrincipalContext> {
+  /** The calling module of a delegated call; present only for version 3 assertions. */
+  readonly actor?: GatewayActorClaim;
   readonly audience: string;
   readonly compositionRevision: string;
   readonly principal: Principal;
-  /** Private relay path retains the exact original signing interval. */
-  readonly sourceValidity?: { readonly expiresAt: number; readonly issuedAt: number };
+  /** Delegated paths keep the requester's exact signing interval; fresh issuance uses the default window. */
+  readonly sourceValidity?: { readonly expiresAt: number; readonly issuedAt: number } | undefined;
 }
 
 export interface GatewayIssuerLayerOptions {
@@ -153,6 +157,25 @@ const gatewayCrypto = Crypto.make({
 
 export const ShellCryptoLive = Layer.succeed(Crypto.Crypto, gatewayCrypto);
 
+/** The calling module of a delegated call, decoded at the signing boundary. */
+const decodeDelegatedActor = (actor: GatewayActorClaim) =>
+  Schema.decodeUnknownEffect(GatewayActorClaimSchema, { onExcessProperty: 'error' })(actor).pipe(
+    Effect.mapError((failureCause) => unavailable('principal', failureCause)),
+  );
+
+/** Version 3 is the only version that names a calling module; without one the subject's namespace decides. */
+const assertionVersionOf = (
+  principal: GatewayTrustedPrincipalContext,
+  actor: GatewayActorClaim | undefined,
+): number => {
+  if (actor !== undefined) {
+    return DELEGATED_GATEWAY_ASSERTION_VERSION;
+  }
+  return principal.authenticationNamespaceId === undefined
+    ? GATEWAY_ASSERTION_VERSION
+    : EXTERNAL_GATEWAY_ASSERTION_VERSION;
+};
+
 const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssuerService(
   options: GatewayIssuerLayerOptions,
 ) {
@@ -205,6 +228,14 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
       onExcessProperty: 'error',
     })(input.principal).pipe(Effect.mapError((failureCause) => unavailable('principal', failureCause)));
+    const actor = input.actor === undefined ? undefined : yield* decodeDelegatedActor(input.actor);
+    if (
+      actor !== undefined &&
+      (actor.principalId === principal.principalId || principal.authenticationNamespaceId === undefined)
+    ) {
+      // A version 3 assertion names two different parties, and its subject must carry an explicit namespace.
+      return yield* unavailable('principal');
+    }
     const admission = yield* options.loadAdmission.pipe(
       Effect.mapError((failureCause) => unavailable('audience', failureCause)),
     );
@@ -247,15 +278,15 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
       key: yield* loadSigningKey(configuration.privateJwk),
       kid: configuration.privateJwk.kid,
     };
-    const signer = new SignJWT({
-      compositionRevision: admission.revision,
-      principal,
-      targetBuildMarker,
-      ver:
-        principal.authenticationNamespaceId === undefined
-          ? GATEWAY_ASSERTION_VERSION
-          : EXTERNAL_GATEWAY_ASSERTION_VERSION,
-    })
+    const signer = new SignJWT(
+      withOptionalProperty(
+        { compositionRevision: admission.revision, principal, targetBuildMarker },
+        actor !== undefined,
+        'act',
+        actor,
+        { ver: assertionVersionOf(principal, actor) },
+      ),
+    )
       .setProtectedHeader({
         alg: 'EdDSA',
         kid: preparedSigningMaterial.kid,

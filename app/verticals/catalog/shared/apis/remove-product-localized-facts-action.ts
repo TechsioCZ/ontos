@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug remove-product-localized-facts
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/remove-product-localized-facts.ts';
 
 export { RemoveProductLocalizedFactsPayloadSchema } from '../actions/remove-product-localized-facts.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RemoveProductLocalizedFactsActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveProductLocalizedFactsActionInvalidProblem',
@@ -24,6 +26,7 @@ export const RemoveProductLocalizedFactsActionForbiddenProblemSchema = makeProbl
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const RemoveProductLocalizedFactsActionApi = HttpApi.make('RemoveProductL
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-product-localized-facts', {
         error: actionErrors,
         payload: Schema.toEncoded(RemoveProductLocalizedFactsPayloadSchema),
-        success: RemoveProductLocalizedFactsResultSchema,
+        success: [ActionProposalAcceptedSchema, RemoveProductLocalizedFactsResultSchema],
       }),
     )
     .middleware(RemoveProductLocalizedFactsActionSchemaErrorMiddleware),

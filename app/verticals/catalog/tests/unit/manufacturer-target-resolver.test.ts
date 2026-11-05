@@ -33,7 +33,6 @@ const scope = { requestId: 'catalog-read-1', tenantId };
 const detail = (kind: 'ALIAS' | 'DIRECT' = 'ALIAS', archivedAt: string | null = null) =>
   Schema.decodeSync(PartyDetailResponseSchema)({
     currentFactAssertions: [],
-    factHistory: null,
     party: {
       archivedAt,
       businessName: 'Maker',

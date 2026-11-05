@@ -46,6 +46,14 @@ const handleRequestSearchRebuild = Effect.fn('RequestSearchRebuildAction.handleR
 
 export const requestSearchRebuildAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.search-index.rebuild',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'maintenance', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.request-search-rebuild.access.v1',
@@ -56,10 +64,7 @@ export const requestSearchRebuildAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.request-search-rebuild',
       moduleKey: 'party.registry',
       role: 'action',
@@ -71,7 +76,6 @@ export const requestSearchRebuildAction = defineAction(
     policies: [],
     resultSchema: RequestSearchRebuildResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleRequestSearchRebuild,
 );

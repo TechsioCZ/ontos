@@ -15,6 +15,15 @@ import {
 
 export const dismissDuplicateCandidateAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.duplicate-candidate.dismiss',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'identity-review', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all', 'assigned'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.caseRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.dismiss-duplicate-candidate.access.v1',
@@ -25,10 +34,7 @@ export const dismissDuplicateCandidateAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.dismiss-duplicate-candidate',
       moduleKey: 'party.registry',
       role: 'action',
@@ -40,7 +46,6 @@ export const dismissDuplicateCandidateAction = defineAction(
     policies: [],
     resultSchema: DismissDuplicateCandidateResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'review_party_identity',
   },
   handleDuplicateCaseResolution,
   (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'DISMISSED_AS_NON_SUBJECT'),

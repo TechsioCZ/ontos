@@ -104,7 +104,6 @@ const ASSEMBLED_HANDLER_PROPERTY = 'handlers: apiHandlersLive,';
 const ASSEMBLED_HANDLER_DECLARATION = 'const apiHandlersLive = Layer.mergeAll(';
 
 const MODULE_CONTRACT_COMMAND = 'module-contract';
-const PERMISSION_FLAG = '--permission';
 const STRIP_TYPES_FLAG = '--experimental-strip-types';
 const SCAFFOLD_CLI_PATH = 'scripts/scaffolding/cli.mts';
 const MISSING_OWNER = 'missing-owner';
@@ -509,8 +508,13 @@ const scaffoldCommand = {
   searchProvider: 'search-provider',
   searchProviderAccess: 'search-provider-access',
 } as const;
+const selectionActionName = 'register-selection';
+const accessRiskFailure = 'extreme';
 const scaffoldFlag = {
-  accessFiltering: '--access-filtering',
+  accessRisk: '--access-risk',
+  accessSelectors: '--access-selectors',
+  accessWorkload: '--access-workload',
+  accessWorkloadKeys: '--access-workload-keys',
   authorization: '--authorization',
   legalEntityScope: '--legal-entity-scope',
   module: '--module',
@@ -907,17 +911,11 @@ const run = Effect.fn(function* scenario12(
       }
       if (!flags.includes(scaffoldFlag.authorization)) {
         if (command === 'action') {
-          flags = [
-            ...flags,
-            scaffoldFlag.authorization,
-            'action_execution',
-            '--provisioning',
-            'tenant_membership_default',
-          ];
+          flags = [...flags, scaffoldFlag.authorization, 'protected'];
         } else if (command === scaffoldCommand.outboxWorker) {
           flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
         } else if (contextPermissionCommands.has(command)) {
-          flags = [...flags, scaffoldFlag.authorization, 'context_permission', PERMISSION_FLAG, 'module.access'];
+          flags = [...flags, scaffoldFlag.authorization, 'protected'];
         }
       }
       return flags;
@@ -1020,7 +1018,11 @@ it.live(
     expect(getHelpText(scaffoldCommand.outboxMessage)).toMatch(
       /scaffold:outbox-message -- --scope core --module <core\.module>/u,
     );
-    expect(getHelpText(scaffoldCommand.searchProviderAccess)).toMatch(/--tenant-permission read_party_identity/u);
+    expect(getHelpText(scaffoldCommand.searchProviderAccess)).toMatch(/--legal-entity-scope <required\|optional>/u);
+    expect(getHelpText('action')).toMatch(/--access-risk <risk>/u);
+    expect(getHelpText('action')).toMatch(/--access-workload <reason>/u);
+    expect(getHelpText('action')).toMatch(/--access-workload-keys <keys>/u);
+    expect(getHelpText(scaffoldCommand.moduleApi)).toMatch(/--access-selectors/u);
   }),
 );
 
@@ -1050,12 +1052,8 @@ it.live(
           fixtureName.inventoryItems,
           scaffoldFlag.legalEntityScope,
           'optional',
-          scaffoldFlag.accessFiltering,
-          'tenant_scope',
           scaffoldFlag.requestFilters,
           'includeArchived',
-          '--tenant-permission',
-          'read_party_identity',
         ]);
 
         const [manifest, provider, contract] = yield* Effect.all(
@@ -1067,11 +1065,9 @@ it.live(
           { concurrency: 'unbounded' },
         );
         expect(manifest).toMatch(
-          /accessFiltering: 'tenant_scope'[\s\S]*?requestFilters: \['includeArchived'\][\s\S]*?tenantPermission: 'read_party_identity'/u,
+          /accessKey: 'inventory\.stock\.inventory-items\.search'[\s\S]*?requestFilters: \['includeArchived'\]/u,
         );
         expect(provider).toMatch(/legalEntityScope: 'optional'/u);
-        expect(provider).toMatch(/permissionTarget: 'tenant'/u);
-        expect(provider).toMatch(/kind: 'tenant', permission: 'read_party_identity'/u);
         expect(contract).toMatch(/includeArchived: Schema\.optionalKey\(Schema\.Boolean\)/u);
 
         const beforeProviderRerun = yield* snapshotTree(fixture.root);
@@ -1097,12 +1093,8 @@ it.live(
           fixtureName.inventoryItems,
           scaffoldFlag.legalEntityScope,
           'optional',
-          scaffoldFlag.accessFiltering,
-          'tenant_scope',
           scaffoldFlag.requestFilters,
           'includeArchived',
-          '--tenant-permission',
-          'read_party_identity',
         ]);
         expect(yield* snapshotTree(fixture.root)).toEqual(beforeIdempotentUpdate);
         yield* Effect.promise(() =>
@@ -1118,8 +1110,6 @@ it.live(
             fixtureName.inventoryItems,
             scaffoldFlag.legalEntityScope,
             'required',
-            scaffoldFlag.accessFiltering,
-            'resource_permission',
             scaffoldFlag.requestFilters,
             'includeArchived,role',
           ],
@@ -1519,7 +1509,7 @@ const assertGovernedReadProviders = (providers: readonly string[]): void => {
   for (const provider of providers) {
     expect(provider).toMatch(/defineRead\(/u);
     expect(provider).toMatch(/legalEntityScope: 'required'/u);
-    expect(provider).toMatch(/permissionTarget: 'module'/u);
+    expect(provider).toMatch(/accessDeclaration: \{/u);
     expect(provider).not.toMatch(/CoreDatabase|ScopedTransactionExecutor|from 'pg'/u);
   }
 };
@@ -2492,9 +2482,7 @@ it.live(
               '--action',
               fixtureName.action,
               scaffoldFlag.authorization,
-              'action_execution',
-              '--provisioning',
-              'tenant_membership_default',
+              'protected',
             ],
             { workspaceRoot: fixture.root },
           ).pipe(Effect.provide(NodeServices.layer)),
@@ -2926,7 +2914,7 @@ if (registration === undefined || !isActionRegistration(registration)) throw new
 export const moduleId = inventoryStockRegistration.moduleId;
 export const runWithOwnedAction = (runner, input) => runner({ ...input, registration });
 export const makeHarness = (applicationComposition) => makeActionTestHarness({
-  actionPermission: 'allowed', tenantPermission: 'allowed', applicationComposition,
+  access: 'allowed', actionPermission: 'allowed', tenantPermission: 'allowed', applicationComposition,
   expectedDeployment: ultramodernDeliveryUnit, ownerRegistration: inventoryStockRegistration,
 });
 `,
@@ -3464,6 +3452,14 @@ const handleCreateOrder2 = () =>
 
 export const createOrder2Action = defineAction(
   {
+    accessDeclaration: {
+      key: 'inventory.stock.order2.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'order2', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'inventory.stock.create-order2.access.v1',
@@ -3474,7 +3470,7 @@ export const createOrder2Action = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'inventory.stock.create-order2',
       moduleKey: 'inventory.stock',
       role: 'action',
@@ -4919,13 +4915,22 @@ export default PurchaseOrdersPage;
             'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts',
           ),
         ).toBe(`import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'inventory.stock.purchase-orders.view',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'purchase-orders', level: 'basic' },
+    risk: 'sensitive',
+    selectors: [],
+  },
   canonicalPath: '/inventory-stock/purchase-orders',
   descriptionKey: 'inventory.pages.purchaseOrders.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'module.access' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'inventory.stock.page.purchase-orders',
     moduleKey: 'inventory.stock',
     role: 'page',
@@ -4943,7 +4948,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'inventory.pages.purchaseOrders.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };
@@ -6034,16 +6039,7 @@ it.live(
         yield* expectFailure(
           runScaffoldEffect(
             scaffoldCommand.microverticalPage,
-            [
-              scaffoldFlag.vertical,
-              inventorySlug,
-              '--page',
-              'orders',
-              scaffoldFlag.authorization,
-              'context_permission',
-              PERMISSION_FLAG,
-              'module.access',
-            ],
+            [scaffoldFlag.vertical, inventorySlug, '--page', 'orders', scaffoldFlag.authorization, 'protected'],
             {
               routeRefresh: () =>
                 Effect.fail(
@@ -6320,6 +6316,7 @@ it.live(
               ['apps/shell-super-app/node_modules/@types/react', 'node_modules/@types/react', 'dir'],
               ['packages/core-runtime/node_modules/@types/pg', 'node_modules/@types/pg', 'dir'],
               ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],
+              ['packages/core-runtime/src/access', 'packages/core-runtime/src/access', 'dir'],
               ['packages/core-runtime/src/actions', 'packages/core-runtime/src/actions', 'dir'],
               ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
               ['packages/core-runtime/src/outbox', 'packages/core-runtime/src/outbox', 'dir'],
@@ -6337,20 +6334,23 @@ it.live(
           ),
           { concurrency: 'unbounded' },
         );
+        // Every Core module file the generated composition root resolves, read from Core instead of a
+        // frozen list: the fixture owns only the generated action catalog and generated core actions.
+        const coreModulesRoot = path.join(appRoot, 'packages/core-runtime/src/modules');
+        const coreModuleFiles = (yield* Effect.promise(() => readdir(coreModulesRoot, { withFileTypes: true })))
+          .filter((entry) => entry.isFile() && entry.name !== 'module-entrypoint.ts')
+          .map((entry) => entry.name);
+        const coreActionFiles = (yield* Effect.promise(() =>
+          readdir(path.join(coreModulesRoot, 'actions'), { withFileTypes: true }),
+        ))
+          .filter((entry) => entry.isFile() && entry.name !== 'catalog.ts')
+          .map((entry) => path.join('actions', entry.name));
         yield* Effect.all(
-          [
-            'module-entrypoint-gateway.ts',
-            'module-state-check-unavailable-error.ts',
-            'module-state-denied-error.ts',
-            'module-state-gate-errors.ts',
-            'module-state-gate.ts',
-            'tenant-module-state-errors.ts',
-            'tenant-module-state-service.ts',
-          ].map(
+          [...coreModuleFiles, ...coreActionFiles].map(
             Effect.fn(function* mergedScenario90(moduleFile) {
               return yield* Effect.promise(() =>
                 symlink(
-                  path.join(appRoot, 'packages/core-runtime/src/modules', moduleFile),
+                  path.join(coreModulesRoot, moduleFile),
                   path.join(fixture.root, 'packages/core-runtime/src/modules', moduleFile),
                   'file',
                 ),
@@ -6948,7 +6948,7 @@ const configureApiOnlyInventory = Effect.fn(function* configureApiOnlyInventory(
 });
 
 it.live(
-  'API-only business generators preserve server ownership, permission grammar and rerun adaptations',
+  'API-only business generators preserve server ownership and rerun adaptations',
   Effect.fn(function* apiOnlyBusinessGenerators() {
     yield* withFixture(
       Effect.fn(function* apiOnlyBusinessFixture(fixture) {
@@ -6956,32 +6956,21 @@ it.live(
         const before = yield* snapshotTree(fixture.root);
         const commands: readonly (readonly [ScaffoldCommand, readonly string[]])[] = [
           ['resource', [scaffoldFlag.vertical, inventorySlug, scaffoldFlag.resource, 'selection']],
-          [
-            'permission',
-            [
-              scaffoldFlag.vertical,
-              inventorySlug,
-              PERMISSION_FLAG,
-              'commerce.cart.read.open_selection_population',
-              '--scope',
-              'module',
-            ],
-          ],
-          ['action', [scaffoldFlag.vertical, inventorySlug, '--action', 'register-selection']],
+          ['action', [scaffoldFlag.vertical, inventorySlug, '--action', selectionActionName]],
           [scaffoldCommand.moduleApi, [scaffoldFlag.vertical, inventorySlug, '--name', 'open-selection-population']],
         ];
         yield* assertScaffoldRefused(
           fixture,
-          'permission',
+          'action',
           [
             scaffoldFlag.vertical,
             inventorySlug,
-            PERMISSION_FLAG,
-            'commerce.cart.read.open-selection-population',
-            '--scope',
-            'module',
+            '--action',
+            selectionActionName,
+            scaffoldFlag.accessRisk,
+            accessRiskFailure,
           ],
-          /stable lowercase dotted/u,
+          /--access-risk must be routine, sensitive, critical/u,
         );
         for (const [command, args] of commands) {
           expect((yield* run(fixture, command, args)).kind).toBe('generated');
@@ -6991,13 +6980,6 @@ it.live(
         expect(added.length).toBeGreaterThan(4);
         expect(added.filter((file) => /module-federation|src\/components|src\/routes|^apps\//u.test(file))).toEqual([]);
         expect(generated[shellSentinelFile]).toBe(before[shellSentinelFile]);
-        const permissionPath =
-          'verticals/inventory-stock/shared/permissions/commerce-cart-read-open-selection-population.ts';
-        expect(generated[permissionPath]).toContain("key: 'commerce.cart.read.open_selection_population'");
-        expect(generated[inventoryManifestFile]).toContain(
-          "import { commerceCartReadOpenSelectionPopulationPermission } from './shared/permissions/commerce-cart-read-open-selection-population.ts';",
-        );
-        expect(generated[inventoryManifestFile]).toContain('      commerceCartReadOpenSelectionPopulationPermission,');
         expect(generated[inventoryManifestFile]).toContain(
           "import { OpenSelectionPopulationApi } from './shared/apis/open-selection-population.ts';",
         );
@@ -7048,6 +7030,143 @@ it.live(
 );
 
 it.live(
+  'access carriers scaffold a record scope, a workload marker and refuse the invalid combinations',
+  Effect.fn(function* mergedScenarioAccessCarriers() {
+    yield* withFixture(
+      Effect.fn(function* mergedScenarioAccessCarrierFixture(fixture) {
+        const recordScopedActionName = 'reserve-stock';
+        const workloadActionName = 'apply-stock-hold';
+        const actionPath = `verticals/inventory-stock/src/actions/${recordScopedActionName}.action.ts`;
+        yield* run(fixture, 'action', [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--action',
+          recordScopedActionName,
+          scaffoldFlag.legalEntityScope,
+          'required',
+          scaffoldFlag.accessRisk,
+          'critical',
+          scaffoldFlag.accessSelectors,
+          'assigned,team',
+        ]);
+        const recordScoped = yield* readFixtureFile(fixture.root, actionPath);
+        expect(recordScoped).toMatch(/accessDeclaration: \{/u);
+        expect(recordScoped).toMatch(/risk: 'critical',/u);
+        expect(recordScoped).toMatch(/selectors: \['assigned', 'team'\],/u);
+        expect(recordScoped).toMatch(/recordId: Schema\.String\.check\(Schema\.isUUID\(\)\),/u);
+        expect(recordScoped).toMatch(
+          /accessTarget: \(input\) => \(\{ moduleKey: 'inventory\.stock', recordKey: input\.recordId \}\),/u,
+        );
+        expect(recordScoped).toMatch(/authorization: \{ kind: 'protected' \},/u);
+        expect(recordScoped).not.toMatch(/provisioning|permissionTarget|action_execution/u);
+
+        const workloadPath = `verticals/inventory-stock/src/actions/${workloadActionName}.action.ts`;
+        yield* run(fixture, 'action', [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--action',
+          workloadActionName,
+          scaffoldFlag.legalEntityScope,
+          'required',
+          scaffoldFlag.accessWorkload,
+          'the stock projection worker reserves stock outside any human session',
+          scaffoldFlag.accessWorkloadKeys,
+          'inventory.stock-projection-worker',
+        ]);
+        const workload = yield* readFixtureFile(fixture.root, workloadPath);
+        expect(workload).toMatch(
+          /accessWorkload: \{\n\s+reason: 'the stock projection worker reserves stock outside any human session',\n\s+workloads: \['inventory\.stock-projection-worker'\],\n\s+\},/u,
+        );
+        expect(workload).not.toMatch(/accessDeclaration: \{/u);
+        expect(workload).not.toMatch(/recordId: Schema/u);
+
+        // O73: a workload marker without its registered keys is refused before anything is written.
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--action',
+            workloadActionName,
+            scaffoldFlag.legalEntityScope,
+            'required',
+            scaffoldFlag.accessWorkload,
+            'a machine writes here',
+          ],
+          /--access-workload requires --access-workload-keys/u,
+        );
+
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--action',
+            workloadActionName,
+            scaffoldFlag.legalEntityScope,
+            'required',
+            scaffoldFlag.accessWorkload,
+            'a machine writes here',
+            scaffoldFlag.accessWorkloadKeys,
+            'inventory.machine-provisioner',
+            scaffoldFlag.accessSelectors,
+            'assigned',
+          ],
+          /a workload Action declares no access risk or selectors/u,
+        );
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--action',
+            recordScopedActionName,
+            scaffoldFlag.legalEntityScope,
+            'required',
+            scaffoldFlag.accessSelectors,
+            'assigned,tenant',
+          ],
+          /--access-selectors may contain only all, assigned, entrusted, team/u,
+        );
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--action',
+            recordScopedActionName,
+            scaffoldFlag.legalEntityScope,
+            'required',
+            scaffoldFlag.authorization,
+            'authenticated_principal',
+          ],
+          /--authorization must be protected for Actions/u,
+        );
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalPage,
+          [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            '--page',
+            'selections',
+            scaffoldFlag.authorization,
+            'protected',
+            scaffoldFlag.accessSelectors,
+            'assigned',
+          ],
+          /--access-selectors require a single-record read/u,
+        );
+      }),
+    );
+  }),
+);
+
+it.live(
   'scaffold executable preserves success and fails malformed requests and generator errors without writes',
   Effect.fn(function* executableStatusControls() {
     yield* withFixture(
@@ -7063,13 +7182,13 @@ it.live(
           [MODULE_CONTRACT_COMMAND, '--unknown-flag', 'x'],
           ['unknown-command'],
           [
-            'permission',
+            'action',
             scaffoldFlag.vertical,
             inventorySlug,
-            PERMISSION_FLAG,
-            'commerce.cart.read.open-selection-population',
-            '--scope',
-            'module',
+            '--action',
+            selectionActionName,
+            scaffoldFlag.accessRisk,
+            accessRiskFailure,
           ],
           [MODULE_CONTRACT_COMMAND, scaffoldFlag.vertical, MISSING_OWNER, scaffoldFlag.module, MISSING_MODULE],
           // Existing owner files make this a controlled generator overwrite failure.

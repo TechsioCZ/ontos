@@ -19,6 +19,17 @@ import {
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type {
+  AccessDecisionGate,
+  AccessDecisionLog,
+  AccessIntent,
+  AccessPrincipalKindSource,
+  AccessWorkloadBindingSource,
+  DecisionCheck,
+  LegalEntityCandidates,
+} from '@app/core-runtime/access/enforcement';
+import type {
+  DatabaseConfigError,
+  DatabaseConnectionError,
   ActionCoreError,
   ActionAuthorizationPreflightInput,
   ActionAuthorizationPreflightService,
@@ -45,11 +56,14 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionRepositoryLive,
   ActionPermissionLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
@@ -135,8 +149,24 @@ const runtimeObservabilityLive = Layer.mergeAll(
 );
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive: Layer.Layer<
+  | AccessDecisionGate
+  | AccessDecisionLog
+  | AccessIntent
+  | AccessPrincipalKindSource
+  | AccessWorkloadBindingSource
+  | DecisionCheck
+  | LegalEntityCandidates,
+  DatabaseConfigError | DatabaseConnectionError
+> = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(
@@ -165,6 +195,7 @@ export const commerceMarketCatalogActionRuntimeDependenciesLive: Layer.Layer<
     | CommerceMarketCatalogActionRuntimeDependencyLayers
     | typeof TenantModuleStateServiceLive
     | typeof ActiveApplicationCompositionSourceLive
+    | typeof DatabaseConfigLive
   >,
   Layer.Services<typeof CorePersistenceLive> | Crypto.Crypto
 > = Layer.mergeAll(
@@ -183,7 +214,7 @@ const actionRuntimeDependenciesLive = commerceMarketCatalogActionRuntimeDependen
 const baseProductionActionRuntimeLive = makeActionRuntimeLive(
   ultramodernDeliveryUnit,
   commerceMarketCatalogRegistration,
-).pipe(Layer.provide(actionRuntimeDependenciesLive));
+).pipe(Layer.provide(Layer.mergeAll(accessEnforcementLive, actionRuntimeDependenciesLive)));
 const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -191,6 +222,7 @@ const productionReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, c
       ContextAccessLive,
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
+      accessEnforcementLive,
       activeApplicationCompositionLive,
     ),
   ),
@@ -202,7 +234,7 @@ interface MarketRetirementRuntimeBindingServices {
   readonly base: ActionRuntimeService;
   readonly coreFactory: Layer.Layer<
     ActionRuntime,
-    MarketRetirementImpactAssessmentUnavailable,
+    MarketRetirementImpactAssessmentUnavailable | Layer.Error<typeof accessEnforcementLive>,
     ActionAuthorizationPreflight
   >;
   readonly crypto: Crypto.Crypto;
@@ -486,7 +518,7 @@ const nativeRetirementBindingsLive = Layer.effect(
     return {
       base,
       coreFactory: makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
-        Layer.provide(Layer.succeedContext(dependencies)),
+        Layer.provide(Layer.mergeAll(accessEnforcementLive, Layer.succeedContext(dependencies))),
       ),
       crypto,
       readRuntime,

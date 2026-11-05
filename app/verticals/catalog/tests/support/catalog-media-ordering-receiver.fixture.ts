@@ -58,6 +58,7 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { createProductActionApiLive } from '../../api/create-product-action-server.ts';
 import { assignCatalogMediaActionApiLive } from '../../api/assign-catalog-media-action-server.ts';
 import { reorderCatalogMediaActionApiLive } from '../../api/reorder-catalog-media-action-server.ts';
@@ -95,6 +96,9 @@ export const MediaOrderingBootstrapSchema = Schema.Struct({
   actor: TrustedPrincipalContextSchema,
   composition: ActiveApplicationCompositionSnapshotSchema,
   database: MediaOwnedDatabaseCertificateSchema,
+  // A person this native database has no v2 assignment for. The fixture's gate names that fact
+  // instead of reading a SpiceDB resource tuple, which v2 no longer consults (O62).
+  deniedPrincipalId: TrustedPrincipalContextSchema.fields.principalId,
   issuer: bounded,
   jwks: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16_384)),
   spiceDb: Schema.Struct({
@@ -377,10 +381,29 @@ const serveCatalog = Effect.fn('MediaOrdering.serveCatalog')(function* serveCata
     Layer.provide(TenantModuleStateServiceLive.pipe(Layer.provide(persistence))),
   );
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
-  const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
+  // The one access gate this receiver scripts (CUTOVER-PLAN §3.1 step 8). The owned database carries
+  // no v2 access intent and reaches no engine, so the seam answers ALLOWED for the admitted actor and
+  // DENIED for the named principal, while the real scope resolver still asks it which companies the
+  // actor may select (O28).
+  const access = makeTestAccessGateLayers({
+    deniedPrincipalIds: [bootstrap.deniedPrincipalId],
+    spec: { defaultAnswer: { outcome: 'ALLOWED' } },
+  });
+  const resolver = OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
+  );
   const namespace = staffAuthenticationNamespaceRegistryLayer(['catalog']);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(bootstrap.composition));
-  const common = Layer.mergeAll(persistence, ContextAccessLive, stateGate, gateway, resolver, namespace, composition);
+  const common = Layer.mergeAll(
+    persistence,
+    ContextAccessLive,
+    stateGate,
+    gateway,
+    resolver,
+    namespace,
+    composition,
+    access,
+  );
   const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),

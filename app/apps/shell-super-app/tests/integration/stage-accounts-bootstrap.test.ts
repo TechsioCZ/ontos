@@ -6,48 +6,10 @@ import { eq } from 'drizzle-orm';
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Redacted } from 'effect';
 import { describe, expect, it, rstest } from 'effect-rstest';
 
-import { parseStageAccountsFile } from '@app/core-runtime/install/stage-accounts-file';
-
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, session, user } from '../../api/auth/db/schema.ts';
-import {
-  bootstrapStageAccounts,
-  ensureStageAccountAuthUser,
-} from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
-
-/** A one-account stage accounts file with fresh identifiers, as the operator would write it. */
-const oneAccountFileSource = (): string =>
-  JSON.stringify({
-    retiredAccountEmails: [],
-    retiredTenants: [],
-    schemaVersion: 2,
-    tenants: [
-      {
-        accounts: [
-          {
-            authBindingId: randomUUID(),
-            displayName: 'First',
-            email: `stage-first-${randomUUID()}@example.test`,
-            grants: { explicitActions: [], tenantRelations: [] },
-            password: randomUUID(),
-            principalId: randomUUID(),
-          },
-        ],
-        defaultLocale: 'cs',
-        displayName: 'Tenant A',
-        legalEntity: {
-          legalEntityId: randomUUID(),
-          legalName: 'Tenant A Legal',
-          registrationCountry: 'CZ',
-          registrationNumber: 'FIXTURE-A',
-        },
-        moduleStateId: randomUUID(),
-        slug: 'tenant-a',
-        tenantId: randomUUID(),
-      },
-    ],
-  });
+import { ensureStageAccountAuthUser } from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 
 describe('stage-accounts-bootstrap', () => {
   it.live('replaces an unreadable account password and revokes its sessions', () =>
@@ -145,13 +107,14 @@ describe('stage-accounts-bootstrap', () => {
               }),
             );
             const database = yield* makeAuthDatabase(configuration);
-            const accountsFile = yield* parseStageAccountsFile({ mode: 0o600, source: oneAccountFileSource() });
-            return yield* bootstrapStageAccounts({
-              accountsFile,
-              authBaseUrl: configuration.baseUrl,
-              authSecret: configuration.secret,
-              databaseAdminUrl: configuration.connectionString,
-            }).pipe(
+            return yield* ensureStageAccountAuthUser(
+              { authBaseUrl: configuration.baseUrl, authSecret: configuration.secret },
+              {
+                displayName: 'First',
+                email: `stage-first-${randomUUID()}@example.test`,
+                password: Redacted.make(randomUUID()),
+              },
+            ).pipe(
               Effect.provideService(AuthDatabase, {
                 adapter: (options) => {
                   const adapter = sdkAdapter(options);

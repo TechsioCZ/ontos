@@ -22,11 +22,8 @@ const OWNER_MODULE_REFERENCE = 'id: ownerModuleKey';
 const RUNTIME_MANIFEST_DECLARATION = 'export const propertyRegistryRuntimeManifest';
 const OUTBOX_MESSAGE_COMMAND = 'outbox-message';
 const MODULE_REGISTRATION_FILE = 'vertical.registration.ts';
-const PERMISSION_FLAG = '--permission';
-const MODULE_ACCESS_PERMISSION = 'module.access';
 const RECORD_CHANGE_ACTION = 'record-change';
 const LEGAL_ENTITY_SCOPE_FLAG = '--legal-entity-scope';
-const PROVISIONING_FLAG = '--provisioning';
 const DOCUMENTS_CHANGED_TOPIC = 'documents.center.changed';
 const PRODUCER_FLAG = '--producer';
 const OUTBOX_WORKER_COMMAND = 'outbox-worker';
@@ -413,16 +410,7 @@ it.live(
       Effect.fn(function* verifySharedOwner(root) {
         yield* scaffold(root);
         yield* linkFixtureDependencies(root, appRoot, { '@app/shared-contracts': 'packages/shared-contracts' });
-        const apiFlags = [
-          VERTICAL_FLAG,
-          APP_ID,
-          '--name',
-          'current-details',
-          AUTHORIZATION_FLAG,
-          'context_permission',
-          PERMISSION_FLAG,
-          MODULE_ACCESS_PERMISSION,
-        ];
+        const apiFlags = [VERTICAL_FLAG, APP_ID, '--name', 'current-details', AUTHORIZATION_FLAG, 'protected'];
         yield* runScaffoldEffect(MODULE_API_COMMAND, apiFlags, { workspaceRoot: root }).pipe(
           Effect.provide(NodeServices.layer),
         );
@@ -434,9 +422,7 @@ it.live(
           LEGAL_ENTITY_SCOPE_FLAG,
           'optional',
           AUTHORIZATION_FLAG,
-          'action_execution',
-          PROVISIONING_FLAG,
-          'tenant_membership_default',
+          'protected',
         ];
         yield* runScaffoldEffect('action', actionFlags, { workspaceRoot: root }).pipe(
           Effect.provide(NodeServices.layer),
@@ -558,16 +544,7 @@ it.live(
         ]) {
           expect(() => bindSharedRuntimeWorkerEntry(invalidEntry, 'propertyRegistry')).toThrow(/binding/u);
         }
-        const nextFlags = [
-          VERTICAL_FLAG,
-          APP_ID,
-          '--name',
-          'current-summary',
-          AUTHORIZATION_FLAG,
-          'context_permission',
-          PERMISSION_FLAG,
-          MODULE_ACCESS_PERMISSION,
-        ];
+        const nextFlags = [VERTICAL_FLAG, APP_ID, '--name', 'current-summary', AUTHORIZATION_FLAG, 'protected'];
         yield* runScaffoldEffect(MODULE_API_COMMAND, nextFlags, { workspaceRoot: root }).pipe(
           Effect.provide(NodeServices.layer),
         );
@@ -673,9 +650,7 @@ it.live(
                 LEGAL_ENTITY_SCOPE_FLAG,
                 'optional',
                 AUTHORIZATION_FLAG,
-                'action_execution',
-                PROVISIONING_FLAG,
-                'tenant_membership_default',
+                'protected',
               ],
               { workspaceRoot: root },
             ).pipe(Effect.provide(NodeServices.layer)),
@@ -770,16 +745,7 @@ it.live(
             ),
           ),
         );
-        const flags = [
-          VERTICAL_FLAG,
-          APP_ID,
-          '--name',
-          'current-details',
-          AUTHORIZATION_FLAG,
-          'context_permission',
-          PERMISSION_FLAG,
-          MODULE_ACCESS_PERMISSION,
-        ];
+        const flags = [VERTICAL_FLAG, APP_ID, '--name', 'current-details', AUTHORIZATION_FLAG, 'protected'];
         yield* runScaffoldEffect(MODULE_API_COMMAND, flags, { workspaceRoot: root }).pipe(
           Effect.provide(NodeServices.layer),
         );
@@ -794,9 +760,7 @@ it.live(
           LEGAL_ENTITY_SCOPE_FLAG,
           'optional',
           AUTHORIZATION_FLAG,
-          'action_execution',
-          PROVISIONING_FLAG,
-          'tenant_membership_default',
+          'protected',
         ];
         yield* runScaffoldEffect('action', [VERTICAL_FLAG, APP_ID, ...actionFlags], { workspaceRoot: root }).pipe(
           Effect.provide(NodeServices.layer),
@@ -928,25 +892,11 @@ it.live(
               LEGAL_ENTITY_SCOPE_FLAG,
               'optional',
               AUTHORIZATION_FLAG,
-              'action_execution',
-              PROVISIONING_FLAG,
-              'tenant_membership_default',
+              'protected',
             ],
           ],
           ['microvertical-action-boundary', [VERTICAL_FLAG, APP_ID]],
-          [
-            'microvertical-page',
-            [
-              VERTICAL_FLAG,
-              APP_ID,
-              '--page',
-              'properties',
-              AUTHORIZATION_FLAG,
-              'context_permission',
-              PERMISSION_FLAG,
-              MODULE_ACCESS_PERMISSION,
-            ],
-          ],
+          ['microvertical-page', [VERTICAL_FLAG, APP_ID, '--page', 'properties', AUTHORIZATION_FLAG, 'protected']],
           ['outbox-message', [VERTICAL_FLAG, APP_ID, '--action', 'create-property', '--topic', 'property.created']],
           [
             OUTBOX_WORKER_COMMAND,

@@ -22,7 +22,7 @@ const unavailable = (cause: unknown) => {
 
 const responsibilityAssignmentsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.responsibility.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.responsibility-assignments',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -30,6 +30,14 @@ const responsibilityAssignmentsEntrypoint = defineTenantModuleEntrypoint({
 
 export const responsibilityAssignmentsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.privacy-responsibility.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'processing-governance', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: responsibilityAssignmentsEntrypoint,
     evidencePolicy: {
@@ -39,7 +47,6 @@ export const responsibilityAssignmentsRead = defineRead(
     inputSchema: ResponsibilityAssignmentsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.responsibility-assignments',
     resultSchema: ResponsibilityAssignmentsResponseSchema,
@@ -66,5 +73,4 @@ export const responsibilityAssignmentsRead = defineRead(
     }).pipe(Effect.mapError(unavailable));
   },
   (transaction, scope) => privacyOperationRepositoryForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

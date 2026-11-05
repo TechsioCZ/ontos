@@ -141,7 +141,7 @@ describe('Product Unit governed Actions', () => {
           }),
       };
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         ownerRegistration: catalogRegistration,
         services: [bindActionTestServices(createProductUnitAction, services)],
       });
@@ -164,7 +164,7 @@ describe('Product Unit governed Actions', () => {
       expect(captured).toHaveLength(1);
 
       const failed = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(createProductUnitAction, {
@@ -206,10 +206,7 @@ describe('Product Unit governed Actions', () => {
     ]) {
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
   });
 

@@ -1,6 +1,7 @@
 import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
   canonicalPath: '/',
   descriptionKey: 'privacy.seo.description',
   entrypoint: defineTenantModuleEntrypoint({
@@ -23,7 +24,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'privacy.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

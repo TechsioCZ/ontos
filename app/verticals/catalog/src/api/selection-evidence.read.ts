@@ -49,7 +49,7 @@ const selectionEvidenceServices = (
 
 const selectionEvidenceEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.selection-evidence' },
+  authorization: { kind: 'protected' },
   entrypointKey: readKey,
   moduleKey,
   role: 'api',
@@ -82,13 +82,25 @@ export const readSelectionEvidence = Effect.fn('SelectionEvidenceRead.read')(fun
 /** Cart-qualified purposes remain unbound until Cart publishes its owner read; PRICING is Catalog-local. */
 export const selectionEvidenceRead = defineRead(
   {
+    accessActor: {
+      callers: ['pricing'],
+      reason: 'The Pricing service reads Catalog selection evidence for the buyer whose price decision it evaluates',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.catalog.selection-evidence.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'selection-evidence', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: selectionEvidenceEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: `${readKey}.evidence.v1` },
     inputSchema: SelectionEvidenceRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: moduleKey,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.selection-evidence',
     resultSchema: SelectionEvidenceResponseSchema,
@@ -99,5 +111,4 @@ export const selectionEvidenceRead = defineRead(
       Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
     ),
   (transaction, scope) => Effect.succeed(selectionEvidenceServices(transaction, scope, unavailableOwnerEvidence)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

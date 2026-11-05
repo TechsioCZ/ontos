@@ -49,10 +49,6 @@ export const OrderCommitmentIdSchema = commitmentIdText.pipe(
   Schema.brand('OrderCommitmentId'),
   Schema.decodeTo(commitmentIdText),
 );
-const ServiceProofActorPrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('OrderServiceProofActorPrincipalId'),
-  Schema.decodeTo(Schema.String.check(Schema.isUUID())),
-);
 export const OrderFinalizationStageSchema = Schema.Literals(['PREPARE', 'PROOF', 'CONSUME']);
 export const OrderCommitmentHashSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 export const OrderCommitmentInstantSchema = Schema.DateTimeUtcFromString;
@@ -113,13 +109,10 @@ export const OrderCommitmentAttemptSchema = Schema.Struct({
   updatedAt: OrderCommitmentInstantSchema,
 });
 
-export const OrderApprovalProofIssuerSchema = Schema.Union([
-  Schema.Struct({ buyerPrincipalId: OrderBuyerPrincipalIdSchema, kind: Schema.Literal('BUYER') }),
-  Schema.Struct({
-    kind: Schema.Literal('ORDER_SERVICE'),
-    serviceProofActorPrincipalId: ServiceProofActorPrincipalIdSchema,
-  }),
-]);
+export const OrderApprovalProofIssuerSchema = Schema.Struct({
+  buyerPrincipalId: OrderBuyerPrincipalIdSchema,
+  kind: Schema.Literal('BUYER'),
+});
 export const CommittedOrderSchema = Schema.Struct({
   acceptedAt: OrderCommitmentInstantSchema,
   approvalIssuer: OrderApprovalProofIssuerSchema,
@@ -173,6 +166,13 @@ export type RecordPrecommitFailureInput = typeof RecordPrecommitFailureInputSche
 
 export const CommitOrderInputSchema = Schema.Struct({
   ...OrderAttemptMutationSchema.fields,
+  /**
+   * The owner-verified frozen purchase value of the prepared Order (O91). The gate reads its exact
+   * `monetaryAmount` as the governed amount before admission; the commit handler re-checks it against
+   * the stored Bundle in the same transaction before anything is written, so the value never
+   * authorizes anything on its own (O18).
+   */
+  purchaseValue: PurchaseProposalRevisionSchema.fields.purchaseValue,
   revalidationRef: OrderResourceRefSchema,
 });
 export type CommitOrderInput = typeof CommitOrderInputSchema.Type;
@@ -273,20 +273,33 @@ export const OrderFinalizationWorkResponseSchema = Schema.Union([
 ]);
 export type OrderFinalizationWorkRequest = typeof OrderFinalizationWorkRequestSchema.Type;
 export type OrderFinalizationWorkResponse = typeof OrderFinalizationWorkResponseSchema.Type;
-export const CompleteOrderPreparationInputSchema = Schema.Struct({ intentRef: OrderResourceRefSchema });
+/**
+ * The action invocation that enqueued the finalization work the worker delivers. Completion acts for
+ * that invocation's subject (the buyer), so the owner check and the outgoing delegation both name it.
+ */
+export const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ActionInvocationId'));
+export const CompleteOrderPreparationInputSchema = Schema.Struct({
+  intentRef: OrderResourceRefSchema,
+  originatorActionInvocationId: ActionInvocationIdSchema,
+});
 export const OrderProofSetSelectorsSchema = Schema.Struct({
   confirmationRef: OrderCommitmentIdSchema,
   intentRef: OrderResourceRefSchema,
+  originatorActionInvocationId: ActionInvocationIdSchema,
   revalidationRef: OrderResourceRefSchema,
 });
 export const RecordOrderProofSetInputSchema = Schema.Union([
   OrderProofSetSelectorsSchema,
   Schema.Struct({
     intentRef: OrderResourceRefSchema,
+    originatorActionInvocationId: ActionInvocationIdSchema,
     outcome: Schema.Literals(['APPROVAL_REQUEST_TERMINAL', 'PRICING_QUOTATION_EXPIRED']),
   }),
 ]);
-export const CompleteOrderApprovalConsumptionInputSchema = Schema.Struct({ intentRef: OrderResourceRefSchema });
+export const CompleteOrderApprovalConsumptionInputSchema = Schema.Struct({
+  intentRef: OrderResourceRefSchema,
+  originatorActionInvocationId: ActionInvocationIdSchema,
+});
 export type CompleteOrderPreparationInput = typeof CompleteOrderPreparationInputSchema.Type;
 export type RecordOrderProofSetInput = typeof RecordOrderProofSetInputSchema.Type;
 export type CompleteOrderApprovalConsumptionInput = typeof CompleteOrderApprovalConsumptionInputSchema.Type;

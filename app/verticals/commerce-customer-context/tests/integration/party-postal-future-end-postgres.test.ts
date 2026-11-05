@@ -1,4 +1,3 @@
-import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
 import { randomUUID } from 'node:crypto';
@@ -11,8 +10,6 @@ import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   ActiveApplicationCompositionSnapshotSchema,
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
   ContextAccessLive,
   OntosModuleDeploymentContractSchema,
   defineScopedRoutine,
@@ -51,10 +48,6 @@ import { HttpServer, HttpServerResponse } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { RetailPortalBindingResultSchema } from '../../shared/actions/bind-retail-portal-profile.ts';
-import {
-  RETAIL_PORTAL_SELF_SERVICE_BASELINE,
-  RetailPortalPermissionCodeSchema,
-} from '../../shared/domain/profile-contracts.ts';
 import { AddSavedAddressPayloadSchema, UpdateSavedAddressPayloadSchema } from '../../shared/domain/address-actions.ts';
 import {
   AddressBookDomainErrorSchema,
@@ -73,7 +66,6 @@ import {
   profileReactivationEligibilityEvaluatorFactoryLive,
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
 import {
@@ -122,90 +114,6 @@ const bindProfile = defineScopedRoutine({
     payload: RetailPortalBindingResultSchema,
   }),
   routineKey: 'test.native-binding',
-  schema: 'commerce_customer_context',
-});
-const NativeIdentitySchema = Schema.String.pipe(Schema.brand('NativeIdentity'));
-const readBindingIntent = defineScopedRoutine({
-  name: 'read_retail_portal_profile_binding_permission_mutation',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-  ] as const,
-  resultSchema: Schema.Struct({
-    outcome: Schema.Literal('AUTHORIZATION_AVAILABLE'),
-    payload: Schema.Struct({
-      actionInvocationId: NativeIdentitySchema,
-      bindingId: NativeIdentitySchema,
-      mutationId: NativeIdentitySchema,
-      operation: Schema.Literal('grant'),
-      permission: RetailPortalPermissionCodeSchema,
-      principalId: NativeIdentitySchema,
-      profileId: NativeIdentitySchema,
-      state: Schema.Literal('PENDING_GRANT'),
-    }),
-  }),
-  routineKey: 'profile.binding-authorization-intent-read',
-  schema: 'commerce_customer_context',
-});
-const BindingFinalizedOutcomeSchema = Schema.Literals(['AUTHORIZATION_FINALIZED', 'AUTHORIZATION_ALREADY_FINAL']);
-const finalizeBindingIntent = defineScopedRoutine({
-  name: 'finalize_retail_portal_profile_binding_permission_mutation',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'text' },
-  ] as const,
-  resultSchema: Schema.Struct({
-    outcome: BindingFinalizedOutcomeSchema,
-    payload: Schema.Struct({ state: Schema.Literal('ACTIVE') }),
-  }),
-  routineKey: 'profile.binding-authorization-intent-finalize',
-  schema: 'commerce_customer_context',
-});
-const finalizeBinding = defineScopedRoutine({
-  name: 'finalize_retail_portal_binding_authorization',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'integer' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'timestamptz' },
-    { source: 'input', type: 'text' },
-    { source: 'input', type: 'uuid' },
-  ] as const,
-  resultSchema: Schema.Struct({
-    outcome: BindingFinalizedOutcomeSchema,
-    payload: Schema.Struct({ authorizationState: Schema.Literal('ACTIVE') }),
-  }),
-  routineKey: 'profile.binding-authorization-finalize',
-  schema: 'commerce_customer_context',
-});
-const readBindingAuthority = defineScopedRoutine({
-  name: 'read_retail_portal_binding_authorization',
-  ownerModuleKey: 'commerce.customer-context',
-  parameters: [
-    { source: 'tenantId', type: 'uuid' },
-    { source: 'legalEntityId', type: 'uuid' },
-    { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
-  ] as const,
-  resultSchema: Schema.Struct({
-    outcome: Schema.Literal('AUTHORIZATION_AVAILABLE'),
-    payload: Schema.Struct({
-      authorizationState: Schema.Literal('ACTIVE'),
-      pendingCount: Schema.Int,
-      terminalCount: Schema.Int,
-    }),
-  }),
-  routineKey: 'profile.binding-authorization-read',
   schema: 'commerce_customer_context',
 });
 
@@ -417,6 +325,7 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
   const scopeGrantRegistrar = makeGatewayScopeGrantRegistrar(Context.get(issuerContext, PgClient.PgClient));
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         'party.registry.create-party',
@@ -555,12 +464,8 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
     retailFactory,
     partyRegistryGuestResolverFactoryLive,
     profileCounterpartyRoleEligibilityResolverFactoryLive,
-    profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive)),
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),
-    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-      Layer.provide(profileRetailPermissionReaderFactoryLive),
-      Layer.provide(ContextAccessLive),
-    ),
+    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive)),
   );
   const context = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(owners)));
   const runtime = Context.get(context, ActionRuntime);
@@ -638,9 +543,7 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
     .prepareOwner(
       (transaction) =>
         Effect.gen(function* bindExactRetailProfile() {
-          const at = bindingEffectiveAt;
           // Initial TEST authority attribution, not represented as a Core Action invocation.
-          const bindingInvocationId = randomUUID();
           const [binding] = yield* transaction.invoke(bindProfile, [
             profile.profileRef.resourceId,
             fixture.manager.principalId,
@@ -649,88 +552,18 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
             null,
             null,
             'BIND',
-            at,
+            bindingEffectiveAt,
             'Native postal source permission proof',
-            bindingInvocationId,
+            randomUUID(),
             fixture.manager.principalId,
           ]);
           assert.isOk(binding !== undefined);
-          return { at, binding: binding.payload, bindingInvocationId };
+          return binding.payload;
         }),
       'required',
     )
     .pipe(Effect.provideContext(context));
-  const profileId = profile.profileRef.resourceId;
-  const mutationContext = yield* Layer.build(BusinessPermissionRelationshipMutationLive);
-  const business = Context.get(mutationContext, BusinessPermissionRelationshipMutation);
-  const intents = prepared.binding.permissionMutations;
-  assert.isOk(intents !== undefined);
-  expect(intents).toHaveLength(RETAIL_PORTAL_SELF_SERVICE_BASELINE.length);
-  expect(new Set(intents.map(({ permission }) => permission))).toEqual(new Set(RETAIL_PORTAL_SELF_SERVICE_BASELINE));
-  for (const intent of intents) {
-    const grant = {
-      permission: intent.permission,
-      principal: { principalId: fixture.manager.principalId, tenantId: fixture.tenantId },
-      target: {
-        kind: 'retail_profile' as const,
-        legalEntityId: fixture.legalEntityId,
-        profileId,
-        tenantId: fixture.tenantId,
-      },
-    };
-    yield* fixture
-      .prepareOwner(
-        (transaction) =>
-          Effect.gen(function* reconcileExactBindingIntent() {
-            const [current] = yield* transaction.invoke(readBindingIntent, [intent.mutationId]);
-            expect(current?.payload).toMatchObject({
-              actionInvocationId: prepared.bindingInvocationId,
-              bindingId: prepared.binding.bindingRef.resourceId,
-              mutationId: intent.mutationId,
-              operation: 'grant',
-              permission: intent.permission,
-              principalId: fixture.manager.principalId,
-              profileId,
-              state: 'PENDING_GRANT',
-            });
-            yield* business.mutate({ ...grant, operation: 'grant', target: customerOwnerPermissionTarget(grant) });
-            yield* transaction.invoke(finalizeBindingIntent, [intent.mutationId, 'grant', 'ACTIVE']);
-          }),
-        'required',
-      )
-      .pipe(Effect.provideContext(context));
-    yield* Effect.addFinalizer(() =>
-      business
-        .mutate({ ...grant, operation: 'revoke', target: customerOwnerPermissionTarget(grant) })
-        .pipe(Effect.orDie),
-    );
-  }
-  yield* fixture
-    .prepareOwner(
-      (transaction) =>
-        Effect.gen(function* finalizeExactBindingAuthority() {
-          yield* transaction.invoke(finalizeBinding, [
-            prepared.binding.bindingRef.resourceId,
-            'grant',
-            prepared.binding.revision,
-            prepared.bindingInvocationId,
-            prepared.at,
-            'Native purchase permission proof',
-            fixture.manager.principalId,
-          ]);
-          const [authority] = yield* transaction.invoke(readBindingAuthority, [
-            prepared.binding.bindingRef.resourceId,
-            'grant',
-          ]);
-          expect(authority?.payload).toMatchObject({
-            authorizationState: 'ACTIVE',
-            pendingCount: 0,
-            terminalCount: RETAIL_PORTAL_SELF_SERVICE_BASELINE.length,
-          });
-        }),
-      'required',
-    )
-    .pipe(Effect.provideContext(context));
+  expect(prepared).toMatchObject({ authorizationOperation: 'grant', authorizationState: 'ACTIVE', state: 'ACTIVE' });
 
   yield* fixture.grantResourceAccess(profile.profileRef, principal.principalId);
   const add = (value: typeof AddSavedAddressPayloadSchema.Type) =>

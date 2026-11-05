@@ -44,6 +44,7 @@ const execute = Effect.fn('AssignSkuActionServer.execute')(function* executeAssi
       authorization: Redacted.make(request.headers['authorization']),
       'x-correlation-id': correlationId,
     },
+    successContract: 'result-or-proposal',
   });
 });
 

@@ -14,6 +14,8 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import type { Project } from '../../shared/domain/project.ts';
 import { projectOwnerEligibilityService } from '../services/project-owner-eligibility.service.ts';
+import type { ProjectOwnerEligibility } from '../services/project-owner-eligibility.service.ts';
+import { projectDestinationParentFacts } from '../access/project-destination-facts.ts';
 import { makeProjectPersistenceService } from '../services/project-persistence.service.ts';
 import type { ProjectPersistenceError } from '../services/project-persistence.service.ts';
 import { CreateProjectPayloadSchema, CreateProjectResultSchema } from '../../shared/actions/create-project.ts';
@@ -28,7 +30,6 @@ const projectModuleKey = 'projects.core';
 
 export { ProjectOwnerNotEligible } from '../../shared/domain/project-owner-not-eligible.ts';
 
-export { ProjectOwnerEligibilityUnavailable } from '../../shared/domain/project-owner-eligibility-unavailable.ts';
 export const CreateProjectErrorSchema = Schema.Union([
   ProjectOwnerNotEligible,
   ProjectOwnerEligibilityUnavailable,
@@ -50,14 +51,11 @@ interface Services {
     payload: CreateProjectPayload,
     createdByPrincipalId: string,
   ) => Effect.Effect<Project, ProjectPersistenceError>;
-  readonly ownerEligibility: (
-    prefix: string,
-    ownerPrincipalId: string,
-  ) => Effect.Effect<'allowed' | 'denied' | 'unavailable'>;
+  readonly ownerEligibility: (ownerPrincipalId: string) => Effect.Effect<ProjectOwnerEligibility>;
 }
 export const makeCreateProjectHandler = (services: Services, createdByPrincipalId: string) =>
   Effect.fn('CreateProject.handle')(function* createProject(payload: CreateProjectPayload) {
-    const decision = yield* services.ownerEligibility(payload.prefix, payload.ownerPrincipalId);
+    const decision = yield* services.ownerEligibility(payload.ownerPrincipalId);
     if (decision === 'unavailable') {
       return yield* new ProjectOwnerEligibilityUnavailable({
         code: 'project_owner_eligibility_unavailable',
@@ -113,17 +111,28 @@ export const handleCreateProject = Effect.fn('CreateProject.record')(function* c
 });
 export const createProjectAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'projects.core.project.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'projects', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'projects.core.create-project.access.v1',
     },
+    // A parented create attaches the new Project under an existing one, which edits that parent (O11).
+    accessOwnerFacts: (payload) =>
+      projectDestinationParentFacts(Option.getOrNull(payload.parentProjectId ?? Option.none())),
     actionKey: 'projects.core.create-project',
     auditProfile: 'standard',
     domainErrorSchema: CreateProjectErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'projects.core.create-project',
       moduleKey: projectModuleKey,
       role: 'action',

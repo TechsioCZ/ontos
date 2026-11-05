@@ -80,6 +80,14 @@ const ACTION_KEY = 'commerce.catalog.add-product-category-assignment';
 
 export const addProductCategoryAssignmentAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-category-assignment.add',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.add-product-category-assignment.access.v1',
@@ -91,7 +99,7 @@ export const addProductCategoryAssignmentAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

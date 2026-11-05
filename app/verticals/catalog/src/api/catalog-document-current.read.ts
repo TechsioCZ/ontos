@@ -56,7 +56,7 @@ const servicesForScope = (
 
 const catalogDocumentCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.catalog-document-current' },
+  authorization: { kind: 'protected' },
   entrypointKey: readKey,
   moduleKey,
   role: 'api',
@@ -114,13 +114,20 @@ export const readCatalogDocumentCurrent = Effect.fn('CatalogDocumentCurrentRead.
 /** Documents Center supplies the owner evidence seam; production stays unavailable until it is bound. */
 export const catalogDocumentCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.catalog-document-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'catalog-document', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: catalogDocumentCurrentEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: `${readKey}.evidence.v1` },
     inputSchema: CatalogDocumentCurrentRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: moduleKey,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.catalog-document-current',
     resultSchema: CatalogDocumentCurrentResponseSchema,
@@ -131,5 +138,4 @@ export const catalogDocumentCurrentRead = defineRead(
       Effect.map((result) => ({ evidence: { resultCount: result.assignments.length }, result })),
     ),
   (transaction, scope) => Effect.succeed(servicesForScope(transaction, scope, unavailableOwner)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

@@ -1,0 +1,148 @@
+# Granular Authorization
+
+Implementation rules for the granular authorization model accepted in [ADR-0030](../../../docs/adr/0030-granular-authorization.md). Domain vocabulary is in the [OntOS context](../../../docs/contexts/ontos/CONTEXT.md#granular-authorization).
+
+This is the only authorization model. It replaced the explicit Action-grant model of [ADR-0019](../../../docs/adr/0019-explicit-action-authorization.md) directly: there is no legacy relation set to fall back to, no dual read or write, no feature flag for the earlier path, and no migration or import step. Every protected entrypoint is gated by the declaration it carries, and one decision function answers Actions, reads, fields, exports, pages, navigation, search and access administration.
+
+## The one gate
+
+Every protected entrypoint calls the Core enforcement seam (`packages/core-runtime/src/access/enforcement/`). `AccessDecisionService` in `access/enforcement/contract.ts` is the only authorization surface:
+
+| Method                    | Question                                                                                            |
+| ------------------------- | --------------------------------------------------------------------------------------------------- |
+| `decide`                  | May this actor run this one entrypoint now?                                                         |
+| `decideMany`              | The same question for several entrypoints in one engine call (navigation, search providers).        |
+| `list`                    | Which rows of a list, search, history or report may this actor read? Returns the owner's predicate. |
+| `selectableLegalEntities` | Which companies may this actor select (`access_legal_entity#select`)?                               |
+
+`decide` takes the trusted `scope` (acting principal, tenant and optional legal entity), the entrypoint's decoded `carrier`, its declared `legalEntityScope`, an optional record `target`, an optional `amount`, an optional `parentRead`, a `mode` and a Core-minted `now`. It returns the engine's `AccessDecision`.
+
+| Outcome          | Meaning                                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------------------- |
+| `ALLOWED`        | Run the entrypoint.                                                                                 |
+| `DENIED`         | Refuse with `403`.                                                                                  |
+| `NEEDS_APPROVAL` | Refuse with `403` `action_approval_required`: the actor may propose but not run.                    |
+| `UNAVAILABLE`    | Retryable `503`: an engine, transport, deadline or consistency-fence failure that cannot be proven. |
+
+The gate fails closed. A missing or invalid caveat context, and a caveat that leaves the permissionship indeterminate, is `DENIED` and logged as a defect, because retrying cannot repair it.
+
+Six seam refusals are decided before the engine is read: `deny.declaration_missing` (a protected descriptor reached the gate without a carrier), `deny.principal_kind_forbidden` (the principal has no verified human kind), `deny.agent_forbidden` (an agent reached a capability no agent may use, or a workload reached an `admin` declaration, O81), `deny.workload_forbidden` (a trusted workload reached a declaration carrier), `deny.workload_unbound` (a workload reached a workload carrier with no active binding for one of its declared keys) and `deny.workload_only` (a human or agent reached a workload carrier). One seam admittance, `allow.workload`, admits a registered workload on a carrier that declares `accessWorkload`; it is the owner's classification, not a v2 grant, so the engine is never asked and no decision is logged.
+
+`list` is how a row-scoped read enforces O25. The engine returns a `ListAccessPredicate`; the runtime passes it as the optional fourth parameter of the read's `ReadServiceFactory` and on the handler context as `listAccess`, and the owner applies it inside its own query. It is present exactly for a row-scoped read decided by the gate; it is absent for a detail or scope-wide read, and an owner factory that both an Action and a read build simply declares no fourth parameter. An empty `groups` list means every row of the scope is visible, and the gate never answers an allowed list without a predicate. An owner list query never fetches rows and filters them afterwards, and never sorts or filters by a field the actor cannot read.
+
+## Entrypoint classification
+
+Every descriptor declares exactly one `authorization` classification:
+
+| Kind                      | Access metadata it carries                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `public`                  | None. An intentional public result.                                                                                    |
+| `authenticated_principal` | None. Any authenticated principal in a resolved scope.                                                                 |
+| `protected`               | `accessDeclaration` or `accessWorkload`; an Action or a governed read may carry both, and the two paths stay disjoint. |
+| `owner_local_background`  | None. Owner-local background work.                                                                                     |
+| `capability_issuance`     | `credential: 'api_key' \| 'session'`. A credential issuer.                                                             |
+
+`protected` replaced both earlier protected kinds. An Action is always `protected`; a worker is always `owner_local_background`; pages, components, APIs, search providers, reports and governed reads are `public`, `authenticated_principal` or `protected`; an API may also be `capability_issuance`.
+
+A protected entrypoint without a carrier is a definition-time error (`missingAccessCarrierIssue` in `authorization/access-declaration.ts`), never a reported gap. Unprotected entrypoints carry no access metadata and never call the gate. Route metadata is wrapped in `defineRouteMeta` (`modules/route-meta.ts`) so a page classification cannot drift from its declaration.
+
+## Access carriers on a descriptor
+
+| Field                    | Entrypoints                                         | Meaning                                                                                                                                                                                                      |
+| ------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `accessDeclaration`      | Actions, governed reads, pages, shell contributions | The entrypoint's own permission. Required unless `accessWorkload` stands alone.                                                                                                                              |
+| `accessWorkload`         | Actions, governed reads                             | `{ reason, workloads }`: only the registered machine workloads named by `workloads` may run this entrypoint. Never in the configurable catalog, never granted to a human or an agent.                        |
+| `accessFieldGroups`      | Actions (write), governed reads (read)              | Sensitive field groups. Requires the descriptor's own `accessDeclaration`; its parent read is that declaration (one record when record-scoped, scope-wide otherwise, O74).                                   |
+| `accessTarget`           | Actions, governed reads                             | `(payload \| input, scope) => { moduleKey, recordKey }`: the one record a record-scoped declaration acts on. Only on a declaration with selectors.                                                           |
+| `accessAmount`           | Actions                                             | `(payload, scope) => AccessAmount`: the governed money value, for an owner-derived total only. When declared, the declaration's `amountInput` must name a `derived.*` path.                                  |
+| `accessOwnerFacts`       | Actions, governed reads                             | `(payload \| input, scope) => Record<string, string>`: owner-local facts for the owner overlay (O70). They never reach the engine and never grant.                                                           |
+| `accessReducesAuthority` | Actions                                             | `(payload) => boolean`: when true the runner skips the grant decision because the Action only reduces authority (O35). It still requires an authenticated principal in a resolved scope and records the act. |
+
+`accessTarget` is required by the runner when the declaration names record selectors; a missing target is `deny.target_required`. A scope-wide declaration (`selectors: []`) that declares `accessTarget` is a definition-time error. A scalar `amountInput` is read from the decoded payload directly. `accessAmount` is only for an owner-derived total: when an Action declares it, the declaration's `amountInput` must name a `derived.*` path, never a client-supplied amount (O18). `accessTarget` and `accessOwnerFacts` are different channels: targets become engine selectors, owner facts go only to the owner overlay.
+
+## The declaration
+
+`packages/core-runtime/src/authorization/access-declaration.ts` owns the exact schema, validation and the dangerous-verb, terminal-verb and sensitive-field-class constants. Do not restate its rules in module code.
+
+| Field         | Rule                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `key`         | Lowercase `<moduleId>.<resource>.<verb>[.<qualifier>]`, starting with the owning module's full dotted `moduleId` and unique within it: `party.registry.party.merge` is module `party.registry`, resource `party`, verb `merge`. The module ID is matched as one whole prefix, so the verb rules only look at the segments after `<moduleId>.<resource>`. It is the permission's identity; changing it is a rename (see lineage).                                                                                                                                                   |
+| `kind`        | `action`, `read`, `field_read`, `field_write`, `export` or `admin`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `risk`        | `routine`, `sensitive` or `critical` (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `placement`   | Suggested editor `group` and `level` (`basic`, `extended`, `manage`). A suggestion for the Role editor and templates, never a grant.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `selectors`   | Record scopes the entrypoint can filter by: `all`, `assigned`, `entrusted`, `team`. Use `[]` when it is not record-scoped.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `modes`       | `run`, `propose`, `approve`. Reads and field reads use exactly `['run']`. A sensitive or critical Action must include `propose`; `approve` is optional, and without it only a granted person runs the Action directly. `approve` requires `propose`. An identity-bound Action, which the original actor must personally run, uses `['run', 'propose']` and never `approve`; an Action that is itself an approval decision declares `['run']` or `['run', 'propose']` with the risk of its own effect. An `ephemeral` Action and a kind `admin` Action may declare `['run']` alone. |
+| `ephemeral`   | `true` only for a short-lived proof whose validity is seconds to minutes and that cannot wait for a person, such as a 30-second commitment confirmation. It must then be run-only, and agents never run it when its risk is sensitive or critical.                                                                                                                                                                                                                                                                                                                                 |
+| `amountInput` | Actions only: the path of the money input that amount limits apply to. A composite money value must be named through a server-derived `derived.*` total (O18).                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `fieldClass`  | Required for `field_read` and `field_write`, forbidden otherwise. Take the class from the module's own meaning. `personal_data`, `bank_details`, `salaries`, `margins`, `purchase_prices`, `credit_limits`, `financial_amounts`, `tax_identifiers` and `authority_metadata` carry a `sensitive` floor; any other lowercase class, such as `commercial_activity`, is allowed and listed for review in the catalog report.                                                                                                                                                           |
+| `lineage`     | `renamedFrom` keeps identity and access across a rename; `splitFrom` registers a split whose halves nobody inherits automatically. Lineage stays inside the owning module and never forms a cycle.                                                                                                                                                                                                                                                                                                                                                                                 |
+
+### Choose the risk tier
+
+- `critical`: money movement, irreversible or legal effect, destructive operations, and authority or admin changes.
+- `sensitive`: personal data, financial visibility, exports, bulk changes and external communication.
+- `routine`: everything else.
+
+Validation enforces the floor:
+
+- `export` and `admin` are at least `sensitive`.
+- A `fieldClass` with a sensitive floor is at least `sensitive`.
+- A key containing a dangerous verb is never `routine`, whatever its spelling, case or separators: anonymize, approve, cancel, close-period, credit-note, delete, erase, export, grant, impersonate, merge, pay, payout, publish, purge, refund, remove, retire, revoke, transfer, void, write-off.
+- A routine key containing a terminal verb (`archive`, `close`, `deactivate`) is surfaced for review as the catalog finding `routine_terminal_verb`. The tier should be at least `sensitive`, and `critical` when the change has a legal or money effect or cannot be undone.
+
+When in doubt, choose the higher tier. Risk only decides warnings, Adoption and agent limits, never a grant.
+
+### Agent policy
+
+Agent behaviour is derived from kind and risk, never declared per entrypoint. A routine declaration is `run`; a sensitive or critical Action is `propose_only`; a sensitive or critical read, field access or export is `never`, because a read cannot be proposed; a kind `admin` declaration is `never`. A dual carrier follows its declaration, because the declaration is the human and agent capability of the descriptor.
+
+## Field groups
+
+A read or Action may carry `accessFieldGroups: readonly AccessFieldGroupInput[]` beside its `accessDeclaration`. Each group is its own declaration with `kind: 'field_read'` on a read or `'field_write'` on an Action, a required `fieldClass` (O19 floors apply), `fields: readonly string[]` naming the result or payload paths it governs, its own key in the same module prefix, `risk`, `placement`, `selectors: []` and modes (`field_read` is run-only; `field_write` is run-only or `['run', 'propose', 'approve']`). A group is never record-scoped and never the key of its parent declaration. A descriptor with field groups must also declare its own `accessDeclaration`, because field access needs access to the read it belongs to. The catalog lists groups as their own entries.
+
+Field access rides the parent read of the declaration it belongs to (D14, O74), and the shape of that parent read follows the entrypoint:
+
+- **Record-scoped entrypoint** (the declaration names record selectors): the read or Action declares `accessTarget`, and every group is decided with that one record and that record's own read.
+- **Scope-wide entrypoint** (`selectors: []`): no `accessTarget` is needed, and declaring one is a definition-time error because a scope-wide capability acts on no single record. The parent read is the containing declaration's own capability, decided scope-wide in the same scope and in the same engine snapshot (`CheckBulk`) as the group. This is how a staff module governs, for example, purchase costs separately from selling prices without inventing a record scope.
+- **Row-scoped read** (`list`, `report`, `search`): the groups are decided scope-wide exactly as declared, and the read's own row predicate bounds the rows they apply to (O25).
+
+The runtime channels are part of the contract, not of the declaration. A result field the caller may not read is omitted from the projection (O17: the canonical payload is decoded, validated and hashed whole server-side and only then redacted), and a payload that writes a `field_write` field the caller may not write is refused with 403 before the handler runs. Only a field the payload really writes is governed, so an Action that governs one sensitive field keeps every other field writable for the same caller; a `field_write` group whose sensitive field may only be proposed answers `action_approval_required` instead. An unreadable field decision is a retryable 503, never a silent projection and never a silent allow.
+
+## Workload-only and dual carriers
+
+A carrier that declares `accessWorkload` is for trusted machine workloads only (O29/O59/O73). A human or agent reaching it is refused with `deny.workload_only`; a workload reaching a declaration-only carrier is refused with `deny.workload_forbidden`. An Action or a governed read may declare both carriers (dual): the workload path admits workloads and never humans, and the declaration path admits humans and agents and never workloads. `accessWorkload` never stands beside `accessFieldGroups`, and never appears on a page, a shell carrier, or an `authenticated_principal` or `public` read.
+
+A workload is admitted by registered identity, never by its principal kind (O73). `accessWorkload` names the workload keys it admits (`{ reason, workloads: ['commerce.storefront-client'] }`), each a `<module>.<workload-name>` key in the carrier module's own namespace. Core keeps the bindings in `core.access_workload_bindings` (tenant, principal, workload key, status, incarnation), written only by the install/bootstrap path — the stage accounts file's per-tenant `workloads` list, the local development seed, and later a Core admin Action. The gate reads the acting workload's active bindings before it admits it: a `service`, `integration` or `system` principal with no active binding for one of the carrier's keys is refused with `deny.workload_unbound` (403), and a registry that cannot be read is UNAVAILABLE (503), never an implicit allow. The principal kind alone grants nothing, so a tenant-created managed API key runs only the workloads its principal is bound for. A revoked binding is final and a re-bind is a fresh incarnation.
+
+## Owner overlay
+
+An owner overlay is the owner's own business rule on its own state, never a second permission system. `accessOwnerFacts` (O70) lets a descriptor hand the overlay owner-derived facts such as `{ counterpartyId }`; Core passes them unchanged into the overlay input. The overlay applies owner-local limits (for example per-counterparty grants) and fails closed: a missing fact for a check that needs it denies. Owner facts never reach the engine and never grant.
+
+## Rules for module authors
+
+- Declare every protected entrypoint. Start new descriptors from their Codesmith generator; a protected page uses `defineRouteMeta`.
+- Never grant from code. A declaration only creates a catalog entry. A new or changed declaration becomes an Access change in Novinky and is usable only after Adoption into a Role and an Assignment.
+- Do not add SpiceDB relations, definitions or tuples for a module permission. The engine schema is fixed.
+- Do not add new hand-written command or permission lists. Every new command maps to exactly one declared permission.
+- Lists filter in the owner's own query using the predicate the decision returns. Never filter after fetching, and never sort or filter by a field the actor cannot read.
+- Domain rules such as a locked period, separation of duties or a threshold stay in the module's Policy and run after authorization; they never grant.
+- Search providers name the declaration key of their own governed search read in the manifest descriptor `accessKey`.
+
+## Rules for Core
+
+- **Intent and projection.** PostgreSQL holds intent: catalog snapshots, Roles and immutable Role revisions with provenance, Assignment incarnations with end dates, Delegations, Access changes and Adoptions, proposals, Mandates and execution receipts, Agent connections with consent snapshots, and the decision log. SpiceDB is a projection of that intent.
+- **One writer.** Only the Core compiler writes the v2 SpiceDB definitions. It compiles levels, switches and templates into exact grant cells, validates a change before taking the Scope fence, records each operation in its own journal, and verifies the complete projection against intent.
+- **Fixed schema.** The v2 definitions follow the reference `schema-v2.2.zed` from #1343. Every v2 name carries an `access_` prefix, `company` becomes `access_legal_entity`, and `principal` is shared with the rest of Core. Configure is structural (scope admins in their own scope, installed or not, plus live delegations inside their envelope); use comes only from grant cells.
+- **One decision function.** Single checks, lists, fields, exports, explanations and the agent's tool list all ask the same question: person ∩ agent ∩ Agent connection. Resolve the trusted scope (Legal Entity for company business data, Tenant context for administration), apply the connection ceiling, run one `CheckBulkPermissions` witness chain over the actor's candidate grants, then record predicates, field classes (which require parent record read) and domain rules.
+- **Outcomes.** `ALLOWED`, `NEEDS_APPROVAL` or `DENIED`, with `UNAVAILABLE` only for an unprovable engine, transport, deadline or fence failure, mapped as in [Effect Error and HTTP Contracts](./ERRORS.md). Every decision is logged with its reasons, and when an administrator asks about somebody else the row keeps the evaluated principal as its actor and the asker in `on_behalf_of_principal_id`, so the trail separates "explained about X" from "X acted" (O86).
+- **Subjects.** The v2 graph accepts only verified humans and `agent`. The compiler maps exactly those two kinds and refuses every other one, so a service, integration or system principal never appears in a v2 tuple. Such a principal keeps its workload classification, which is not an agent, and machine provisioning stays with it.
+- **Deadlines.** The admission deadline is the earliest relevant end date of the path used (membership, Assignment, Delegation, Agent connection, task or Mandate). Core enforces it itself, independent of engine caching.
+- **Scopes never leak.** A company grant authorizes only that company. Owner and admin status manage access; using it always requires membership and a granted Role. Records never move between companies.
+- **Approvals.** Only people approve and administer. A Mandate is single use, lives 24 hours (1 hour for critical), and is re-checked at execution. It binds, in the graph, the approver's exact execution and approval Assignments together with those grants; the requester's exact Assignment is bound in Core and re-checked at execution. It lapses permanently on loss of role, membership, suspension, uninstall or parent read access, and a Role edit that keeps the approver's authority keeps the Mandate. Only the approving human executes it.
+- **Lifecycle.** Leaving a company removes every owner, admin, Delegation, Assignment, team and connection right there, and rejoining starts clean. The last owner can never be removed. Uninstall stops every use and keeps configuration; a reinstall never restores something revoked meanwhile.
+- **Delegation.** A delegate acts only while the exact Delegation is live, only within its envelope, never on themselves and never further.
+- **Novinky.** Catalog snapshot diffs create Access changes. Routine items may be adopted in one batch per release; widening access, sensitive and critical items are reviewed one by one with a named effect. Undo never restores something revoked. "Plný přístup" covers what exists when it is granted.
+- **Administration never depends on business scope.** Access administration screens and APIs (Lidé, Role, Novinky, Ke schválení, Proč?) run in Tenant context and work without a selected Legal Entity and without business-data access. Capability keys start with their entrypoint's own module key, so Shell- and Identity-owned surfaces use `core.shell.*` and `core.identity.*`.
+- **Reducing authority is never blocked.** Stopping an impersonation, revoking or disabling a credential, leaving a company or declining a proposal is always allowed to its holder, even when the related capability was never adopted. The runtime never hard-codes an Action key for this; a descriptor declares `accessReducesAuthority`.
+- **Bootstrap.** A new Tenant gets its scopes, owner membership, a "Plný přístup" Role compiled from the current catalog snapshot, an owner assignment in every scope, and one compiler reconcile. `bootstrapTenantAccess` takes the installed modules' declarations as an explicit input; Core never scans source code.
+- **Catalog.** `pnpm authorization:inventory:check` fails on a missing or invalid declaration instead of reporting it. `pnpm authorization:catalog:report` lists the current catalog, including field groups and review findings.

@@ -6,7 +6,6 @@ import {
   ReadPermissionDenied,
   ReadRuntime,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Crypto, DateTime, Effect } from 'effect';
@@ -39,7 +38,7 @@ interface ManufacturerWirePeriod {
 
 export const manufacturerRelationCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.manufacturer-relation-current' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.manufacturer-relation-current',
   moduleKey,
   role: 'api',
@@ -47,6 +46,14 @@ export const manufacturerRelationCurrentEntrypoint = defineTenantModuleEntrypoin
 
 export const manufacturerRelationCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.manufacturer-relation-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'manufacturer-relation', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: manufacturerRelationCurrentEntrypoint,
     evidencePolicy: {
@@ -56,13 +63,8 @@ export const manufacturerRelationCurrentRead = defineRead(
     inputSchema: ManufacturerRelationCurrentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.manufacturer-relation-current',
-    resourcePermission: defineReadResourcePermission<ManufacturerRelationCurrentRequest>(({ subject }) => ({
-      permission: 'read',
-      resource: subject,
-    })),
     resultSchema: ManufacturerRelationCurrentResponseSchema,
     schemaVersion: '1',
   },
@@ -142,5 +144,4 @@ export const manufacturerRelationCurrentRead = defineRead(
       ),
     });
   }),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

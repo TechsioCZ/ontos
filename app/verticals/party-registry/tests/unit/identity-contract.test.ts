@@ -142,8 +142,10 @@ it('Party identity Actions are tenant-authorized, optionally scoped, and idempot
   for (const action of [createPartyAction, updatePartyAction, unarchivePartyAction]) {
     expect(action.descriptor.legalEntityScope).toBe('optional');
     expect(action.descriptor.idempotency).toBe('required');
-    // SAFETY: These identity permission callbacks are constant and do not inspect payload fields.
-    expect(action.descriptor.tenantPermission?.({} as never)).toBe('manage_party_identity');
+    // The one gate decides these Actions from their own declaration (O62); the record-scoped ones
+    // name the Party they act on (O9, O27).
+    expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(action.descriptor.accessDeclaration?.kind).toBe('action');
   }
 });
 

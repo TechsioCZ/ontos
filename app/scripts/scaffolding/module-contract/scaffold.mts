@@ -26,8 +26,6 @@ import {
   MODULE_MANIFEST_OPERATION_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_END,
   MODULE_MANIFEST_COMPONENT_SLOT_START,
-  MODULE_MANIFEST_PERMISSION_SLOT_END,
-  MODULE_MANIFEST_PERMISSION_SLOT_START,
   MODULE_MANIFEST_IMPORT_SLOT_END,
   MODULE_MANIFEST_IMPORT_SLOT_START,
   MODULE_REGISTRATION_ACTION_SLOT_END,
@@ -224,9 +222,12 @@ import {
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive as GovernedAccessDecisionLive,
+  AccessEnforcementPortsLive as GovernedAccessEnforcementPortsLive,
   ModuleEntrypointGatewayLive as GovernedModuleEntrypointGatewayLive,
   ModuleStateGateLive as GovernedModuleStateGateLive,
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
+  TenantIntentLoaderLive as GovernedTenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -254,6 +255,13 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
       GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive),
     ),
   ),
+);
+const governedAccessEnforcementLive = GovernedAccessDecisionLive.pipe(
+  GovernedReadLayer.provideMerge(GovernedAccessEnforcementPortsLive),
+  GovernedReadLayer.provide(GovernedTenantIntentLoaderLive),
+  GovernedReadLayer.provide(GovernedCorePersistenceLive),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(NodeCrypto.layer),
 );
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(
@@ -290,6 +298,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
       .replace(/^handlers:\s*/u, '');
     return `${generatedRoot}\n${source.slice(0, handlerProperty.start)}
     handlers: GovernedReadLayer.mergeAll(${handlers}, governedReadApiHandlersLive).pipe(
+      GovernedReadLayer.provide(governedAccessEnforcementLive),
       GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
       GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
       GovernedReadLayer.orDie,
@@ -299,6 +308,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     runtimeLayerStart,
     runtimeLayerEnd,
   )}  GovernedReadLayer.provide(governedReadApiHandlersLive),
+  GovernedReadLayer.provide(governedAccessEnforcementLive),
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
   GovernedReadLayer.orDie,
@@ -428,10 +438,6 @@ export const ${valueName} = defineOntosModuleManifest({
       ${MODULE_MANIFEST_API_SLOT_START}
       ${MODULE_MANIFEST_API_SLOT_END}
     },
-    businessPermissions: [
-      ${MODULE_MANIFEST_PERMISSION_SLOT_START}
-      ${MODULE_MANIFEST_PERMISSION_SLOT_END}
-    ],
     components: {
       ${MODULE_MANIFEST_COMPONENT_SLOT_START}
       ${MODULE_MANIFEST_COMPONENT_SLOT_END}

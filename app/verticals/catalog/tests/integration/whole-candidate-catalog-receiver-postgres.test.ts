@@ -37,6 +37,10 @@ import { executeQuantityPreparationWithAuthorization } from '../../src/api/quant
 import { executePricingPurposeEquivalenceWithAuthorization } from '../../src/api/pricing-purpose-equivalence-client.ts';
 import { executeQuantityBasisCompatibilityWithAuthorization } from '../../src/api/quantity-basis-compatibility-client.ts';
 import { executeCatalogMediaCurrentWithAuthorization } from '../../src/api/catalog-media-current-client.ts';
+import { quantityPreparationRead } from '../../src/api/quantity-preparation.read.ts';
+import { pricingPurposeEquivalenceRead } from '../../src/api/pricing-purpose-equivalence.read.ts';
+import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-compatibility.read.ts';
+import { catalogMediaCurrentRead } from '../../src/api/catalog-media-current.read.ts';
 import {
   QuantityPreparationRequestSchema,
   QuantityPreparationAuthenticationProblemSchema,
@@ -238,6 +242,7 @@ const runCatalogReceiver = (mode: 'strict-whole-candidate' | 'target-agreement')
       actor: fixture.manager,
       composition,
       databaseName: isolated.connections.runtime.database,
+      deniedPrincipalId: fixture.denied.principalId,
       issuer,
       jwks,
       legalEntityId: WholeCandidateCatalogProducedSchema.fields.legalEntityId.make(fixture.legalEntityId),
@@ -253,12 +258,6 @@ const runCatalogReceiver = (mode: 'strict-whole-candidate' | 'target-agreement')
     const produced = yield* Schema.decodeUnknownEffect(WholeCandidateCatalogProducedSchema)(yield* receive());
     expect(produced.actor).toEqual(fixture.manager);
     const [p1, p2, q1] = produced.selections;
-    for (const resource of [p1.productRef, q1.productRef, p1.variantRef]) {
-      yield* fixture.grantResourceAccess(resource, fixture.manager.principalId);
-      yield* Effect.addFinalizer(() =>
-        fixture.revokeResourceAccess(resource, fixture.manager.principalId).pipe(Effect.orDie),
-      );
-    }
     const authorization = Effect.fn('WholeCandidateNative.authorization')(function* authorization(
       options: {
         readonly actor?: typeof fixture.manager;
@@ -462,12 +461,13 @@ const runCatalogReceiver = (mode: 'strict-whole-candidate' | 'target-agreement')
           outcomeCode: 'read_allowed',
           outcomeStage: 'evidence',
           principalId: fixture.manager.principalId,
-          targetModuleKey: 'commerce.catalog',
           tenantId: fixture.tenantId,
         });
       }
-      expect(recorded.filter((access) => access.targetResourceId === p1.productRef.resourceId)).toHaveLength(2);
-      expect(recorded.filter((access) => access.targetResourceId === p1.variantRef.resourceId)).toHaveLength(1);
+      // v2 replaced the per-record resource target with one scope-wide capability (Q2): these reads
+      // name `selectors: []`, so their evidence carries no record target at all.
+      expect(recorded.every((access) => access.targetModuleKey === null)).toBe(true);
+      expect(recorded.every((access) => access.targetResourceId === null)).toBe(true);
     }
     const reused = yield* authorization();
     expect(
@@ -500,38 +500,20 @@ const runCatalogReceiver = (mode: 'strict-whole-candidate' | 'target-agreement')
         ),
       ).toBe(true);
     }
-    // Same active manager/context grants, but exact resource read is independently denied.
-    yield* fixture.revokeResourceAccess(p1.productRef, fixture.manager.principalId);
-    expect(
-      Schema.is(QuantityPreparationForbiddenProblemSchema)(
-        yield* executeQuantityPreparationWithAuthorization(
-          { amount: '1', purpose: 'PRICING', selection: p1 },
-          yield* authorization(),
-          yield* nextId,
-          endpoint,
-        ).pipe(Effect.flip),
-      ),
-    ).toBe(true);
-    expect(
-      Schema.is(PricingPurposeEquivalenceForbiddenProblemSchema)(
-        yield* executePricingPurposeEquivalenceWithAuthorization(
-          equivalenceInput,
-          yield* authorization(),
-          yield* nextId,
-          endpoint,
-        ).pipe(Effect.flip),
-      ),
-    ).toBe(true);
-    expect(
-      Schema.is(QuantityBasisCompatibilityForbiddenProblemSchema)(
-        yield* executeQuantityBasisCompatibilityWithAuthorization(
-          compatibilityInput,
-          yield* authorization(),
-          yield* nextId,
-          endpoint,
-        ).pipe(Effect.flip),
-      ),
-    ).toBe(true);
+    // v2 replaced the per-record SpiceDB resource grants with one scope-wide capability per read
+    // (Q2): each declaration names `selectors: []`, so no resource tuple is consulted and revoking
+    // one cannot change a decision. The refusals that remain are the gate's own answer for a person
+    // with no assignment (below) and the trusted scope's refusals (further below).
+    const scopeWideReadKeys = [
+      quantityPreparationRead.descriptor.accessDeclaration,
+      pricingPurposeEquivalenceRead.descriptor.accessDeclaration,
+      quantityBasisCompatibilityRead.descriptor.accessDeclaration,
+      catalogMediaCurrentRead.descriptor.accessDeclaration,
+    ];
+    for (const declaration of scopeWideReadKeys) {
+      expect(declaration?.kind).toBe('read');
+      expect(declaration?.selectors).toEqual([]);
+    }
     expect(
       yield* executeCatalogMediaCurrentWithAuthorization(
         { target: p1.variantRef },
@@ -540,20 +522,6 @@ const runCatalogReceiver = (mode: 'strict-whole-candidate' | 'target-agreement')
         endpoint,
       ),
     ).toMatchObject({ target: p1.variantRef });
-    yield* fixture.revokeResourceAccess(p1.variantRef, fixture.manager.principalId);
-    expect(
-      Schema.is(CatalogMediaCurrentForbiddenProblemSchema)(
-        yield* executeCatalogMediaCurrentWithAuthorization(
-          { target: p1.variantRef },
-          yield* authorization(),
-          yield* nextId,
-          endpoint,
-        ).pipe(Effect.flip),
-      ),
-    ).toBe(true);
-    // All tuples belong to these fresh fixture Resources; existing finalizers own their restoration/revocation.
-    yield* fixture.grantResourceAccess(p1.productRef, fixture.manager.principalId);
-    yield* fixture.grantResourceAccess(p1.variantRef, fixture.manager.principalId);
     const beforeDenied = yield* fixture.evidence(coreEvidenceExecutor);
     const deniedCredential = () => authorization({ actor: fixture.denied });
     expect(
@@ -654,11 +622,15 @@ const runCatalogReceiver = (mode: 'strict-whole-candidate' | 'target-agreement')
       );
       yield* Scope.close(endpointScope, Exit.void);
       const beforeUnavailable = yield* fixture.evidence(coreEvidenceExecutor);
+      // The receiver's gate is scripted unavailable: a native suite reaches no engine, so this is how
+      // the runtime's 503 path is proven. The closed SpiceDB port stays as the child's own config.
       const outage = yield* launchReceiver(artifact, { SPICEDB_ENDPOINT: `localhost:${closedAddress.port}` });
       yield* outage.send({
+        accessOutcome: 'unavailable',
         actor: fixture.manager,
         composition,
         databaseName: isolated.connections.runtime.database,
+        deniedPrincipalId: fixture.denied.principalId,
         issuer,
         jwks,
         legalEntityId: WholeCandidateCatalogProducedSchema.fields.legalEntityId.make(fixture.legalEntityId),
@@ -758,7 +730,7 @@ it.layer(services, { excludeTestServices: true })((suite) => {
     120_000,
   );
   suite.effect(
-    '#1262 admits four exact resource targets through public Core gates and preserves security refusals',
+    '#1262 runs four scope-wide governed reads through the one Core gate and preserves the gate and scope refusals',
     () => runCatalogReceiver('target-agreement'),
     120_000,
   );

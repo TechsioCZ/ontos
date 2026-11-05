@@ -7,12 +7,14 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway } from '../../src/integrations/current-pricing-decision-owner-final-fence.ts';
 import type { PricingOwnerMaterialEvidenceFenceGatewayUnavailable } from '../../src/integrations/material-evidence-owner-final-fence.ts';
-import { PriceGroupOwnerGatewayUnavailable } from '../../shared/domain/price-group-owner-gateway-unavailable.ts';
+import { OwnerGatewayConnectionError } from '../../src/integrations/owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionInput } from '../../src/integrations/owner-gateway-connection.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 import { makeIssue787Snapshot } from './support/issue-787-material-change.fixture.ts';
 
 const candidateRef = 'candidate:purchase-replay';
 const compositionRevision = 'revision:purchase-replay';
-const pricingServiceSecret = 'pricing-service-credential-secret';
+const ownerConnectionSecret = 'owner-connection-credential-secret';
 const baseUrl = new URL('https://customer-context.internal.example/');
 const customerPrincipalId = Schema.decodeSync(PrincipalIdSchema)('77777777-7777-4777-8777-777777777777');
 
@@ -77,41 +79,37 @@ interface ExecutorCall {
   readonly payload: PricingPurchaseContextVerificationRequest;
 }
 
-interface IssuerCall {
-  readonly audience: string;
-  readonly compositionRevision: string;
-  readonly legalEntityId: string;
-  readonly requestCorrelation: string;
-}
-
-/** Builds the real Customer Context fence gateway over a recording credential issuer and Purchase Context executor. */
+/** Builds the real Customer Context fence gateway over a recording owner connection and Purchase Context executor. */
 type PurchaseContextReply = ReturnType<
   NonNullable<
     Parameters<typeof makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway>[0]['executePurchaseContext']
   >
 >;
 
-const makeGateway = (reply: () => PurchaseContextReply, issuerFails = false) => {
+const subjectScope = verifiedTestScope({
+  correlationId: candidateRef,
+  legalEntityId: purchaseRequest.purchasingContext.sellingLegalEntityId,
+  principalId: customerPrincipalId,
+  tenantId: snapshot.decision.tenantId,
+});
+
+const makeGateway = (reply: () => PurchaseContextReply, acquireFails = false) => {
   const executorCalls: ExecutorCall[] = [];
-  const issuerCalls: IssuerCall[] = [];
+  const acquireCalls: OwnerGatewayConnectionInput[] = [];
   const gateway = makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway({
+    acquire: (input) => {
+      acquireCalls.push(input);
+      return acquireFails
+        ? Effect.fail(new OwnerGatewayConnectionError({ reason: 'Owner gateway is unavailable' }))
+        : Effect.succeed({ baseUrl, credential: Redacted.make(ownerConnectionSecret) });
+    },
     execute: () => Effect.die('Price Group replay must not run for a source-free Purchase Context singleton'),
     executePurchaseContext: (payload, credential, correlation) => {
       executorCalls.push({ correlation, credential: Redacted.value(credential), payload });
       return reply();
     },
-    issuer: {
-      issue: (input) => {
-        issuerCalls.push(input);
-        return issuerFails
-          ? Effect.fail(
-              new PriceGroupOwnerGatewayUnavailable({ owner: 'COMMERCE_ASSIGNMENT', reason: 'no credential' }),
-            )
-          : Effect.succeed({ baseUrl, credential: Redacted.make(pricingServiceSecret) });
-      },
-    },
   });
-  return { executorCalls, gateway, issuerCalls };
+  return { acquireCalls, executorCalls, gateway };
 };
 
 const verificationContext = {
@@ -126,6 +124,7 @@ const replay = (gateway: ReturnType<typeof makeGateway>['gateway']) =>
   gateway.verifyOpaqueProofsAgainstCurrentState({
     candidateRef,
     compositionRevision,
+    scope: subjectScope,
     sources: [],
     typedSources: [purchaseSource],
     verificationContext,
@@ -136,27 +135,28 @@ const expectFailsClosed = (failure: PricingOwnerMaterialEvidenceFenceGatewayUnav
   expect(failure.reason).toMatch(reason);
 };
 
-describe('Pricing final fence Purchase Context replay as the Pricing service identity', () => {
-  it.effect('replays with the Pricing service credential and the retained request, not the caller assertion', () =>
+describe('Pricing final fence Purchase Context replay for the verified subject', () => {
+  it.effect('replays for the verified subject through the owner connection, not the caller assertion', () =>
     Effect.gen(function* serviceIdentityReplay() {
-      const { executorCalls, gateway, issuerCalls } = makeGateway(() =>
+      const { acquireCalls, executorCalls, gateway } = makeGateway(() =>
         Effect.succeed(verifiedResponse(retainedEvidence)),
       );
 
       const result = yield* replay(gateway);
 
       expect(result.observations).toEqual([]);
-      expect(issuerCalls).toEqual([
+      expect(acquireCalls).toEqual([
         {
           audience: 'commerce-customer-context',
           compositionRevision,
-          legalEntityId: purchaseRequest.purchasingContext.sellingLegalEntityId,
+          legalEntityScope: 'subject',
           requestCorrelation: candidateRef,
+          scope: subjectScope,
         },
       ]);
       expect(executorCalls).toHaveLength(1);
       const [call] = executorCalls;
-      expect(call?.credential).toBe(pricingServiceSecret);
+      expect(call?.credential).toBe(ownerConnectionSecret);
       expect(call?.correlation).toBe(candidateRef);
       // The retained buyer actor travels as data; the buyer's own gateway assertion is never retained or forwarded.
       expect(call?.payload).toEqual(purchaseRequest);
@@ -171,11 +171,12 @@ describe('Pricing final fence Purchase Context replay as the Pricing service ide
         candidateRef,
         compositionRevision,
         observations: [],
+        scope: subjectScope,
         through: snapshot.decision.operationTime,
         typedSources: [purchaseSource],
       });
 
-      expect(executorCalls.map(({ credential }) => credential)).toEqual([pricingServiceSecret]);
+      expect(executorCalls.map(({ credential }) => credential)).toEqual([ownerConnectionSecret]);
     }),
   );
 
@@ -259,6 +260,7 @@ describe('Pricing final fence Purchase Context replay as the Pricing service ide
         .verifyOpaqueProofsAgainstCurrentState({
           candidateRef,
           compositionRevision,
+          scope: subjectScope,
           sources: [],
           typedSources: [],
           verificationContext,

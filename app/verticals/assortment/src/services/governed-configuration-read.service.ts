@@ -1,4 +1,3 @@
-import type { AssortmentPermissionAccessTarget } from '../permissions/authorization-targets.ts';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import { and, eq } from 'drizzle-orm';
@@ -411,26 +410,4 @@ export const assortmentConfigurationReadService = (
     return yield* source.resolve(request.resource, scope);
   });
   return { read };
-};
-
-export const configurationPermissionTarget = (
-  request: AssortmentConfigurationRequest,
-  scope: OperationalScope,
-): Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_configuration' }> => {
-  if (
-    scope.legalEntityId === undefined ||
-    request.resource.tenantId !== scope.tenantId ||
-    !isOwnedResource(request.resource)
-  ) {
-    throw unavailable();
-  }
-  return {
-    kind: 'assortment_configuration',
-    permission: 'assortment.configuration.read',
-    resource: {
-      moduleId: request.resource.moduleId,
-      resourceId: request.resource.resourceId,
-      resourceType: request.resource.resourceType,
-    },
-  };
 };

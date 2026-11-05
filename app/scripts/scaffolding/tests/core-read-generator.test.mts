@@ -123,17 +123,7 @@ it.effect('Core READ mode composes another read without disturbing the first', (
   fixture((root) =>
     Effect.gen(function* composeCoreReads() {
       yield* run(root);
-      yield* run(root, [
-        '--core',
-        '--module',
-        CORE_MODULE,
-        '--name',
-        'another-read',
-        AUTHORIZATION_FLAG,
-        'context_permission',
-        '--permission',
-        'module.access',
-      ]);
+      yield* run(root, ['--core', '--module', CORE_MODULE, '--name', 'another-read', AUTHORIZATION_FLAG, 'protected']);
       const sharedApi = yield* read(root, SHELL_SHARED_API_PATH);
       const server = yield* read(root, SHELL_SERVER_PATH);
       expect(sharedApi).toContain("HttpApiGroup.make('coreReadFixtureRead')");

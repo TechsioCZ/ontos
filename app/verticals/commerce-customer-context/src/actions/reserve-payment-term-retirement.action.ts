@@ -114,6 +114,14 @@ const handleReservePaymentTermRetirement = Effect.fn('ReservePaymentTermRetireme
 
 export const reservePaymentTermRetirementAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.payment-term-retirement.reserve',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'payment-terms', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.reserve-payment-term-retirement.access.v1',
@@ -125,7 +133,7 @@ export const reservePaymentTermRetirementAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.reserve-payment-term-retirement',
       moduleKey,
       role: 'action',

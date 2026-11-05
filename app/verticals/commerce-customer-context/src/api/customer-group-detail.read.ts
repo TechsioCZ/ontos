@@ -10,7 +10,6 @@ import type { CustomerGroupDetailRequest } from '../../shared/apis/customer-grou
 import {
   customerGroupReadServiceFactory,
   customerGroupReadUnavailable,
-  customerGroupResourceTarget,
   requireCustomerGroupReadLegalEntityId,
   requireCustomerGroupTenant,
   unwrapCustomerGroupLookup,
@@ -19,7 +18,7 @@ import type { CustomerGroupReadServices } from './customer-group-read-support.ts
 
 const customerGroupDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'customer.group.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.customer-group-detail',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -44,6 +43,14 @@ const handleCustomerGroupDetail = Effect.fn('CustomerGroupDetailRead.handle')(fu
 
 export const customerGroupDetailRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-groups', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: customerGroupDetailEntrypoint,
     evidencePolicy: {
@@ -53,7 +60,6 @@ export const customerGroupDetailRead = defineRead(
     inputSchema: CustomerGroupDetailRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'commerce.customer-context.api.customer-group-detail',
     resultSchema: CustomerGroupDetailResponseSchema,
@@ -61,5 +67,4 @@ export const customerGroupDetailRead = defineRead(
   },
   handleCustomerGroupDetail,
   customerGroupReadServiceFactory,
-  ({ groupRef }: CustomerGroupDetailRequest) => customerGroupResourceTarget(groupRef),
 );

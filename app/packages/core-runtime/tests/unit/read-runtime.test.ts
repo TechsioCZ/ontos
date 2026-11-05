@@ -12,6 +12,7 @@ import { defineOntosModuleManifest } from '../../src/modules/manifest.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import type { VerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
@@ -43,8 +44,8 @@ import type { OwnerPermissionAccessTarget } from '../../src/permissions/context-
 import type {
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
-} from '../../src/permissions/owner-authorization-overlay.ts';
-import { allowOwnerAuthorizationOverlay } from '../../src/permissions/owner-authorization-overlay.ts';
+} from '../../src/access/enforcement/owner-overlay.ts';
+import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
 import {
   defineRead,
   defineReadOwnerPermission,
@@ -57,9 +58,12 @@ import {
   ReadPermissionDenied,
   ReadPolicyDenied,
 } from '../../src/reads/errors.ts';
+import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
+import type { CoreTransaction } from '../../src/db/types.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
 
 const FixturePermissionCodeSchema = Schema.String;
 
@@ -113,6 +117,7 @@ const historicalFixtureOwner = (moduleId: string) => {
 
 const makeHarness = Effect.fn(function* makeHarness(
   options: {
+    readonly accessDecision?: BoundAccessGate;
     readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
     readonly authorityEvents?: string[];
     readonly businessPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -268,6 +273,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     value: transaction,
   });
   const stages: string[] = [];
+  const accessDecisionOptions = options.accessDecision === undefined ? {} : { accessDecision: options.accessDecision };
   const ownerAuthorizationOptions =
     options.omitOwnerAuthorizationOverlay === true
       ? {}
@@ -277,6 +283,7 @@ const makeHarness = Effect.fn(function* makeHarness(
   let ownedRuntimeOptions: ReadRuntimeOptions = {
     onStage: (stage) => stages.push(stage),
     ...ownerAuthorizationOptions,
+    ...accessDecisionOptions,
     ...options.runtimeAdmission,
   };
   if (options.applicationComposition !== undefined) {
@@ -418,6 +425,7 @@ const makeHarness = Effect.fn(function* makeHarness(
 const registration = (items: readonly string[] = []) =>
   defineRead(
     {
+      accessDeclaration: fixtureReadAccess('core.shell'),
       accessKind: 'list',
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
@@ -463,6 +471,7 @@ const ownerReadRegistration = (
 ) =>
   defineRead(
     {
+      accessDeclaration: fixtureReadAccess('commerce.fixture'),
       accessKind: 'detail',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'read',
@@ -768,6 +777,7 @@ it.effect('retains owner-declared tenant and Legal Entity scope without a fallba
     const configurationRegistration = (target: OwnerPermissionAccessTarget) =>
       defineRead(
         {
+          accessDeclaration: fixtureReadAccess('commerce.fixture'),
           accessKind: 'detail',
           entrypoint: defineTenantModuleEntrypoint({
             access: 'read',
@@ -1443,9 +1453,12 @@ it.effect(
     const selectedId = '00000000-0000-4000-8000-000000000004';
     const observed: string[] = [];
     let handlerCalls = 0;
+    // O62: an `authenticated_principal` Read is unprotected, so it must not inherit a carrier.
+    const { accessDeclaration, ...unprotectedRegistration } = registration().descriptor;
+    expect(accessDeclaration?.key).toBe('core.shell.fixture.read');
     const targetRead = defineRead(
       {
-        ...registration().descriptor,
+        ...unprotectedRegistration,
         entrypoint: defineSystemModuleEntrypoint({
           access: 'read',
           authorization: { kind: 'authenticated_principal' },
@@ -1515,6 +1528,7 @@ it.effect(
     );
     const currencyRead = defineRead(
       {
+        accessDeclaration: fixtureReadAccess('commerce.customer-context'),
         accessKind: 'detail',
         entrypoint: defineTenantModuleEntrypoint({
           access: 'read',
@@ -1684,6 +1698,7 @@ it.effect('rejects payload Storefront promotion and requires an exact trusted sc
     let handlerCalls = 0;
     const storefrontRead = defineRead(
       {
+        accessDeclaration: fixtureReadAccess('commerce.customer-context'),
         accessKind: 'list',
         entrypoint: defineTenantModuleEntrypoint({
           access: 'read',
@@ -1792,6 +1807,7 @@ it.effect('governs tenant-only Price Group reads with stable target evidence and
     const makePriceGroupRead = (targetPermission: typeof permission) =>
       defineRead(
         {
+          accessDeclaration: fixtureReadAccess('pricing.price-group-catalog'),
           accessKind: 'detail',
           entrypoint: defineTenantModuleEntrypoint({
             access: 'read',
@@ -1949,6 +1965,7 @@ it.effect('governs one exact Inventory Resource read without deriving authority 
     let handlerCalls = 0;
     const read = defineRead(
       {
+        accessDeclaration: fixtureReadAccess('commerce.inventory'),
         accessKind: 'detail',
         entrypoint: defineTenantModuleEntrypoint({
           access: 'read',
@@ -2643,6 +2660,115 @@ for (const mode of ['local', 'governed'] as const) {
     }),
   );
 }
+const protectedIdentityRead = <Failure>(
+  handler: () => Effect.Effect<
+    { readonly evidence: { readonly resultCount: number }; readonly result: { readonly name: string } },
+    Failure
+  >,
+) =>
+  defineRead(
+    {
+      accessDeclaration: fixtureReadAccess('core.shell'),
+      accessKind: 'detail',
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'protected' },
+        entrypointKey: 'core.shell.identity',
+        moduleKey: 'core.shell',
+        role: 'api',
+      }),
+      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.shell.identity.v1' },
+      inputSchema: Schema.Struct({}),
+      legalEntityScope: 'forbidden',
+      owningModuleKey: 'core.shell',
+      permissionTarget: 'module',
+      policies: [],
+      readKey: 'core.shell.identity',
+      resultSchema: Schema.Struct({ name: Schema.String }),
+      schemaVersion: '1',
+    },
+    handler,
+    () => Effect.succeed(Object.freeze({})),
+    () => ({ kind: 'module', moduleId: 'core.shell' }),
+  );
+
+/** An ALLOWED gate that records the transaction each decision was written into (O75). */
+const allowingGate = (decidedIn: (transaction: CoreTransaction | undefined) => void): BoundAccessGate => ({
+  decide: (_input, transaction) =>
+    Effect.sync(() => {
+      decidedIn(transaction);
+      return {
+        evidence: [],
+        outcome: 'ALLOWED' as const,
+        reasons: [{ code: 'allow.actor_identity' as const }],
+        selectors: [],
+      };
+    }),
+  list: () => Effect.die('the identity read is not row-scoped'),
+  selectableLegalEntities: () => Effect.succeed([]),
+});
+
+it.effect('keeps the ALLOWED decision row when a governed Read fails with a typed owner error', () =>
+  Effect.gen(function* keepsDecisionOnTypedFailure() {
+    const sqlEvents: string[] = [];
+    const decidedIn: (CoreTransaction | undefined)[] = [];
+    const notFound = new ReadHandlerNotFound({
+      code: 'read_handler_not_found',
+      reason: 'The subject is not recognised',
+    });
+    const harness = yield* makeHarness({
+      accessDecision: allowingGate((transaction) => decidedIn.push(transaction)),
+      sqlEvents,
+    });
+    const exit = yield* Effect.exit(
+      harness.runtime.runRead({
+        input: {},
+        principal: trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision),
+        registration: protectedIdentityRead(() => Effect.fail(notFound)),
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    // The decision was written inside the Read's own transaction, and that transaction commits, so the
+    // decision log keeps the row. The caller still receives the owner's typed failure, unchanged.
+    expect(decidedIn.length).toBe(1);
+    expect(decidedIn[0]).toBeDefined();
+    expect(sqlEvents).toContain('COMMIT');
+    expect(sqlEvents).not.toContain('ROLLBACK');
+    if (!Exit.isFailure(exit)) {
+      expect.unreachable('Expected a typed failure');
+    }
+    expect(Cause.findErrorOption(exit.cause)).toEqual(Option.some(notFound));
+    expect(Cause.hasDies(exit.cause)).toBe(false);
+    expect(Cause.hasInterruptsOnly(exit.cause)).toBe(false);
+  }),
+);
+it.effect('rolls back the ALLOWED decision row when a governed Read dies', () =>
+  Effect.gen(function* rollsBackDecisionOnDefect() {
+    const sqlEvents: string[] = [];
+    const decidedIn: (CoreTransaction | undefined)[] = [];
+    const harness = yield* makeHarness({
+      accessDecision: allowingGate((transaction) => decidedIn.push(transaction)),
+      sqlEvents,
+    });
+    const exit = yield* Effect.exit(
+      harness.runtime.runRead({
+        input: {},
+        principal: trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision),
+        registration: protectedIdentityRead(() => Effect.die(new Error('owner defect'))),
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(decidedIn.length).toBe(1);
+    expect(decidedIn[0]).toBeDefined();
+    expect(sqlEvents).toContain('ROLLBACK');
+    expect(sqlEvents).not.toContain('COMMIT');
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (!Exit.isFailure(exit)) {
+      expect.unreachable('Expected a defect');
+    }
+    expect(Cause.hasDies(exit.cause)).toBe(true);
+  }),
+);
 for (const mode of ['local', 'governed'] as const) {
   it.effect(`prioritizes failed ${mode} denial evidence while retaining permission denial in the cause`, () =>
     Effect.gen(function* migratedTest26() {
@@ -2693,6 +2819,7 @@ it.effect('authorizes optional tenant Party Reads with a genuine tenant module p
     const read = defineRead(
       {
         ...registration().descriptor,
+        accessDeclaration: fixtureReadAccess('party.registry'),
         entrypoint: defineTenantModuleEntrypoint({
           access: 'read',
           authorization: { kind: 'context_permission', permission: 'module.access' },
@@ -2799,6 +2926,7 @@ it.effect('enforces named entrypoint context permission before services and hand
     const historyRead = defineRead(
       {
         ...registration().descriptor,
+        accessDeclaration: fixtureReadAccess('commerce.customer-context'),
         entrypoint: defineTenantModuleEntrypoint({
           access: 'historical_read',
           authorization: {
@@ -2925,6 +3053,7 @@ it.effect('executes only the selected finite conditional authorization branch', 
     const read = defineRead(
       {
         ...registration().descriptor,
+        accessDeclaration: fixtureReadAccess('commerce.customer-context'),
         entrypoint: defineTenantModuleEntrypoint({
           access: 'read',
           authorization: {
@@ -3169,9 +3298,11 @@ it.effect('does not turn a partial authority plus inbound revision into a requir
 const coreReadHost = (metadata: 'matching' | 'intrinsic' | 'core' | 'required' | 'provided' = 'matching') => {
   const base = makeModuleContractFixture({ appId: 'core-read-host', moduleId: 'test.core-read-host.module' }).manifest;
   const moduleId = base.module.id;
+  // O62: an `authenticated_principal` Read is unprotected, so it must not inherit a carrier.
+  const { accessDeclaration: _inheritedAccess, ...unprotectedRegistration } = registration().descriptor;
   const ownRead = defineRead(
     {
-      ...registration().descriptor,
+      ...unprotectedRegistration,
       entrypoint: defineTenantModuleEntrypoint({
         access: 'read',
         authorization: { kind: 'authenticated_principal' },
@@ -3239,9 +3370,9 @@ it.effect('runs the exact Core Legal Entity Read in a genuine vertical-bound rec
       ]),
     );
     const harness = yield* makeHarness({
+      accessDecision: makeScriptedBoundAccessGate('allowed').bound,
       compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
       legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active' }],
-      permissionDecision: 'allowed',
       runtimeAdmission: {
         applicationComposition: { load: Effect.succeed(snapshot) },
         expectedDeployment: { appId: 'core-read-host', buildMarker: 'actual-host-build' },
@@ -3311,9 +3442,9 @@ it.effect('rejects recreated Core Reads, wrong receiver builds and every mismatc
         };
       }
       const harness = yield* makeHarness({
+        accessDecision: makeScriptedBoundAccessGate(control === 'denied' ? 'denied' : 'allowed').bound,
         compositionAuthority: { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
         legalEntityRows: [{ legalName: 'Managed Legal Entity', status: 'active' }],
-        permissionDecision: control === 'denied' ? 'denied' : 'allowed',
         runtimeAdmission,
       });
       const readInput = {
@@ -3504,6 +3635,7 @@ for (const row of remainingPermissionBaselines) {
       const key = `${row.owner}.baseline.${row.target.kind.replaceAll('_', '-')}`;
       const read = defineRead(
         {
+          accessDeclaration: fixtureReadAccess(row.owner),
           accessKind: 'detail',
           entrypoint: defineTenantModuleEntrypoint({
             access: 'read',
@@ -3585,9 +3717,8 @@ it.effect(
   () =>
     Effect.gen(function* genuineCoreBindingSubjectRead() {
       const harness = yield* makeHarness({
-        contextPermissionDecision: 'allowed',
+        accessDecision: makeScriptedBoundAccessGate('allowed').bound,
         omitOwnerRegistration: true,
-        permissionDecision: 'allowed',
       });
       const failure = yield* Effect.flip(
         harness.runtime.runRead({

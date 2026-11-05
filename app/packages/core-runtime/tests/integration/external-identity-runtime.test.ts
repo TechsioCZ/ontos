@@ -12,10 +12,12 @@ import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-g
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import type { TrustedPrincipalContext } from '../../src/actions/principal-context.ts';
 import { trustResolvedSystemPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import {
   AuthBindingIdSchema,
   AuthenticationAdmissionObservationSchema,
+  AuthenticationNamespaceIdSchema,
   AuthenticationNamespaceRegistrationSchema,
   ExternalAuthenticationSubjectSchema,
   ExternalSubjectAdmissionObservationSchema,
@@ -56,8 +58,9 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
-import type { ContextAccessService } from '../../src/permissions/context-access.ts';
-import { ContextAccess } from '../../src/permissions/context-access.ts';
+import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
+import { bindFixedAccessGate } from '../support/fixed-access-gate.ts';
+import { makeAuthority, makeCheck } from '../unit/access-decision-support.ts';
 import { reservePrincipalBindingAction } from '../../src/modules/actions/reserve-principal-binding.action.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
@@ -170,22 +173,6 @@ const makeRunPrepare =
         ),
       ),
     );
-
-const allowedContextResults = (keys: readonly string[]) =>
-  Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
-const deniedContextResults = (keys: readonly string[]) =>
-  Effect.succeed(keys.map((key) => ({ decision: 'denied' as const, key })));
-
-const actionContextAccess: ContextAccessService = {
-  identityNamespaces: ({ authenticationNamespaceIds }) => allowedContextResults(authenticationNamespaceIds),
-  legalEntities: ({ legalEntityIds }) => allowedContextResults(legalEntityIds),
-  modules: ({ moduleIds }) => allowedContextResults(moduleIds),
-  resources: ({ resources }) =>
-    allowedContextResults(
-      resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
-    ),
-  tenants: ({ tenantIds }) => allowedContextResults(tenantIds),
-};
 
 const systemActionPrincipal = (tenantId: string, principalId: string) =>
   trustResolvedSystemPrincipalContext(
@@ -562,6 +549,17 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
     const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(yield* nextUuid);
     const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(yield* nextUuid);
     const actor = systemActionPrincipal(tenantId, actorPrincipalId);
+    const humanPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(yield* nextUuid);
+    // A person is never admitted to a workload carrier, so this actor proves the refusal is real
+    // rather than a missing grant (O59, O67-Q4).
+    const humanAuthBindingId = yield* Schema.decodeEffect(AuthBindingIdSchema)(yield* nextUuid);
+    const humanActor = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+      authBindingId: humanAuthBindingId,
+      authContextRef: 'better-auth-session:external-identity-negative-control',
+      authMethod: 'session',
+      principalId: humanPrincipalId,
+      tenantId,
+    });
     const successSubject = yield* makeSubject();
     const deniedSubject = yield* makeSubject();
     const namespaceDeniedSubject = yield* makeSubject();
@@ -575,10 +573,10 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
         actionInvocations,
         principalAuthBindings,
         principals,
-        tenants,
       ]) {
         yield* database.executor.delete(table).where(eq(table.tenantId, tenantId));
       }
+      // Core retains access intent (D27): the Tenant's scope and fence, and so the Tenant, stay.
     });
     yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
     yield* database.executor.insert(tenants).values({
@@ -588,24 +586,56 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
       status: 'active',
       tenantId,
     });
-    yield* database.executor.insert(principals).values({
-      displayName: 'External identity Action actor',
-      kind: 'system',
-      principalId: actorPrincipalId,
+    // The governed reservation runs under the Tenant's real access fence.
+    yield* writeTestTenantScopes(database.executor, { principalId: actorPrincipalId, tenantId });
+    yield* database.executor.insert(principals).values([
+      {
+        displayName: 'External identity Action actor',
+        kind: 'system',
+        principalId: actorPrincipalId,
+        status: 'active',
+        tenantId,
+      },
+      {
+        displayName: 'External identity refusal control',
+        kind: 'human',
+        principalId: humanPrincipalId,
+        status: 'active',
+        tenantId,
+      },
+    ]);
+    yield* database.executor.insert(principalAuthBindings).values({
+      authenticationNamespaceId: namespaceId,
+      principalAuthBindingId: humanAuthBindingId,
+      principalId: humanPrincipalId,
+      provider: 'better_auth',
+      providerSubjectId: `refusal-control-${yield* nextUuid}`,
       status: 'active',
+      subjectType: 'user',
       tenantId,
     });
 
+    // The provisioning Action carries `accessWorkload`, so the gate admits only a trusted workload
+    // and never a person (O29, O59, O67-Q4); the actor kind is read from `core.principals`. The
+    // suite grants no capability: a workload path never asks for one. The actor's registered key is
+    // the namespace this workload provisions in (O73), so the suite binds it explicitly.
+    const authority = makeAuthority({ cells: [] });
+    const accessGate = bindFixedAccessGate({
+      authorityFor: () => authority.port,
+      check: makeCheck({ authority: { cells: [] } }).port,
+      executor: database.executor,
+      workloads: { [actorPrincipalId]: ['core.identity-provider'] },
+    });
     const runReserve = (
       runtime: ReturnType<typeof makeActionRuntime>,
       subject: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>,
       key: string,
-      contextAccess: ContextAccessService = actionContextAccess,
+      requestActor: TrustedPrincipalContext = actor,
     ) =>
       runtime
         .runAction({
           payload: { ...subject, displayName: 'Neutral reserved principal' },
-          principal: actor,
+          principal: requestActor,
           registration: reservePrincipalBindingAction,
           transport: {
             correlationId: `external-identity-action-${key}`,
@@ -615,17 +645,14 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
             targetResourceType: 'principal-auth-binding',
           },
         })
-        .pipe(
-          Effect.provideService(AuthenticationNamespaceRegistry, registry),
-          Effect.provideService(ContextAccess, contextAccess),
-        );
+        .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
 
     const allowedRuntime = makeActionRuntime(
       database,
       makeActionRepository(crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      { ...openActionRuntimeOptions, accessDecision: accessGate },
     );
     const reserved = yield* runReserve(allowedRuntime, successSubject, 'external-identity-action-success');
     expect(reserved.outcome).toBe('RESERVED');
@@ -654,15 +681,14 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
     expect(successEvent.length).toBe(1);
     expect(successOutbox.length).toBe(1);
 
-    const deniedRuntime = makeActionRuntime(
-      database,
-      makeActionRepository(crypto),
-      { checkActionPermission: () => Effect.succeed('denied' as const) },
-      testOperationalScopeResolver,
-      openActionRuntimeOptions,
-    );
-    const denied = yield* runReserve(deniedRuntime, deniedSubject, 'external-identity-action-denied').pipe(Effect.flip);
-    expect(Predicate.isTagged(denied, 'ActionPermissionDenied')).toBe(true);
+    // O59, O67-Q4: a person is refused by the workload carrier itself, before any owner rule runs.
+    const humanDenied = yield* runReserve(
+      allowedRuntime,
+      deniedSubject,
+      'external-identity-action-human-denied',
+      humanActor,
+    ).pipe(Effect.flip);
+    expect(Predicate.isTagged(humanDenied, 'ActionPermissionDenied')).toBe(true);
     expect(
       yield* database.executor
         .select()
@@ -670,17 +696,21 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
         .where(eq(principalAuthBindings.providerSubjectId, deniedSubject.providerSubjectId)),
     ).toHaveLength(0);
 
-    const namespaceDeniedContextAccess: ContextAccessService = {
-      ...actionContextAccess,
-      identityNamespaces: ({ authenticationNamespaceIds }) => deniedContextResults(authenticationNamespaceIds),
-    };
-    const namespaceDenied = yield* runReserve(
+    // The namespace a workload provisions in must be registered deployment data (O62: no SpiceDB grant).
+    const unregisteredNamespace = yield* Schema.decodeEffect(AuthenticationNamespaceIdSchema)(
+      'test.integration.unregistered',
+    );
+    const unregisteredSubject = yield* Schema.decodeEffect(ExternalAuthenticationSubjectSchema)({
+      authenticationNamespaceId: unregisteredNamespace,
+      providerSubjectId: `provider-user-${yield* nextUuid}`,
+      subjectType: 'user',
+    });
+    const unregistered = yield* runReserve(
       allowedRuntime,
-      namespaceDeniedSubject,
-      'external-identity-action-namespace-denied',
-      namespaceDeniedContextAccess,
+      unregisteredSubject,
+      'external-identity-action-unregistered-namespace',
     ).pipe(Effect.flip);
-    expect(Predicate.isTagged(namespaceDenied, 'ExternalIdentityError')).toBe(true);
+    expect(Predicate.isTagged(unregistered, 'ExternalIdentityError')).toBe(true);
     expect(
       yield* database.executor
         .select()
@@ -693,7 +723,7 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
       makeActionRepository(crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      { ...openActionRuntimeOptions, accessDecision: accessGate },
     );
     const rollback = yield* Effect.exit(
       runReserve(rollbackRuntime, rollbackSubject, 'external-identity-action-outbox-failure'),
@@ -1022,7 +1052,20 @@ const runCoreIdentitySubjectReads = Effect.gen(function* governedCoreIdentitySub
     { executor: database },
     openModuleEntrypointGateway,
     testOperationalScopeResolver,
-    actionContextAccess,
+    {
+      legalEntities: () => Effect.succeed([]),
+      modules: () => Effect.succeed([]),
+      resources: () => Effect.succeed([]),
+      tenants: () => Effect.succeed([]),
+    },
+    {
+      accessDecision: bindFixedAccessGate({
+        authorityFor: () => makeAuthority({ cells: [] }).port,
+        check: makeCheck({ authority: { cells: [] } }).port,
+        executor: database,
+        workloads: { [scope.principalId]: ['core.identity-provider'] },
+      }),
+    },
   );
   const principal = systemActionPrincipal(tenantId, scope.principalId);
   const loadedSubject = yield* runtime.runRead({

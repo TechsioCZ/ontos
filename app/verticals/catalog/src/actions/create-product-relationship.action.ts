@@ -134,6 +134,14 @@ export const createProductRelationshipResultServiceFactory = (
 
 export const createProductRelationshipAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-relationship.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-relationship', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.create-product-relationship.access.v1',
@@ -145,7 +153,7 @@ export const createProductRelationshipAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey: catalogModuleKey,
       role: 'action',

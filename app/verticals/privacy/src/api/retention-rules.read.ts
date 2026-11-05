@@ -21,7 +21,7 @@ const unavailable = (cause: unknown) => {
 
 const retentionRulesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.retention.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.retention-rules',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -29,6 +29,14 @@ const retentionRulesEntrypoint = defineTenantModuleEntrypoint({
 
 export const retentionRulesRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.retention-rule.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'retention', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: retentionRulesEntrypoint,
     evidencePolicy: {
@@ -38,7 +46,6 @@ export const retentionRulesRead = defineRead(
     inputSchema: RetentionRulesRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.retention-rules',
     resultSchema: RetentionRulesResponseSchema,
@@ -65,6 +72,5 @@ export const retentionRulesRead = defineRead(
     }).pipe(Effect.mapError(unavailable));
   },
   (transaction, scope) => privacyOperationRepositoryForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );
 /* jscpd:ignore-end */

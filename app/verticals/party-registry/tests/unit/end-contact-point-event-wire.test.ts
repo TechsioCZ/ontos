@@ -97,8 +97,8 @@ for (const target of targets) {
       Effect.gen(function* endEventWireBoundary() {
         const commands: EndContactPointCommand[] = [];
         const harness = yield* makeActionTestHarness({
+          access: 'allowed',
           ownerRegistration: partyRegistryBackendRegistration,
-          actionPermission: 'allowed',
           services: [
             bindActionTestServices(endContactPointAction, {
               end: (command) =>
@@ -108,7 +108,6 @@ for (const target of targets) {
                 }),
             }),
           ],
-          tenantPermission: 'allowed',
         });
         const payload = yield* Schema.decodeEffect(EndContactPointPayloadSchema)({
           contactPointRef: contactPoint.contactPointRef,

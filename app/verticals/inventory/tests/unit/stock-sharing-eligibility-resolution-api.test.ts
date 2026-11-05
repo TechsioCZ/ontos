@@ -30,6 +30,7 @@ import {
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import { makeTestBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -139,33 +140,39 @@ const evaluationPersistence: StockSharingEligibilityPersistence = {
 };
 
 it('declares an exact Position-scoped governed Read with typed decision output', () => {
-  expect(stockSharingEligibilityResolutionRead.descriptor.permissionTarget).toBe('owner_permission');
+  // The one gate decides the read's own scope-wide capability (O62); the read carries no legacy
+  // permission target and no positional target resolver any more.
+  expect(stockSharingEligibilityResolutionRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.inventory.stock-sharing-eligibility.resolve',
+    kind: 'read',
+    selectors: [],
+  });
+  expect(Object.keys(stockSharingEligibilityResolutionRead.descriptor)).not.toContain('permissionTarget');
+  expect(getReadPermissionTargetResolver(stockSharingEligibilityResolutionRead)).toBeUndefined();
   expect(stockSharingEligibilityResolutionRead.descriptor.legalEntityScope).toBe('required');
   expect(stockSharingEligibilityResolutionRead.descriptor.evidencePolicy.captureMode).toBe('metadata_only');
-
-  const resolver = getReadPermissionTargetResolver(stockSharingEligibilityResolutionRead);
-  expect(Predicate.isFunction(resolver)).toBe(true);
-  if (Predicate.isFunction(resolver)) {
-    expect(resolver(request, scope)).toMatchObject({
-      kind: 'owner_permission',
-      ownerPermission: {
-        definition: { key: 'inventory.resource.read' },
-        target: {
-          kind: 'inventory_resource',
-          resource: {
-            moduleId: positionRef.moduleId,
-            resourceId: positionRef.resourceId,
-            resourceType: positionRef.resourceType,
-          },
-          tenantId,
-        },
-      },
-    });
-  }
 
   expect(Schema.is(StockSharingEligibilityResolutionResponseSchema)({ decision })).toBe(true);
   expect(Predicate.isFunction(executeStockSharingEligibilityResolution)).toBe(true);
   expect(Predicate.isFunction(executeStockSharingEligibilityResolutionWithAuthorization)).toBe(true);
+});
+
+it('refuses a Position from another Tenant in the declared request contract', () => {
+  // Negative control for the guard the removed target resolver used to enforce by emptying its Tenant:
+  // the payload schema refuses a Position and Inventory Backend configuration of two Tenants (O62 risk 4),
+  // and the handler additionally answers POSITION_SCOPE_MISMATCH for a mismatch it still sees.
+  expect(() =>
+    Schema.decodeUnknownSync(StockSharingEligibilityResolutionRequestSchema)({
+      ...request,
+      scope: {
+        ...request.scope,
+        positionRef: {
+          ...request.scope.positionRef,
+          tenantId: '99999999-9999-4999-8999-999999999999',
+        },
+      },
+    }),
+  ).toThrow(/one Tenant/u);
 });
 
 it.effect('returns only a proven positive-union decision and records result evidence', () =>
@@ -222,8 +229,8 @@ it.effect('fails closed before evaluation when the trusted seller is not the sel
 
 it.effect('denies the exact Stock Position before owner services are resolved', () =>
   Effect.gen(function* denyBeforeOwnerResolution() {
-    let businessChecks = 0;
     const stages: string[] = [];
+    const gate = makeTestBoundAccessGate();
     const database = {
       executor: yield* makeTestDatabase((text) =>
         Effect.succeed(
@@ -238,23 +245,16 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(scope) },
       {
+        // The gate is the only authority: the retired target checks are never consulted (O62).
         legalEntities: ({ legalEntityIds }) =>
           Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
         modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        ownerPermissions: ({ targets }) => {
-          businessChecks += 1;
-          return Effect.succeed(targets.map((target) => ({ decision: 'denied' as const, key: target.target.key })));
-        },
-        resources: ({ resources }) =>
-          Effect.succeed(
-            resources.map((resource) => ({
-              decision: 'allowed' as const,
-              key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-            })),
-          ),
+        ownerPermissions: () => Effect.die('The gate decides; no legacy owner target is checked'),
+        resources: () => Effect.die('The gate decides; no legacy resource target is checked'),
         tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
       },
       {
+        accessDecision: gate.bound,
         onStage: (stage) => {
           stages.push(stage);
         },
@@ -273,7 +273,10 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
       .pipe(Effect.flip);
 
     expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-    expect(businessChecks).toBe(1);
+    expect(gate.accessDecision.askedDecisions).toHaveLength(1);
+    expect(gate.accessDecision.askedDecisions[0]?.carrier.accessDeclaration?.key).toBe(
+      'commerce.inventory.stock-sharing-eligibility.resolve',
+    );
     expect(stages).toEqual(['input_decoded', 'scope_validated', 'module_state_checked', 'permission_checked']);
   }),
 );

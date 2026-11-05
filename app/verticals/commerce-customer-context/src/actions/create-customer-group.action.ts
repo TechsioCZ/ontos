@@ -125,6 +125,14 @@ const handleCreateCustomerGroup = Effect.fn('CreateCustomerGroupAction.handle')(
 
 export const createCustomerGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-groups', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.create-customer-group.access.v1',
@@ -136,7 +144,7 @@ export const createCustomerGroupAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.create-customer-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',

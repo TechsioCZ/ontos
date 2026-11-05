@@ -1,80 +1,17 @@
 import type { OperationalScope } from '@app/core-runtime';
-import type { AssortmentPermissionSelector } from '../permissions/authorization-targets.ts';
 import { DateTime, Match, Result, Schema } from 'effect';
 import type {
   CreateClosedAssortmentBoundaryPayload,
   ReplaceClosedAssortmentBoundaryPayload,
 } from '../../shared/actions/boundary-administration.ts';
 import { AssortmentCollectionRevisionRefSchema } from '../../shared/actions/boundary-administration.ts';
-import type {
-  AssortmentCatalogSelector,
-  AssortmentCommercialScope,
-  AssortmentPurchasingSubject,
-} from '../../shared/domain/decision-contracts.ts';
+import type { AssortmentCommercialScope, AssortmentPurchasingSubject } from '../../shared/domain/decision-contracts.ts';
 import { AssortmentPolicyTargetInvariant } from '../../shared/domain/policy-errors.ts';
+import type { AssortmentCurrentnessTarget } from '../services/assortment-currentness.ts';
 import { assortmentMeaningFingerprint } from '../services/policy-administration.service.ts';
 
 type Ref = Readonly<{ moduleId: string; resourceId: string; resourceType: string }>;
 type TenantRef = Ref & Readonly<{ tenantId: string }>;
-interface ScopeTarget {
-  channel: Ref;
-  market?: Ref;
-  storefront?: Ref;
-}
-
-const target = (ref: Ref) => ({ moduleId: ref.moduleId, resourceId: ref.resourceId, resourceType: ref.resourceType });
-const scopeTarget = (scope: AssortmentCommercialScope) => {
-  const value: ScopeTarget = { channel: target(scope.channelRef) };
-  if (scope.commerceMarketRef !== undefined) {
-    value.market = target(scope.commerceMarketRef);
-  }
-  if (scope.storefrontRef !== undefined) {
-    value.storefront = target(scope.storefrontRef);
-  }
-  return value;
-};
-const subjectTarget = (subject: AssortmentPurchasingSubject) =>
-  subject.kind === 'COUNTERPARTY'
-    ? { kind: subject.kind, ref: target(subject.counterpartyRef) }
-    : { kind: subject.kind, ref: target(subject.profileRef) };
-
-const allAdmissionTarget = () => ({ kind: 'ALL' as const });
-const categoryAdmissionTarget = (value: Extract<AssortmentCatalogSelector, { readonly kind: 'CATEGORY' }>) => ({
-  kind: 'CATEGORY' as const,
-  target: target(value.categoryRef),
-});
-const packageAdmissionTarget = (value: Extract<AssortmentCatalogSelector, { readonly kind: 'PACKAGE_OPTION' }>) => ({
-  kind: 'PACKAGE_OPTION' as const,
-  target: target(value.packageOptionRef),
-});
-const productAdmissionTarget = (value: Extract<AssortmentCatalogSelector, { readonly kind: 'PRODUCT' }>) => ({
-  kind: 'PRODUCT' as const,
-  target: target(value.productRef),
-});
-const variantAdmissionTarget = (value: Extract<AssortmentCatalogSelector, { readonly kind: 'VARIANT' }>) => ({
-  kind: 'VARIANT' as const,
-  target: target(value.variantRef),
-});
-
-const admissionSelectorTarget = (selector: AssortmentCatalogSelector): AssortmentPermissionSelector =>
-  Match.value(selector).pipe(
-    Match.discriminatorsExhaustive('kind')({
-      ALL: allAdmissionTarget,
-      CATEGORY: categoryAdmissionTarget,
-      PACKAGE_OPTION: packageAdmissionTarget,
-      PRODUCT: productAdmissionTarget,
-      VARIANT: variantAdmissionTarget,
-    }),
-  );
-
-const admissionTargetKey = (selector: ReturnType<typeof admissionSelectorTarget>): string =>
-  [
-    selector.kind,
-    selector.target?.moduleId ?? '',
-    selector.target?.resourceType ?? '',
-    selector.target?.resourceId ?? '',
-  ].join('\u0000');
-
 const assertRefs = (scope: OperationalScope, refs: readonly TenantRef[], sellingLegalEntityRef?: TenantRef) => {
   if (refs.some((ref) => ref.tenantId !== scope.tenantId)) {
     throw new AssortmentPolicyTargetInvariant({ reason: 'Assortment boundary target tenant mismatch' });
@@ -140,10 +77,10 @@ export const collectionRevisionRef = (tenantId: string, resourceId: string) =>
     }),
   );
 
-export const createBoundaryPermissionTarget = (
+export const createBoundaryCurrentnessTarget = (
   payload: CreateClosedAssortmentBoundaryPayload,
   scope: OperationalScope,
-) => {
+): AssortmentCurrentnessTarget => {
   assertRefs(
     scope,
     [
@@ -153,65 +90,52 @@ export const createBoundaryPermissionTarget = (
     ],
     payload.commercialScope.sellingLegalEntityRef,
   );
-  const evidence = boundaryAdmissionEvidence(payload);
-  const entries = payload.admissionSet.entries
-    .map(admissionSelectorTarget)
-    .toSorted((left, right) => admissionTargetKey(left).localeCompare(admissionTargetKey(right), 'en'));
-  const admissionSet =
-    evidence.setKind === 'EMPTY'
-      ? {
-          contentHash: evidence.contentHash,
-          entries: [] as const,
-          memberCount: 0 as const,
-          setKind: 'EMPTY' as const,
-        }
-      : {
-          contentHash: evidence.contentHash,
-          entries,
-          memberCount: payload.admissionSet.entries.length,
-          setKind: 'ENTRIES' as const,
-        };
-  return {
-    admissionSet,
-    commercialScope: scopeTarget(payload.commercialScope),
-    effectiveFrom: DateTime.formatIso(payload.effectiveFrom),
-    kind: 'assortment_boundary' as const,
-    mode: 'create' as const,
-    permission: 'assortment.boundary.create' as const,
-    purpose: payload.decisionPurpose,
-    subject: subjectTarget(payload.subject),
-  };
+  return { kind: 'assortment_boundary', mode: 'create' };
 };
 
-export const endBoundaryPermissionTarget = (payload: { boundaryRef: TenantRef }, scope: OperationalScope) => {
+export const endBoundaryCurrentnessTarget = (
+  payload: { readonly boundaryRef: TenantRef },
+  scope: OperationalScope,
+): AssortmentCurrentnessTarget => {
   assertRefs(scope, [payload.boundaryRef]);
   return {
-    boundary: target(payload.boundaryRef),
-    kind: 'assortment_boundary' as const,
-    mode: 'end' as const,
-    permission: 'assortment.boundary.end' as const,
+    boundary: {
+      moduleId: payload.boundaryRef.moduleId,
+      resourceId: payload.boundaryRef.resourceId,
+      resourceType: payload.boundaryRef.resourceType,
+    },
+    kind: 'assortment_boundary',
+    mode: 'end',
   };
 };
 
-export const replaceBoundaryPermissionTargets = (
+export const replaceBoundaryCurrentnessTarget = (
   payload: ReplaceClosedAssortmentBoundaryPayload,
   scope: OperationalScope,
-) =>
-  [
-    endBoundaryPermissionTarget({ boundaryRef: payload.existingBoundaryRef }, scope),
-    createBoundaryPermissionTarget(
-      {
-        admissionSet: payload.proposedAdmissionSet,
-        commercialScope: payload.proposedCommercialScope,
-        decisionPurpose: payload.proposedDecisionPurpose,
-        effectiveFrom: payload.proposedEffectiveFrom,
-        provenanceRef: payload.provenanceRef,
-        reason: payload.reason,
-        subject: payload.proposedSubject,
-      },
-      scope,
-    ),
-  ] as const;
+): AssortmentCurrentnessTarget => {
+  assertRefs(scope, [payload.existingBoundaryRef]);
+  createBoundaryCurrentnessTarget(
+    {
+      admissionSet: payload.proposedAdmissionSet,
+      commercialScope: payload.proposedCommercialScope,
+      decisionPurpose: payload.proposedDecisionPurpose,
+      effectiveFrom: payload.proposedEffectiveFrom,
+      provenanceRef: payload.provenanceRef,
+      reason: payload.reason,
+      subject: payload.proposedSubject,
+    },
+    scope,
+  );
+  return {
+    boundary: {
+      moduleId: payload.existingBoundaryRef.moduleId,
+      resourceId: payload.existingBoundaryRef.resourceId,
+      resourceType: payload.existingBoundaryRef.resourceType,
+    },
+    kind: 'assortment_boundary',
+    mode: 'replace',
+  };
+};
 
 export const boundaryMeaningFingerprint = (payload: CreateClosedAssortmentBoundaryPayload) =>
   assortmentMeaningFingerprint({

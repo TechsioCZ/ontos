@@ -23,7 +23,7 @@ import type {
   ProductCommercialFeeBulkTrustedContext,
 } from '../services/product-commercial-fee-bulk.service.ts';
 import { ProductCommercialFeeBulkUnavailable } from '../services/product-commercial-fee-bulk-unavailable.ts';
-import { PricingCatalogSelectionUnavailable } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { CurrencySupportPersistenceUnavailable } from './currency-support-persistence-unavailable.ts';
 
 export {
@@ -141,6 +141,14 @@ export const handleManageProductCommercialFeesBulk = Effect.fn('ManageProductCom
 
 export const manageProductCommercialFeesBulkAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.commercial-fee.manage-bulk',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commercial-fees', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.manage-product-commercial-fees-bulk.access.v1',
@@ -157,7 +165,7 @@ export const manageProductCommercialFeesBulkAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.manage-product-commercial-fees-bulk',
       moduleKey: MODULE_KEY,
       role: 'action',

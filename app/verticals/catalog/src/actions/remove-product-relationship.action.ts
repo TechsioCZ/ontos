@@ -128,6 +128,14 @@ export const removeProductRelationshipResultServiceFactory = (
 
 export const removeProductRelationshipAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-relationship.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-relationship', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.remove-product-relationship.access.v1',
@@ -139,7 +147,7 @@ export const removeProductRelationshipAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey: catalogModuleKey,
       role: 'action',

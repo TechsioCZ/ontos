@@ -592,7 +592,7 @@ const ledger961: readonly TaxAcceptanceRow[] = [
       ),
       unit(
         'tax-governance-permissions',
-        '907-Q08 #960 importing Seller VAT Regime declarations has no business Permission target (explicit Action provisioning instead)',
+        '907-Q08 #960 importing Seller VAT Regime declarations carries its own capability instead of an owner Permission target',
       ),
       sellerVatRegimeImportTest(
         '907-Q08 #960 the payload needs a run, its stable migration instant and at least one source declaration',
@@ -1109,7 +1109,7 @@ const ledger963: readonly TaxAcceptanceRow[] = [
       ),
       integration(
         'historical-final-order-tax-access-postgres',
-        'E30: real SpiceDB revocation and PostgreSQL scope prevent unauthorized historical final recovery',
+        'E30: a revoked Selling Legal Entity capability and the PostgreSQL scope prevent unauthorized historical final recovery',
       ),
     ],
     NON_PAYER_REMEDIATION_DOUBLES,

@@ -13,13 +13,7 @@ import { planDeploymentImpact } from '../plan-deployment-impact.mts';
 const HOST = 'outbox-worker-host';
 const EXCLUDED = 'commerce-order-worker';
 const INVENTORY_WORKER = 'inventory-worker';
-const APPROVED = [
-  'party-registry-worker',
-  'commerce-customer-context-worker',
-  'price-group-catalog-worker',
-  INVENTORY_WORKER,
-  'privacy-worker',
-];
+const APPROVED = ['party-registry-worker', 'commerce-customer-context-worker', INVENTORY_WORKER, 'privacy-worker'];
 const INVENTORY = [...APPROVED, EXCLUDED, HOST];
 const CUSTOM_INTENT = 'topology/drift-custom-intent.json';
 const appDirectory = path.resolve(import.meta.dirname, '../..');

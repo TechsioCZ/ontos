@@ -6,7 +6,12 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const ReadProjectRequestSchema = Schema.Struct({ projectId: ProjectUuidSchema });
 export type ReadProjectRequest = typeof ReadProjectRequestSchema.Type;
-export const ReadProjectResponseSchema = ProjectSchema;
+// Governed authority fields may be omitted by Core's field projection (O83).
+export const ReadProjectResponseSchema = Schema.Struct({
+  ...ProjectSchema.fields,
+  createdByPrincipalId: Schema.optionalKey(ProjectUuidSchema),
+  ownerPrincipalId: Schema.optionalKey(ProjectUuidSchema),
+});
 
 export const ReadProjectAuthenticationProblemSchema = makeProblemDetailsSchema('ReadProjectAuthenticationProblem', 401);
 export const ReadProjectInvalidProblemSchema = makeProblemDetailsSchema('ReadProjectInvalidProblem', 400);

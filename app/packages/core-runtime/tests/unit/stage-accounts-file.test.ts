@@ -1,19 +1,33 @@
-import { Effect, Redacted } from 'effect';
+import { fileURLToPath } from 'node:url';
+
+import { NodeFileSystem } from '@effect/platform-node';
+import { Effect, FileSystem, Redacted } from 'effect';
+import type { PlatformError } from 'effect/PlatformError';
 import { expect, it } from 'effect-rstest';
 
-import { STAGE_GRANTABLE_TENANT_RELATIONS, parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
+import { parseStageAccountsFile, STAGE_DECLARED_WORKLOAD_KEYS } from '../../src/install/stage-accounts-file.ts';
 
-const account = (tenant: string, index: number, explicitActions: 'all' | readonly string[]) => ({
+/*
+ * The operator accounts file names a stage tenant's v2 authority as data: which account owns the tenant
+ * and which further accounts hold the tenant's "Plný přístup" role. A file that names no owner, two
+ * owners, or a role that does not exist yet cannot be bootstrapped, so it is refused before anything is
+ * written — a tenant without an owner would be created with no authority at all.
+ */
+
+const account = (tenant: string, index: number, grants: { owner: boolean; roles: readonly string[] }) => ({
   authBindingId: `30000000-0000-4000-8000-0000000000${tenant}${index}`,
   displayName: `Tenant ${tenant.toUpperCase()} account ${index}`,
   email: `account-${tenant}-${index}@example.invalid`,
-  grants: { explicitActions, tenantRelations: index === 1 ? ['party_identity_reader'] : ['identity_admin'] },
+  grants,
   password: `fixture-${tenant}-${index}-password`,
   principalId: `20000000-0000-4000-8000-0000000000${tenant}${index}`,
 });
 
 const tenant = (suffix: string) => ({
-  accounts: [account(suffix, 1, []), account(suffix, 2, 'all')],
+  accounts: [
+    account(suffix, 1, { owner: true, roles: [] }),
+    account(suffix, 2, { owner: false, roles: ['full_access'] }),
+  ],
   defaultLocale: 'cs',
   displayName: `Tenant ${suffix.toUpperCase()}`,
   legalEntity: {
@@ -44,7 +58,7 @@ const parse = <File>(file: File, mode = 0o600) => parseStageAccountsFile({ mode,
 const rejectionReason = <File>(file: File, mode?: number) =>
   Effect.flip(parse(file, mode)).pipe(Effect.map(({ reason }) => reason));
 
-it.effect('accepts any number of Tenants and accounts with grants as data', () =>
+it.effect('accepts any number of Tenants and accounts with v2 authority as data', () =>
   Effect.gen(function* acceptsValidFile() {
     const parsed = yield* parse(validFile);
     expect(parsed).toMatchObject({
@@ -63,17 +77,11 @@ it.effect('accepts any number of Tenants and accounts with grants as data', () =
       })),
     });
     const [firstTenant] = parsed.tenants;
-    const [firstAccount] = firstTenant.accounts;
-    expect(Redacted.value(firstAccount.password)).toBe('fixture-a-1-password');
+    const [owner, holder] = firstTenant.accounts;
+    expect(owner?.grants).toEqual({ owner: true, roles: [] });
+    expect(holder?.grants).toEqual({ owner: false, roles: ['full_access'] });
+    expect(Redacted.value(owner?.password ?? Redacted.make(''))).toBe('fixture-a-1-password');
     expect(yield* parse({ ...validFile, tenants: [tenant('a')] })).toMatchObject({ tenants: [{ slug: 'tenant-a' }] });
-  }),
-);
-
-it.effect('derives grantable Tenant relations from the SpiceDB schema, never membership', () =>
-  Effect.sync(() => {
-    expect(STAGE_GRANTABLE_TENANT_RELATIONS).toContain('identity_admin');
-    expect(STAGE_GRANTABLE_TENANT_RELATIONS).toContain('party_identity_reader');
-    expect(STAGE_GRANTABLE_TENANT_RELATIONS).not.toContain('member');
   }),
 );
 
@@ -99,7 +107,9 @@ it.effect('rejects malformed files without echoing their values', () =>
       withAccount({ password: 'short' }),
       withAccount({ email: 'not-an-email' }),
       withAccount({ role: 'anything' }),
-      withAccount({ grants: { explicitActions: 'some', tenantRelations: [] } }),
+      // The legacy grant shape is gone with the relations it named (O62): it is not accepted quietly.
+      withAccount({ grants: { explicitActions: 'all', tenantRelations: ['party_identity_reader'] } }),
+      withAccount({ grants: { owner: true, roles: ['role_editor_template'] } }),
     ]) {
       const reason = yield* rejectionReason(file);
       expect(reason).toMatch(/documented schema/u);
@@ -108,7 +118,7 @@ it.effect('rejects malformed files without echoing their values', () =>
   }),
 );
 
-it.effect('rejects duplicate identities, unknown relations, and overlapping retirements', () =>
+it.effect('rejects duplicate identities, unknown role keys, and overlapping retirements', () =>
   Effect.gen(function* rejectsInconsistentData() {
     const [first, second] = validFile.tenants;
     const [firstAccount, secondAccount] = first?.accounts ?? [];
@@ -122,13 +132,14 @@ it.effect('rejects duplicate identities, unknown relations, and overlapping reti
         withAccounts([firstAccount, { ...secondAccount, email: firstAccount?.email.toUpperCase() }]),
       ),
     ).toMatch(/own email/u);
-    for (const tenantRelations of [['member'], ['not_a_relation'], ['identity_admin', 'identity_admin']]) {
-      expect(
-        yield* rejectionReason(
-          withAccounts([{ ...firstAccount, grants: { explicitActions: [], tenantRelations } }, secondAccount]),
-        ),
-      ).toMatch(/SpiceDB schema/u);
-    }
+    expect(
+      yield* rejectionReason(
+        withAccounts([
+          firstAccount,
+          { ...secondAccount, grants: { owner: false, roles: ['full_access', 'full_access'] } },
+        ]),
+      ),
+    ).toMatch(/roles must be unique/u);
     expect(yield* rejectionReason({ ...validFile, retiredAccountEmails: [firstAccount?.email] })).toMatch(/Retired/u);
     expect(
       yield* rejectionReason({
@@ -137,6 +148,92 @@ it.effect('rejects duplicate identities, unknown relations, and overlapping reti
           { legalEntityId: first?.legalEntity.legalEntityId, principalIds: [], tenantId: first?.tenantId },
         ],
       }),
-    ).toMatch(/Retired/u);
+    ).toMatch(/documented schema/u);
   }),
 );
+
+it.effect('refuses a Tenant with no owner or with two owners', () =>
+  Effect.gen(function* refusesUnbootstrappableTenants() {
+    const [first, second] = validFile.tenants;
+    const [owner, holder] = first?.accounts ?? [];
+    const withoutOwner = { ...validFile, tenants: [{ ...first, accounts: [holder] }, second] };
+    expect(yield* rejectionReason(withoutOwner)).toMatch(/exactly one owner/u);
+    const withTwoOwners = {
+      ...validFile,
+      tenants: [
+        {
+          ...first,
+          accounts: [owner, { ...holder, grants: { owner: true, roles: [] } }],
+        },
+        second,
+      ],
+    };
+    expect(yield* rejectionReason(withTwoOwners)).toMatch(/exactly one owner/u);
+  }),
+);
+
+it.effect('accepts only the workloads a carrier declares, and refuses module-to-module workload keys', () =>
+  Effect.gen(function* acceptsDeclaredWorkloadsOnly() {
+    const [first, second] = validFile.tenants;
+    const principalId = first?.accounts[1]?.principalId;
+    const withWorkload = (workloadKey: string) => ({
+      ...validFile,
+      tenants: [{ ...first, workloads: [{ principalId, workloadKey }] }, second],
+    });
+    for (const workloadKey of ['commerce.storefront-client', 'core.identity-provider']) {
+      expect((yield* parse(withWorkload(workloadKey))).tenants[0]?.workloads).toStrictEqual([
+        { principalId, workloadKey },
+      ]);
+    }
+    const reason = yield* rejectionReason(withWorkload('commerce.order-approval-consumer'));
+    expect(reason).not.toContain('commerce.order-approval-consumer');
+  }),
+);
+
+/** The repository's `app/` root, where every carrier package lives. */
+const APP_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+/** Where carriers declare `accessWorkload`: the Core runtime, the verticals and the Shell API. */
+const CARRIER_ROOTS = ['packages/core-runtime/src', 'verticals', 'apps/shell-super-app/api'];
+const ACCESS_WORKLOAD_LIST = /accessWorkload:\s*\{[^}]*?workloads:\s*\[(?<keys>[^\]]*)\]/gu;
+
+/** Every production source file under a directory, skipping installed packages and test folders. */
+const productionSourceFiles = (directory: string): Effect.Effect<string[], PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* listProductionSourceFiles() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const files: string[] = [];
+    for (const name of yield* fileSystem.readDirectory(directory)) {
+      const entry = `${directory}/${name}`;
+      if (name === 'node_modules' || name === 'tests') {
+        continue;
+      }
+      if ((yield* fileSystem.stat(entry)).type === 'Directory') {
+        files.push(...(yield* productionSourceFiles(entry)));
+      } else if (/\.m?ts$/u.test(name) && !/\.test\./u.test(name)) {
+        files.push(entry);
+      }
+    }
+    return files;
+  });
+
+it.layer(NodeFileSystem.layer)('the carrier workload keys', (suite) => {
+  suite.effect(
+    'accepts exactly the workload keys that carriers declare with accessWorkload',
+    () =>
+      Effect.gen(function* declaresTheCarrierWorkloadKeys() {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const declared = new Set<string>();
+        for (const root of CARRIER_ROOTS) {
+          for (const file of yield* productionSourceFiles(`${APP_ROOT}${root}`)) {
+            for (const match of (yield* fileSystem.readFileString(file)).matchAll(ACCESS_WORKLOAD_LIST)) {
+              for (const key of (match.groups?.['keys'] ?? '').matchAll(/'(?<key>[^']+)'/gu)) {
+                declared.add(key.groups?.['key'] ?? '');
+              }
+            }
+          }
+        }
+        expect([...declared].toSorted()).toStrictEqual([...STAGE_DECLARED_WORKLOAD_KEYS].toSorted());
+      }),
+    // It reads every production source file of the carrier roots, which outlasts the default on CI.
+    30_000,
+  );
+});

@@ -7,12 +7,7 @@ import {
 } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import {
-  PrincipalIdSchema,
-  TenantIdSchema,
-  AuthenticationNamespaceIdSchema,
-} from '@app/core-runtime/auth/external-identity-contracts';
-import { Config, Crypto, DateTime, Effect, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Schema } from 'effect';
 import { CartDraftSchema } from '../../shared/domain/cart-draft.ts';
 import type { PreapprovalCartObservationRequest } from '../../shared/apis/preapproval-cart-observation.ts';
 import { carts, cartRevisions } from '../database/schema.ts';
@@ -26,37 +21,10 @@ const unavailable = (cause?: unknown) =>
     'cause',
     { value: cause },
   );
-const serviceGrants = Schema.fromJsonString(
-  Schema.Array(
-    Schema.Struct({
-      authenticationNamespaceId: AuthenticationNamespaceIdSchema.pipe(Schema.decodeTo(Schema.String)),
-      legalEntityId: Schema.String.check(Schema.isUUID()).pipe(
-        Schema.brand('LegalEntityId'),
-        Schema.decodeTo(Schema.String),
-      ),
-      principalId: PrincipalIdSchema.pipe(Schema.decodeTo(Schema.String)),
-      tenantId: TenantIdSchema.pipe(Schema.decodeTo(Schema.String)),
-    }),
-  ),
-);
-export const preapprovalCartGrantMatches = (
-  scope: Pick<
-    OperationalScope,
-    | 'principalId'
-    | 'authenticationNamespaceId'
-    | 'authMethod'
-    | 'impersonatedByPrincipalId'
-    | 'tenantId'
-    | 'legalEntityId'
-  >,
-  grant: (typeof serviceGrants.Type)[number],
-): boolean =>
-  scope.authMethod === 'api_key' &&
-  scope.impersonatedByPrincipalId === undefined &&
-  grant.principalId === scope.principalId &&
-  grant.authenticationNamespaceId === scope.authenticationNamespaceId &&
-  grant.tenantId === scope.tenantId &&
-  grant.legalEntityId === scope.legalEntityId;
+
+/** A Cart is observed only for its actual buyer; a calling module acts for that buyer and holds no rights of its own. */
+export const preapprovalCartBuyerIsSubject = (buyer: string, subject: Pick<OperationalScope, 'principalId'>): boolean =>
+  buyer === subject.principalId;
 
 /** Full owner head and quantities; never an approval or monetary decision. */
 export const preapprovalCartObservationService = (transaction: ScopedTransactionExecutor, scope: OperationalScope) =>
@@ -104,16 +72,11 @@ export const preapprovalCartObservationService = (transaction: ScopedTransaction
             reason: 'Exact open Cart is unavailable',
           });
         }
-        if (row.buyer !== scope.principalId) {
-          const grants = yield* Config.schema(serviceGrants, 'ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS').pipe(
-            Effect.mapError(unavailable),
-          );
-          if (!grants.some((grant) => preapprovalCartGrantMatches(scope, grant))) {
-            return yield* new ReadPermissionDenied({
-              code: 'read_permission_denied',
-              reason: 'Configured preapproval service or actual Cart buyer is required',
-            });
-          }
+        if (!preapprovalCartBuyerIsSubject(row.buyer, scope)) {
+          return yield* new ReadPermissionDenied({
+            code: 'read_permission_denied',
+            reason: 'The actual Cart buyer is required',
+          });
         }
         const cart = yield* Schema.decodeUnknownEffect(CartDraftSchema)(row.encoded).pipe(Effect.mapError(unavailable));
         if (

@@ -59,6 +59,14 @@ export const handleSetProductBrand = Effect.fn('SetProductBrandAction.handle')(f
 
 export const setProductBrandAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-brand.set',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-product-brand.access.v1',
@@ -70,7 +78,7 @@ export const setProductBrandAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

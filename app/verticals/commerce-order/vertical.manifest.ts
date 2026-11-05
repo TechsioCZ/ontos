@@ -65,6 +65,13 @@ export const commerceOrderManifest: OntosModuleManifestInput = defineOntosModule
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
+  originatorActions: [
+    // Finalization work acts for the invocation that enqueued it.
+    commitOrderAction.descriptor.actionKey,
+    prepareOrderCommitmentAction.descriptor.actionKey,
+    reconcileOrderApprovalAction.descriptor.actionKey,
+    revalidateOrderCommitmentAction.descriptor.actionKey,
+  ],
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>

@@ -75,6 +75,14 @@ const handle = Effect.fn('SuspendCustomerProfileAction.handle')(function* handle
 });
 export const suspendCustomerProfileAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-profile.suspend',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.suspend-customer-profile.access.v1',
@@ -87,7 +95,7 @@ export const suspendCustomerProfileAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.suspend-customer-profile',
       moduleKey: MODULE_KEY,
       role: 'action',

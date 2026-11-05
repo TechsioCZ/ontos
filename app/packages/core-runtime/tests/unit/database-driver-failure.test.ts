@@ -3,6 +3,7 @@ import { Cause, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UniqueViolation } from 'effect/sql/SqlError';
 
+import { isDatabaseGuardRefusal, isDatabaseIntegrityRefusal } from '../../src/database/driver-failure.ts';
 import {
   DatabaseDriverFailureSchema,
   decodeDatabaseDriverFailure,
@@ -270,4 +271,47 @@ it('walks native mixed Causes in order and skips unrelated failures', () => {
     code: '23505',
     constraint: 'owned_unique',
   });
+});
+
+it('classifies every integrity constraint and an access guard refusal as permanent, never as unavailability', () => {
+  // Class 23 is every integrity constraint PostgreSQL can refuse a write with: uniqueness, check,
+  // foreign key, not-null and exclusion. None of them can be satisfied by retrying the same write.
+  for (const code of ['23505', '23514', '23502', '23503', '23P01']) {
+    expect(isDatabaseIntegrityRefusal({ code })).toBe(true);
+    expect(isDatabaseGuardRefusal({ code })).toBe(false);
+  }
+  // 55000 is an access guard's own refusal of a forward-only write, and it is the one code the
+  // taxonomy names apart from the class.
+  expect(isDatabaseIntegrityRefusal({ code: '55000' })).toBe(true);
+  expect(isDatabaseGuardRefusal({ code: '55000' })).toBe(true);
+  // Every other class-55 code stays transient: a lock that is not available yet is not a refusal.
+  for (const code of ['55P03', '55006']) {
+    expect(isDatabaseIntegrityRefusal({ code })).toBe(false);
+    expect(isDatabaseGuardRefusal({ code })).toBe(false);
+  }
+  // Connectivity, capacity and shutdown remain retryable unavailability and are never a refusal.
+  for (const code of ['08006', '53300', '57P01', '40001']) {
+    expect(isDatabaseIntegrityRefusal({ code })).toBe(false);
+    expect(isDatabaseUnavailableFailure({ code })).toBe(true);
+  }
+  // A bug or an unrelated failure is neither: it stays a defect for its owner to see.
+  for (const failure of [new Error('private driver failure'), { code: 'XX000' }, { code: '42501' }]) {
+    expect(isDatabaseIntegrityRefusal(failure)).toBe(false);
+    expect(isDatabaseGuardRefusal(failure)).toBe(false);
+  }
+});
+
+it('finds a commit-time refusal through the cause chain it arrives in', () => {
+  // A deferred constraint trigger refuses at COMMIT, so the failure reaches Core wrapped in the
+  // driver's transaction error rather than as the statement's own result.
+  const deferred = new EffectDrizzleQueryError({
+    cause: Cause.fail(new Error('commit refused', { cause: { code: '23514' } })),
+    params: [],
+    query: 'commit',
+  });
+  expect(isDatabaseIntegrityRefusal(deferred)).toBe(true);
+  expect(isDatabaseGuardRefusal(deferred)).toBe(false);
+  const guard = new Error('outer', { cause: { cause: { code: '55000' } } });
+  expect(isDatabaseIntegrityRefusal(guard)).toBe(true);
+  expect(isDatabaseGuardRefusal(guard)).toBe(true);
 });

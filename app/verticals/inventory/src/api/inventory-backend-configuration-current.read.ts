@@ -17,7 +17,7 @@ const MODULE_KEY = 'commerce.inventory';
 
 const inventoryBackendConfigurationCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.inventory.api.inventory-backend-configuration-current',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -25,6 +25,16 @@ const inventoryBackendConfigurationCurrentEntrypoint = defineTenantModuleEntrypo
 
 export const inventoryBackendConfigurationCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.backend-configuration.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'backend-configuration', level: 'manage' },
+      // Selecting which backend is authoritative is a critical write (O20, O31); reading the current
+      // selection is commercially sensitive but carries no verified personal or money field (A1).
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     domainErrorSchema: InventoryBackendConfigurationPersistenceUnavailable,
     entrypoint: inventoryBackendConfigurationCurrentEntrypoint,
@@ -35,7 +45,6 @@ export const inventoryBackendConfigurationCurrentRead = defineRead(
     inputSchema: InventoryBackendConfigurationCurrentRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.inventory.api.inventory-backend-configuration-current',
     resultSchema: InventoryBackendConfigurationCurrentResponseSchema,
@@ -63,5 +72,4 @@ export const inventoryBackendConfigurationCurrentRead = defineRead(
     Effect.succeed(
       makeInventoryBackendConfigurationService(inventoryBackendConfigurationPersistenceForScope(transaction, scope)),
     ),
-  () => ({ kind: 'tenant' as const, permission: 'access' as const }),
 );

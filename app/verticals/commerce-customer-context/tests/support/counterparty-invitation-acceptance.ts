@@ -1,9 +1,9 @@
-import { customerPermissionObjectId } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 
-import { v1 } from '@authzed/authzed-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { layer as nodeServicesLayer } from '@effect/platform-node/NodeServices';
 import { sql } from 'drizzle-orm';
-import { Context, Crypto, Effect, Layer, Redacted, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Match, Redacted, Schema } from 'effect';
 
 import {
   ActionInvocationPersistenceError,
@@ -11,23 +11,42 @@ import {
   scopedRoutineInvokerFromTransaction,
 } from '@app/core-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
+import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
 import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { acquireFixturePgClient } from './fixture-pg-client.ts';
-import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
+import { AccessChangesStoreLive } from '../../../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
 import {
-  ContextAccess,
-  toLegalEntityAccessObjectId,
-  toModuleAccessObjectId,
-} from '../../../../packages/core-runtime/src/permissions/context-access.ts';
+  // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- The fixture builds the single projection writer over the shared SpiceDB, as Core's own access test support does; expires: 2027-03-31.
+  makeAccessProjectionCompiler,
+  // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- The fixture owns and closes this SpiceDB transport in its own scope; expires: 2027-03-31.
+  makeAccessProjectionTransport,
+} from '../../../../packages/core-runtime/src/access/compiler/spice-db-compiler.ts';
+import { AccessMembershipStoreLive } from '../../../../packages/core-runtime/src/access/intent/memberships.ts';
+import {
+  AccessPeopleStore,
+  AccessPeopleStoreLive,
+} from '../../../../packages/core-runtime/src/access/intent/people-store.ts';
+import { AccessProjectionCompiler } from '../../../../packages/core-runtime/src/access/intent/projection-compiler.ts';
+import {
+  AccessProjectionWriter,
+  AccessProjectionWriterLive,
+} from '../../../../packages/core-runtime/src/access/intent/projection-writer.ts';
+import { TenantIntentLoaderLive } from '../../../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
+import { AccessWriteJournalStoreLive } from '../../../../packages/core-runtime/src/access/lifecycle/persistence/journal-store.ts';
+import {
+  CoreDatabase,
+  // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- The writers run as the admin role over the environment database, as Core's own access test support does; expires: 2027-03-31.
+  makeCoreDatabase,
+} from '../../../../packages/core-runtime/src/db/client.ts';
+import { loadDatabaseConnectionPair, parseDatabaseConfig } from '../../../../packages/core-runtime/src/db/config.ts';
+import { stageScopeOf } from '../../../../packages/core-runtime/src/install/stage-context-bootstrap.ts';
+import { ContextAccess } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
-import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { PrincipalEligibility } from '../../../../packages/core-runtime/src/permissions/principal-ref.ts';
 import type { PrincipalEligibilityService } from '../../../../packages/core-runtime/src/permissions/principal-ref.ts';
-import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
@@ -36,10 +55,11 @@ import {
   ClaimCounterpartyAccessInvitationPayloadSchema,
 } from '../../shared/actions/claim-counterparty-access-invitation.ts';
 import { AccessInstantSchema, CounterpartyRefSchema, PrincipalRefSchema } from '../../shared/domain/access-contract.ts';
+import type { CounterpartyPermissionCode } from '../../shared/domain/permission-catalog.ts';
 import { counterpartyInvitationClaimRedemptionForTransaction } from '../../src/persistence/invitation-claim-authority-persistence.ts';
 import {
   readCounterpartyAccessInvitationForScope,
-  counterpartyAccessPortForScopedTransaction,
+  counterpartyAccessPortForOwnerTransaction,
 } from '../../src/persistence/access-persistence.ts';
 import type { CounterpartyAccessScopedRoutineInvoker } from '../../src/persistence/access-persistence.ts';
 import type { EnrollmentAcceptanceFixture } from './enrollment-acceptance-fixture.ts';
@@ -52,18 +72,24 @@ import { seedCounterpartyInvitationCoreRealm } from './counterparty-invitation-c
  * The acceptance owns three Principals: the shared Storefront client that starts an enrollment on
  * a visitor's behalf, the Counterparty administrator whose current authority the claim re-verifies,
  * and the recipient the journey binds. Their Core rows, the Commerce Counterparty profile the
- * invitation hangs off, the administrator's owner-ledger grant and the SpiceDB relationships are
- * all real; nothing about the claim path is scripted.
+ * invitation hangs off and the administrator's owner-ledger grant and v2 role are real. The recipient
+ * starts with no access intent at all: the claim route admits it once its redemption proves the
+ * secret, and the claim's own grants give it its portal access, exactly as in production.
  */
 
 const ACCESS_MANAGEMENT_PERMISSION = 'counterparty.access.manage';
-const COMMERCE_MODULE_KEY = 'commerce.customer-context';
 /** What an invitation grants its recipient; the claim stages this grant for the claimant. */
 const COUNTERPARTY_INVITATION_PERMISSION = 'counterparty.purchase.submit';
+/** The administrator's own v2 capabilities: managing the Counterparty's access in the company. */
+const ADMINISTRATOR_CAPABILITY_KEYS = [
+  'commerce.customer-context.counterparty-commerce-access.grant',
+  'commerce.customer-context.counterparty-commerce-access.revoke',
+];
 
 export interface CounterpartyInvitationRealm {
   readonly counterpartyPurchasingProfileId: string;
   readonly counterpartyResourceId: string;
+  readonly inviterAuthBindingId: string;
   readonly inviterPrincipalId: string;
   readonly legalEntityId: string;
   readonly recipientAuthBindingId: string;
@@ -73,84 +99,70 @@ export interface CounterpartyInvitationRealm {
   readonly tenantId: string;
 }
 
-interface SpiceDbRelationshipSpec {
-  readonly relation: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-  readonly subjectId: string;
-  readonly subjectType: string;
-}
+/** The platform services the v2 access writers read the catalog and mint their ids with. */
+const tenantAccessServices = Layer.mergeAll(nodeServicesLayer, nodeCryptoLayer);
 
-/** The `action#executor` relationships one Principal needs for the Actions a scenario runs. */
-const executorOf = (principalId: string, actionKeys: readonly string[]): readonly SpiceDbRelationshipSpec[] =>
-  actionKeys.map((actionKey) => ({
-    relation: 'executor',
-    resourceId: toSpiceDbActionObjectId(actionKey),
-    resourceType: 'action',
-    subjectId: principalId,
-    subjectType: 'principal',
-  }));
-
-const relationshipFor = (spec: SpiceDbRelationshipSpec) =>
-  v1.Relationship.create({
-    relation: spec.relation,
-    resource: v1.ObjectReference.create({ objectId: spec.resourceId, objectType: spec.resourceType }),
-    subject: v1.SubjectReference.create({
-      object: v1.ObjectReference.create({ objectId: spec.subjectId, objectType: spec.subjectType }),
-    }),
-  });
-
-/** A SpiceDB object identifier the encoder refused is a fixture defect, never a scenario outcome. */
-const requireObjectId = (value: string | undefined, what: string): string => {
-  if (value === undefined) {
-    throw new Error(`The invitation acceptance could not encode a SpiceDB object id for ${what}`);
-  }
-  return value;
-};
-
-/** Writes the relationships one scenario needs and removes them again on scope close. */
-const seedSpiceDbRelationships = Effect.fnUntraced(function* seedSpiceDbRelationships(
-  specs: readonly SpiceDbRelationshipSpec[],
-) {
-  const configuration = yield* loadSpiceDbConfig();
-  const client = newSpiceDbGrpcClient(configuration);
-  const relationships = specs.map(relationshipFor);
-  const write = (operation: v1.RelationshipUpdate_Operation) =>
-    Effect.promise(
-      async () =>
-        await client.promises.writeRelationships(
-          v1.WriteRelationshipsRequest.create({
-            updates: relationships.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
-          }),
-        ),
-    );
-  yield* write(v1.RelationshipUpdate_Operation.TOUCH);
-  yield* Effect.addFinalizer(() => write(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.asVoid, Effect.orDie));
+/**
+ * The Core writers the recipient's v2 access intent changes through, built into the caller's scope: the people
+ * store that ends its assignments and the single projection writer that reconciles the result.
+ */
+const recipientAccessWriters = Effect.fnUntraced(function* recipientAccessWriters() {
+  const target = yield* environmentTestAccessTarget;
+  const database = Context.make(
+    CoreDatabase,
+    yield* makeCoreDatabase(
+      yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(target.adminConnectionString) }).pipe(Effect.orDie),
+    ),
+  );
+  const transport = yield* Effect.acquireRelease(
+    Effect.sync(() => makeAccessProjectionTransport(target.spiceDb)),
+    (opened) => Effect.sync(() => opened.close()),
+  );
+  const platform = Context.add(database, AccessProjectionCompiler, makeAccessProjectionCompiler(transport));
+  const stores = Context.merge(
+    platform,
+    yield* Layer.build(
+      Layer.mergeAll(
+        TenantIntentLoaderLive,
+        AccessWriteJournalStoreLive,
+        AccessChangesStoreLive,
+        AccessMembershipStoreLive,
+        AccessPeopleStoreLive,
+      ),
+    ).pipe(Effect.provideContext(platform)),
+  );
+  const writer = yield* Layer.build(AccessProjectionWriterLive).pipe(Effect.provideContext(stores));
+  return {
+    people: Context.get(stores, AccessPeopleStore),
+    writer: Context.get(writer, AccessProjectionWriter),
+  };
 });
 
-/** Revoke only this fixture recipient's explicit invitation-claim executor relationship. */
-export const revokeCounterpartyInvitationClaimExecutor = Effect.fnUntraced(
-  function* revokeCounterpartyInvitationClaimExecutor(realm: CounterpartyInvitationRealm) {
-    const configuration = yield* loadSpiceDbConfig();
-    const client = newSpiceDbGrpcClient(configuration);
-    yield* Effect.addFinalizer(() => Effect.sync(() => client.close()));
-    const relationships = executorOf(realm.recipientPrincipalId, [
-      'commerce.customer-context.claim-counterparty-access-invitation',
-    ]).map(relationshipFor);
-    yield* Effect.promise(
-      async () =>
-        await client.promises.writeRelationships(
-          v1.WriteRelationshipsRequest.create({
-            updates: relationships.map((relationship) =>
-              v1.RelationshipUpdate.create({
-                operation: v1.RelationshipUpdate_Operation.DELETE,
-                relationship,
-              }),
-            ),
-          }),
-        ),
-    );
+/**
+ * Revoke the recipient's v2 access to the claim: every active assignment it holds ends in one people change,
+ * followed by one reconcile through the single projection writer, so the engine denies because the intent did.
+ */
+export const revokeCounterpartyInvitationRecipientAccess = Effect.fnUntraced(
+  function* revokeCounterpartyInvitationRecipientAccess(realm: CounterpartyInvitationRealm) {
+    const { people, writer } = yield* recipientAccessWriters();
+    const scope = yield* stageScopeOf({ principalId: realm.recipientPrincipalId, tenantId: realm.tenantId });
+    const { assignments } = yield* people.loadTenantPeople(scope);
+    const writes = assignments
+      .filter(
+        ({ holder, status }) =>
+          status === 'active' &&
+          Match.value(holder).pipe(
+            Match.tag('Principal', ({ principalId }) => principalId === realm.recipientPrincipalId),
+            Match.orElse(() => false),
+          ),
+      )
+      .map(({ incarnationId }) => ({ _tag: 'EndAssignment' as const, incarnationId }));
+    yield* people.applyPeopleChange(scope, { writes });
+    yield* writer.reconcileTenant({ scope });
   },
+  Effect.scoped,
+  Effect.provide(tenantAccessServices),
+  Effect.orDie,
 );
 
 /** The Commerce rows an invitation hangs off, written with the owner role under the scenario scope. */
@@ -219,105 +231,13 @@ const removeCommerceCounterparty = (fixture: EnrollmentAcceptanceFixture, realm:
     )
     .pipe(Effect.asVoid, Effect.orDie);
 
-/** Every Action key a scenario's Principals execute, keyed by the Principal that executes it. */
-export interface CounterpartyInvitationActionGrants {
-  readonly recipientActionKeys: readonly string[];
-  readonly storefrontActionKeys: readonly string[];
-}
-
-const spiceDbSpecsFor = (
-  realm: CounterpartyInvitationRealm,
-  grants: CounterpartyInvitationActionGrants,
-): readonly SpiceDbRelationshipSpec[] => {
-  const legalEntityObjectId = requireObjectId(
-    toLegalEntityAccessObjectId(realm.tenantId, realm.legalEntityId),
-    'the selling Legal Entity',
-  );
-  const moduleObjectId = requireObjectId(
-    toModuleAccessObjectId(realm.tenantId, realm.legalEntityId, COMMERCE_MODULE_KEY),
-    'the Commerce module',
-  );
-  const administrationObjectId = requireObjectId(
-    customerPermissionObjectId({
-      permission: ACCESS_MANAGEMENT_PERMISSION,
-      target: {
-        counterpartyId: realm.counterpartyResourceId,
-        kind: 'counterparty',
-        legalEntityId: realm.legalEntityId,
-        tenantId: realm.tenantId,
-      },
-    }),
-    'the Counterparty administration permission',
-  );
-  const memberOf = (principalId: string): readonly SpiceDbRelationshipSpec[] => [
-    {
-      relation: 'member',
-      resourceId: realm.tenantId,
-      resourceType: 'tenant',
-      subjectId: principalId,
-      subjectType: 'principal',
-    },
-    {
-      relation: 'member',
-      resourceId: legalEntityObjectId,
-      resourceType: 'legal_entity',
-      subjectId: principalId,
-      subjectType: 'principal',
-    },
-    {
-      relation: 'accessor',
-      resourceId: moduleObjectId,
-      resourceType: 'module_access',
-      subjectId: principalId,
-      subjectType: 'principal',
-    },
-  ];
-  return [
-    {
-      relation: 'tenant',
-      resourceId: legalEntityObjectId,
-      resourceType: 'legal_entity',
-      subjectId: realm.tenantId,
-      subjectType: 'tenant',
-    },
-    {
-      relation: 'legal_entity',
-      resourceId: moduleObjectId,
-      resourceType: 'module_access',
-      subjectId: legalEntityObjectId,
-      subjectType: 'legal_entity',
-    },
-    {
-      relation: 'legal_entity',
-      resourceId: administrationObjectId,
-      resourceType: 'business_permission',
-      subjectId: legalEntityObjectId,
-      subjectType: 'legal_entity',
-    },
-    // Core's own projection of the grantor's administrative authority, conjunctive with the owner
-    // ledger row above: the claim consults both and refuses when either is missing.
-    {
-      relation: 'grantee',
-      resourceId: administrationObjectId,
-      resourceType: 'business_permission',
-      subjectId: realm.inviterPrincipalId,
-      subjectType: 'principal',
-    },
-    ...memberOf(realm.inviterPrincipalId),
-    ...memberOf(realm.recipientPrincipalId),
-    ...memberOf(realm.storefrontPrincipalId),
-    ...executorOf(realm.recipientPrincipalId, grants.recipientActionKeys),
-    ...executorOf(realm.storefrontPrincipalId, grants.storefrontActionKeys),
-  ];
-};
-
 export const makeCounterpartyInvitationRealm = Effect.fnUntraced(function* makeCounterpartyInvitationRealm(
   fixture: EnrollmentAcceptanceFixture,
-  grants: CounterpartyInvitationActionGrants,
 ) {
   const realm: CounterpartyInvitationRealm = {
     counterpartyPurchasingProfileId: randomUUID(),
     counterpartyResourceId: `counterparty-${randomUUID()}`,
+    inviterAuthBindingId: randomUUID(),
     inviterPrincipalId: randomUUID(),
     legalEntityId: randomUUID(),
     recipientAuthBindingId: randomUUID(),
@@ -330,7 +250,14 @@ export const makeCounterpartyInvitationRealm = Effect.fnUntraced(function* makeC
   yield* Effect.acquireRelease(seedCommerceCounterparty(fixture, realm), () =>
     removeCommerceCounterparty(fixture, realm),
   );
-  yield* seedSpiceDbRelationships(spiceDbSpecsFor(realm, grants));
+  // The administrator who manages this Counterparty's access is a member of the company with a role of
+  // exactly that authority; writing it also publishes the release every portal role is pinned to.
+  yield* grantTestTenantRoleAccess({
+    ...(yield* environmentTestAccessTarget),
+    holders: [{ capabilityKeys: ADMINISTRATOR_CAPABILITY_KEYS, principalId: realm.inviterPrincipalId }],
+    legalEntityIds: [realm.legalEntityId],
+    tenantId: realm.tenantId,
+  }).pipe(Effect.provide(tenantAccessServices));
   return realm;
 });
 
@@ -432,10 +359,19 @@ interface IssuedCounterpartyInvitation {
  * `create-counterparty-access-invitation` Action calls, with the deployment's fail-closed proof
  * delivery replaced by the capturing one so the recipient's copy of the secret is observable.
  */
+/** Creating an invitation grants nobody anything, so its owner transaction never writes portal access. */
+const issuancePortalAccess = {
+  grant: () => Effect.die('Creating an invitation writes no portal access'),
+  revoke: () => Effect.die('Creating an invitation writes no portal access'),
+};
+
 export const issueCounterpartyAccessInvitation = Effect.fnUntraced(function* issueCounterpartyAccessInvitation(
   realm: CounterpartyInvitationRealm,
   capture: CapturingCounterpartyInvitationProofDelivery,
   deliveryReference: string,
+  intendedPermissions: readonly [CounterpartyPermissionCode, ...CounterpartyPermissionCode[]] = [
+    COUNTERPARTY_INVITATION_PERMISSION,
+  ],
 ) {
   const scope = {
     ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
@@ -463,7 +399,7 @@ export const issueCounterpartyAccessInvitation = Effect.fnUntraced(function* iss
   const { run } = owner;
   const expiresAt = Schema.decodeUnknownSync(AccessInstantSchema)(yield* owner.expiryInOneDay);
   const created = yield* run((transaction) =>
-    counterpartyAccessPortForScopedTransaction(transaction, scope).pipe(
+    counterpartyAccessPortForOwnerTransaction(transaction, scope, issuancePortalAccess).pipe(
       Effect.flatMap((port) =>
         port.createInvitation({
           actionInvocationId: randomUUID(),
@@ -472,7 +408,7 @@ export const issueCounterpartyAccessInvitation = Effect.fnUntraced(function* iss
           deliveryMethod: 'VERIFIED_CONTACT_POINT',
           deliveryReference,
           expiresAt,
-          intendedPermissions: [COUNTERPARTY_INVITATION_PERMISSION],
+          intendedPermissions,
           legalEntityId: realm.legalEntityId,
           reason: 'Counterparty invitation enrollment acceptance',
           scope: { kind: 'counterparty' },

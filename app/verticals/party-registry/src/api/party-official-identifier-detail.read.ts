@@ -11,7 +11,7 @@ import { findOfficialIdentifierRecord } from '../services/party-official-identif
 import { readUnavailable, requireReadValue, readDetailResult } from './read-outcome.ts';
 
 const partyOfficialIdentifierDetailEntrypoint = defineTenantModuleEntrypoint({
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-official-identifier-detail',
   moduleKey: 'party.registry',
@@ -23,6 +23,27 @@ interface Services {
 const unavailable = readUnavailable('Official Identifier persistence is unavailable', true);
 export const partyOfficialIdentifierDetailRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'party.registry.official-identifier.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'party-identity', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: input.officialIdentifierRef.resourceId }),
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['normalizedValue', 'originalInputDigits', 'externalEvidence'],
+        key: 'party.registry.official-identifier-value.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
     entrypoint: partyOfficialIdentifierDetailEntrypoint,
     evidencePolicy: {
@@ -32,7 +53,6 @@ export const partyOfficialIdentifierDetailRead = defineRead(
     inputSchema: PartyOfficialIdentifierDetailRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-official-identifier-detail',
     resultSchema: PartyOfficialIdentifierDetailResponseSchema,
@@ -50,5 +70,4 @@ export const partyOfficialIdentifierDetailRead = defineRead(
     Effect.succeed({
       find: (identifierId: string) => findOfficialIdentifierRecord(transaction, scope.tenantId, identifierId),
     }),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

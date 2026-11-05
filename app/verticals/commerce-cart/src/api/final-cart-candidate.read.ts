@@ -19,7 +19,7 @@ const MODULE_KEY = 'commerce.cart' as const;
 
 const finalCartCandidateEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.cart.api.final-cart-candidate',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -27,6 +27,20 @@ const finalCartCandidateEntrypoint = defineTenantModuleEntrypoint({
 
 export const finalCartCandidateRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context', 'commerce-order', 'pricing'],
+      reason:
+        'The Customer Context, Order and Pricing services read the final Cart candidate for the buyer whose order they process',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.cart.final-candidate.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'cart-finalization', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: finalCartCandidateEntrypoint,
     evidencePolicy: {
@@ -36,7 +50,6 @@ export const finalCartCandidateRead = defineRead(
     inputSchema: FinalCartCandidateRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.cart.api.final-cart-candidate',
     resultSchema: FinalCartCandidateResponseSchema,
@@ -78,5 +91,4 @@ export const finalCartCandidateRead = defineRead(
       ),
     ),
   (transaction, scope) => finalCartCandidateService(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

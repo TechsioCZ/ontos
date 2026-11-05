@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug revise-product-type
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ReviseProductTypePayloadSchema, ReviseProductTypeResultSchema } from '../actions/revise-product-type.ts';
 
 export { ReviseProductTypePayloadSchema } from '../actions/revise-product-type.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReviseProductTypeActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseProductTypeActionInvalidProblem',
@@ -21,6 +23,7 @@ export const ReviseProductTypeActionForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -131,7 +134,7 @@ export const ReviseProductTypeActionApi = HttpApi.make('ReviseProductTypeActionA
       HttpApiEndpoint.post('execute', '/catalog/actions/revise-product-type', {
         error: actionErrors,
         payload: Schema.toEncoded(ReviseProductTypePayloadSchema),
-        success: ReviseProductTypeResultSchema,
+        success: [ActionProposalAcceptedSchema, ReviseProductTypeResultSchema],
       }),
     )
     .middleware(ReviseProductTypeActionSchemaErrorMiddleware),

@@ -118,11 +118,11 @@ const checkFactory = (compositionRevision?: string) =>
       reads: [registration],
     });
     const harness = yield* makeReadTestHarness({
+      access: 'allowed',
       executeOwnerQuery: () => Effect.die('Pricing persistence must not run'),
       operationTime,
       ownerAuthorizationDecision: 'allowed',
       ownerRegistration,
-      permissionDecision: 'allowed',
       scope,
     });
     expect(

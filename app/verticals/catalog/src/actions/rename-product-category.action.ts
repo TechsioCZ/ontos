@@ -73,6 +73,14 @@ const ACTION_KEY = 'commerce.catalog.rename-product-category';
 
 export const renameProductCategoryAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-category.rename',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-category', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.rename-product-category.access.v1',
@@ -84,7 +92,7 @@ export const renameProductCategoryAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

@@ -4,7 +4,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
-import { definePriceGroupActionPermissions } from '../permissions/authorization.ts';
 import {
   CreatePriceGroupDefinitionRevisionPayloadSchema,
   CreatePriceGroupDefinitionRevisionResultSchema,
@@ -103,6 +102,14 @@ export const handleCreatePriceGroupDefinitionRevision = Effect.fn('CreatePriceGr
 
 export const createPriceGroupDefinitionRevisionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'pricing.price-group-catalog.price-group-definition-revision.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'price-groups', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'pricing.price-group-catalog.create-price-group-definition-revision.access.v1',
@@ -114,22 +121,13 @@ export const createPriceGroupDefinitionRevisionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'pricing.price-group-catalog.create-price-group-definition-revision',
       moduleKey: MODULE_KEY,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'forbidden',
-    ownerPermissions: definePriceGroupActionPermissions<CreatePriceGroupDefinitionRevisionPayload>((payload) => ({
-      permission: 'pricing.price_group.revision.create',
-      target: {
-        kind: 'price_group',
-        priceGroupId: payload.expectedCurrent.priceGroupRef.resourceId,
-        pricingCatalogId: payload.expectedCurrent.priceGroupRef.tenantId,
-        tenantId: payload.expectedCurrent.priceGroupRef.tenantId,
-      },
-    })),
     owningModuleKey: MODULE_KEY,
     payloadSchema: CreatePriceGroupDefinitionRevisionPayloadSchema,
     policies: [],

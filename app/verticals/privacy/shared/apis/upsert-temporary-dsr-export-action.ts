@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug upsert-temporary-dsr-export
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/upsert-temporary-dsr-export.ts';
 
 export { UpsertTemporaryDsrExportPayloadSchema } from '../actions/upsert-temporary-dsr-export.ts';
-
 export const UpsertTemporaryDsrExportActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpsertTemporaryDsrExportActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const UpsertTemporaryDsrExportActionForbiddenProblemSchema = makeProblemD
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const upsertTemporaryDsrExportActionGroupDefinition = HttpApiGroup.make('
     HttpApiEndpoint.post('execute', '/privacy/actions/upsert-temporary-dsr-export', {
       error: actionErrors,
       payload: Schema.toEncoded(UpsertTemporaryDsrExportPayloadSchema),
-      success: UpsertTemporaryDsrExportResultSchema,
+      success: [ActionProposalAcceptedSchema, UpsertTemporaryDsrExportResultSchema],
     }),
   )
   .middleware(UpsertTemporaryDsrExportActionSchemaErrorMiddleware);

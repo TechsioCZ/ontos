@@ -43,8 +43,8 @@ describe('all published Catalog Action snapshot/recovery tuples', () => {
       expect(actionKey).toBe(`commerce.catalog.${slug}`);
       const publicContract = Object.entries(catalogPublicOperationContracts).find(([key]) => key === actionKey)?.[1];
       expect(publicContract).toMatchObject({
+        accessKind: 'action',
         permission: actionKey,
-        permissionKind: 'action_execution',
         scope: 'tenant',
       });
       const recoveryContract = Object.entries(catalogPublicOperationContracts).find(

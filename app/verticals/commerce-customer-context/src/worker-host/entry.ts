@@ -13,8 +13,6 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
 import {
-  outboxWorkerBusinessPermissionRelationshipMutationLive,
-  outboxWorkerContextAccessLive,
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
   outboxWorkerLayer as outboxWorkerDefinitionLayer,
@@ -39,8 +37,6 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     ),
     outboxWorkerDefinitionLayer,
   ).pipe(
-    Layer.provide(outboxWorkerBusinessPermissionRelationshipMutationLive),
-    Layer.provide(outboxWorkerContextAccessLive),
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),

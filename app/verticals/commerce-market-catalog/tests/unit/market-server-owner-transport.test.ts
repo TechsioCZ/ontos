@@ -1,4 +1,4 @@
-import { GatewayRelayRequestSchema } from '@app/shared-contracts';
+import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import { TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { MarketSubjectRestrictionsCurrentResponseSchema } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import {
@@ -6,7 +6,7 @@ import {
   CurrentStorefrontApplicationRequestSchema,
   CurrentStorefrontApplicationResponseSchema,
 } from '@app/storefront-registry-contracts';
-import { ConfigProvider, Crypto, DateTime, Effect, Option, Predicate, Redacted, Schema } from 'effect';
+import { ConfigProvider, Crypto, DateTime, Effect, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -18,8 +18,7 @@ const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const requestCorrelation = 'market-server-owner-transport';
 const configuration = ConfigProvider.fromUnknown({
-  ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: 'market-server-api-key',
-  ONTOS_GATEWAY_RELAY_API_KEY: 'market-source-relay-key',
+  ONTOS_GATEWAY_MODULE_API_KEY: 'market-module-api-key',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
 const sourceAssertion = 'verified-original-administrator-source-proof';
@@ -38,6 +37,20 @@ const scope = trustVerifiedGatewayPrincipalContext(sourceScope, compositionRevis
   assertion: Redacted.make(sourceAssertion),
   audience: 'commerce-market-catalog',
 });
+const scopeWithoutLegalEntity = trustVerifiedGatewayPrincipalContext(
+  {
+    ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+      authBindingId: sourceScope.authBindingId,
+      authContextRef: sourceScope.authContextRef,
+      authMethod: 'session',
+      principalId: sourceScope.principalId,
+      tenantId,
+    }),
+    correlationId: requestCorrelation,
+  },
+  compositionRevision,
+  { assertion: Redacted.make(sourceAssertion), audience: 'commerce-market-catalog' },
+);
 let randomSequence = 0;
 const crypto = Crypto.make({
   digest: () => Effect.succeed(new Uint8Array()),
@@ -114,7 +127,7 @@ describe('Commerce Market server owner transport', () => {
         requests.push(request);
         return Promise.resolve(
           Response.json(
-            new URL(request.url).pathname.endsWith('/auth/relay/gateway-context')
+            new URL(request.url).pathname.endsWith('/auth/delegated/gateway-context')
               ? {
                   apiBaseUrl: '/module-api/commerce.storefront-registry',
                   compositionRevision,
@@ -147,17 +160,17 @@ describe('Commerce Market server owner transport', () => {
       expect(requests).toHaveLength(2);
       const issuerRequest = yield* Effect.fromNullishOr(requests[0]);
       const ownerRequest = yield* Effect.fromNullishOr(requests[1]);
-      expect(issuerRequest.url).toBe('https://shell.example.test/shell-super-app-api/auth/relay/gateway-context');
+      expect(issuerRequest.url).toBe('https://shell.example.test/shell-super-app-api/auth/delegated/gateway-context');
       expect(issuerRequest.method).toBe('POST');
-      expect(issuerRequest.headers.get('x-api-key')).toBe('market-source-relay-key');
+      expect(issuerRequest.headers.get('x-api-key')).toBe('market-module-api-key');
       expect(issuerRequest.headers.get('authorization')).toBeNull();
       expect(issuerRequest.headers.get('x-correlation-id')).toBe(requestCorrelation);
       expect(yield* Effect.promise(() => issuerRequest.json())).toEqual({
         audience: 'storefront-registry',
         compositionRevision,
         exchangeId: expect.any(String),
-        operationKey: 'commerce.storefront-registry.api.current-storefront-application',
-        sourceAssertion,
+        legalEntityScope: 'subject',
+        subject: { _tag: 'Assertion', sourceAssertion },
       });
       expect(ownerRequest.url).toBe(
         'https://shell.example.test/module-api/commerce.storefront-registry/reads/current-storefront-application',
@@ -252,7 +265,7 @@ describe('Commerce Market server owner transport', () => {
       const fakeFetch: typeof fetch = (input, init) => {
         const request = new Request(input, init);
         requests.push(request);
-        if (new URL(request.url).pathname.endsWith('/auth/relay/gateway-context')) {
+        if (new URL(request.url).pathname.endsWith('/auth/delegated/gateway-context')) {
           return Promise.resolve(
             Response.json({
               apiBaseUrl: '/module-api/commerce.storefront-registry',
@@ -313,7 +326,7 @@ describe('Commerce Market server owner transport', () => {
         const exchanges: Request[] = [];
         const fakeFetch: typeof fetch = (input, init) => {
           const request = new Request(input, init);
-          if (new URL(request.url).pathname.endsWith('/auth/relay/gateway-context')) {
+          if (new URL(request.url).pathname.endsWith('/auth/delegated/gateway-context')) {
             exchanges.push(request);
             return Promise.resolve(
               Response.json({
@@ -351,18 +364,18 @@ describe('Commerce Market server owner transport', () => {
             audience: 'storefront-registry',
             compositionRevision,
             exchangeId: expect.any(String),
-            operationKey: 'commerce.storefront-registry.api.current-storefront-application',
-            sourceAssertion: proof,
+            legalEntityScope: 'subject',
+            subject: { _tag: 'Assertion', sourceAssertion: proof },
           },
           {
             audience: 'storefront-registry',
             compositionRevision,
             exchangeId: expect.any(String),
-            operationKey: 'commerce.storefront-registry.api.current-storefront-application',
-            sourceAssertion: proof,
+            legalEntityScope: 'subject',
+            subject: { _tag: 'Assertion', sourceAssertion: proof },
           },
         ]);
-        const identitySchema = GatewayRelayRequestSchema;
+        const identitySchema = GatewayDelegatedContextRequestSchema;
         expect(Schema.decodeUnknownSync(identitySchema)(bodies[0]).exchangeId).not.toBe(
           Schema.decodeUnknownSync(identitySchema)(bodies[1]).exchangeId,
         );
@@ -385,80 +398,80 @@ describe('Commerce Market server owner transport', () => {
         );
       expect(Predicate.isTagged(failure, 'StorefrontApplicationValidationUnavailable')).toBe(true);
       expect(requests).toHaveLength(1);
-      expect(requests[0]?.url).toBe('https://shell.example.test/shell-super-app-api/auth/relay/gateway-context');
+      expect(requests[0]?.url).toBe('https://shell.example.test/shell-super-app-api/auth/delegated/gateway-context');
     }),
   );
 
-  it.effect('relays the captured original actor admission and exact revision for subject restrictions', () =>
-    Effect.gen(function* subjectOwnerTransport() {
-      const requests: Request[] = [];
-      const fakeFetch: typeof fetch = (input, init) => {
-        const request = new Request(input, init);
-        requests.push(request);
-        return Promise.resolve(
-          Response.json(
-            new URL(request.url).pathname.endsWith('/auth/relay/gateway-context')
-              ? {
-                  apiBaseUrl: '/module-api/commerce.customer-context',
-                  compositionRevision,
-                  expiresAt: 1_700_000_300,
-                  token: 'customer-context-owner-assertion',
-                }
-              : Schema.encodeSync(MarketSubjectRestrictionsCurrentResponseSchema)(restrictionsResponse),
-          ),
-        );
-      };
-      const captured = { compositionRevision, crypto, scope };
-      const reader = makeServerMarketSubjectRestrictionsReader(captured);
-      captured.compositionRevision = 'b'.repeat(64);
-      captured.scope = trustVerifiedGatewayPrincipalContext(
-        { ...sourceScope, legalEntityId: '55555555-5555-4555-8555-555555555555' },
-        'b'.repeat(64),
-        { assertion: Redacted.make('later-actor-assertion'), audience: 'commerce-market-catalog' },
-      );
-      const result = yield* reader
-        .current(subject, requestCorrelation)
-        .pipe(
-          Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-          Effect.provide(ConfigProvider.layer(configuration)),
-        );
+  it.effect(
+    'retains captured Customer Context revision and legal entity after input mutation for subject restrictions',
+    () =>
+      Effect.gen(function* subjectOwnerTransport() {
+        const requests: Request[] = [];
+        const fakeFetch: typeof fetch = (input, init) => {
+          const request = new Request(input, init);
+          requests.push(request);
+          return Promise.resolve(
+            Response.json(
+              new URL(request.url).pathname.endsWith('/auth/delegated/gateway-context')
+                ? {
+                    apiBaseUrl: '/module-api/commerce.customer-context',
+                    compositionRevision,
+                    expiresAt: 1_700_000_300,
+                    token: 'customer-context-owner-assertion',
+                  }
+                : Schema.encodeSync(MarketSubjectRestrictionsCurrentResponseSchema)(restrictionsResponse),
+            ),
+          );
+        };
+        const captured = { compositionRevision, crypto, scope };
+        const reader = makeServerMarketSubjectRestrictionsReader(captured);
+        captured.scope = trustVerifiedGatewayPrincipalContext(sourceScope, 'b'.repeat(64), {
+          assertion: Redacted.make('replacement-source-proof'),
+          audience: 'commerce-market-catalog',
+        });
+        const result = yield* reader
+          .current(subject, requestCorrelation)
+          .pipe(
+            Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+            Effect.provide(ConfigProvider.layer(configuration)),
+          );
 
-      expect(result).toMatchObject({
-        allowedChannels: ['B2B'],
-        allowedSellerIds: [legalEntityId],
-        decision: 'ALLOWED',
-        ownerRevision: 'counterparty-profile:7',
-        profileState: 'ACTIVE',
-        subjectIdentityRef: subject.profileRef.resourceId,
-        subjectKind: 'COUNTERPARTY',
-      });
-      expect(DateTime.formatIso(result.observedAt)).toBe('2026-10-01T00:00:00.000Z');
-      expect(requests).toHaveLength(2);
-      const issuerRequest = yield* Effect.fromNullishOr(requests[0]);
-      const ownerRequest = yield* Effect.fromNullishOr(requests[1]);
-      expect(issuerRequest.url).toBe('https://shell.example.test/shell-super-app-api/auth/relay/gateway-context');
-      expect(issuerRequest.headers.get('x-api-key')).toBe('market-source-relay-key');
-      expect(issuerRequest.headers.get('x-correlation-id')).toBe(requestCorrelation);
-      expect(yield* Effect.promise(() => issuerRequest.json())).toEqual({
-        audience: 'commerce-customer-context',
-        compositionRevision,
-        exchangeId: expect.any(String),
-        operationKey: 'commerce.customer-context.api.market-subject-restrictions-current',
-        sourceAssertion,
-      });
-      expect(ownerRequest.url).toBe(
-        'https://shell.example.test/module-api/commerce.customer-context/reads/market-subject-restrictions-current',
-      );
-      expect(ownerRequest.method).toBe('POST');
-      expect(ownerRequest.headers.get('authorization')).toBe('Bearer customer-context-owner-assertion');
-      expect(ownerRequest.headers.get('x-api-key')).toBeNull();
-      expect(ownerRequest.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
-      expect(ownerRequest.headers.get('x-correlation-id')).toBe(requestCorrelation);
-      expect(yield* Effect.promise(() => ownerRequest.json())).toEqual({ subject });
-    }),
+        expect(result).toMatchObject({
+          allowedChannels: ['B2B'],
+          allowedSellerIds: [legalEntityId],
+          decision: 'ALLOWED',
+          ownerRevision: 'counterparty-profile:7',
+          profileState: 'ACTIVE',
+          subjectIdentityRef: subject.profileRef.resourceId,
+          subjectKind: 'COUNTERPARTY',
+        });
+        expect(DateTime.formatIso(result.observedAt)).toBe('2026-10-01T00:00:00.000Z');
+        expect(requests).toHaveLength(2);
+        const issuerRequest = yield* Effect.fromNullishOr(requests[0]);
+        const ownerRequest = yield* Effect.fromNullishOr(requests[1]);
+        expect(issuerRequest.url).toBe('https://shell.example.test/shell-super-app-api/auth/delegated/gateway-context');
+        expect(issuerRequest.headers.get('x-api-key')).toBe('market-module-api-key');
+        expect(issuerRequest.headers.get('x-correlation-id')).toBe(requestCorrelation);
+        expect(yield* Effect.promise(() => issuerRequest.json())).toEqual({
+          audience: 'commerce-customer-context',
+          compositionRevision,
+          exchangeId: expect.any(String),
+          legalEntityScope: 'subject',
+          subject: { _tag: 'Assertion', sourceAssertion },
+        });
+        expect(ownerRequest.url).toBe(
+          'https://shell.example.test/module-api/commerce.customer-context/reads/market-subject-restrictions-current',
+        );
+        expect(ownerRequest.method).toBe('POST');
+        expect(ownerRequest.headers.get('authorization')).toBe('Bearer customer-context-owner-assertion');
+        expect(ownerRequest.headers.get('x-api-key')).toBeNull();
+        expect(ownerRequest.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
+        expect(ownerRequest.headers.get('x-correlation-id')).toBe(requestCorrelation);
+        expect(yield* Effect.promise(() => ownerRequest.json())).toEqual({ subject });
+      }),
   );
 
-  it.effect('rejects unverified or mismatched subject admissions before relay and provider HTTP', () =>
+  it.effect('rejects unverified or mismatched subject admissions before delegation and provider HTTP', () =>
     Effect.gen(function* invalidSubjectAdmissions() {
       let fetchCount = 0;
       const fakeFetch: typeof fetch = () => {
@@ -498,8 +511,8 @@ describe('Commerce Market server owner transport', () => {
     }),
   );
 
-  it.effect('preserves subject relay refusal without renewal or ordinary service-key fallback', () =>
-    Effect.gen(function* refusedSubjectRelay() {
+  it.effect('preserves subject delegation refusal without renewal or ordinary service-key fallback', () =>
+    Effect.gen(function* refusedSubjectDelegation() {
       const requests: Request[] = [];
       const fakeFetch: typeof fetch = (input, init) => {
         requests.push(new Request(input, init));
@@ -514,7 +527,7 @@ describe('Commerce Market server owner transport', () => {
         );
       expect(Predicate.isTagged(failure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);
       expect(requests).toHaveLength(1);
-      expect(requests[0]?.url).toBe('https://shell.example.test/shell-super-app-api/auth/relay/gateway-context');
+      expect(requests[0]?.url).toBe('https://shell.example.test/shell-super-app-api/auth/delegated/gateway-context');
     }),
   );
 
@@ -559,62 +572,44 @@ describe('Commerce Market server owner transport', () => {
       expect(Predicate.isTagged(restrictionsFailure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);
       expect(requests).toHaveLength(2);
       expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-        '/shell-super-app-api/auth/relay/gateway-context',
-        '/shell-super-app-api/auth/relay/gateway-context',
+        '/shell-super-app-api/auth/delegated/gateway-context',
+        '/shell-super-app-api/auth/delegated/gateway-context',
       ]);
     }),
   );
 
-  it.effect('rejects a missing captured revision even if the input is later filled before restrictions read', () =>
-    Effect.gen(function* rejectMissingComposition() {
+  it.effect('rejects a scope without verified gateway provenance before any HTTP transport', () =>
+    Effect.gen(function* rejectUnverifiedRestrictionsScope() {
       let fetchCount = 0;
       const fakeFetch: typeof fetch = () => {
         fetchCount += 1;
-        return Promise.reject(new Error('Missing composition must fail before any HTTP transport'));
+        return Promise.reject(new Error('Unverified scope must fail before any HTTP transport'));
       };
-      const captured = {
-        compositionRevision: Option.getOrUndefined(Option.none<string>()),
+      const failure = yield* makeServerMarketSubjectRestrictionsReader({
+        compositionRevision,
         crypto,
-        scope,
-      };
-      const reader = makeServerMarketSubjectRestrictionsReader(captured);
-      captured.compositionRevision = 'b'.repeat(64);
-      captured.scope = trustVerifiedGatewayPrincipalContext(
-        { ...sourceScope, legalEntityId: '55555555-5555-4555-8555-555555555555' },
-        'b'.repeat(64),
-        { assertion: Redacted.make('later-actor-assertion'), audience: 'commerce-market-catalog' },
-      );
-      const failure = yield* reader
+        scope: sourceScope,
+      })
         .current(subject, requestCorrelation)
         .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
 
       expect(Predicate.isTagged(failure, 'MarketSubjectRestrictionsUnavailable')).toBe(true);
-      expect(failure).toHaveProperty(
-        'cause',
-        'Cross-owner subject restrictions require the original verified composition revision',
-      );
       expect(fetchCount).toBe(0);
     }),
   );
 
-  it.effect('rejects a missing captured Legal Entity even if the input is later filled before restrictions read', () =>
+  it.effect('rejects a missing Legal Entity before any HTTP transport', () =>
     Effect.gen(function* rejectMissingLegalEntity() {
       let fetchCount = 0;
       const fakeFetch: typeof fetch = () => {
         fetchCount += 1;
         return Promise.reject(new Error('Missing Legal Entity must fail before any HTTP transport'));
       };
-      const captured = {
+      const failure = yield* makeServerMarketSubjectRestrictionsReader({
         compositionRevision,
         crypto,
-        scope: { ...sourceScope, legalEntityId: Option.getOrUndefined(Option.none<string>()) },
-      };
-      const reader = makeServerMarketSubjectRestrictionsReader(captured);
-      captured.scope = trustVerifiedGatewayPrincipalContext({ ...sourceScope, legalEntityId }, compositionRevision, {
-        assertion: Redacted.make(sourceAssertion),
-        audience: 'commerce-market-catalog',
-      });
-      const failure = yield* reader
+        scope: scopeWithoutLegalEntity,
+      })
         .current(subject, requestCorrelation)
         .pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
 

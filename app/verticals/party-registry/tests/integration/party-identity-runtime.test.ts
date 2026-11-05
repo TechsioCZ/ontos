@@ -19,6 +19,7 @@ import {
 } from '@app/core-runtime';
 import { defineOutboxWorkerEntry, extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
 import {
   addTestGatewayScopeGrantCleanup,
   registerTestGatewayScopeGrant,
@@ -202,6 +203,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           const openFixture = Effect.acquireRelease(
             makeLiveOperationFixture({
+              access: 'allowed',
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
@@ -222,7 +224,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               deleteTestCoreOutbox(adminClient, tenantId),
             ).pipe(Effect.orDie),
           );
-          const fixtureContext = yield* Layer.build(fixture.layer);
+          const deniedAccess = makePartyDeniedAccess();
+          const fixtureContext = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
           const otherContext = yield* Layer.build(other.layer);
           // Each principal carries a registered gateway grant, as a redeemed Shell assertion would.
           const withGatewayScope = Effect.fn('PartyIdentityRuntimeTest.withGatewayScope')(function* withGatewayScope(
@@ -311,7 +314,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           expect(afterAction.events.length).toBe(before.events.length + 1);
           expect(afterAction.outbox.length).toBe(before.outbox.length + 1);
 
-          // A permission-denied Action changes nothing and leaves its rejection audit.
+          // A permission-denied Action changes nothing and leaves its rejection audit. v2 decides
+          // this Action at the one access gate (O62): the fixture scripts its gate per capability,
+          // so the refusal of this one principal is named on the fixture's own per-request owner
+          // seam, which the runtime records exactly like a gate denial.
+          deniedAccess.deny(deniedPrincipal.principalId, 'party.registry.contact-point.add');
           const denial = yield* addContactPoint(deniedPrincipal).pipe(Effect.flip);
           assert.isOk(Predicate.isTagged(denial, 'ActionPermissionDenied'));
           const afterDenial = yield* fixture.evidence(coreAdmin).pipe(Effect.orDie);

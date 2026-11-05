@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug assign-legal-basis
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { AssignLegalBasisPayloadSchema, AssignLegalBasisResultSchema } from '../actions/assign-legal-basis.ts';
 
 export { AssignLegalBasisPayloadSchema } from '../actions/assign-legal-basis.ts';
-
 export const AssignLegalBasisActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignLegalBasisActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const AssignLegalBasisActionForbiddenProblemSchema = makeProblemDetailsSc
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const assignLegalBasisActionGroupDefinition = HttpApiGroup.make('assignLe
     HttpApiEndpoint.post('execute', '/privacy/actions/assign-legal-basis', {
       error: actionErrors,
       payload: Schema.toEncoded(AssignLegalBasisPayloadSchema),
-      success: AssignLegalBasisResultSchema,
+      success: [ActionProposalAcceptedSchema, AssignLegalBasisResultSchema],
     }),
   )
   .middleware(AssignLegalBasisActionSchemaErrorMiddleware);

@@ -10,11 +10,14 @@ import {
   parseDatabaseConnectionPair,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
@@ -57,7 +60,6 @@ import { reserveMarketRetirementActionApiLive } from '../../api/reserve-market-r
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { commerceCustomerContextApi, commerceCustomerContextApiContract } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 
 export interface MarketRetirementNativeReceiverOptions {
@@ -177,8 +179,14 @@ export const makeMarketRetirementNativeReceiver = Effect.fn('MarketRetirementNat
         const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
         const gate = ModuleStateGateLive.pipe(Layer.provide(states));
         const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
+        const accessEnforcement = AccessDecisionLive.pipe(
+          Layer.provideMerge(AccessEnforcementPortsLive),
+          Layer.provide(TenantIntentLoaderLive),
+          Layer.provide(persistence),
+          Layer.provide(NodeCrypto.layer),
+        );
         const resolver = OperationalScopeResolverLive.pipe(
-          Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)),
+          Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessEnforcement)),
         );
         const namespace = staffAuthenticationNamespaceRegistryLayer(['commerce-customer-context']);
         const compositionHttp = FetchHttpClient.layer.pipe(
@@ -189,11 +197,11 @@ export const makeMarketRetirementNativeReceiver = Effect.fn('MarketRetirementNat
         const owners = applicationCompositionMarketReferenceOwnerDeploymentStateAuthorityLive.pipe(
           Layer.provide(composition),
         );
-        const reader = profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive));
-        const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(reader));
+        const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive;
         const common = Layer.mergeAll(
           persistence,
           ContextAccessLive,
+          accessEnforcement,
           gate,
           gateway,
           resolver,

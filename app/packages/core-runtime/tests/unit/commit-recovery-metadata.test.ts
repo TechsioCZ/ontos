@@ -10,6 +10,7 @@ import { makeModuleContractFixture } from '../../src/testing/module-contract.ts'
 import { ActionAlreadyCommitted } from '../../src/actions/errors.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeActionTestHarness } from '../../src/testing/actions.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -37,6 +38,7 @@ it.effect(
       let executions = 0;
       const registration = defineAction(
         {
+          accessDeclaration: fixtureActionAccess('test.recovery'),
           accessEvidencePolicy: {
             captureMode: 'metadata_only',
             policyKey: 'test.recovery.read.v1',
@@ -133,6 +135,7 @@ it.effect('lost commit acknowledgement recovers the committed invocation and fau
     let executions = 0;
     const registration = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('test.recovery'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'test.recovery.read.v1',

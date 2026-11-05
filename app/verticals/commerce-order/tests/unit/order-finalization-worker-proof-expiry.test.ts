@@ -24,8 +24,8 @@ const owners = rs.hoisted(() => ({
 
 // Only the Order owner transport and the Shell assertion issuer are replaced; the worker,
 // its admission and its lost-response recovery run as registered.
-rs.mock('@app/shared-contracts/server/gateway-context-api-key', () => ({
-  issueApiKeyGatewayContext: owners.issueGateway,
+rs.mock('@app/shared-contracts/gateway-context-server', () => ({
+  acquireDelegatedGatewayContext: owners.issueGateway,
 }));
 rs.mock('../../src/api/order-finalization-work-client.ts', () => ({
   executeOrderFinalizationWorkWithAuthorization: owners.load,
@@ -47,6 +47,7 @@ const context = attestOutboxWorkerHandlerContext({
   domainEventId: 'event-late-proof',
   legalEntityScope: 'required',
   messageId: 'message-late-proof',
+  originatorInvocationId: '80000000-0000-4000-8000-0000000000a2',
   producerModuleKey: 'commerce.order',
   tenantId: orderTenantId,
   tenantSequenceNo: 1n,
@@ -61,9 +62,9 @@ const reset = (observedAfterCompletion: Observation, at = afterExpiry) =>
     owners.issueGateway.mockReturnValue(
       Effect.succeed({
         apiBaseUrl: '/order-api',
+        authorization: 'Bearer unit-token',
         compositionRevision: revision,
         expiresAt: at / 1000 + 600,
-        token: 'unit-token',
       }),
     );
     owners.load.mockReset();
@@ -86,14 +87,18 @@ describe('Order proof worker with an expired Quotation and no Confirmation', () 
       yield* execute.pipe(Effect.provide(provenExpired));
       expect(owners.revalidate).not.toHaveBeenCalled();
       expect(executeRecordOrderProofSetWithAuthorization).toHaveBeenCalledExactlyOnceWith(
-        { intentRef: payload.intentRef, outcome: 'PRICING_QUOTATION_EXPIRED' },
+        {
+          intentRef: payload.intentRef,
+          originatorActionInvocationId: '80000000-0000-4000-8000-0000000000a2',
+          outcome: 'PRICING_QUOTATION_EXPIRED',
+        },
         'Bearer unit-token',
         context.correlationId,
         {
           authorization: 'Bearer unit-token',
           baseUrl: new URL('https://order.unit.invalid'),
           compositionRevision: revision,
-          idempotencyKey: `order-complete:${payload.intentRef.resourceId}:quotation-expired`,
+          idempotencyKey: `order-complete:${payload.intentRef.resourceId}:quotation-expired:80000000-0000-4000-8000-0000000000a2`,
         },
       );
     }),
@@ -144,7 +149,7 @@ describe('Order proof worker with an expired Quotation and no Confirmation', () 
 // replacements outlive this file and would leak into whatever runs next. Remove them and drop the
 // modules they replaced, so the next file evaluates the real implementations.
 afterAll(() => {
-  rs.doUnmock('@app/shared-contracts/server/gateway-context-api-key');
+  rs.doUnmock('@app/shared-contracts/gateway-context-server');
   rs.doUnmock('../../src/api/order-finalization-work-client.ts');
   rs.doUnmock('../../src/api/record-order-proof-set-action-client.ts');
   rs.resetModules();

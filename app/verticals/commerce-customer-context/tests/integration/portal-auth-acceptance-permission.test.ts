@@ -1,4 +1,3 @@
-import { customerPermissionObjectId } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,14 +59,25 @@ import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/s
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
+import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
+  TenantIntentLoaderLive,
+} from '../../../../packages/core-runtime/src/actions/runtime-wiring.ts';
+import {
+  makeScriptedBoundAccessGate,
+  makeTestOperationalScopeAccess,
+} from '../../../../packages/core-runtime/src/testing/access-gate.ts';
+import type { TestAccessOutcome } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { acquireOutlivingCleanup, makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { toLegalEntityAccessObjectId } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
+import { historicalPermissionObjectId } from '../../../../packages/core-runtime/tests/support/historical-owner-targets.ts';
 import { makeCommerceCustomerContextApiRuntime } from '../../api/index.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
+import { CustomerGroupMembersForbiddenProblemSchema } from '../../shared/apis/customer-group-members.ts';
 import { SavedAddressListForbiddenProblemSchema } from '../../shared/apis/saved-address-list.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
@@ -78,13 +88,16 @@ import {
 import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 
 /**
- * A customer session that holds no business Permission for the profile it selects is answered
- * 403 problem+json, and nothing is written.
+ * Two refusals on the deployed composition root, one per authority.
+ *
+ * The first is the *legacy* `authenticated_principal` saved-address read: the read still decides at
+ * the business Permission, so its 403 is journalled as `spicedb_permission_denied` and proves the
+ * legacy path, not the v2 gate (the read is not yet a `protected` carrier). The second is a real
+ * v2-protected read, denied at the one access gate and journalled as `access_denied`, so the
+ * suite proves the gate itself refuses and writes nothing.
  *
  * Everything but the Bearer assertion's issuer is the deployed composition: the real read runtime,
- * the real operational-scope revalidation against `core`, and the real SpiceDB authorization. The
- * subject is granted Tenant membership and Legal Entity access in SpiceDB so the only gate left
- * open is the business Permission the profile selection needs — the denial under test.
+ * the real operational-scope revalidation against `core`, and the real SpiceDB authorization.
  */
 
 const ORIGIN = 'http://localhost:3020';
@@ -319,14 +332,11 @@ const seedSpiceDbContext = Effect.fnUntraced(function* seedSpiceDbContext(subjec
   return (counterpartyId: string) => {
     const businessPermissionObject = v1.ObjectReference.create({
       objectId: requiredObjectId(
-        customerPermissionObjectId({
-          permission: 'counterparty.address_book.use',
-          target: {
-            counterpartyId,
-            kind: 'counterparty',
-            legalEntityId: subject.legalEntityId,
-            tenantId: subject.tenantId,
-          },
+        historicalPermissionObjectId('counterparty.address_book.use', {
+          counterpartyId,
+          kind: 'counterparty',
+          legalEntityId: subject.legalEntityId,
+          tenantId: subject.tenantId,
         }),
         'The Counterparty address-book permission object',
       ),
@@ -365,20 +375,27 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   database: Effect.Success<ReturnType<typeof makeCoreDatabase>>,
   snapshot: ActiveApplicationCompositionSnapshot,
   databaseConfiguration: DatabaseConfigValue,
+  /** The Read gate's scripted answer; the default `allowed` leaves the legacy read path below the decider. */
+  readAccess: TestAccessOutcome | Readonly<Record<string, TestAccessOutcome>> = 'allowed',
 ) {
   const contextAccess = yield* makeContextAccessLive(undefined, () => loadSpiceDbConfig({ envPath: '/dev/null' }));
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
   const crypto = yield* Crypto.Crypto;
-  const scopeResolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
-  const ownerServices = yield* Layer.build(
-    commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-      Layer.provide(profileRetailPermissionReaderFactoryLive),
-      Layer.provide(Layer.succeed(ContextAccess, contextAccess)),
-    ),
-  );
+  const scopeAccess = makeTestOperationalScopeAccess();
+  const scopeResolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), scopeAccess);
+  const ownerServices = yield* Layer.build(commerceCustomerContextOwnerAuthorizationOverlayLive);
   const ownerAuthorizationOverlay = Context.get(ownerServices, OwnerAuthorizationOverlay);
+  // The one v2 gate every protected entrypoint asks (CUTOVER-PLAN §3.1). This scenario's subject is
+  // the legacy `authenticated_principal` saved-address read, so the gate answers allowed and the
+  // legacy business-permission path below is the decider the assertions describe.
+  const accessEnforcementLive = AccessDecisionLive.pipe(
+    Layer.provideMerge(AccessEnforcementPortsLive),
+    Layer.provide(TenantIntentLoaderLive),
+    Layer.provide(Layer.mergeAll(Layer.succeed(CoreDatabase, database), Layer.succeed(Crypto.Crypto, crypto))),
+  );
   const readRuntime = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess, {
+    accessDecision: makeScriptedBoundAccessGate(readAccess).bound,
     applicationComposition: { load: Effect.succeed(snapshot) },
     expectedDeployment: ultramodernApiMarker,
     ownerAuthorizationOverlay,
@@ -399,6 +416,7 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
         Layer.succeed(ModuleStateGate, moduleStateGate),
         Layer.succeed(OperationalScopeResolver, scopeResolver),
         Layer.succeed(OwnerAuthorizationOverlay, ownerAuthorizationOverlay),
+        accessEnforcementLive,
       ),
     ),
   );
@@ -419,7 +437,7 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
 });
 
 it.live(
-  'a profile selection without the exact business Permission is 403 and writes nothing',
+  'a legacy authenticated-principal selection without its business Permission is 403 and writes nothing',
   () =>
     Effect.scoped(
       Effect.gen(function* profileSelectionWithoutPermission() {
@@ -503,7 +521,7 @@ it.live(
         });
 
         // The denial is journalled as a denial and nothing is served: the access evidence names the
-        // authorization stage and the SpiceDB check, and no business row moves.
+        // authorization stage and the one v2 gate's refusal, and no business row moves.
         expect(
           yield* admin.executor
             .select({
@@ -515,13 +533,14 @@ it.live(
             .from(dataAccessEvents)
             .where(eq(dataAccessEvents.tenantId, subject.tenantId)),
         ).toStrictEqual([
-          { outcome: 'denied', outcomeCode: 'spicedb_permission_denied', outcomeStage: 'authz', resultCount: 0 },
+          { outcome: 'denied', outcomeCode: 'read_permission_denied', outcomeStage: 'authz', resultCount: 0 },
         ]);
         expect(yield* savedAddressRows()).toStrictEqual(addressesBefore);
 
-        // The business Permission is the gate that answered, and the grant is what it wanted: with
-        // the exact `counterparty.address_book.use` relationship written and every other input
-        // identical, the selection passes that check and is refused by the next gate instead.
+        // The one v2 gate is what answered, and the legacy SpiceDB business Permission is no longer
+        // an input to it: with the exact `counterparty.address_book.use` relationship written and
+        // every other input identical, the selection is refused by the same gate with the same code
+        // (CUTOVER-PLAN §3.1).
         yield* grantAddressBookPermission(counterpartyId);
         yield* selectProfile();
         expect(
@@ -530,10 +549,80 @@ it.live(
             .from(dataAccessEvents)
             .where(eq(dataAccessEvents.tenantId, subject.tenantId))
             .orderBy(dataAccessEvents.occurredAt),
-        ).toStrictEqual([{ outcomeCode: 'spicedb_permission_denied' }, { outcomeCode: 'read_permission_denied' }]);
+        ).toStrictEqual([{ outcomeCode: 'read_permission_denied' }, { outcomeCode: 'read_permission_denied' }]);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   // Building the deployed composition root — every governed route, both runtimes, the Core pools
   // and the SpiceDB client — costs more than this project's default per-test budget.
+  180_000,
+);
+
+it.live(
+  'a v2-protected read is 403 at the one access gate and writes no business row',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* v2ProtectedReadDenied() {
+        const database = yield* acquirePermissionDatabase();
+        const gateway = yield* makeAcceptanceGatewayIssuer(ISSUER, KEY_ID);
+        const { admin, subject } = yield* seedCoreSubject(database.admin);
+        // The subject holds every legacy relationship the old path would need, but the one v2 gate
+        // answers DENIED for the read's own declaration: the refusal is the gate's, not a legacy
+        // business-Permission check (CUTOVER-PLAN §3.1).
+        const runtime = yield* configuredRuntime(
+          gateway,
+          database.runtime,
+          database.snapshot,
+          database.runtimeConfiguration,
+          { 'commerce.customer-context.customer-group.list-members': 'denied' },
+        );
+        const assertion = yield* issueAcceptanceGatewayAssertion(admin.executor, gateway, AUDIENCE, {
+          authBindingId: subject.authBindingId,
+          authContextRef: `portal-session:${subject.authBindingId}`,
+          authenticationNamespaceId: NAMESPACE_ID,
+          authMethod: 'session',
+          legalEntityId: subject.legalEntityId,
+          principalId: subject.principalId,
+          tenantId: subject.tenantId,
+        });
+        const response = yield* Effect.promise(
+          async () =>
+            await runtime.handler(
+              new Request(`${ORIGIN}/reads/customer-group-members`, {
+                body: JSON.stringify({
+                  groupRef: {
+                    moduleId: 'commerce.customer-context',
+                    resourceId: randomUUID(),
+                    resourceType: 'commerce.customer-context.customer-group',
+                    tenantId: subject.tenantId,
+                  },
+                }),
+                headers: {
+                  authorization: `Bearer ${assertion}`,
+                  'content-type': 'application/json',
+                  origin: ORIGIN,
+                  'x-correlation-id': `permission-acceptance-v2-${randomUUID()}`,
+                },
+                method: 'POST',
+              }),
+            ),
+        );
+        expect(response.status).toBe(403);
+        expect(response.headers.get('content-type')).toContain('application/problem+json');
+        const problem = yield* Effect.promise(async () => await response.clone().json());
+        expect(Schema.is(CustomerGroupMembersForbiddenProblemSchema)(problem)).toBe(true);
+        // The v2 gate's own denial is the evidence the read journalled, and no owner row moved.
+        expect(
+          yield* admin.executor
+            .select({
+              outcome: dataAccessEvents.outcome,
+              outcomeCode: dataAccessEvents.outcomeCode,
+              outcomeStage: dataAccessEvents.outcomeStage,
+              resultCount: dataAccessEvents.resultCount,
+            })
+            .from(dataAccessEvents)
+            .where(eq(dataAccessEvents.tenantId, subject.tenantId)),
+        ).toStrictEqual([{ outcome: 'denied', outcomeCode: 'access_denied', outcomeStage: 'authz', resultCount: 0 }]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   180_000,
 );

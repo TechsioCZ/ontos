@@ -65,6 +65,18 @@ const handle = Effect.fn('CorrectPartyFactAction.handle')(function* handleCorrec
 });
 export const correctPartyFactAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.party-fact.correct',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'identity-review', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({
+      moduleKey: 'party.registry',
+      recordKey: payload.factKind === 'RELATIONSHIP' ? payload.relationshipRef.resourceId : payload.partyId,
+    }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.correct-party-fact.access.v1',
@@ -75,10 +87,7 @@ export const correctPartyFactAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.correct-party-fact',
       moduleKey: 'party.registry',
       role: 'action',
@@ -90,8 +99,6 @@ export const correctPartyFactAction = defineAction(
     policies: [],
     resultSchema: CorrectPartyFactResultSchema,
     schemaVersion: '1',
-    tenantPermission: (payload) =>
-      payload.factKind === 'RELATIONSHIP' ? 'manage_party_relationships' : 'manage_party_identity',
   },
   handle,
   (transaction, scope) =>

@@ -7,6 +7,10 @@ import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
+import { installedModuleKeysOf } from '../../packages/core-runtime/src/install/installation-runtime.ts';
+import { decodeAccessDeclarationOrThrow } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
+import type { AccessCatalogModule } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
+import { defineTenantModuleEntrypoint } from '../../packages/core-runtime/src/modules/module-entrypoint.ts';
 import { makeModuleContractFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import { SPICEDB_TEST_CERTIFICATE } from '../../packages/core-runtime/tests/support/spicedb-test-certificate.ts';
@@ -15,7 +19,6 @@ import {
   LOCAL_DEVELOPMENT_VERTICALS,
   LOCAL_DEVELOPMENT_CONTEXT,
   LocalDevelopmentInitializationError,
-  buildLocalDevelopmentRelationships,
   classifyExactLocalRecord,
   classifyLocalModuleState,
   deriveActivatedModuleIds,
@@ -278,24 +281,48 @@ it.effect('rejects duplicate module IDs derived from different verticals', () =>
   }),
 );
 
-it.effect('generates stable module state IDs and complete access relationships', () =>
-  Effect.gen(function* testEffect7() {
+const accessModuleOf = (moduleId: string, entrypointKey: string): AccessCatalogModule => {
+  const entrypoint = defineTenantModuleEntrypoint({
+    access: 'read',
+    authorization: { kind: 'protected' },
+    entrypointKey,
+    moduleKey: moduleId,
+    role: 'api',
+  });
+  return {
+    descriptors: [
+      {
+        accessDeclaration: decodeAccessDeclarationOrThrow(
+          {
+            key: entrypointKey,
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'local', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
+          entrypoint,
+        ),
+        entrypoint,
+      },
+    ],
+    moduleId,
+  };
+};
+
+it.effect('generates stable module state IDs and installs the activated modules plus Core', () =>
+  Effect.sync(() => {
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).toBe(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID));
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).not.toBe(moduleStateIdFor(INVENTORY_MODULE_ID));
-    const relationships = yield* buildLocalDevelopmentRelationships([PARTY_REGISTRY_MODULE_ID, INVENTORY_MODULE_ID]);
-    expect(relationships.length).toBe(8);
-    expect(relationships.filter(({ relation }) => relation === 'accessor').length).toBe(2);
-    expect(relationships.filter(({ relation }) => relation === 'legal_entity').length).toBe(2);
-    // Party Registry's governed reads need the tenant read permission, not only module access.
-    expect(relationships).toContainEqual({
-      relation: 'party_identity_reader',
-      resourceId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-      resourceType: 'tenant',
-      subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
-      subjectType: 'principal',
-    });
-    const withoutPartyRegistry = yield* buildLocalDevelopmentRelationships([INVENTORY_MODULE_ID]);
-    expect(withoutPartyRegistry.some(({ relation }) => relation === 'party_identity_reader')).toBe(false);
+    const modules = [
+      accessModuleOf(PARTY_REGISTRY_MODULE_ID, 'party.registry.party.read'),
+      accessModuleOf('core.shell', 'core.shell.composition.read'),
+      accessModuleOf(CATALOG_MODULE_ID, 'commerce.catalog.product.read'),
+    ];
+    // The local principal works with Parties, so that vertical is installed beside Core's own modules.
+    expect(installedModuleKeysOf([PARTY_REGISTRY_MODULE_ID], modules)).toEqual(['core.shell', 'party.registry']);
+    // A vertical the local development does not activate stays out: its capabilities never decide here.
+    expect(installedModuleKeysOf([PARTY_REGISTRY_MODULE_ID], modules)).not.toContain(CATALOG_MODULE_ID);
   }),
 );
 

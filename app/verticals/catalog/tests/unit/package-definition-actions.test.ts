@@ -117,10 +117,7 @@ describe('Package Definition governed Action contracts', () => {
       revisePackageDefinitionAction,
       retirePackageDefinitionAction,
     ]) {
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
     }

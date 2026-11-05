@@ -154,8 +154,8 @@ it.effect('Unarchive review outcome commits once and replays without an unarchiv
       reasonCode: 'EXACT_CLAIM_CONFLICT' as const,
     };
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       ownerRegistration: partyRegistryBackendRegistration,
-      actionPermission: 'allowed',
       services: [
         bindActionTestServices(unarchivePartyAction, {
           unarchive: () =>
@@ -165,7 +165,6 @@ it.effect('Unarchive review outcome commits once and replays without an unarchiv
             }),
         }),
       ],
-      tenantPermission: 'allowed',
     });
     const request = {
       payload: {

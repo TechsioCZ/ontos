@@ -9,6 +9,7 @@ import type {
 } from '../../shared/domain/order-commitment.ts';
 import type { VerifiedOrderBinding } from '@app/commerce-order-contracts/verify-order-commitment-binding';
 import { verifyOrderAttemptSources } from '../services/order-final-source-verification.service.ts';
+import { callAs } from '../services/order-module-call.ts';
 import { OrderPreparationIntentDataSchema } from '../../shared/domain/order-commitment.ts';
 import { OrderCommitmentStateRequestSchema } from '../../shared/apis/order-commitment-state.ts';
 import type { OrderCommitmentStateRequest } from '../../shared/apis/order-commitment-state.ts';
@@ -115,12 +116,15 @@ export const orderCommitmentReadServices: ReadServiceFactory<OrderCommitmentRead
       if (input.mode === 'REVALIDATION') {
         const state = yield* persistence.load(input.binding);
         yield* verifyOrderAttemptSources({
-          scope: {
-            buyerPrincipalId: state.bundle.buyerPrincipalId,
-            correlationId: state.attempt.commitmentCorrelationId,
-            legalEntityId: state.bundle.legalEntityId,
-            tenantId: scope.tenantId,
-          },
+          scope: callAs(
+            {
+              buyerPrincipalId: state.bundle.buyerPrincipalId,
+              correlationId: state.attempt.commitmentCorrelationId,
+              legalEntityId: state.bundle.legalEntityId,
+              tenantId: scope.tenantId,
+            },
+            { _tag: 'Assertion', scope },
+          ),
           state,
         });
       }

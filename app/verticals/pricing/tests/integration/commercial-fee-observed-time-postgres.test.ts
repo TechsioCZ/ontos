@@ -849,10 +849,18 @@ const provisionalReads: {
 }[] = [];
 const nativeFeeRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.fixture.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'pricing.commercial_fee.native_test.read' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.test.fee-observed-time',
       moduleKey: 'commerce.pricing',
       role: 'api',
@@ -866,7 +874,6 @@ const nativeFeeRead = defineRead(
     }),
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.pricing',
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.test.fee-observed-time',
     resultSchema: Schema.Struct({ outcome: Schema.String }),
@@ -914,7 +921,6 @@ const nativeFeeRead = defineRead(
       const context = yield* Layer.build(adapters);
       return { persistence, reader: Context.get(context, CurrentPricingDecisionFeeSetReader) };
     }),
-  () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
 );
 
 // This owner registers the exact local native test Read; it claims no production Pricing API.
@@ -936,6 +942,7 @@ it.live('settles real Core Fee evidence and rolls back a SQL-aborted pseudo-succ
   Effect.scoped(
     Effect.gen(function* governedNativeFee() {
       const fixture = yield* makeNativeReadTestContext({
+        access: 'allowed',
         contextPermissions: ['pricing.commercial_fee.native_test.read'],
         moduleId: 'commerce.pricing',
         ownerFixtureRetention: 'retain-complete-context',

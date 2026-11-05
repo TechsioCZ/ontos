@@ -1,4 +1,4 @@
-import type { OperationalScope, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
 import {
   AuthBindingIdSchema,
@@ -6,22 +6,19 @@ import {
   TenantIdSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { AccessPortalError } from '@app/core-runtime/access/portal';
+import type { AccessPortalGrantInput, AccessPortalReceipt, AccessPortalWrites } from '@app/core-runtime/access/portal';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { CounterpartyAccessContractViolation } from '../../shared/domain/access-port.ts';
+import { CounterpartyAccessContractViolation, CounterpartyAccessUnavailable } from '../../shared/domain/access-port.ts';
 import type { CounterpartyAccessDomainError } from '../../shared/domain/access-port.ts';
 import type { VerifiedInvitationClaimAttestation } from '../../shared/domain/invitation-contract.ts';
 import {
-  accessAuthorizationMutationReconciliationForWorker,
-  accessAuthorizationMutationReconciliationForTransaction,
-  accessAuthorizationReconcilerForTransaction,
   counterpartyAccessPortForTransaction,
   currentOwnerAccessForTransaction,
-  lockingCurrentOwnerAccessForTransaction,
   readEnrollmentInvitationClaimCurrent,
 } from '../../src/persistence/access-persistence.ts';
-import { CounterpartyAccessInvitationClaimAuthorizationMutationRequestedPayloadSchema } from '../../shared/domain/access-authorization-mutation.ts';
 import type {
   CounterpartyAccessScopedRoutineInvoker,
   CounterpartyAccessPersistenceContext,
@@ -34,9 +31,8 @@ const recipientId = '50000000-0000-4000-8000-000000000001';
 const invitationId = '60000000-0000-4000-8000-000000000001';
 const grantId = '70000000-0000-4000-8000-000000000001';
 const invocationId = '80000000-0000-4000-8000-000000000001';
-const mutationId = '81000000-0000-4000-8000-000000000001';
+const otherInvitationId = '81000000-0000-4000-8000-000000000001';
 const claimMutationId = '82000000-0000-4000-8000-000000000001';
-const compensationMutationId = '83000000-0000-4000-8000-000000000001';
 const counterpartyId = 'counterparty-one';
 const ResourceIdSchema = Schema.String.pipe(Schema.brand('ResourceId'));
 
@@ -68,17 +64,15 @@ const scope = Object.freeze({
 }) satisfies OperationalScope & { readonly legalEntityId: string };
 
 // oxlint-disable-next-line effect-native/no-literal-union-type-alias -- This test-only row-fixture vocabulary mirrors private persistence output and has no runtime parsing boundary.
-type GrantState = 'ACTIVE' | 'PENDING_GRANT' | 'PENDING_REVOKE' | 'RECONCILIATION_REQUIRED' | 'REVOKED';
+type GrantState = 'ACTIVE' | 'REVOKED';
 // oxlint-disable-next-line effect-native/no-literal-union-type-alias -- This test-only routine-result vocabulary drives fixture typing and has no runtime parsing boundary.
 type GrantOperationOutcome =
   | 'ALREADY_ACTIVE'
   | 'ALREADY_REVOKED'
+  | 'APPLIED'
   | 'CONFLICT'
   | 'LAST_ADMIN_PROTECTED'
-  | 'PENDING_GRANT'
-  | 'PENDING_REVOKE';
-// oxlint-disable-next-line effect-native/no-literal-union-type-alias -- This test-only mutation marker includes null fixture state and has no runtime parsing boundary.
-type GrantMutationOperation = 'grant' | 'revoke' | null;
+  | 'REVOKED';
 
 const grantRowFixture = Object.freeze({
   counterparty_resource_id: counterpartyId,
@@ -91,30 +85,16 @@ const grantRowFixture = Object.freeze({
   storefront_resource_id: null,
 });
 
-const grantMutationOperation = (operationOutcome?: GrantOperationOutcome): GrantMutationOperation => {
-  let mutationOperation: 'grant' | 'revoke' | null = null;
-  if (operationOutcome === 'PENDING_GRANT') {
-    mutationOperation = 'grant';
-  } else if (operationOutcome === 'PENDING_REVOKE') {
-    mutationOperation = 'revoke';
-  }
-  return mutationOperation;
-};
-
-const buildGrantRow = (state: GrantState, mutationOperation: GrantMutationOperation) => ({
+const buildGrantRow = (state: GrantState) => ({
   ...grantRowFixture,
-  action_invocation_id: mutationOperation === null ? null : invocationId,
-  mutation_id: mutationOperation === null ? null : mutationId,
-  mutation_operation: mutationOperation,
-  mutation_staged: mutationOperation === null ? null : true,
-  revision: state === 'PENDING_GRANT' || state === 'PENDING_REVOKE' ? 1 : 2,
+  revision: state === 'REVOKED' ? 2 : 1,
   revoked_at: state === 'REVOKED' ? '2026-09-09T09:01:00.000Z' : null,
   revoked_by: state === 'REVOKED' ? actorId : null,
   state,
 });
 
 const grantRow = (state: GrantState, operationOutcome?: GrantOperationOutcome) => {
-  const row = buildGrantRow(state, grantMutationOperation(operationOutcome));
+  const row = buildGrantRow(state);
   return operationOutcome === undefined ? row : { ...row, operation_outcome: operationOutcome };
 };
 
@@ -162,19 +142,33 @@ const attestation = Object.freeze({
   verifiedAt: '2026-09-09T09:00:30.000Z',
 } as const satisfies VerifiedInvitationClaimAttestation);
 
+/** Core's portal writes as the owner transaction calls them, recorded in call order. */
+const recordingPortalAccess = (refuse?: AccessPortalError) => {
+  const calls: string[] = [];
+  const write =
+    (operation: 'grant' | 'revoke') =>
+    (input: AccessPortalGrantInput): Effect.Effect<AccessPortalReceipt, AccessPortalError> =>
+      Effect.sync(() => calls.push(`${operation}:${input.role.key}:${input.principalId}:${input.source}`)).pipe(
+        Effect.andThen(
+          refuse === undefined
+            ? Effect.succeed({ assignmentIncarnationId: input.source, changed: true })
+            : Effect.fail(refuse),
+        ),
+      );
+  const portalAccess: AccessPortalWrites = { grant: write('grant'), revoke: write('revoke') };
+  return { calls, portalAccess };
+};
+
 const dependenciesWith = (
   transaction: CounterpartyAccessScopedRoutineInvoker,
   overrides: Partial<CounterpartyAccessPersistenceContext> = {},
 ): CounterpartyAccessPersistenceContext => ({
   claimAuthority: { verifyAndConsume: () => Effect.succeed(attestation) },
-  contextAccess: {
-    ownerPermissions: ({ targets }) =>
-      Effect.succeed(targets.map(({ target }) => ({ decision: 'allowed', key: target.key }))),
-  },
   currentOwnerAccess: () => Effect.succeed('ALLOWED' as const),
   eligibility: {
     resolve: (principal) => Effect.succeed({ decision: 'eligible', principal, reason: 'active' }),
   },
+  portalAccess: recordingPortalAccess().portalAccess,
   proofLifecycle: {
     issueAndStageDelivery: () =>
       Effect.succeed({
@@ -193,9 +187,6 @@ const dependenciesWith = (
   transaction,
   ...overrides,
 });
-
-const allowedOwnerAccessForWorker: typeof currentOwnerAccessForTransaction = () => () =>
-  Effect.succeed('ALLOWED' as const);
 
 const grantInput = {
   actionInvocationId: invocationId,
@@ -234,7 +225,6 @@ const invitationRow = (state: 'CLAIMING' | 'CLAIMED') => {
     invitation_id: invitationId,
     invited_by: actorId,
     mutation_id: claimMutationId,
-    mutation_staged: state === 'CLAIMING',
     reason: 'Invite administrator',
     requested_permission_codes: ['counterparty.access.manage'],
     revision: state === 'CLAIMING' ? 2 : 3,
@@ -256,7 +246,6 @@ const pendingInvitationRow = (operationOutcome: 'ALREADY_PENDING' | 'ALREADY_SEN
   invitation_id: invitationId,
   invited_by: actorId,
   mutation_id: claimMutationId,
-  mutation_staged: operationOutcome === 'RESENT',
   operation_outcome: operationOutcome,
   reason: 'Invite administrator',
   requested_permission_codes: ['counterparty.access.manage'],
@@ -278,7 +267,18 @@ const claimInput = {
   scope: { kind: 'counterparty' },
 } as const;
 
-const claimReconciliationRow = (state: 'CLAIMED' | 'RECONCILIATION_REQUIRED') => ({
+const earlierRedeemerId = '51000000-0000-4000-8000-000000000001';
+/** Two redemptions of the invitation: an earlier proof somebody else redeemed, then the claimant's own. */
+const redemptionRows = [
+  { claimant_principal_id: earlierRedeemerId, proof_reference: 'secure-vault-proof-earlier' },
+  { claimant_principal_id: recipientId, proof_reference: claimInput.claimProofReference },
+];
+const inviteeRevocations = redemptionRows.map(
+  (row) =>
+    `revoke:commerce.customer-context.counterparty-invitee:${row.claimant_principal_id}:commerce.customer-context.counterparty-invitation:${invitationId}:${row.proof_reference}`,
+);
+
+const claimReconciliationRow = (state: 'CLAIMED') => ({
   attestation_reference: attestation.attestationReference,
   claim_mutation_id: claimMutationId,
   claim_subject_principal_id: null,
@@ -314,62 +314,51 @@ const claimReconciliationRow = (state: 'CLAIMED' | 'RECONCILIATION_REQUIRED') =>
   verified_at: attestation.verifiedAt,
 });
 
-const claimReconciliationRequest = Schema.decodeUnknownSync(
-  CounterpartyAccessInvitationClaimAuthorizationMutationRequestedPayloadSchema,
-)({
-  catalogVersion: '1',
-  counterpartyRef,
-  invitationRef: attestation.invitationRef,
-  legalEntityId,
-  mutationId: claimMutationId,
-  operation: 'claim',
-  permissionMutations: [],
-  schemaVersion: '1',
-  scope: { kind: 'counterparty' },
-});
-
-const workerScope = (routineInvoker: CounterpartyAccessScopedRoutineInvoker) =>
-  ({
-    completionPublisher: {
-      publish: () => Effect.succeed({ domainEventId: mutationId, outcome: 'PUBLISHED' as const }),
-    },
-    legalEntityId,
-    routineInvoker,
-    tenantId,
-  }) satisfies OutboxWorkerLegalEntityScope;
-
-it.effect('commits a durable grant intent without performing the external relationship write', () =>
+it.effect('applies a grant in one owner routine without a second permission store', () =>
   Effect.gen(function* grantAccess() {
     const calls: string[] = [];
     const port = counterpartyAccessPortForTransaction(
       dependenciesWith(
-        invokerWith((routineKey, values) => {
+        invokerWith((routineKey) => {
           calls.push(routineKey);
-          return routineKey === 'counterparty-access.begin-grant'
-            ? [grantRow('PENDING_GRANT', 'PENDING_GRANT')]
-            : [grantRow(values[3] === 'ACTIVE' ? 'ACTIVE' : 'RECONCILIATION_REQUIRED')];
+          return [grantRow('ACTIVE', 'APPLIED')];
         }),
       ),
     );
 
     const result = yield* port.grant(grantInput);
-    expect(result.outcome).toBe('RECONCILIATION_REQUIRED');
-    expect(result.grant.state).toBe('RECONCILIATION_REQUIRED');
-    if (result.outcome === 'RECONCILIATION_REQUIRED') {
-      expect(result.reconciliation).toEqual({
-        mutationId,
-        operation: 'grant',
-        staged: true,
-      });
-    }
-    expect(calls).toEqual(['counterparty-access.begin-grant', 'counterparty-access.transition-grant']);
+    // The owner row is the whole authority (O67-Q1), so the grant is ACTIVE when the Action returns
+    // instead of waiting for an out-of-band projection (O62).
+    expect(result.outcome).toBe('APPLIED');
+    expect(result.grant.state).toBe('ACTIVE');
+    expect(calls).toEqual(['counterparty-access.grant']);
   }),
 );
 
-it.effect('denies an allowed Core relation while the owner revoke is still pending', () =>
-  Effect.gen(function* denyDuringPendingRevoke() {
+it.effect('revokes a grant in one owner routine without a second permission store', () =>
+  Effect.gen(function* revokeAccess() {
+    const calls: string[] = [];
+    const port = counterpartyAccessPortForTransaction(
+      dependenciesWith(
+        invokerWith((routineKey) => {
+          calls.push(routineKey);
+          return [grantRow('REVOKED', 'REVOKED')];
+        }),
+      ),
+    );
+
+    const result = yield* port.revoke(grantInput);
+    expect(result.outcome).toBe('REVOKED');
+    expect(result.grant.state).toBe('REVOKED');
+    expect(result.grant.revokedBy).toEqual(actor);
+    expect(calls).toEqual(['counterparty-access.revoke']);
+  }),
+);
+
+it.effect('denies once the owner grant is revoked', () =>
+  Effect.gen(function* denyRevokedGrant() {
     const transaction = invokerWith((routineKey) =>
-      routineKey === 'counterparty-access.list-grants' ? [grantRow('PENDING_REVOKE', 'PENDING_REVOKE')] : [],
+      routineKey === 'counterparty-access.list-grants' ? [grantRow('REVOKED')] : [],
     );
     const port = counterpartyAccessPortForTransaction(
       dependenciesWith(transaction, {
@@ -384,27 +373,6 @@ it.effect('denies an allowed Core relation while the owner revoke is still pendi
       scope: { kind: 'counterparty' },
     });
     expect(decision).toBe('DENIED');
-  }),
-);
-
-it.effect('returns unavailable when owner access is indeterminate during reconciliation', () =>
-  Effect.gen(function* unavailableDuringReconciliation() {
-    const transaction = invokerWith((routineKey) =>
-      routineKey === 'counterparty-access.list-grants' ? [grantRow('RECONCILIATION_REQUIRED')] : [],
-    );
-    const port = counterpartyAccessPortForTransaction(
-      dependenciesWith(transaction, {
-        currentOwnerAccess: currentOwnerAccessForTransaction(transaction, scope),
-      }),
-    );
-
-    const decision = yield* port.check({
-      counterpartyRef,
-      permission: 'counterparty.access.manage',
-      principal: recipient,
-      scope: { kind: 'counterparty' },
-    });
-    expect(decision).toBe('UNAVAILABLE');
   }),
 );
 
@@ -430,7 +398,7 @@ it.effect('lets a broad active owner grant cover a narrower scope despite stale 
         ? [
             grantRow('ACTIVE'),
             {
-              ...grantRow('PENDING_REVOKE', 'PENDING_REVOKE'),
+              ...grantRow('REVOKED'),
               storefront_resource_id: 'storefront-one',
             },
           ]
@@ -450,33 +418,16 @@ it.effect('lets a broad active owner grant cover a narrower scope despite stale 
   }),
 );
 
-it.effect('fails closed when a pending row is missing its durable mutation identity', () =>
-  Effect.gen(function* rejectMissingMutationIdentity() {
-    const transitioned: unknown[] = [];
-    const port = counterpartyAccessPortForTransaction(
-      dependenciesWith(
-        invokerWith((routineKey, values) => {
-          if (routineKey === 'counterparty-access.begin-grant') {
-            return [
-              {
-                ...grantRow('PENDING_GRANT', 'PENDING_GRANT'),
-                mutation_id: null,
-                mutation_operation: null,
-              },
-            ];
-          }
-          transitioned.push(...values);
-          return [grantRow('RECONCILIATION_REQUIRED')];
-        }),
-      ),
-    );
+it.effect('fails closed when the grant routine reports no applied grant', () =>
+  Effect.gen(function* rejectUnappliedGrant() {
+    const port = counterpartyAccessPortForTransaction(dependenciesWith(invokerWith(() => [grantRow('ACTIVE')])));
 
-    yield* Effect.flip(port.grant(grantInput));
-    expect(transitioned).toEqual([]);
+    const failure = yield* Effect.flip(port.grant(grantInput));
+    expect(Schema.is(CounterpartyAccessUnavailable)(failure)).toBe(true);
   }),
 );
 
-it.effect('returns last-admin protection and idempotent active outcomes without staging another intent', () =>
+it.effect('returns last-admin protection and idempotent active outcomes', () =>
   Effect.gen(function* protectLastAdministrator() {
     const active = counterpartyAccessPortForTransaction(
       dependenciesWith(invokerWith(() => [grantRow('ACTIVE', 'ALREADY_ACTIVE')])),
@@ -490,507 +441,78 @@ it.effect('returns last-admin protection and idempotent active outcomes without 
   }),
 );
 
-it.effect('completes pending revoke and repairs indeterminate relationship mutations', () =>
-  Effect.gen(function* revokeAndReconcile() {
-    const recoveredStorefronts: (string | undefined)[] = [];
-    const transaction = invokerWith((routineKey, values) => {
-      if (routineKey === 'counterparty-access.begin-revoke') {
-        return [grantRow('PENDING_REVOKE', 'PENDING_REVOKE')];
-      }
-      if (routineKey === 'counterparty-access.list-reconciliation') {
-        return [
-          {
-            ...grantRow('RECONCILIATION_REQUIRED'),
-            action_invocation_id: invocationId,
-            mutation_id: mutationId,
-            recovery_operation: 'grant',
-            storefront_resource_id: 'persisted-storefront',
-          },
-        ];
-      }
-      return [grantRow(values[3] === 'REVOKED' ? 'REVOKED' : 'ACTIVE')];
-    });
-    const dependencies = dependenciesWith(transaction);
-    const revoked = yield* counterpartyAccessPortForTransaction(dependencies).revoke(grantInput);
-    const summary = yield* accessAuthorizationReconcilerForTransaction(dependencies, {
-      mutate: (input) =>
-        Effect.sync(() => {
-          recoveredStorefronts.push(input.trustedStorefrontId);
-        }),
-    }).reconcile({ limit: 10, tenantId });
-    expect(revoked.outcome).toBe('RECONCILIATION_REQUIRED');
-    if (revoked.outcome === 'RECONCILIATION_REQUIRED') {
-      expect(revoked.reconciliation).toEqual({
-        mutationId,
-        operation: 'revoke',
-        staged: true,
-      });
-    }
-    expect(summary).toEqual({ examined: 1, repaired: 1, stillIndeterminate: 0 });
-    expect(recoveredStorefronts).toContain('persisted-storefront');
-  }),
-);
-
-it.effect('reconciles one exact committed mutation and returns terminal grant evidence', () =>
-  Effect.gen(function* reconcileOneCommittedMutation() {
-    let relationshipWrites = 0;
-    let exactReads = 0;
-    const transaction = invokerWith((routineKey, values) => {
-      if (routineKey === 'counterparty-access.read-reconciliation') {
-        exactReads += 1;
-        return [
-          {
-            ...grantRow(exactReads === 1 ? 'RECONCILIATION_REQUIRED' : 'ACTIVE'),
-            action_invocation_id: invocationId,
-            mutation_id: mutationId,
-            recovery_operation: 'grant',
-          },
-        ];
-      }
-      expect(values).toEqual([grantId, mutationId, 'grant', 'ACTIVE']);
-      return [grantRow('ACTIVE')];
-    });
-    const result = yield* accessAuthorizationMutationReconciliationForTransaction(dependenciesWith(transaction), {
-      mutate: () =>
-        Effect.sync(() => {
-          relationshipWrites += 1;
-        }),
-    }).reconcileOne({
-      counterpartyResourceId: counterpartyId,
-      grantId,
-      mutationId,
-      operation: 'grant',
-    });
-
-    expect(result.outcome).toBe('FINALIZED');
-    expect(result.grant.state).toBe('ACTIVE');
-    expect(result.sourceActionInvocationId).toBe(invocationId);
-    expect(result.occurredAt.toISOString()).toBe('2026-09-09T09:00:00.000Z');
-    expect(relationshipWrites).toBe(1);
-    expect(exactReads).toBe(2);
-  }),
-);
-
-it.effect('commits newly staged invitation successors before any relationship mutation', () =>
-  Effect.gen(function* stageClaimSuccessorBeforeMutation() {
-    let relationshipWrites = 0;
-    let finalizations = 0;
-    const transaction = invokerWith((routineKey) => {
-      if (routineKey === 'counterparty-access.read-invitation-claim-reconciliation') {
-        return [claimReconciliationRow('RECONCILIATION_REQUIRED')];
-      }
-      if (routineKey === 'counterparty-access.stage-invitation-claim-grants') {
-        return [
-          {
-            ...grantRow('RECONCILIATION_REQUIRED'),
-            action_invocation_id: invocationId,
-            mutation_id: mutationId,
-            mutation_staged: true,
-            recovery_operation: 'grant',
-          },
-        ];
-      }
-      finalizations += 1;
-      return [];
-    });
-    const service = accessAuthorizationMutationReconciliationForWorker(
-      dependenciesWith(transaction).contextAccess,
-      {
-        mutate: () =>
-          Effect.sync(() => {
-            relationshipWrites += 1;
-          }),
-      },
-      allowedOwnerAccessForWorker,
-    );
-    const result = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
-
-    expect(result).toEqual({ outcome: 'INDETERMINATE' });
-    expect(relationshipWrites).toBe(0);
-    expect(finalizations).toBe(0);
-  }),
-);
-
-for (const control of [
-  'valid',
-  'missing-attestation',
-  'missing-source',
-  'missing-mutation',
-  'wrong-attestation-type',
-  'wrong-state',
-  'wrong-outcome',
-  'malformed-progress',
-  'missing-root-subject',
-] as const) {
-  it.effect(`reconciles durable invitation grants with strict actual finalizer wire: ${control}`, () =>
-    Effect.gen(function* reconcileInvitationClaim() {
-      let relationshipWrites = 0;
-      const transaction = invokerWith((routineKey, values) => {
-        if (routineKey === 'counterparty-access.read-invitation-claim-reconciliation') {
-          return [
-            control === 'missing-root-subject'
-              ? Object.fromEntries(
-                  Object.entries(claimReconciliationRow('RECONCILIATION_REQUIRED')).filter(
-                    ([key]) => key !== 'claim_subject_principal_id',
-                  ),
-                )
-              : claimReconciliationRow('RECONCILIATION_REQUIRED'),
-          ];
-        }
-        if (routineKey === 'counterparty-access.stage-invitation-claim-grants') {
-          return [
-            {
-              ...grantRow('RECONCILIATION_REQUIRED'),
-              action_invocation_id: invocationId,
-              mutation_id: mutationId,
-              mutation_staged: false,
-              recovery_operation: 'grant',
-            },
-          ];
-        }
-        if (routineKey === 'counterparty-access.transition-grant') {
-          expect(values).toEqual([grantId, mutationId, 'grant', 'ACTIVE']);
-          return [grantRow('ACTIVE')];
-        }
-        if (routineKey === 'counterparty-access.finalize-reconciled-invitation') {
-          const entries = Object.entries({ ...claimReconciliationRow('CLAIMED'), operation_outcome: 'CLAIMED' });
-          const wire = Object.fromEntries(
-            entries.filter(
-              ([key]) =>
-                key !== 'claim_subject_principal_id' &&
-                !(control === 'missing-attestation' && key === 'attestation_reference') &&
-                !(control === 'missing-source' && key === 'source_action_invocation_id') &&
-                !(control === 'missing-mutation' && key === 'claim_mutation_id'),
-            ),
-          );
-          if (control === 'wrong-attestation-type') {
-            wire.attestation_reference = 42;
-          }
-          if (control === 'wrong-state') {
-            wire.state = 'UNKNOWN';
-          }
-          if (control === 'wrong-outcome') {
-            wire.operation_outcome = 'UNKNOWN';
-          }
-          if (control === 'malformed-progress') {
-            wire.grant_progress = 'invalid';
-          }
-          return [wire];
-        }
-        return [];
-      });
-      const service = accessAuthorizationMutationReconciliationForWorker(
-        dependenciesWith(transaction).contextAccess,
-        {
-          mutate: () =>
-            Effect.sync(() => {
-              relationshipWrites += 1;
-            }),
-        },
-        allowedOwnerAccessForWorker,
+it.effect('gives an ACTIVE grant’s grantee the Counterparty portal role, named by the grant row', () =>
+  Effect.gen(function* grantPortalAccess() {
+    for (const outcome of ['APPLIED', 'ALREADY_ACTIVE'] as const) {
+      const portal = recordingPortalAccess();
+      const port = counterpartyAccessPortForTransaction(
+        dependenciesWith(
+          invokerWith(() => [grantRow('ACTIVE', outcome)]),
+          { portalAccess: portal.portalAccess },
+        ),
       );
-      if (control !== 'valid') {
-        const error = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest).pipe(Effect.flip);
-        expect(error.code).toBe('RECONCILIATION_UNAVAILABLE');
-        return;
-      }
-      const result = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
-
-      expect(result.outcome).toBe('FINALIZED');
-      if (result.outcome === 'FINALIZED' || result.outcome === 'ALREADY_FINAL') {
-        expect(result.terminal.kind).toBe('INVITATION_CLAIM');
-        expect(result.terminal.completionId).toBe(claimMutationId);
-        expect(result.terminal.sourceActionInvocationId).toBe(invocationId);
-        expect(result.terminal.occurredAt.toISOString()).toBe('2026-09-09T09:02:00.000Z');
-      }
-      expect(relationshipWrites).toBe(1);
-    }),
-  );
-}
-
-it.effect('durably compensates claim-created tuples when inviter authority is lost', () =>
-  Effect.gen(function* compensateLostInviterAuthority() {
-    const relationshipOperations: string[] = [];
-    let authorityChecks = 0;
-    let compensationStages = 0;
-    const transaction = invokerWith((routineKey, values) => {
-      if (routineKey === 'counterparty-access.read-invitation-claim-reconciliation') {
-        return [claimReconciliationRow('RECONCILIATION_REQUIRED')];
-      }
-      if (routineKey === 'counterparty-access.stage-invitation-claim-grants') {
-        if (values[1] === true) {
-          compensationStages += 1;
-          return [
-            {
-              ...grantRow('RECONCILIATION_REQUIRED'),
-              action_invocation_id: invocationId,
-              mutation_id: compensationMutationId,
-              mutation_staged: compensationStages === 1,
-              recovery_operation: 'revoke',
-            },
-          ];
-        }
-        return [
-          {
-            ...grantRow('RECONCILIATION_REQUIRED'),
-            action_invocation_id: invocationId,
-            mutation_id: mutationId,
-            mutation_staged: false,
-            recovery_operation: 'grant',
-          },
-        ];
-      }
-      if (routineKey === 'counterparty-access.transition-grant') {
-        return [grantRow(values[2] === 'revoke' ? 'REVOKED' : 'ACTIVE')];
-      }
-      return [];
-    });
-    const contextAccess = {
-      ownerPermissions: ({
-        targets,
-      }: Parameters<NonNullable<CounterpartyAccessPersistenceContext['contextAccess']['ownerPermissions']>>[0]) => {
-        authorityChecks += 1;
-        const decision = authorityChecks === 1 ? ('allowed' as const) : ('denied' as const);
-        return Effect.succeed(targets.map(({ target }) => ({ decision, key: target.key })));
-      },
-    };
-    const service = accessAuthorizationMutationReconciliationForWorker(
-      contextAccess,
-      {
-        mutate: ({ operation }) =>
-          Effect.sync(() => {
-            relationshipOperations.push(operation);
-          }),
-      },
-      allowedOwnerAccessForWorker,
-    );
-
-    const first = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
-    expect(first).toEqual({ outcome: 'INDETERMINATE' });
-    expect(relationshipOperations).toEqual(['grant']);
-
-    const second = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
-    expect(second).toEqual({ outcome: 'INDETERMINATE' });
-    expect(relationshipOperations).toEqual(['grant', 'revoke']);
+      expect((yield* port.grant(grantInput)).outcome).toBe(outcome);
+      expect(portal.calls).toEqual([
+        `grant:commerce.customer-context.counterparty-customer:${recipientId}:commerce.customer-context.counterparty-access-grant:${grantId}`,
+      ]);
+    }
   }),
 );
 
-it.effect('worker claim authority includes owner-local pending revoke state', () =>
-  Effect.gen(function* workerOwnerOverlay() {
-    let coreChecks = 0;
-    const routineKeys: string[] = [];
-    const transaction = invokerWith((routineKey) => {
-      routineKeys.push(routineKey);
-      if (routineKey === 'counterparty-access.read-invitation-claim-reconciliation') {
-        return [claimReconciliationRow('RECONCILIATION_REQUIRED')];
-      }
-      if (
-        routineKey === 'counterparty-access.list-grants' ||
-        routineKey === 'counterparty-access.lock-grant-authority'
-      ) {
-        return [grantRow('PENDING_REVOKE', 'PENDING_REVOKE')];
-      }
-      if (routineKey === 'counterparty-access.stage-invitation-claim-grants') {
-        return [];
-      }
-      if (routineKey === 'counterparty-access.mutate-invitation') {
-        return [{ ...pendingInvitationRow('ALREADY_PENDING'), operation_outcome: 'CLAIM_REJECTED' }];
-      }
-      return [];
-    });
-    const contextAccess = {
-      ownerPermissions: ({
-        targets,
-      }: Parameters<NonNullable<CounterpartyAccessPersistenceContext['contextAccess']['ownerPermissions']>>[0]) => {
-        coreChecks += 1;
-        return Effect.succeed(targets.map(({ target }) => ({ decision: 'allowed' as const, key: target.key })));
-      },
-    };
-    const service = accessAuthorizationMutationReconciliationForWorker(
-      contextAccess,
-      { mutate: () => Effect.void },
-      lockingCurrentOwnerAccessForTransaction,
-    );
-
-    const result = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
-
-    expect(result).toEqual({ outcome: 'COMPENSATED' });
-    expect(coreChecks).toBe(0);
-    expect(routineKeys).toContain('counterparty-access.lock-grant-authority');
+it.effect('ends exactly the portal assignment a REVOKED grant stood for', () =>
+  Effect.gen(function* revokePortalAccess() {
+    for (const outcome of ['REVOKED', 'ALREADY_REVOKED'] as const) {
+      const portal = recordingPortalAccess();
+      const port = counterpartyAccessPortForTransaction(
+        dependenciesWith(
+          invokerWith(() => [grantRow('REVOKED', outcome)]),
+          { portalAccess: portal.portalAccess },
+        ),
+      );
+      expect((yield* port.revoke(grantInput)).outcome).toBe(outcome);
+      expect(portal.calls).toEqual([
+        `revoke:commerce.customer-context.counterparty-customer:${recipientId}:commerce.customer-context.counterparty-access-grant:${grantId}`,
+      ]);
+    }
   }),
 );
 
-it.effect('rejects a malformed worker Tenant before invoking owner access routines', () =>
-  Effect.gen(function* rejectMalformedWorkerTenant() {
-    const routineKeys: string[] = [];
-    const transaction = invokerWith((routineKey) => {
-      routineKeys.push(routineKey);
-      return routineKey === 'counterparty-access.read-invitation-claim-reconciliation'
-        ? [claimReconciliationRow('RECONCILIATION_REQUIRED')]
-        : [grantRow('PENDING_REVOKE', 'PENDING_REVOKE')];
-    });
-    const service = accessAuthorizationMutationReconciliationForWorker(
-      {
-        ownerPermissions: ({ targets }) =>
-          Effect.succeed(targets.map(({ target }) => ({ decision: 'allowed' as const, key: target.key }))),
-      },
-      { mutate: () => Effect.die('must not mutate malformed worker scope') },
-      lockingCurrentOwnerAccessForTransaction,
+it.effect('changes no portal access for a conflicting grant or a protected last administrator', () =>
+  Effect.gen(function* untouchedPortalAccess() {
+    const portal = recordingPortalAccess();
+    const conflicting = counterpartyAccessPortForTransaction(
+      dependenciesWith(
+        invokerWith(() => [grantRow('ACTIVE', 'CONFLICT')]),
+        { portalAccess: portal.portalAccess },
+      ),
     );
-    const failure = yield* Effect.flip(
-      service.reconcile({ ...workerScope(transaction), tenantId: 'not-a-tenant' }, claimReconciliationRequest),
-    );
-
-    expect(failure.code).toBe('RECONCILIATION_UNAVAILABLE');
-    expect(failure.reason).toBe('The worker Tenant scope is malformed');
-    expect(Object.getOwnPropertyDescriptor(failure, 'cause')?.value).toBeDefined();
-    expect(routineKeys).toEqual(['counterparty-access.read-invitation-claim-reconciliation']);
-  }),
-);
-
-it.effect('resets a claim when inviter authority is lost before any grant row exists', () =>
-  Effect.gen(function* compensateClaimWithoutGrantRows() {
-    let invitationResets = 0;
-    let relationshipWrites = 0;
-    const transaction = invokerWith((routineKey) => {
-      if (routineKey === 'counterparty-access.read-invitation-claim-reconciliation') {
-        return [claimReconciliationRow('RECONCILIATION_REQUIRED')];
-      }
-      if (routineKey === 'counterparty-access.stage-invitation-claim-grants') {
-        return [];
-      }
-      if (routineKey === 'counterparty-access.mutate-invitation') {
-        invitationResets += 1;
-        return [
-          {
-            ...pendingInvitationRow('ALREADY_PENDING'),
-            operation_outcome: 'CLAIM_REJECTED',
-          },
-        ];
-      }
-      return [];
-    });
-    const contextAccess = {
-      ownerPermissions: ({
-        targets,
-      }: Parameters<NonNullable<CounterpartyAccessPersistenceContext['contextAccess']['ownerPermissions']>>[0]) =>
-        Effect.succeed(targets.map(({ target }) => ({ decision: 'denied' as const, key: target.key }))),
-    };
-    const service = accessAuthorizationMutationReconciliationForWorker(
-      contextAccess,
-      {
-        mutate: () =>
-          Effect.sync(() => {
-            relationshipWrites += 1;
-          }),
-      },
-      allowedOwnerAccessForWorker,
-    );
-
-    const result = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
-
-    expect(result).toEqual({ outcome: 'COMPENSATED' });
-    expect(invitationResets).toBe(1);
-    expect(relationshipWrites).toBe(0);
-  }),
-);
-
-it.effect('compensates a partial claim after revoke and converges once every tuple is removed', () =>
-  Effect.gen(function* compensateRevokedPartialClaim() {
-    let compensationStages = 0;
-    const relationshipOperations: string[] = [];
-    const revokedRoot = {
-      ...claimReconciliationRow('RECONCILIATION_REQUIRED'),
-      claim_subject_principal_id: recipientId,
-      claimed_at: null,
-      claimed_by_principal_id: null,
-      grant_progress: [
+    const protectedPort = counterpartyAccessPortForTransaction(
+      dependenciesWith(
+        invokerWith(() => [grantRow('ACTIVE', 'LAST_ADMIN_PROTECTED')]),
         {
-          grantRef: {
-            moduleId: 'commerce.customer-context',
-            resourceId: grantId,
-            resourceType: 'commerce.customer-context.counterparty-commerce-access-grant',
-            tenantId,
-          },
-          permission: 'counterparty.access.manage',
-          state: 'ACTIVE',
+          portalAccess: portal.portalAccess,
         },
-      ],
-      revision: 4,
-      state: 'REVOKED' as const,
-    };
-    const transaction = invokerWith((routineKey, values) => {
-      if (routineKey === 'counterparty-access.read-invitation-claim-reconciliation') {
-        return [revokedRoot];
-      }
-      if (routineKey === 'counterparty-access.stage-invitation-claim-grants') {
-        if (values[1] !== true) {
-          return [];
-        }
-        compensationStages += 1;
-        return compensationStages === 1
-          ? [
-              {
-                ...grantRow('RECONCILIATION_REQUIRED'),
-                action_invocation_id: invocationId,
-                mutation_id: compensationMutationId,
-                mutation_staged: false,
-                recovery_operation: 'revoke',
-              },
-            ]
-          : [];
-      }
-      if (routineKey === 'counterparty-access.transition-grant') {
-        return [grantRow('REVOKED')];
-      }
-      if (routineKey === 'counterparty-access.mutate-invitation') {
-        return [
-          {
-            ...pendingInvitationRow('CREATED'),
-            mutation_id: compensationMutationId,
-            mutation_staged: false,
-            operation_outcome: 'CLAIM_REJECTED',
-          },
-        ];
-      }
-      return [];
-    });
-    const service = accessAuthorizationMutationReconciliationForWorker(dependenciesWith(transaction).contextAccess, {
-      mutate: ({ operation }) =>
-        Effect.sync(() => {
-          relationshipOperations.push(operation);
-        }),
-    });
-
-    const first = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
-    expect(first).toEqual({ outcome: 'INDETERMINATE' });
-    expect(relationshipOperations).toEqual(['revoke']);
-
-    const second = yield* service.reconcile(workerScope(transaction), claimReconciliationRequest);
-    expect(second).toEqual({ outcome: 'COMPENSATED' });
-    expect(relationshipOperations).toEqual(['revoke']);
+      ),
+    );
+    expect((yield* conflicting.grant(grantInput)).outcome).toBe('CONFLICT');
+    expect((yield* protectedPort.revoke(grantInput)).outcome).toBe('LAST_ADMIN_PROTECTED');
+    expect(portal.calls).toEqual([]);
   }),
 );
 
-it.effect('rejects a mismatched invitation claim before staging or relationship mutation', () =>
-  Effect.gen(function* rejectMismatchedClaim() {
-    let calls = 0;
-    const transaction = invokerWith(() => {
-      calls += 1;
-      return [
-        {
-          ...claimReconciliationRow('RECONCILIATION_REQUIRED'),
-          counterparty_resource_id: 'different-counterparty',
-        },
-      ];
-    });
-    const service = accessAuthorizationMutationReconciliationForWorker(dependenciesWith(transaction).contextAccess, {
-      mutate: () => Effect.die('must not mutate a mismatched claim'),
-    });
-    const failure = yield* Effect.flip(service.reconcile(workerScope(transaction), claimReconciliationRequest));
-
-    expect(failure.code).toBe('RECONCILIATION_UNAVAILABLE');
-    expect(calls).toBe(1);
+it.effect('fails a grant closed when Core cannot write its portal access', () =>
+  Effect.gen(function* refusedPortalAccess() {
+    const portal = recordingPortalAccess(
+      new AccessPortalError({ code: 'access_portal_unavailable', reason: 'engine down' }),
+    );
+    const port = counterpartyAccessPortForTransaction(
+      dependenciesWith(
+        invokerWith(() => [grantRow('ACTIVE', 'APPLIED')]),
+        { portalAccess: portal.portalAccess },
+      ),
+    );
+    const failure = yield* Effect.flip(port.grant(grantInput));
+    expect(Schema.is(CounterpartyAccessUnavailable)(failure)).toBe(true);
   }),
 );
 
@@ -1016,26 +538,12 @@ it.effect('never promotes an untrusted storefront request into a trusted mutatio
   }),
 );
 
-it.effect('stages an intent only for independently verified storefront scope', () =>
+it.effect('applies a storefront grant only for the independently verified storefront scope', () =>
   Effect.gen(function* useTrustedStorefront() {
     const trustedStorefrontId = 'trusted-storefront';
     const port = counterpartyAccessPortForTransaction(
       dependenciesWith(
-        invokerWith((routineKey, values) =>
-          routineKey === 'counterparty-access.begin-grant'
-            ? [
-                {
-                  ...grantRow('PENDING_GRANT', 'PENDING_GRANT'),
-                  storefront_resource_id: trustedStorefrontId,
-                },
-              ]
-            : [
-                {
-                  ...grantRow(values[3] === 'ACTIVE' ? 'ACTIVE' : 'RECONCILIATION_REQUIRED'),
-                  storefront_resource_id: trustedStorefrontId,
-                },
-              ],
-        ),
+        invokerWith(() => [{ ...grantRow('ACTIVE', 'APPLIED'), storefront_resource_id: trustedStorefrontId }]),
         {
           trustedStorefrontId,
         },
@@ -1046,11 +554,18 @@ it.effect('stages an intent only for independently verified storefront scope', (
       ...grantInput,
       scope: { kind: 'storefront', storefrontKey: trustedStorefrontId },
     });
-    expect(result.outcome).toBe('RECONCILIATION_REQUIRED');
+    // The owner row is the whole authority (O67-Q1), so the storefront grant is final in the
+    // owner transaction (O62) instead of waiting for an out-of-band projection.
+    expect(result.outcome).toBe('APPLIED');
     expect(result.grant.scope).toEqual({
       kind: 'storefront',
       storefrontKey: trustedStorefrontId,
     });
+
+    const mismatched = yield* Effect.flip(
+      port.grant({ ...grantInput, scope: { kind: 'storefront', storefrontKey: 'untrusted-storefront' } }),
+    );
+    expect(Schema.is(CounterpartyAccessContractViolation)(mismatched)).toBe(true);
   }),
 );
 
@@ -1059,6 +574,7 @@ it.effect('stages proof delivery only for material invitation create and resend 
     let createCalls = 0;
     let resendCalls = 0;
     const lifecycleOperations: string[] = [];
+    const portal = recordingPortalAccess();
     const port = counterpartyAccessPortForTransaction(
       dependenciesWith(
         invokerWith((routineKey) => {
@@ -1066,10 +582,14 @@ it.effect('stages proof delivery only for material invitation create and resend 
             createCalls += 1;
             return [pendingInvitationRow(createCalls === 1 ? 'CREATED' : 'ALREADY_PENDING')];
           }
+          if (routineKey === 'counterparty-access.read-invitation-redemptions') {
+            return redemptionRows;
+          }
           resendCalls += 1;
           return [pendingInvitationRow(resendCalls === 1 ? 'RESENT' : 'ALREADY_SENT')];
         }),
         {
+          portalAccess: portal.portalAccess,
           proofLifecycle: {
             issueAndStageDelivery: ({ invitationRef }) =>
               Effect.sync(() => {
@@ -1121,6 +641,37 @@ it.effect('stages proof delivery only for material invitation create and resend 
     expect((yield* port.resendInvitation(mutationInput)).outcome).toBe('RESENT');
     expect((yield* port.resendInvitation(mutationInput)).outcome).toBe('ALREADY_SENT');
     expect(lifecycleOperations).toEqual([`issue:${invitationId}`, `rotate:${invitationId}`]);
+    // The rotation revoked every earlier proof, so the invitee access each redemption admitted ends once, with the
+    // material resend only.
+    expect(portal.calls).toEqual(inviteeRevocations);
+  }),
+);
+
+it.effect('ends the invitee access of every redemption when the invitation is revoked', () =>
+  Effect.gen(function* revokeInvitation() {
+    const portal = recordingPortalAccess();
+    const port = counterpartyAccessPortForTransaction(
+      dependenciesWith(
+        invokerWith((routineKey) =>
+          routineKey === 'counterparty-access.read-invitation-redemptions'
+            ? redemptionRows
+            : [{ ...pendingInvitationRow('RESENT'), operation_outcome: 'REVOKED', state: 'REVOKED' }],
+        ),
+        { portalAccess: portal.portalAccess },
+      ),
+    );
+    const outcome = yield* port.revokeInvitation({
+      actionInvocationId: invocationId,
+      actor,
+      counterpartyRef,
+      expectedRevision: 1,
+      invitationRef: attestation.invitationRef,
+      legalEntityId,
+      reason: 'Revoke invitation',
+      scope: { kind: 'counterparty' as const },
+    });
+    expect(outcome.outcome).toBe('REVOKED');
+    expect(portal.calls).toEqual(inviteeRevocations);
   }),
 );
 
@@ -1128,39 +679,18 @@ it.effect('binds one consumed attestation to the exact claim and persists only i
   Effect.gen(function* claimInvitation() {
     const invitationMutations: unknown[][] = [];
     let authorityChecks = 0;
-    let inviterChecks = 0;
+    const portal = recordingPortalAccess();
     const port = counterpartyAccessPortForTransaction(
       dependenciesWith(
         invokerWith((routineKey, values) => {
           if (routineKey === 'counterparty-access.mutate-invitation') {
             invitationMutations.push([...values]);
-            return values[4] === 'BEGIN_CLAIM'
-              ? [invitationRow('CLAIMING')]
-              : [
-                  {
-                    ...invitationRow('CLAIMING'),
-                    grant_progress: [
-                      {
-                        grantRef: {
-                          moduleId: 'commerce.customer-context',
-                          resourceId: grantId,
-                          resourceType: 'commerce.customer-context.counterparty-commerce-access-grant',
-                          tenantId,
-                        },
-                        permission: 'counterparty.access.manage',
-                        state: 'RECONCILIATION_REQUIRED',
-                      },
-                    ],
-                    operation_outcome: 'RECONCILIATION_REQUIRED',
-                    revision: 3,
-                    state: 'RECONCILIATION_REQUIRED',
-                  },
-                ];
+            return values[4] === 'BEGIN_CLAIM' ? [invitationRow('CLAIMING')] : [invitationRow('CLAIMED')];
           }
-          if (routineKey === 'counterparty-access.begin-grant') {
-            return [grantRow('PENDING_GRANT', 'PENDING_GRANT')];
+          if (routineKey === 'counterparty-access.read-invitation-redemptions') {
+            return redemptionRows;
           }
-          return [grantRow('ACTIVE')];
+          return [grantRow('ACTIVE', 'APPLIED')];
         }),
         {
           claimAuthority: {
@@ -1170,47 +700,26 @@ it.effect('binds one consumed attestation to the exact claim and persists only i
                 return attestation;
               }),
           },
-          contextAccess: {
-            ownerPermissions: ({ targets }) =>
-              Effect.sync(() => {
-                inviterChecks += 1;
-                return targets.map(({ target }) => ({
-                  decision: 'allowed' as const,
-                  key: target.key,
-                }));
-              }),
-          },
+          portalAccess: portal.portalAccess,
         },
       ),
     );
 
     const result = yield* port.claimInvitation(claimInput);
-    expect(result.outcome).toBe('RECONCILIATION_REQUIRED');
-    if (result.outcome !== 'RECONCILIATION_REQUIRED') {
+    expect(result.outcome).toBe('CLAIMED');
+    if (result.outcome !== 'CLAIMED') {
       return;
     }
     expect(result.attestation).toEqual(attestation);
-    expect(result.reconciliation).toEqual({
-      mutationId: claimMutationId,
-      operation: 'claim',
-      permissionMutations: [
-        {
-          grantRef: {
-            moduleId: 'commerce.customer-context',
-            resourceId: grantId,
-            resourceType: 'commerce.customer-context.counterparty-commerce-access-grant',
-            tenantId,
-          },
-          mutationId,
-          operation: 'grant',
-          permission: 'counterparty.access.manage',
-          staged: true,
-        },
-      ],
-      staged: true,
-    });
     expect(authorityChecks).toBe(1);
-    expect(inviterChecks).toBe(2);
+    // The claimed grants carry the claimant's access from here, and the invitee access of every redemption of
+    // the invitation ends in the same transaction — the earlier proof somebody else redeemed too.
+    expect(portal.calls.slice(-inviteeRevocations.length)).toEqual(inviteeRevocations);
+    expect(
+      portal.calls
+        .slice(0, -inviteeRevocations.length)
+        .every((call) => call.startsWith('grant:commerce.customer-context.counterparty-customer:')),
+    ).toBe(true);
     expect(invitationMutations[0]).toContain(claimInput.claimProofReference);
     expect(invitationMutations[1]).toContain(attestation.attestationReference);
   }),
@@ -1226,7 +735,7 @@ it.effect('rejects a verifier attestation for a different invitation before any 
     const port = counterpartyAccessPortForTransaction(
       dependenciesWith(
         invokerWith((routineKey) => {
-          if (routineKey === 'counterparty-access.begin-grant') {
+          if (routineKey === 'counterparty-access.grant') {
             grants += 1;
           }
           return [invitationRow('CLAIMING')];
@@ -1257,7 +766,6 @@ it.effect('commits proof rejection evidence while restoring the invitation to pe
                 {
                   ...pendingInvitationRow('ALREADY_PENDING'),
                   mutation_id: claimMutationId,
-                  mutation_staged: false,
                   operation_outcome: 'CLAIM_REJECTED',
                   revision: 3,
                 },
@@ -1319,45 +827,29 @@ it.effect('does not expose an already-claimed invitation to a different claimant
   }),
 );
 
-it.effect('preserves a recoverable invitation when an intended grant conflicts', () =>
-  Effect.gen(function* reconcileConflictingClaimGrant() {
+it.effect('fails closed and leaves the invitation recoverable when an intended grant conflicts', () =>
+  Effect.gen(function* conflictingClaimGrant() {
     const invitationOperations: unknown[] = [];
-    const reconciliationRow = {
-      ...invitationRow('CLAIMING'),
-      grant_progress: [
-        {
-          grantRef: {
-            moduleId: 'commerce.customer-context',
-            resourceId: grantId,
-            resourceType: 'commerce.customer-context.counterparty-commerce-access-grant',
-            tenantId,
-          },
-          permission: 'counterparty.access.manage',
-          state: 'RECONCILIATION_REQUIRED',
-        },
-      ],
-      operation_outcome: 'RECONCILIATION_REQUIRED',
-      revision: 3,
-      state: 'RECONCILIATION_REQUIRED',
-    } as const;
     const port = counterpartyAccessPortForTransaction(
       dependenciesWith(
         invokerWith((routineKey, values) => {
           if (routineKey === 'counterparty-access.mutate-invitation') {
             invitationOperations.push(values[4]);
-            return values[4] === 'BEGIN_CLAIM' ? [invitationRow('CLAIMING')] : [reconciliationRow];
+            return values[4] === 'BEGIN_CLAIM' ? [invitationRow('CLAIMING')] : [invitationRow('CLAIMED')];
           }
-          if (routineKey === 'counterparty-access.begin-grant') {
-            return [grantRow('PENDING_REVOKE', 'CONFLICT')];
+          if (routineKey === 'counterparty-access.grant') {
+            return [grantRow('ACTIVE', 'CONFLICT')];
           }
           return [];
         }),
       ),
     );
 
-    const result = yield* port.claimInvitation(claimInput);
-    expect(result.outcome).toBe('RECONCILIATION_REQUIRED');
-    expect(invitationOperations).toEqual(['BEGIN_CLAIM', 'FINISH_RECONCILIATION']);
+    const failure = yield* Effect.flip(port.claimInvitation(claimInput));
+    expect(Schema.is(CounterpartyAccessUnavailable)(failure)).toBe(true);
+    // The claim never finishes: the single owner transaction rolls back so the invitation can be
+    // retried once the conflicting grant is resolved (O62, O67-Q1).
+    expect(invitationOperations).toEqual(['BEGIN_CLAIM']);
   }),
 );
 
@@ -1367,21 +859,16 @@ for (const control of [
   'wrong-claim-subject',
   'wrong-claimant',
   'wrong-attestation',
-  'pending-owner',
   'revoked-owner',
   'absent-owner',
   'foreign-counterparty',
   'foreign-storefront',
-  'missing-core',
-  'duplicate-core',
-  'unavailable-core',
-  'foreign-core-key',
 ] as const) {
   it.effect(`checks the original accepted claim Current authority exactly: ${control}`, () =>
     Effect.gen(function* acceptedClaimCurrentAuthority() {
       const root = { ...claimReconciliationRow('CLAIMED'), claim_subject_principal_id: recipientId };
       if (control === 'wrong-invitation') {
-        root.invitation_id = mutationId;
+        root.invitation_id = otherInvitationId;
       }
       if (control === 'wrong-claim-subject') {
         root.claim_subject_principal_id = actorId;
@@ -1408,9 +895,6 @@ for (const control of [
           if (control === 'revoked-owner') {
             state = 'REVOKED';
           }
-          if (control === 'pending-owner') {
-            state = 'PENDING_REVOKE';
-          }
           const row = grantRow(state);
           return [{ ...row, storefront_resource_id: control === 'foreign-storefront' ? 'another-storefront' : null }];
         }
@@ -1424,25 +908,6 @@ for (const control of [
             control === 'wrong-attestation' ? 'another-attestation' : attestation.attestationReference,
           invitationId,
           principalId: recipientId,
-        },
-        {
-          legalEntities: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
-          modules: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
-          ownerPermissions: ({ targets }) => {
-            const decisions = targets.map((target) => ({
-              decision: control === 'unavailable-core' ? ('unavailable' as const) : ('allowed' as const),
-              key: control === 'foreign-core-key' ? 'another-target' : target.target.key,
-            }));
-            if (control === 'missing-core') {
-              return Effect.succeed([]);
-            }
-            if (control === 'duplicate-core') {
-              return Effect.succeed([...decisions, ...decisions]);
-            }
-            return Effect.succeed(decisions);
-          },
-          resources: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
-          tenants: () => Effect.die('The accepted claim reader must not query unrelated capabilities'),
         },
       );
       expect(Option.isSome(accepted)).toBe(true);

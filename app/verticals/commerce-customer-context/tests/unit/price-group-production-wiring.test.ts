@@ -22,12 +22,13 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import { PriceGroupInstantSchema, PriceGroupRefSchema } from '@app/price-group-catalog-contracts';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 
-import { PriceGroupCatalogGatewayCredentialService } from '../../shared/domain/price-group-catalog-gateway-credential.ts';
 import { assignCounterpartyPriceGroupAction } from '../../src/actions/assign-counterparty-price-group.action.ts';
 import { assignCustomerPriceGroupAction } from '../../src/actions/assign-customer-price-group.action.ts';
 import { migrateCounterpartyPriceGroupAction } from '../../src/actions/migrate-counterparty-price-group.action.ts';
@@ -46,13 +47,12 @@ import {
   customerPriceGroupResolutionServicesForTransaction,
 } from '../../src/api/customer-price-group-resolution.read.ts';
 import type { PriceGroupRoutineInvoker } from '../../src/persistence/price-group-persistence.ts';
-
-interface CapturedCompositionContext {
-  readonly revision?: string;
-}
+import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
+import { delegatedGatewayConfiguration } from '../support/delegated-gateway-shell.fixture.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
+const compositionRevision = 'a'.repeat(64);
 const scopeFields = {
   authBindingId: '30000000-0000-4000-8000-000000000001',
   authContextRef: 'better-auth-session:price-group-production-wiring',
@@ -78,6 +78,23 @@ const scopeWithoutLegalEntity: OperationalScope = {
   principalId: scope.principalId,
   tenantId: scope.tenantId,
 };
+// No verified composition revision: the cross-owner Read must refuse before wiring the catalog.
+const absentCompositionRevision: string | undefined = new Map<string, string>().get('composition-revision');
+
+// Construction must not acquire delegated context: with no delegated configuration at all, wiring still succeeds.
+const constructionWithoutDelegation = Layer.mergeAll(
+  nodeCryptoLayer,
+  ConfigProvider.layer(ConfigProvider.fromUnknown({})),
+);
+const shellOrigin = new URL('https://shell.example.test');
+const delegatedCallerConfiguration = ConfigProvider.layer(delegatedGatewayConfiguration(shellOrigin));
+const priceGroupRef = Schema.decodeSync(PriceGroupRefSchema)({
+  moduleId: 'pricing.price-group-catalog',
+  resourceId: '30000000-0000-4000-8000-000000000001',
+  resourceType: 'pricing.price-group-catalog.price-group',
+  tenantId,
+});
+const trustedOperationAt = Schema.decodeSync(PriceGroupInstantSchema)('2026-09-23T10:00:00.000Z');
 
 it('attaches every Price Group Action and the governed resolution Read to production catalog wiring', () => {
   expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(assignCustomerPriceGroupServicesForTransaction);
@@ -106,101 +123,91 @@ it('attaches every Price Group Action and the governed resolution Read to produc
   expect(readFactorySource).not.toContain('unavailablePriceGroupCatalogPort');
 });
 
-it.effect(
-  'creates a fresh catalog adapter for every governed Action and Read attempt without eager credential issuance',
-  () =>
-    Effect.gen(function* freshPerAttempt() {
-      let credentialIssues = 0;
-      const credentialLayer = Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
-        issue: () =>
-          Effect.sync(() => {
-            credentialIssues += 1;
-            return {
-              baseUrl: new URL('https://shell.example.test/owner-api'),
-              credential: Redacted.make(`Bearer production-wiring-${credentialIssues}`),
-            };
-          }),
-      });
+it('declares the Pricing caller with an identity subject on the customer Price Group resolution Read', () => {
+  expect(customerPriceGroupResolutionRead.descriptor.accessActor).toMatchObject({
+    callers: ['pricing'],
+    subject: 'identity',
+  });
+});
 
-      const firstActionServices = yield* priceGroupActionServicesForTransaction(
-        priceGroupInvoker,
-        scope,
-        'a'.repeat(64),
-      ).pipe(Effect.provide(credentialLayer));
-      const secondActionServices = yield* priceGroupActionServicesForTransaction(
-        priceGroupInvoker,
-        scope,
-        'a'.repeat(64),
-      ).pipe(Effect.provide(credentialLayer));
-      const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
-        priceGroupInvoker,
-        scope,
-        'a'.repeat(64),
-      ).pipe(Effect.provide(credentialLayer));
+it.effect('creates a fresh catalog adapter for every governed Action and Read attempt', () =>
+  Effect.gen(function* freshPerAttempt() {
+    const firstActionServices = yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(
+      Effect.provide(constructionWithoutDelegation),
+    );
+    const secondActionServices = yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(
+      Effect.provide(constructionWithoutDelegation),
+    );
+    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
+      priceGroupInvoker,
+      scope,
+      compositionRevision,
+    ).pipe(Effect.provide(constructionWithoutDelegation));
 
-      expect(firstActionServices.catalog).not.toBe(secondActionServices.catalog);
-      expect(readServices.catalog).not.toBe(firstActionServices.catalog);
-      expect(credentialIssues).toBe(0);
-    }),
+    expect(firstActionServices.catalog).not.toBe(secondActionServices.catalog);
+    expect(readServices.catalog).not.toBe(firstActionServices.catalog);
+  }),
 );
 
 it.effect('keeps both remove Actions catalog-free and rejects missing Legal Entity scope before wiring', () =>
   Effect.gen(function* removalBoundary() {
-    let credentialIssues = 0;
-    const credentialLayer = Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
-      issue: () =>
-        Effect.sync(() => {
-          credentialIssues += 1;
-          return {
-            baseUrl: new URL('https://shell.example.test/owner-api'),
-            credential: Redacted.make('Bearer must-not-be-issued'),
-          };
-        }),
-    });
-
-    yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope, 'a'.repeat(64)).pipe(
-      Effect.provide(credentialLayer),
+    yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(
+      Effect.provide(constructionWithoutDelegation),
     );
-    expect(credentialIssues).toBe(0);
 
     const failure = yield* Effect.flip(
-      priceGroupActionServicesForTransaction(priceGroupInvoker, scopeWithoutLegalEntity, 'a'.repeat(64)).pipe(
-        Effect.provide(credentialLayer),
+      priceGroupActionServicesForTransaction(priceGroupInvoker, scopeWithoutLegalEntity).pipe(
+        Effect.provide(constructionWithoutDelegation),
       ),
     );
     expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
-    expect(credentialIssues).toBe(0);
   }),
 );
 
-it.effect(
-  'rejects a cross-owner Read without its captured verified composition revision before issuing credentials',
-  () =>
-    Effect.gen(function* missingCompositionRevision() {
-      let credentialIssues = 0;
-      const missingComposition: CapturedCompositionContext = {};
-      const failure = yield* customerPriceGroupResolutionServicesForTransaction(
-        priceGroupInvoker,
-        scope,
-        missingComposition.revision,
-      ).pipe(
-        Effect.provide(
-          Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
-            issue: () =>
-              Effect.sync(() => {
-                credentialIssues += 1;
-                return {
-                  baseUrl: new URL('https://shell.example.test/owner-api'),
-                  credential: Redacted.make('Bearer must-not-be-issued'),
-                };
-              }),
-          }),
-        ),
-        Effect.flip,
-      );
-      expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
-      expect(credentialIssues).toBe(0);
-    }),
+it.effect('rejects a cross-owner Read without a verified composition revision before wiring the catalog', () =>
+  Effect.gen(function* missingCompositionRevision() {
+    const failure = yield* Effect.flip(
+      customerPriceGroupResolutionServicesForTransaction(priceGroupInvoker, scope, absentCompositionRevision).pipe(
+        Effect.provide(constructionWithoutDelegation),
+      ),
+    );
+    expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
+  }),
+);
+
+it.effect('sends the verified request scope to the catalog as an Assertion subject, not an Originator', () =>
+  Effect.gen(function* assertionCallSite() {
+    // The scope carries no verified gateway provenance, so an Assertion subject must be refused before any
+    // network call. An Originator subject would skip that check and reach the Shell instead.
+    const actionServices = yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(
+      Effect.provide(Layer.mergeAll(nodeCryptoLayer, delegatedCallerConfiguration)),
+    );
+    const actionFailure = yield* Effect.flip(
+      actionServices.catalog
+        .resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt)
+        .pipe(Effect.provide(delegatedCallerConfiguration)),
+    );
+    // The port wraps the delegated failure in the adapter and again in resolveCurrent; the innermost cause is the
+    // shared delegated client refusing a scope without verified gateway provenance before any Shell request.
+    expect(actionFailure).toMatchObject({
+      cause: { cause: { reason: 'Verified gateway scope is required to act for the requester' } },
+    });
+
+    // The Read gates its catalog behind the module operation requirement, which only a genuine Read execution
+    // satisfies; its port is built with the same Assertion subject.
+    const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
+      priceGroupInvoker,
+      scope,
+      compositionRevision,
+    ).pipe(Effect.provide(Layer.mergeAll(nodeCryptoLayer, delegatedCallerConfiguration)));
+    const readFailure = yield* Effect.flip(
+      readServices.catalog
+        .resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt)
+        .pipe(Effect.provide(delegatedCallerConfiguration)),
+    );
+    expect(readFailure).toMatchObject({ cause: { code: 'module_operation_requirement_unavailable' } });
+    expect(customerPriceGroupResolutionServicesForTransaction.toString()).toMatch(/_tag:\s*["']Assertion["']/u);
+  }),
 );
 
 // Controlled unit metadata is projected from the real owner. It does not claim a published release.
@@ -271,28 +278,13 @@ it.effect(
   'keeps the actual default Assign catalog gate inside genuine Action execution before acquisition or mutation',
   () =>
     Effect.gen(function* defaultFactoryRequiresOperationClaim() {
-      let credentialIssues = 0;
       let writes = 0;
       const requirementFailures: ModuleOperationRequirementError[] = [];
       const { deployment, snapshot } = yield* makeMissingPriceGroupComposition();
       const from = '2027-01-01T00:00:00.000Z';
-      const assembled = yield* assignCustomerPriceGroupServicesForTransaction(
-        priceGroupInvoker,
-        scope,
-        snapshot.composition.revision,
-      ).pipe(
-        Effect.provide(
-          Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
-            issue: () =>
-              Effect.sync(() => {
-                credentialIssues += 1;
-                return {
-                  baseUrl: new URL('https://catalog.example.test'),
-                  credential: Redacted.make('Bearer transport-seam'),
-                };
-              }),
-          }),
-        ),
+      // No delegated configuration: the operation requirement must refuse before any context acquisition.
+      const assembled = yield* assignCustomerPriceGroupServicesForTransaction(priceGroupInvoker, scope).pipe(
+        Effect.provide(constructionWithoutDelegation),
       );
       const services = {
         ...assembled,
@@ -322,7 +314,7 @@ it.effect(
         },
       };
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         applicationComposition: { load: Effect.succeed(snapshot) },
         expectedDeployment: deployment,
         ownerRegistration: commerceCustomerContextRegistration,
@@ -362,9 +354,8 @@ it.effect(
           reason: 'The required module operation is not supported by the admitted composition',
         },
       ]);
-      expect(credentialIssues).toBe(0);
       expect(writes).toBe(0);
       expect(harness.snapshot().committed).toHaveLength(0);
       expect(harness.snapshot().permissionDenials).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(nodeCryptoLayer)),
 );

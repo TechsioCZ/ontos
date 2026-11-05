@@ -1,6 +1,16 @@
+---
+status: superseded
+superseded_by: ADR-0030
+---
+
 # ADR-0019: Action authorization is explicit and fail-closed
 
-Status: Accepted.
+Status: Superseded by [ADR-0030](0030-granular-authorization.md). The member default and the
+global per-key Action identity described here no longer exist; current rules are in
+[Granular Authorization](../../app/docs/architecture/AUTHORIZATION.md). Fail-closed denial is the
+one part that remains in force, restated by ADR-0030.
+
+The body below is retained as history and does not describe the current model.
 
 Scope: Action authorization. [Issue #173](https://github.com/TechsioCZ/ontos/issues/173)
 tracks wider protected-entrypoint implementation and readiness;

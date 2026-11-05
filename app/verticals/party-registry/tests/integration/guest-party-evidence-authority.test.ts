@@ -5,6 +5,7 @@ import {
 import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -48,6 +49,7 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
     const gateway = yield* makePartyReconciliationGateway(native, snapshot);
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
+        access: 'allowed',
         actionKeys: [
           createPartyAction,
           addContactPointAction,
@@ -63,7 +65,8 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
       }),
       (resource) => resource.close().pipe(Effect.orDie),
     );
-    const context = yield* Layer.build(fixture.layer);
+    const deniedAccess = makePartyDeniedAccess();
+    const context = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
     const runtime = yield* ActionRuntime.pipe(Effect.provideContext(context));
     const reads = yield* ReadRuntime.pipe(Effect.provideContext(context));
     const adminLayer = PgClient.layer({ url: Redacted.make(isolated.connections.admin.connectionString) }).pipe(
@@ -312,6 +315,11 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
       .pipe(Effect.provideContext(context));
     // Ending contactability cannot manufacture or erase the separate retained reviewed identity.
     expect(yield* resolve()).toEqual({ outcome: 'EXISTING_PARTY_RESOLVED', partyRef });
+    // v2: the one access gate decides this read (O62); a principal it does not admit is refused
+    // before any owner work. The fixture scripts its gate per capability, so the refusal of this
+    // one principal is named on the fixture's own per-request owner seam (the removed SpiceDB
+    // reader tuple no longer refuses anyone).
+    deniedAccess.deny(fixture.legalEntityOnly.principalId, 'party.registry.guest-party.resolve');
     expect(
       Result.isFailure(
         yield* reads

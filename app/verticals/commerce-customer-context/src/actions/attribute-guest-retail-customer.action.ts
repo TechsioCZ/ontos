@@ -90,6 +90,14 @@ const handle = Effect.fn('AttributeGuestRetailCustomerAction.handle')(
 );
 export const attributeGuestRetailCustomerAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.guest-retail-customer.attribute',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.attribute-guest-retail-customer.access.v1',
@@ -102,7 +110,7 @@ export const attributeGuestRetailCustomerAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.attribute-guest-retail-customer',
       moduleKey: MODULE_KEY,
       role: 'action',

@@ -25,7 +25,7 @@ type TaxCorrectionPreviewServices = Record<never, never>;
 
 const taxCorrectionPreviewEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'tax.governed.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.tax.api.tax-correction-preview',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -78,6 +78,14 @@ export const readTaxCorrectionPreview = (
 
 export const taxCorrectionPreviewRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.tax-correction.preview',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'order-tax', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: taxCorrectionPreviewEntrypoint,
     evidencePolicy: {
@@ -87,7 +95,6 @@ export const taxCorrectionPreviewRead = defineRead(
     inputSchema: TaxCorrectionPreviewRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.tax.api.tax-correction-preview',
     resultSchema: TaxCorrectionPreviewResponseSchema,
@@ -95,5 +102,4 @@ export const taxCorrectionPreviewRead = defineRead(
   },
   readTaxCorrectionPreview,
   () => Effect.succeed({}),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

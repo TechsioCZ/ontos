@@ -26,11 +26,33 @@ import { executeSetProductLocalizedFactsWithAuthorization } from '../../src/api/
 import { executeSetProductUnitTargetDivisibilityWithAuthorization } from '../../src/api/set-product-unit-target-divisibility-action-client.ts';
 import { executeUpdateProductWithAuthorization } from '../../src/api/update-product-action-client.ts';
 import { executeVariantHistoryWithAuthorization } from '../../src/api/variant-history-client.ts';
-import { PublishProductConfigurationPayloadSchema } from '../../shared/actions/publish-product-configuration.ts';
+import { AddProductCategoryAssignmentResultSchema } from '../../shared/actions/add-product-category-assignment.ts';
+import { ConfirmVariantCombinationResultSchema } from '../../shared/actions/confirm-variant-combination.ts';
+import { CreateAttributeDefinitionResultSchema } from '../../shared/actions/create-attribute-definition.ts';
+import { CreateProductResultSchema } from '../../shared/actions/create-product.ts';
+import { CreateProductCategoryResultSchema } from '../../shared/actions/create-product-category.ts';
+import { CreateProductTypeResultSchema } from '../../shared/actions/create-product-type.ts';
+import { CreateProductUnitResultSchema } from '../../shared/actions/create-product-unit.ts';
+import { GovernProductAttributeApplicabilityResultSchema } from '../../shared/actions/govern-product-attribute-applicability.ts';
+import { GovernVariantAllowedValuesResultSchema } from '../../shared/actions/govern-variant-allowed-values.ts';
+import { GovernVariantAxesResultSchema } from '../../shared/actions/govern-variant-axes.ts';
+import {
+  PublishProductConfigurationPayloadSchema,
+  PublishProductConfigurationResultSchema,
+} from '../../shared/actions/publish-product-configuration.ts';
+import { SetProductLocalizedFactsResultSchema } from '../../shared/actions/set-product-localized-facts.ts';
+import { SetProductTypeResultSchema } from '../../shared/actions/set-product-type.ts';
+import { SetProductUnitTargetDivisibilityResultSchema } from '../../shared/actions/set-product-unit-target-divisibility.ts';
+import { SetVariantAttributeOverrideResultSchema } from '../../shared/actions/set-variant-attribute-override.ts';
+import { UpdateProductResultSchema } from '../../shared/actions/update-product.ts';
+import { QuantityPreparationResponseSchema } from '../../shared/apis/quantity-preparation.ts';
+import { VariantHistoryResponseSchema } from '../../shared/apis/variant-history.ts';
 import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
 import { ProductConfigurationSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { ProductUnitRefSchema } from '../../shared/resources/product-unit.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { requireExecutionResult } from './action-execution-result.ts';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 
 const catalogModule = 'commerce.catalog' as const;
 const protocol = 'ontos.catalog.preproposal-basis.receiver.v1' as const;
@@ -270,12 +292,13 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   const correlation = (step: ProducerStep) => `catalog-native:${input.runKey}:${step}`;
   const actionOptions = (step: ProducerStep) => ({ ...options, idempotencyKey: correlation(step) });
   const credential = (step: ProducerStep) => input.credentials[step];
-  const record = <Success, Failure, Requirements>(
+  const record = <Result, Encoded, Failure, Requirements>(
     step: ProducerStep,
-    operation: Effect.Effect<Success, Failure, Requirements>,
+    schema: Schema.Codec<Result, Encoded>,
+    operation: Effect.Effect<Result | ActionProposalAccepted, Failure, Requirements>,
     write = false,
   ) =>
-    operation.pipe(
+    requireExecutionResult(schema, operation).pipe(
       Effect.mapError((failure) => {
         process.stderr.write(
           `producer-step-failure ${step}: ${inspect(failure, { depth: 5, maxStringLength: 2048 })
@@ -297,6 +320,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
     );
   const created = yield* record(
     'createProduct',
+    CreateProductResultSchema,
     executeCreateProductWithAuthorization(
       { name: 'Native preproposal proof product', reason },
       credential('createProduct'),
@@ -319,6 +343,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   const initialVariantRevision = yield* Schema.decodeUnknownEffect(CatalogRevisionNumberSchema)(1);
   const variantCreated = yield* record(
     'variantCreatedHistory',
+    VariantHistoryResponseSchema,
     executeVariantHistoryWithAuthorization(
       { reference: { resourceRef: selection.variantRef, revision: initialVariantRevision } },
       credential('variantCreatedHistory'),
@@ -332,6 +357,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   // Typed Catalog path: a Current Variant is only reachable through an attribute-defined axis and a confirmed combination.
   const definition = yield* record(
     'createAttributeDefinition',
+    CreateAttributeDefinitionResultSchema,
     executeCreateAttributeDefinitionWithAuthorization(
       {
         label: 'Native proof finish',
@@ -351,6 +377,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   yield* requestGrants([definition.attributeDefinitionRef]);
   const productType = yield* record(
     'createProductType',
+    CreateProductTypeResultSchema,
     executeCreateProductTypeWithAuthorization(
       {
         name: 'Native proof product type',
@@ -366,6 +393,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   yield* requestGrants([productType.productTypeRef]);
   const assigned = yield* record(
     'setProductType',
+    SetProductTypeResultSchema,
     executeSetProductTypeWithAuthorization(
       {
         expectedProductRevision: created.product.revision,
@@ -382,6 +410,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   yield* record(
     'governApplicability',
+    GovernProductAttributeApplicabilityResultSchema,
     executeGovernProductAttributeApplicabilityWithAuthorization(
       {
         attributeDefinitionRef: definition.attributeDefinitionRef,
@@ -399,6 +428,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   yield* record(
     'setVariantOverride',
+    SetVariantAttributeOverrideResultSchema,
     executeSetVariantAttributeOverrideWithAuthorization(
       {
         attributeDefinitionRef: definition.attributeDefinitionRef,
@@ -417,6 +447,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   yield* record(
     'governAxes',
+    GovernVariantAxesResultSchema,
     executeGovernVariantAxesWithAuthorization(
       {
         axes: [
@@ -439,6 +470,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   yield* record(
     'governAllowedValues',
+    GovernVariantAllowedValuesResultSchema,
     executeGovernVariantAllowedValuesWithAuthorization(
       {
         attributeDefinitionRef: definition.attributeDefinitionRef,
@@ -458,6 +490,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   yield* record(
     'confirmCombination',
+    ConfirmVariantCombinationResultSchema,
     executeConfirmVariantCombinationWithAuthorization(
       {
         evidenceRefs,
@@ -481,6 +514,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   });
   const unit = yield* record(
     'createUnit',
+    CreateProductUnitResultSchema,
     executeCreateProductUnitWithAuthorization(
       {
         code: `native-${input.runKey}`,
@@ -498,6 +532,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   const localized = yield* record(
     'localizedFacts',
+    SetProductLocalizedFactsResultSchema,
     executeSetProductLocalizedFactsWithAuthorization(
       {
         evidenceRefs,
@@ -515,6 +550,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   const activated = yield* record(
     'activateProduct',
+    UpdateProductResultSchema,
     executeUpdateProductWithAuthorization(
       { expectedRevision: assigned.revision, productRef: selection.productRef, reason, targetLifecycle: 'ACTIVE' },
       credential('activateProduct'),
@@ -528,6 +564,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   const variantActivated = yield* record(
     'variantActivatedHistory',
+    VariantHistoryResponseSchema,
     executeVariantHistoryWithAuthorization(
       { reference: { resourceRef: selection.variantRef, revision: activatedVariantRevision } },
       credential('variantActivatedHistory'),
@@ -543,6 +580,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   const divisibility = yield* record(
     'setDivisibility',
+    SetProductUnitTargetDivisibilityResultSchema,
     executeSetProductUnitTargetDivisibilityWithAuthorization(
       {
         divisible: false,
@@ -567,6 +605,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   const category = yield* record(
     'createCategory',
+    CreateProductCategoryResultSchema,
     executeCreateProductCategoryWithAuthorization(
       { name: 'Native preproposal proof category', reason },
       credential('createCategory'),
@@ -578,6 +617,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   yield* requestGrants([category.category.categoryRef]);
   const categoryAssignment = yield* record(
     'assignCategory',
+    AddProductCategoryAssignmentResultSchema,
     executeAddProductCategoryAssignmentWithAuthorization(
       { categoryRef: category.category.categoryRef, productRef: selection.productRef, reason },
       credential('assignCategory'),
@@ -622,6 +662,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   const nowMillis = yield* Clock.currentTimeMillis;
   const configurationCurrent = yield* record(
     'publishConfigurationCurrent',
+    PublishProductConfigurationResultSchema,
     executePublishProductConfigurationWithAuthorization(
       configurationPayload(0, new Date(nowMillis - 60_000), 'Standard packaging'),
       credential('publishConfigurationCurrent'),
@@ -632,6 +673,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   yield* record(
     'publishConfigurationSuccessor',
+    PublishProductConfigurationResultSchema,
     executePublishProductConfigurationWithAuthorization(
       configurationPayload(
         configurationCurrent.revision,
@@ -664,6 +706,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   // CCC prepares Catalog lines for PRICING, whose genuine owner basis also requires CATEGORY.
   const pricingQuantity = yield* record(
     'pricingQuantityPreparation',
+    QuantityPreparationResponseSchema,
     executeQuantityPreparationWithAuthorization(
       { amount: '1', purpose: 'PRICING', selection: configuredSelection },
       credential('pricingQuantityPreparation'),
@@ -673,6 +716,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
   );
   const quantity = yield* record(
     'quantityPreparation',
+    QuantityPreparationResponseSchema,
     executeQuantityPreparationWithAuthorization(
       { amount: '1', purpose: 'PURCHASE_ACCEPTANCE', selection: configuredSelection },
       credential('quantityPreparation'),

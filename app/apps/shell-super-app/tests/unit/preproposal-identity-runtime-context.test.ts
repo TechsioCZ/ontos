@@ -1,4 +1,5 @@
 import { ActionRuntime, PrincipalResolver } from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import type { PrincipalResolverService } from '@app/core-runtime';
 import { AuthenticationNamespaceRegistry } from '@app/core-runtime/auth/external-identity-admission';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -30,13 +31,15 @@ const fixture = rs.hoisted(() => {
 
 rs.mock('@app/core-runtime', () => {
   const actionRuntime = Context.Service<object>('PreproposalContextTest/ActionRuntime');
+  const legalEntityContext = Context.Service<object>('PreproposalContextTest/LegalEntityContext');
   const principalResolver = Context.Service<object>('PreproposalContextTest/PrincipalResolver');
   return {
     ActionRuntime: actionRuntime,
     ContextAccessLive: Layer.empty,
     CorePersistenceLive: Layer.empty,
     DatabaseConfig: Context.Service<object>('PreproposalContextTest/DatabaseConfig'),
-    LegalEntityContextLive: Layer.empty,
+    LegalEntityContext: legalEntityContext,
+    LegalEntityContextLive: Layer.succeed(legalEntityContext, {}),
     makeActionRuntimeLive: () => Layer.effect(actionRuntime, AuthenticationNamespaceRegistry.pipe(Effect.as({}))),
     parseDatabaseConfig: () => Effect.succeed({ database: fixture.database, host: 'localhost', user: 'ontos_runtime' }),
     PrincipalResolver: principalResolver,
@@ -58,6 +61,32 @@ rs.mock('@app/core-runtime', () => {
     TenantModuleStateServiceLive: Layer.empty,
   };
 });
+rs.mock('@app/core-runtime/access/enforcement', () => {
+  const accessDecisionGate = Context.Service('PreproposalContextTest/AccessDecisionGate');
+  const allowed = {
+    evidence: [],
+    outcome: 'ALLOWED',
+    reasons: [{ code: 'allow.granted' }],
+    selectors: [],
+  };
+  return {
+    AccessDecisionGate: accessDecisionGate,
+    makeTestAccessDecision: () => ({
+      askedDecisions: [],
+      askedLists: [],
+      askedSelectableLegalEntities: [],
+      decide: () => Effect.succeed(allowed),
+      decideMany: (inputs: readonly unknown[]) => Effect.succeed(inputs.map(() => allowed)),
+      list: () => Effect.succeed({ decision: allowed, predicate: { groups: [] } }),
+      selectableLegalEntities: () => Effect.succeed([]),
+    }),
+  };
+});
+// The fixture scripts its one access gate over the Tenant's own companies; the suite provides that gate.
+rs.mock('@app/core-runtime/testing/access-gate', () => ({
+  makeTestAccessGateLayers: () =>
+    Layer.succeed(AccessDecisionGate, makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } })),
+}));
 rs.mock('@app/core-runtime/actions/runtime-wiring', () => ({
   ActionPermissionLive: Layer.empty,
   ActionRepositoryLive: Layer.empty,
@@ -118,7 +147,21 @@ rs.mock('../../api/auth/service.ts', () => ({
         createFixtureUser: () => Effect.succeed('fixture-provider-user'),
         resolveShellContext: () =>
           Effect.succeed({
-            principal: { principalId: fixture.principalId, tenantId: fixture.tenantId },
+            principal: {
+              authContextRef: 'better-auth-session:fixture-session',
+              legalEntityId: '88888888-8888-4888-8888-888888888888',
+              principalId: fixture.principalId,
+              tenantId: fixture.tenantId,
+            },
+            state: 'authenticated',
+          }),
+        resolveTenantContext: () =>
+          Effect.succeed({
+            principal: {
+              authContextRef: 'better-auth-session:fixture-tenant-session',
+              principalId: fixture.principalId,
+              tenantId: fixture.tenantId,
+            },
             state: 'authenticated',
           }),
         signIn: () =>
@@ -138,9 +181,10 @@ rs.mock('../../api/auth/api-key-service.ts', () => ({
             fixture.calls.push('verify-buyer-key');
             return { providerKeyId: 'fixture-buyer-provider-key' };
           }
-          expect(rawKey).toBe('inert-market-relay-key');
-          fixture.calls.push('verify-market-relay-key');
-          return { providerKeyId: 'fixture-market-relay-provider-key' };
+          const service = /^inert-(?<name>[a-z-]+)-key$/u.exec(rawKey)?.groups?.['name'];
+          expect(service).toBeDefined();
+          fixture.calls.push(`verify-${service}-key`);
+          return { providerKeyId: `fixture-${service}-provider-key` };
         }),
     } satisfies Pick<ApiKeyServiceContract, 'verify'>),
 }));
@@ -155,6 +199,9 @@ rs.mock('../../api/auth/identity-lifecycle.ts', () => ({
           }
           if (payload.displayName.endsWith('pricing-issuer')) {
             return { principalId: '44444444-4444-4444-8444-444444444444' };
+          }
+          if (payload.displayName.endsWith('catalog')) {
+            return { principalId: '77777777-7777-4777-8777-777777777777' };
           }
           return { principalId: '66666666-6666-4666-8666-666666666666' };
         }),
@@ -231,8 +278,13 @@ it.effect('retains the supported staff registry in the runtime used by both iden
       'resolve-buyer-binding',
       'create',
       'issue',
+      'verify-ccc-reader-key',
       'create',
       'issue',
+      'verify-pricing-issuer-key',
+      'create',
+      'issue',
+      'verify-catalog-key',
       'create',
       'issue',
       'verify-market-relay-key',
@@ -242,7 +294,12 @@ it.effect('retains the supported staff registry in the runtime used by both iden
     expect(fixture.frames[1]).toContain(
       `"buyer":{"authBindingId":"55555555-5555-4555-8555-555555555555","principalId":"${fixture.principalId}"`,
     );
-    expect(fixture.frames[1]).toContain('fixture-market-relay-provider-key');
+    for (const service of ['ccc-reader', 'pricing-issuer', 'catalog', 'market-relay']) {
+      expect(fixture.frames[1]).toContain(`fixture-${service}-provider-key`);
+    }
+    expect(fixture.frames[1]).toContain('33333333-3333-4333-8333-333333333333');
+    expect(fixture.frames[1]).toContain('44444444-4444-4444-8444-444444444444');
+    expect(fixture.frames[1]).toContain('77777777-7777-4777-8777-777777777777');
     expect(fixture.frames[1]).toContain('66666666-6666-4666-8666-666666666666');
   }).pipe(
     Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer, FetchHttpClient.layer)),

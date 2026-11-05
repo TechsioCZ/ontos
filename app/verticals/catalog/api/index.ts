@@ -13,11 +13,14 @@ import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } fr
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
@@ -296,9 +299,16 @@ const runtimeObservabilityLayers = [
 const runtimeObservabilityLive = Layer.mergeAll(...runtimeObservabilityLayers);
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const operationalScopeResolverLive = Layer.provide(
   OperationalScopeResolverLive,
-  Layer.mergeAll(CorePersistenceLive, ContextAccessLive),
+  Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const catalogSourceActionPersistenceLive = catalogSourceActionPersistenceFactoryLive.pipe(
@@ -318,7 +328,7 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
   Layer.provide(nativeCompositionSourceLive),
 );
 const catalogReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
-  Layer.provide(catalogExternalCorrelationResolverLive),
+  Layer.provide(Layer.mergeAll(catalogExternalCorrelationResolverLive, accessEnforcementLive)),
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
@@ -332,7 +342,7 @@ const catalogCartPopulationLive = cartOpenSelectionPopulationLive.pipe(
   Layer.provide(Layer.mergeAll(activeApplicationCompositionLive, nodeCryptoLayer)),
 );
 const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
-  Layer.provide(catalogSourceActionPersistenceLive),
+  Layer.provide(Layer.mergeAll(catalogSourceActionPersistenceLive, accessEnforcementLive)),
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,

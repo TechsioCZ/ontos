@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug record-processing-intervention
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/record-processing-intervention.ts';
 
 export { RecordProcessingInterventionPayloadSchema } from '../actions/record-processing-intervention.ts';
-
 export const RecordProcessingInterventionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordProcessingInterventionActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const RecordProcessingInterventionActionForbiddenProblemSchema = makeProb
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const recordProcessingInterventionActionGroupDefinition = HttpApiGroup.ma
     HttpApiEndpoint.post('execute', '/privacy/actions/record-processing-intervention', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordProcessingInterventionPayloadSchema),
-      success: RecordProcessingInterventionResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordProcessingInterventionResultSchema],
     }),
   )
   .middleware(RecordProcessingInterventionActionSchemaErrorMiddleware);

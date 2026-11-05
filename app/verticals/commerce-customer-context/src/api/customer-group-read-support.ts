@@ -1,9 +1,6 @@
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
-import type { ResourceAccessTarget } from '@app/core-runtime';
 import { Effect } from 'effect';
-import type { CommerceCustomerProfileSubject } from '../../shared/domain/group-contract.ts';
 import type { CustomerGroupLookupOutcome, CustomerGroupPersistence } from '../../shared/domain/group-service.ts';
-import type { CustomerGroupRef } from '../../shared/resources/customer-group.ts';
 
 export { customerGroupServiceFactory as customerGroupReadServiceFactory } from '../actions/customer-group-action-support.ts';
 
@@ -33,27 +30,6 @@ export const unwrapCustomerGroupLookup = <Value>(
   outcome: CustomerGroupLookupOutcome<Value>,
 ): Effect.Effect<Value, ReadHandlerNotFound> =>
   Effect.fromOption(outcome).pipe(Effect.mapError((cause) => customerGroupReadNotFound(cause)));
-
-export const customerGroupResourceTarget = (groupRef: CustomerGroupRef) => ({
-  kind: 'resource' as const,
-  resource: {
-    moduleId: groupRef.moduleId,
-    resourceId: groupRef.resourceId,
-    resourceType: groupRef.resourceType,
-  },
-});
-
-export const customerProfileResourceTarget = (profile: CommerceCustomerProfileSubject): ResourceAccessTarget => ({
-  moduleId: profile.profileRef.moduleId,
-  resourceId: profile.profileRef.resourceId,
-  resourceType: profile.profileRef.resourceType,
-});
-
-export const groupResourceAccessTarget = (groupRef: CustomerGroupRef): ResourceAccessTarget => ({
-  moduleId: groupRef.moduleId,
-  resourceId: groupRef.resourceId,
-  resourceType: groupRef.resourceType,
-});
 
 export const requireCustomerGroupTenant = (
   trustedTenantId: string,

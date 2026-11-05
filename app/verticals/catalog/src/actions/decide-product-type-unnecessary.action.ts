@@ -54,6 +54,14 @@ const handleDecideProductTypeUnnecessary = Effect.fn('DecideProductTypeUnnecessa
 
 export const decideProductTypeUnnecessaryAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-type-unnecessary.decide',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.decide-product-type-unnecessary.access.v1',
@@ -65,7 +73,7 @@ export const decideProductTypeUnnecessaryAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey,
       role: 'action',

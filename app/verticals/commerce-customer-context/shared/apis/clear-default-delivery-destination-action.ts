@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug clear-default-delivery-destination
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/clear-default-delivery-destination.ts';
 
 export { ClearDefaultDeliveryDestinationPayloadSchema } from '../actions/clear-default-delivery-destination.ts';
-
 export const ClearDefaultDeliveryDestinationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ClearDefaultDeliveryDestinationActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const ClearDefaultDeliveryDestinationActionForbiddenProblemSchema = makeP
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -154,7 +155,7 @@ export const clearDefaultDeliveryDestinationActionGroupDefinition = HttpApiGroup
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/clear-default-delivery-destination', {
       error: actionErrors,
       payload: Schema.toEncoded(ClearDefaultDeliveryDestinationPayloadSchema),
-      success: ClearDefaultDeliveryDestinationResultSchema,
+      success: [ActionProposalAcceptedSchema, ClearDefaultDeliveryDestinationResultSchema],
     }),
   )
   .middleware(ClearDefaultDeliveryDestinationActionSchemaErrorMiddleware);

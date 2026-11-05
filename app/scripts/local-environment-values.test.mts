@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import {
   localDatabaseIdentityValues,
+  localModuleValues,
   localPublicClientValues,
   localSpiceDbValues,
 } from './local-environment-values.mts';
@@ -163,3 +164,9 @@ it.effect('derives no identity URL from a remote, malformed or missing runtime U
     expect(yield* localDatabaseIdentityValues([])).toStrictEqual({});
   }),
 );
+
+it('defaults the Shell module bindings to an empty list and keeps a configured value', () => {
+  expect(localModuleValues([])).toEqual({ ONTOS_GATEWAY_MODULE_BINDINGS: '[]' });
+  expect(localModuleValues(['ONTOS_GATEWAY_MODULE_BINDINGS=[]'])).toEqual({});
+  expect(localModuleValues(['ONTOS_GATEWAY_MODULE_BINDINGS=[{"sourceAppId":"commerce-order"}]'])).toEqual({});
+});

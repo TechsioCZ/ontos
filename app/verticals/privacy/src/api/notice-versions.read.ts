@@ -20,7 +20,7 @@ const unavailable = (cause: unknown) => {
 
 const noticeVersionsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.notice.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.notice-versions',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -28,6 +28,14 @@ const noticeVersionsEntrypoint = defineTenantModuleEntrypoint({
 
 export const noticeVersionsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.notice-version.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'notices', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: noticeVersionsEntrypoint,
     evidencePolicy: {
@@ -37,7 +45,6 @@ export const noticeVersionsRead = defineRead(
     inputSchema: NoticeVersionsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.notice-versions',
     resultSchema: NoticeVersionsResponseSchema,
@@ -67,5 +74,4 @@ export const noticeVersionsRead = defineRead(
     }).pipe(Effect.mapError(unavailable));
   },
   (transaction, scope) => privacyOperationRepositoryForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

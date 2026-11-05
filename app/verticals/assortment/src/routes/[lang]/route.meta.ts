@@ -1,11 +1,20 @@
 import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'commerce.assortment.home.read',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'configuration', level: 'basic' },
+    risk: 'routine',
+    selectors: [],
+  },
   canonicalPath: '/',
   descriptionKey: 'assortment.seo.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'assortment.configuration.read' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'commerce.assortment.page.assortment-home',
     moduleKey: 'commerce.assortment',
     role: 'page',
@@ -23,7 +32,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'assortment.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

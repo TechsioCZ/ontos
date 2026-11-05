@@ -322,6 +322,74 @@ payload archive, trace store, or financial ledger.
 **Storage-level WORM / Object Lock** — Provider-enforced immutability of stored artifact bytes.
 Database rules may protect application behavior but cannot claim provider-enforced WORM.
 
+## Granular authorization
+
+These terms belong to the accepted granular authorization model
+([ADR-0030](../../adr/0030-granular-authorization.md)). In product language "company" is a Legal
+Entity.
+
+**Capability** — One declared permission made available in one scope (a company or the Tenant
+context) where its module is installed. Scope admins can always configure it, installed or not; a
+delegate only within its live delegation envelope. Nobody can use it without an adopted grant in an
+assigned Role. Uninstalling the module stops every use while keeping its configuration.
+_Avoid_: confusing it with capability issuance (credentials) or a module capability; the engine type
+is `access_capability`, and a Capability is never a grant and never a module boundary.
+
+**Access declaration** — A module's in-code statement of one protected entrypoint's permission:
+stable key, kind (action, read, field read, field write, export, admin), Risk tier, suggested
+placement, supported record scopes and modes. It never grants anything; it only creates a catalog
+entry.
+
+**Risk tier** — Routine, sensitive or critical classification of a declared permission. Sensitive
+covers personal data, financial visibility, exports, bulk changes and external communication;
+critical covers money movement, irreversible or legal effects, destructive operations and authority
+changes. Risk drives warnings, Adoption, approvals and agent limits, never an automatic grant.
+
+**Role** — A Tenant-defined job description, such as Účetní or Obchodník, defined once and
+assigned per company. A role's levels, switches and limits compile to exact permissions pinned to
+the catalog at save time; something new never slips into a level silently.
+_Avoid_: treating an admin or owner title as a Role; it is management power, not data access.
+
+**Role revision** — One immutable saved state of a Role, with provenance (template,
+customer-changed or manual). Editing a Role creates a new revision.
+
+**Assignment** — One holder (person or agent) × one Role revision × one scope × one period. Each
+Assignment is a distinct incarnation that is never reused: removing and re-adding a Role creates a
+new Assignment, so approvals and history tied to the old one never come back.
+
+**Delegation** — A bounded management envelope letting a person assign approved Roles within exact
+permissions, people, company and duration. A delegate can never escalate, self-assign, delegate
+further or gain the module's future permissions automatically.
+
+**Access change** — An item in Novinky v oprávněních describing what a module release added,
+changed, renamed or split, with suggested Roles and affected people. It makes the change
+configurable and visible, never usable.
+
+**Adoption** — An explicit decision that adds a new or changed permission to a Role. Routine items
+may be adopted in one batch per release; sensitive and critical items are adopted one by one with a
+named effect. Only Adoption plus an Assignment makes a permission usable.
+
+**Principal and agent** — In the authorization graph a Principal is a verified person: only
+Principals of kind human become v2 `principal` subjects. AI agents are the separate `agent` subject
+type, and service, integration and system Principals never appear in v2 relationships; they keep
+their workload classification, which is not an agent.
+_Avoid_: reading the general Principal entry (a person, integration, service, agent or system job)
+as authorization vocabulary, or treating an agent as a kind of Principal that can approve or
+administer.
+
+**Mandate** — A person's single-use approval of one exact proposed command. In the graph it is bound
+to the approver's exact execution and approval Assignments and their grants; the requester's exact
+Assignment is bound in Core and re-checked at execution. It expires, and lapses permanently when the
+bound authority is lost. Agents never hold or grant a Mandate.
+
+**Agent connection** — A person's revocable, time-bounded consent for one agent to act for them in
+one scope, with a ceiling on what the agent may reach. An agent's effective access is the
+intersection of the person's access, the agent's own access and the connection.
+
+**Scope fence** — The per-scope guard that lets only one access-changing operation alter a
+company's or Tenant context's access at a time. While a change is in progress, readers see the access
+state before the operation or after it, never a mix of old and new.
+
 ## External systems
 
 **External Business System** — Live upstream or downstream system exchanging business facts with

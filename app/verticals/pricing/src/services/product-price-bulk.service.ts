@@ -10,6 +10,7 @@ import type {
   PriceProductTargetSnapshot,
 } from '@app/pricing-contracts/domain/catalog-price-target';
 import { PriceIdentityKeySchema, priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
+import type { Crypto } from 'effect';
 import { Context, Effect, Schema } from 'effect';
 
 import type {
@@ -501,7 +502,7 @@ export const makeProductPriceBulkCommandPort = (
 
 export const productPriceBulkServiceForScope: ActionServiceFactory<
   ProductPriceBulkService<ManageProductPriceOperation>,
-  ExternalPriceInputBoundaryFactory
+  Crypto.Crypto | ExternalPriceInputBoundaryFactory
 > = Effect.fn('ProductPriceBulkService.productPriceBulkServiceForScope')(
   function* makeProductPriceBulkServices(transaction, scope, compositionRevision) {
     const { legalEntityId } = scope;
@@ -519,11 +520,13 @@ export const productPriceBulkServiceForScope: ActionServiceFactory<
           compositionRevision,
           legalEntityId,
           requestCorrelation: scope.correlationId,
+          scope,
         }),
         commercialContext: commercialContextAssessmentPortFromEnvironment({
           compositionRevision,
           legalEntityId,
           requestCorrelation: scope.correlationId,
+          scope,
         }),
         currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
         persistence: pricePersistenceForScope(transaction, scope),

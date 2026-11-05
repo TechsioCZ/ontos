@@ -12,11 +12,14 @@ import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/module
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive as GovernedModuleEntrypointGatewayLive,
   ModuleStateGateLive as GovernedModuleStateGateLive,
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
@@ -30,6 +33,7 @@ import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramo
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
+import { projectDestinationAuthorityLive } from '../src/access/project-destination-authority.ts';
 
 // <generated-governed-http-handler-imports>
 import { archiveProjectActionApiLive } from './archive-project-action-server.ts';
@@ -47,13 +51,23 @@ const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLiv
 const governedModuleStateGateLive = GovernedModuleStateGateLive.pipe(
   GovernedReadLayer.provide(governedTenantModuleStateServiceLive),
 );
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  GovernedReadLayer.provideMerge(AccessEnforcementPortsLive),
+  GovernedReadLayer.provide(TenantIntentLoaderLive),
+  GovernedReadLayer.provide(GovernedCorePersistenceLive),
+  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(nodeCryptoLayer),
+);
 const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
   GovernedCorePersistenceLive,
   GovernedContextAccessLive,
   GovernedModuleEntrypointGatewayLive.pipe(GovernedReadLayer.provide(governedModuleStateGateLive)),
   GovernedOperationalScopeResolverLive.pipe(
-    GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive)),
+    GovernedReadLayer.provide(
+      GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive, accessEnforcementLive),
+    ),
   ),
+  accessEnforcementLive,
 );
 
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
@@ -73,6 +87,11 @@ const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(ultramodernDeliveryU
   GovernedReadLayer.provide(activeApplicationCompositionLive),
 );
 
+// O11 both ends: a hierarchy change also asks this gate about its destination parent, through the
+// module's own owner rule, so the second question is the same authority and never a second system.
+const governedOwnerAuthorizationLive = projectDestinationAuthorityLive.pipe(
+  GovernedReadLayer.provide(accessEnforcementLive),
+);
 const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, projectsBackendRegistration).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
@@ -83,10 +102,14 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit,
       governedModuleStateGateLive,
       GovernedModuleEntrypointGatewayLive.pipe(GovernedReadLayer.provide(governedModuleStateGateLive)),
       GovernedOperationalScopeResolverLive.pipe(
-        GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive)),
+        GovernedReadLayer.provide(
+          GovernedReadLayer.mergeAll(GovernedCorePersistenceLive, GovernedContextAccessLive, accessEnforcementLive),
+        ),
       ),
       ActionAuthorizationPreflightDatabaseLive.pipe(GovernedReadLayer.provideMerge(GovernedCorePersistenceLive)),
       activeApplicationCompositionLive,
+      accessEnforcementLive,
+      governedOwnerAuthorizationLive,
     ),
   ),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),

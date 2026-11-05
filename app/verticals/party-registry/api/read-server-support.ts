@@ -13,6 +13,7 @@ export const partyRegistryCorsAllowedHeaders = [
   'Content-Type',
   'Idempotency-Key',
   'Traceparent',
+  'X-Action-Intent',
   'X-Correlation-Id',
   'X-Modernjs-Bff-Operation-Context',
   'X-Operation-Id',

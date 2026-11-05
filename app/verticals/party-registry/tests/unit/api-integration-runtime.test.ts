@@ -205,6 +205,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                         tenantId: principal.tenantId,
                       },
                       { ...principal, correlationId: 'runtime-assembly-proof' },
+                      { hiddenTextFields: [], listAccess: { groups: [] } },
                     )
                     .pipe(Effect.orDie, Effect.andThen(Effect.die('Party search substitute completed unexpectedly')));
                 }
@@ -225,6 +226,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                         correlationId: 'runtime-assembly-proof',
                         legalEntityId: 'a5000000-0000-4000-8000-000000000001',
                       },
+                      { hiddenTextFields: [], listAccess: { groups: [] } },
                     )
                     .pipe(
                       Effect.orDie,
@@ -595,10 +597,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         };
         const preflight = yield* Effect.promise(() =>
           runtime.handler(
-            new Request('http://localhost/party-registry/readiness', {
+            new Request('http://localhost/party-registry/actions/create-party', {
               headers: {
-                'access-control-request-headers': 'Authorization, X-Correlation-Id, X-Ontos-Composition-Revision',
-                'access-control-request-method': 'GET',
+                'access-control-request-headers':
+                  'Authorization, X-Action-Intent, X-Correlation-Id, X-Ontos-Composition-Revision',
+                'access-control-request-method': 'POST',
                 origin: 'http://localhost:3020',
               },
               method: 'OPTIONS',
@@ -615,6 +618,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         );
         expect(commaSeparatedHeader(preflight.headers.get('access-control-allow-headers'))).toContain(
           'X-Ontos-Composition-Revision',
+        );
+        expect(commaSeparatedHeader(preflight.headers.get('access-control-allow-headers'))).toContain(
+          'X-Action-Intent',
         );
         expect({
           actionCalls,

@@ -246,19 +246,9 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
-        ONTOS_CCC_ORDER_CONSUMER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID: ${migrator_ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID}
-        ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID: ${migrator_ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID}
-        ONTOS_CCC_ORDER_CONSUMER_TENANT_ID: ${migrator_ONTOS_CCC_ORDER_CONSUMER_TENANT_ID}
-        ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS: ${migrator_ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS}
-        ONTOS_CCC_ORDER_GATEWAY_API_KEY: ${migrator_ONTOS_CCC_ORDER_GATEWAY_API_KEY}
-        ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY: ${migrator_ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY}
-        ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID: ${migrator_ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID}
-        ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS: ${migrator_ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS}
-        ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS: ${migrator_ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS}
         ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'
-        ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: ${migrator_ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY}
         ONTOS_COMMERCE_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
         ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4101'
@@ -363,6 +353,8 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_MARKET_CATALOG}
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4109'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
         SPICEDB_ENDPOINT: 'spicedb:50051'
@@ -414,6 +406,8 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_CATALOG}
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4105'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
         SPICEDB_ENDPOINT: 'spicedb:50051'
@@ -465,15 +459,11 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PRICING}
         ONTOS_PRICING_CONFIRMATION_KEY_LINEAGE_REF: ${migrator_ONTOS_PRICING_CONFIRMATION_KEY_LINEAGE_REF}
         ONTOS_PRICING_CONFIRMATION_KEY_REF: ${migrator_ONTOS_PRICING_CONFIRMATION_KEY_REF}
         ONTOS_PRICING_CONFIRMATION_KEY_VERSION: ${migrator_ONTOS_PRICING_CONFIRMATION_KEY_VERSION}
         ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: ${migrator_ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET}
-        ONTOS_PRICING_GATEWAY_API_KEY: ${migrator_ONTOS_PRICING_GATEWAY_API_KEY}
-        ONTOS_PRICING_ORDER_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_PRICING_ORDER_PRINCIPAL_ID: ${migrator_ONTOS_PRICING_ORDER_PRINCIPAL_ID}
-        ONTOS_PRICING_PREPROPOSAL_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_PRICING_PREPROPOSAL_PRINCIPAL_ID: ${migrator_ONTOS_PRICING_PREPROPOSAL_PRINCIPAL_ID}
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4106'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
@@ -934,11 +924,9 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
-        ONTOS_CART_FINALIZATION_SERVICE_API_KEY: ${migrator_ONTOS_CART_FINALIZATION_SERVICE_API_KEY}
-        ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS: ${migrator_ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS}
-        ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS: ${migrator_ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS}
         ONTOS_CATALOG_API_BASE_URL: 'http://catalog:4105/catalog-api'
         ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'http://commercecustomercontext:4101/commerce-customer-context-api'
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CART}
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4115'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
@@ -993,15 +981,8 @@ zerops:
         NODE_ENV: production
         ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'
         ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'http://commercecustomercontext:4101/commerce-customer-context-api'
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER}
         ONTOS_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
-        ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY: ${migrator_ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY}
-        ONTOS_ORDER_CCC_VERIFIER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID: ${migrator_ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID}
-        ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: ${migrator_ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY}
-        ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID: ${migrator_ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID}
-        ONTOS_ORDER_PRICING_VERIFIER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID: ${migrator_ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID}
         ONTOS_PAYMENT_TERM_CATALOG_API_BASE_URL: 'http://paymenttermcatalog:4103/payment-term-catalog-api'
         ONTOS_PRICING_API_BASE_URL: 'http://pricing:4106/pricing-api'
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
@@ -1060,6 +1041,7 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_BINDINGS: ${migrator_ONTOS_GATEWAY_MODULE_BINDINGS}
         PORT: '3020'
         SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:${migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         SHELL_SUPER_APP_PORT: '3020'
@@ -1109,6 +1091,10 @@ zerops:
           httpSupport: true
       envVariables:
         NODE_ENV: production
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY}
+        ONTOS_PARTY_REGISTRY_API_BASE_URL: 'http://partyregistry:4102/party-registry-api'
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:${migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         PORT: '4102'
         OUTBOX_WORKER_HEALTH_PORT: '4102'
@@ -1158,19 +1144,9 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
-        ONTOS_CCC_ORDER_CONSUMER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID: ${migrator_ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID}
-        ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID: ${migrator_ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID}
-        ONTOS_CCC_ORDER_CONSUMER_TENANT_ID: ${migrator_ONTOS_CCC_ORDER_CONSUMER_TENANT_ID}
-        ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS: ${migrator_ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS}
-        ONTOS_CCC_ORDER_GATEWAY_API_KEY: ${migrator_ONTOS_CCC_ORDER_GATEWAY_API_KEY}
-        ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY: ${migrator_ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY}
-        ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID: ${migrator_ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID}
-        ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS: ${migrator_ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS}
-        ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS: ${migrator_ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS}
         ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'
-        ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: ${migrator_ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY}
         ONTOS_COMMERCE_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
         ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4101'
@@ -1185,54 +1161,6 @@ zerops:
           port: 4101
           path: '/live'
       start: sh -c 'cd app/.zerops/runtime/commerce-customer-context-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
-
-  - setup: 'price-group-catalog-worker'
-    build:
-      base: 'alpine@3.23'
-      envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
-        ZE_FAIL_BUILD: 'true'
-      prepareCommands:
-        - sudo apk add --no-cache curl libstdc++ libatomic
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.13.0 12.16.1
-      buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.13.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.13.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker
-        - mkdir 'app/.zerops/runtime/price-group-catalog-worker/node' && cp -a "$HOME/.local/node-26.13.0/bin" "$HOME/.local/node-26.13.0/lib" 'app/.zerops/runtime/price-group-catalog-worker/node/'
-      deployFiles:
-        - 'app/.zerops/runtime/price-group-catalog-worker'
-    deploy:
-      temporaryShutdown: false
-      readinessCheck:
-        httpGet:
-          port: 4108
-          path: '/live'
-        failureTimeout: 3m
-        retryPeriod: 10s
-    run:
-      base: 'nodejs@24'
-      prepareCommands:
-        - sudo apk add --no-cache libatomic
-      ports:
-        - port: 4108
-          protocol: tcp
-          httpSupport: true
-      envVariables:
-        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
-        NODE_ENV: production
-        PORT: '4108'
-        OUTBOX_WORKER_HEALTH_PORT: '4108'
-        SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
-        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
-        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        ULTRAMODERN_ZEROPS_SERVICE: price-group-catalog-worker
-      healthCheck:
-        httpGet:
-          port: 4108
-          path: '/live'
-      start: sh -c 'cd app/.zerops/runtime/price-group-catalog-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
   - setup: 'inventory-worker'
     build:
@@ -1367,15 +1295,8 @@ zerops:
         NODE_ENV: production
         ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'
         ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'http://commercecustomercontext:4101/commerce-customer-context-api'
+        ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER}
         ONTOS_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
-        ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY: ${migrator_ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY}
-        ONTOS_ORDER_CCC_VERIFIER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID: ${migrator_ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID}
-        ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: ${migrator_ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY}
-        ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID: ${migrator_ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID}
-        ONTOS_ORDER_PRICING_VERIFIER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID: ${migrator_ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID}
         ONTOS_PAYMENT_TERM_CATALOG_API_BASE_URL: 'http://paymenttermcatalog:4103/payment-term-catalog-api'
         ONTOS_PRICING_API_BASE_URL: 'http://pricing:4106/pricing-api'
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
@@ -1428,32 +1349,18 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
-        ONTOS_CCC_ORDER_CONSUMER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID: ${migrator_ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID}
-        ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID: ${migrator_ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID}
-        ONTOS_CCC_ORDER_CONSUMER_TENANT_ID: ${migrator_ONTOS_CCC_ORDER_CONSUMER_TENANT_ID}
-        ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS: ${migrator_ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS}
-        ONTOS_CCC_ORDER_GATEWAY_API_KEY: ${migrator_ONTOS_CCC_ORDER_GATEWAY_API_KEY}
-        ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY: ${migrator_ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY}
-        ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID: ${migrator_ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID}
-        ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS: ${migrator_ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS}
-        ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS: ${migrator_ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS}
         ONTOS_COMMERCE_CART_API_BASE_URL: 'http://commercecart:4115/commerce-cart-api'
         ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'http://commercecustomercontext:4101/commerce-customer-context-api'
-        ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: ${migrator_ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY}
         ONTOS_COMMERCE_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
+        ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
+        ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER}
+        ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY}
         ONTOS_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
-        ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY: ${migrator_ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY}
-        ONTOS_ORDER_CCC_VERIFIER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID: ${migrator_ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID}
-        ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: ${migrator_ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY}
-        ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID: ${migrator_ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID}
-        ONTOS_ORDER_PRICING_VERIFIER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'
-        ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID: ${migrator_ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID}
+        ONTOS_PARTY_REGISTRY_API_BASE_URL: 'http://partyregistry:4102/party-registry-api'
         ONTOS_PAYMENT_TERM_CATALOG_API_BASE_URL: 'http://paymenttermcatalog:4103/payment-term-catalog-api'
         ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
         ONTOS_PRICING_API_BASE_URL: 'http://pricing:4106/pricing-api'
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         ONTOS_TAX_API_BASE_URL: 'http://tax:4112/tax-api'
         OUTBOX_WORKER_HEALTH_PORT: '4100'

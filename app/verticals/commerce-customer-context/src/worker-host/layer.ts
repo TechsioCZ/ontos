@@ -4,56 +4,38 @@ import {
   OutboxWorkerInfrastructureLive,
   OutboxWorkerLegalEntityScopeFanoutLive,
 } from '@app/core-runtime/outbox/worker';
-import { BusinessPermissionRelationshipMutation } from '@app/core-runtime';
 import type { OutboxRuntime } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
-import { Effect, Layer } from 'effect';
-import {
-  reconcilePartyMergePersistenceForTransaction,
-  retailBindingAuthorizationMutationReconciliationForWorker,
-} from '../persistence/profile-persistence.ts';
-import { AccessAuthorizationMutationReconciliationLive } from '../workers/access-authorization-mutation-reconciliation-live.ts';
-import type { AccessAuthorizationMutationReconciliation } from '../workers/access-authorization-mutation-reconciliation.ts';
+import type { Crypto } from 'effect';
+import { Layer } from 'effect';
+import { reconcilePartyMergePersistenceForTransaction } from '../persistence/profile-persistence.ts';
 import { ReconcilePartyMergePersistence } from '../workers/reconcile-party-merge.worker.ts';
-import { RetailBindingAuthorizationMutationReconciliation } from '../workers/retail-binding-authorization-mutation-reconciliation.ts';
 import type { PrivacyMeasureOwnerGateway } from '../workers/privacy-measure-owner-gateway.ts';
 import { PrivacyMeasureOwnerGatewayLive } from '../workers/privacy-measure-owner-gateway.ts';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
 export { OutboxRepositoryLive as outboxWorkerRepositoryLive } from '@app/core-runtime/outbox/worker';
-export { BusinessPermissionRelationshipMutationLive as outboxWorkerBusinessPermissionRelationshipMutationLive } from '@app/core-runtime';
-export { ContextAccessLive as outboxWorkerContextAccessLive } from '@app/core-runtime';
 
 /** Add owner-local repositories and services required by worker handlers here. */
 const outboxWorkerHandlerLayer = Layer.mergeAll(
   Layer.succeed(ReconcilePartyMergePersistence, reconcilePartyMergePersistenceForTransaction()),
-  Layer.effect(
-    RetailBindingAuthorizationMutationReconciliation,
-    Effect.gen(function* retailBindingAuthorizationMutationReconciliationLive() {
-      const mutation = yield* BusinessPermissionRelationshipMutation;
-      return retailBindingAuthorizationMutationReconciliationForWorker(mutation);
-    }),
-  ),
 );
 type OutboxWorkerOwnerServices =
   | OutboxRuntime
   | OutboxWorkerLegalEntityScopeFanout
-  | AccessAuthorizationMutationReconciliation
   | PrivacyMeasureOwnerGateway
-  | ReconcilePartyMergePersistence
-  | RetailBindingAuthorizationMutationReconciliation;
+  | ReconcilePartyMergePersistence;
+export type { OutboxWorkerOwnerServices };
 
 export const outboxWorkerLayer: Layer.Layer<
   OutboxWorkerOwnerServices,
   never,
+  | Crypto.Crypto
   | Layer.Services<typeof OutboxWorkerInfrastructureLive>
-  | Layer.Services<typeof AccessAuthorizationMutationReconciliationLive>
-  | Layer.Services<typeof outboxWorkerHandlerLayer>
   | Layer.Services<typeof OutboxWorkerLegalEntityScopeFanoutLive>
 > = Layer.mergeAll(
   OutboxWorkerInfrastructureLive,
-  AccessAuthorizationMutationReconciliationLive,
   PrivacyMeasureOwnerGatewayLive,
   outboxWorkerHandlerLayer,
   OutboxWorkerLegalEntityScopeFanoutLive,

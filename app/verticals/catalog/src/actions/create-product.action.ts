@@ -172,6 +172,14 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
 
 export const createProductAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.create-product.access.v1',
@@ -183,7 +191,7 @@ export const createProductAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',

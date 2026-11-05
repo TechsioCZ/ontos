@@ -46,10 +46,7 @@ describe('Create Product Type Action contract', () => {
   });
 
   it('remains an explicitly authorized tenant Action without legal-entity scope', () => {
-    expect(createProductTypeAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(createProductTypeAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(createProductTypeAction.descriptor.entrypoint.scope).toBe('tenant');
     expect(createProductTypeAction.descriptor.legalEntityScope).toBe('forbidden');
     expect(createProductTypeAction.descriptor.idempotency).toBe('required');

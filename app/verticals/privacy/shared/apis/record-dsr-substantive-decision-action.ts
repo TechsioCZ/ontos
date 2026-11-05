@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug record-dsr-substantive-decision
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/record-dsr-substantive-decision.ts';
 
 export { RecordDsrSubstantiveDecisionPayloadSchema } from '../actions/record-dsr-substantive-decision.ts';
-
 export const RecordDsrSubstantiveDecisionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordDsrSubstantiveDecisionActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const RecordDsrSubstantiveDecisionActionForbiddenProblemSchema = makeProb
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const recordDsrSubstantiveDecisionActionGroupDefinition = HttpApiGroup.ma
     HttpApiEndpoint.post('execute', '/privacy/actions/record-dsr-substantive-decision', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordDsrSubstantiveDecisionPayloadSchema),
-      success: RecordDsrSubstantiveDecisionResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordDsrSubstantiveDecisionResultSchema],
     }),
   )
   .middleware(RecordDsrSubstantiveDecisionActionSchemaErrorMiddleware);

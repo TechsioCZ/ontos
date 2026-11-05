@@ -52,6 +52,14 @@ const handleEnqueueRetentionEvaluation = Effect.fn('EnqueueRetentionEvaluationAc
 
 export const enqueueRetentionEvaluationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.retention-evaluation.enqueue',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'retention', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.enqueue-retention-evaluation.access.v1',
@@ -63,7 +71,7 @@ export const enqueueRetentionEvaluationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.enqueue-retention-evaluation',
       moduleKey: MODULE_KEY,
       role: 'action',

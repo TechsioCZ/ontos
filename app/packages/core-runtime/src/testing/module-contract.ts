@@ -16,7 +16,7 @@ import {
 } from '../modules/application-composition.ts';
 import type { ApplicationComposition, ApplicationCompositionModule } from '../modules/application-composition.ts';
 import { OntosModuleDeploymentContractSchema } from '../modules/manifest.ts';
-import type { OntosModuleDeploymentContract } from '../modules/manifest.ts';
+import type { OntosModuleActivation } from '../modules/manifest.ts';
 
 interface ModuleContractFixtureOptions<Subscription extends object> {
   readonly appId: string;
@@ -24,8 +24,10 @@ interface ModuleContractFixtureOptions<Subscription extends object> {
   readonly description?: string;
   readonly displayName?: string;
   readonly moduleId: string;
+  /** The Action keys the module may act for as an Originator; absent declares none. */
+  readonly originatorActions?: readonly string[];
   readonly outboxSubscriptions?: readonly Subscription[];
-  readonly supportedStates?: OntosModuleDeploymentContract['manifest']['activation']['supportedStates'];
+  readonly supportedStates?: OntosModuleActivation['supportedStates'];
 }
 
 export const makeModuleContractFixture = <Subscription extends object = never>({
@@ -34,6 +36,7 @@ export const makeModuleContractFixture = <Subscription extends object = never>({
   moduleId,
   description = `${moduleId} module`,
   displayName = moduleId,
+  originatorActions = [],
   outboxSubscriptions = [],
   supportedStates = ['inactive', 'active'],
 }: ModuleContractFixtureOptions<Subscription>) => ({
@@ -52,6 +55,7 @@ export const makeModuleContractFixture = <Subscription extends object = never>({
       implementedAs: 'ultramodern_microvertical' as const,
       kind: 'business_module' as const,
     },
+    originatorActions,
     publicSurface: {
       actions: [],
       api: [],

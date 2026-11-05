@@ -31,6 +31,14 @@ const ACTION_KEY = 'commerce.catalog.retire-package-option' as const;
 
 export const retirePackageOptionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.package-option.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'package-definition', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.retire-package-option.access.v1',
@@ -41,7 +49,7 @@ export const retirePackageOptionAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

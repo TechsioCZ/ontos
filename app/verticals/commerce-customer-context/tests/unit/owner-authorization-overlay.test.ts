@@ -1,13 +1,8 @@
-import { createOwnerPermissionAccessTarget, defineBusinessPermission } from '@app/core-runtime';
-import type { CustomerPermissionRequest } from '../../src/permissions/authorization.ts';
-import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
-import { counterpartyAccessManagePermission } from '../../shared/permissions/counterparty-access-manage.ts';
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
 import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
 import { DateTime, Deferred, Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import type { ProfileRetailPermissionReaderFactoryService } from '../../src/integrations/retail-permission-reader.ts';
 import { makeCommerceCustomerContextOwnerAuthorizationOverlay } from '../../src/persistence/owner-authorization-overlay.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
@@ -27,39 +22,29 @@ const scope = Object.freeze({
   trustedStorefrontId: 'storefront-one',
 });
 
-const ownerRow = (
-  state: 'ACTIVE' | 'PENDING_REVOKE' | 'RECONCILIATION_REQUIRED',
-  storefrontResourceId: string | null = null,
-) => {
-  const row = {
-    action_invocation_id: null,
-    counterparty_resource_id: counterpartyId,
-    grant_id: '70000000-0000-4000-8000-000000000001',
-    granted_at: '2026-09-09T09:00:00.000Z',
-    granted_by: principalId,
-    mutation_id: state === 'PENDING_REVOKE' ? '80000000-0000-4000-8000-000000000001' : null,
-    mutation_operation: state === 'PENDING_REVOKE' ? 'revoke' : null,
-    mutation_staged: state === 'PENDING_REVOKE' ? true : null,
-    permission_code: 'counterparty.access.manage',
-    principal_id: principalId,
-    reason: 'Owner overlay test',
-    revision: 2,
-    revoked_at: null,
-    revoked_by: null,
-    state,
-    storefront_resource_id: storefrontResourceId,
-  };
-  return state === 'PENDING_REVOKE' ? { ...row, operation_outcome: 'PENDING_REVOKE' as const } : row;
-};
+const ownerRow = (state: 'ACTIVE' | 'REVOKED', storefrontResourceId: string | null = null) => ({
+  counterparty_resource_id: counterpartyId,
+  grant_id: '70000000-0000-4000-8000-000000000001',
+  granted_at: '2026-09-09T09:00:00.000Z',
+  granted_by: principalId,
+  permission_code: 'counterparty.access.manage',
+  principal_id: principalId,
+  reason: 'Owner overlay test',
+  revision: 2,
+  revoked_at: state === 'REVOKED' ? '2026-09-09T09:01:00.000Z' : null,
+  revoked_by: state === 'REVOKED' ? principalId : null,
+  state,
+  storefront_resource_id: storefrontResourceId,
+});
 
-type RoutineHandler = (routineKey: string) => readonly object[];
+type RoutineHandler = (routineKey: string, values: readonly unknown[]) => readonly object[];
 
 const transactionWith = (handler: RoutineHandler): ScopedTransactionExecutor =>
   // SAFETY: Every fixture row is decoded by the invoked owner routine schema; this harness only
   // exercises the adapter's scoped `invoke` capability.
   ({
-    invoke: (routine: ScopedRoutineDefinition) =>
-      Effect.sync(() => handler(routine.routineKey)).pipe(
+    invoke: (routine: ScopedRoutineDefinition, values: readonly unknown[] = []) =>
+      Effect.sync(() => handler(routine.routineKey, values)).pipe(
         Effect.flatMap((rows) =>
           // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Effect.forEach's second argument is the element effect, not Array thisArg.
           Effect.forEach(rows, (row) => Schema.decodeUnknownEffect(routine.resultSchema)(row)),
@@ -82,131 +67,53 @@ const transactionWithEffect = (
       ),
   }) as unknown as ScopedTransactionExecutor;
 
-const readerFactory: ProfileRetailPermissionReaderFactoryService = {
-  make: () => () =>
-    Effect.succeed({
-      observedAt: '2026-09-09T09:00:00.000Z',
-      permissions: [],
-    }),
+const factInput = (operationKey: string, ownerFacts?: Readonly<Record<string, string>>): OwnerAuthorizationInput => {
+  const base: OwnerAuthorizationInput = {
+    capabilityKey: operationKey,
+    operation: 'action',
+    operationAt,
+    operationKey,
+    owningModuleKey: 'commerce.customer-context',
+    scope,
+    targets: [],
+  };
+  return ownerFacts === undefined ? base : { ...base, ownerFacts };
 };
 
-const input = (
-  target: Extract<OwnerAuthorizationInput['targets'][number], { readonly kind: 'owner_permission' }>,
-): OwnerAuthorizationInput => ({
-  operation: 'action',
-  operationAt,
-  operationKey: 'commerce.customer-context.grant-counterparty-commerce-access',
-  owningModuleKey: 'commerce.customer-context',
-  scope,
-  targets: [target],
-});
+const grantCounterpartyCommerceAccess = 'commerce.customer-context.grant-counterparty-commerce-access';
 
-const counterpartyTarget = (
-  storefrontId?: string,
-): Extract<OwnerAuthorizationInput['targets'][number], { readonly kind: 'owner_permission' }> => {
-  const request: CustomerPermissionRequest = {
-    permission: 'counterparty.access.manage',
-    target:
-      storefrontId === undefined
-        ? { counterpartyId, kind: 'counterparty', legalEntityId, tenantId }
-        : { counterpartyId, kind: 'counterparty_storefront', legalEntityId, storefrontId, tenantId },
-  };
-  if (storefrontId === undefined) {
-    return { kind: 'owner_permission', target: customerOwnerPermissionTarget(request) };
-  }
-  return {
-    kind: 'owner_permission',
-    target: customerOwnerPermissionTarget({ ...request, trustedStorefrontId: storefrontId }),
-    trustedStorefrontId: storefrontId,
-  };
-};
-
-it.effect('denies a stale Core tuple when the owner row is pending revoke', () =>
-  Effect.gen(function* ownerPendingRevoke() {
+it.effect('denies once the owner row is revoked', () =>
+  Effect.gen(function* ownerRevoked() {
     const calls: string[] = [];
     const transaction = transactionWith((routineKey) => {
       calls.push(routineKey);
-      return routineKey === 'counterparty-access.lock-grant-authority' ? [ownerRow('PENDING_REVOKE')] : [];
+      return routineKey === 'counterparty-access.lock-grant-authority' ? [ownerRow('REVOKED')] : [];
     });
-    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decision = yield* overlay.authorize(transaction, input(counterpartyTarget()));
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const decision = yield* overlay.authorize(
+      transaction,
+      factInput(grantCounterpartyCommerceAccess, { counterpartyId }),
+    );
 
     expect(decision).toBe('denied');
     expect(calls).toEqual(['counterparty-access.lock-grant-authority']);
   }),
 );
 
-it.effect('uses a broad active owner row for a narrower storefront target', () =>
+it.effect('uses a broad active owner row for a narrower storefront fact', () =>
   Effect.gen(function* broadActiveOwnerGrant() {
     const transaction = transactionWith((routineKey) =>
       routineKey === 'counterparty-access.lock-grant-authority'
-        ? [ownerRow('ACTIVE'), ownerRow('PENDING_REVOKE', 'storefront-one')]
+        ? [ownerRow('ACTIVE'), ownerRow('REVOKED', 'storefront-one')]
         : [],
     );
-    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decision = yield* overlay.authorize(transaction, input(counterpartyTarget('storefront-one')));
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const decision = yield* overlay.authorize(
+      transaction,
+      factInput(grantCounterpartyCommerceAccess, { counterpartyId, storefrontId: 'storefront-one' }),
+    );
 
     expect(decision).toBe('allowed');
-  }),
-);
-
-it.effect('returns unavailable when owner reconciliation is required', () =>
-  Effect.gen(function* ownerReconciliationRequired() {
-    const transaction = transactionWith((routineKey) =>
-      routineKey === 'counterparty-access.lock-grant-authority' ? [ownerRow('RECONCILIATION_REQUIRED')] : [],
-    );
-    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decision = yield* overlay.authorize(transaction, input(counterpartyTarget()));
-
-    expect(decision).toBe('unavailable');
-  }),
-);
-
-it.effect('rejects Pricing business targets before entering Counterparty persistence', () =>
-  Effect.gen(function* rejectsPricingTargets() {
-    const calls: string[] = [];
-    const transaction = transactionWith((routineKey) => {
-      calls.push(routineKey);
-      return [];
-    });
-    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decision = yield* overlay.authorize(transaction, {
-      operation: 'read',
-      operationAt,
-      operationKey: 'pricing.price-group.read',
-      owningModuleKey: 'commerce.customer-context',
-      scope,
-      targets: ['pricing_catalog', 'price_group'].map((scopeKind) => {
-        const definition = defineBusinessPermission({
-          ...counterpartyAccessManagePermission,
-          allowedScopeKinds: ['pricing_catalog', 'price_group'],
-          key: 'pricing.price_group.read',
-          owningCapability: 'pricing.price-group-catalog',
-        });
-        const contract = Object.freeze({
-          owningModuleKey: 'pricing.price-group-catalog',
-          permissions: [definition],
-          schemaVersion: '1' as const,
-          targetResourceType: 'business_permission',
-        });
-        return {
-          kind: 'owner_permission' as const,
-          target: createOwnerPermissionAccessTarget(contract, {
-            definition,
-            key: `pricing.price_group.read:${scopeKind}`,
-            objectId: `pricing-${scopeKind}`,
-            scope: { kind: 'tenant', tenantId },
-            scopeKind,
-            target: { kind: scopeKind, pricingCatalogId: 'catalog-one', tenantId },
-            transportModuleKey: 'pricing.price-group-catalog',
-            transportObjectId: 'catalog-one',
-          }),
-        };
-      }),
-    });
-
-    expect(decision).toBe('unavailable');
-    expect(calls).toEqual([]);
   }),
 );
 
@@ -222,15 +129,193 @@ it.effect('fences a grant reauthorization against a concurrent revoke', () =>
       return Effect.gen(function* ownerFence() {
         yield* Deferred.succeed(lockStarted, null);
         yield* Deferred.await(releaseFence);
-        return [ownerRow(revokeCommitted ? 'PENDING_REVOKE' : 'ACTIVE')];
+        return [ownerRow(revokeCommitted ? 'REVOKED' : 'ACTIVE')];
       });
     });
-    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay(readerFactory);
-    const decisionFiber = yield* Effect.forkScoped(overlay.authorize(transaction, input(counterpartyTarget())));
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const decisionFiber = yield* Effect.forkScoped(
+      overlay.authorize(transaction, factInput(grantCounterpartyCommerceAccess, { counterpartyId })),
+    );
     yield* Deferred.await(lockStarted);
     revokeCommitted = true;
     yield* Deferred.succeed(releaseFence, null);
 
     expect(yield* Fiber.join(decisionFiber)).toBe('denied');
+  }),
+);
+
+/** The real scoped SQL returns rows only for the Counterparty it was asked about. */
+const grantRowsFor = (grantedCounterpartyId?: string) => (routineKey: string, values: readonly unknown[]) => {
+  if (
+    routineKey !== 'counterparty-access.lock-grant-authority' ||
+    grantedCounterpartyId === undefined ||
+    values[0] !== grantedCounterpartyId
+  ) {
+    return [];
+  }
+  return [{ ...ownerRow('ACTIVE'), counterparty_resource_id: grantedCounterpartyId }];
+};
+
+it.effect('allows the Counterparty the owner granted and denies a different one (O67-Q1)', () =>
+  Effect.gen(function* perCounterpartyGrant() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const granted = yield* overlay.authorize(
+      transactionWith(grantRowsFor(counterpartyId)),
+      factInput('commerce.customer-context.grant-counterparty-commerce-access', { counterpartyId }),
+    );
+    const other = yield* overlay.authorize(
+      transactionWith(grantRowsFor(counterpartyId)),
+      factInput('commerce.customer-context.grant-counterparty-commerce-access', { counterpartyId: 'counterparty-two' }),
+    );
+
+    expect(granted).toBe('allowed');
+    expect(other).toBe('denied');
+  }),
+);
+
+/**
+ * Every counterparty-governed read the owner's catalogue does not publish (R5b-1). Each names the
+ * owner-local Counterparty Permission the overlay must apply to its Counterparty fact; an unmapped
+ * operation is denied, so this table is the spec the overlay is held to.
+ */
+const UNPUBLISHED_COUNTERPARTY_READ_PERMISSIONS = [
+  ['commerce.customer-context.api.customer-payment-term-entitlement-read', 'counterparty.profile.read'],
+  ['commerce.customer-context.api.payment-terms-resolution', 'counterparty.profile.read'],
+  ['commerce.customer-context.api.customer-price-group-assignment-read', 'counterparty.profile.read'],
+  ['commerce.customer-context.api.customer-price-group-resolution', 'counterparty.profile.read'],
+  ['commerce.customer-context.api.order-commitment-approval-evidence', 'counterparty.purchase.submit'],
+] as const;
+
+it.effect('denies a Counterparty-governed read whose fact names a different Counterparty (R5b-1)', () =>
+  Effect.gen(function* buyerATargetB() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    for (const [operationKey] of UNPUBLISHED_COUNTERPARTY_READ_PERMISSIONS) {
+      // The buyer holds a grant only for counterparty A; the request names B, so the owner rule
+      // must refuse rather than fall through to the scope-wide capability.
+      const decision = yield* overlay.authorize(
+        transactionWith(grantRowsFor(counterpartyId)),
+        factInput(operationKey, { counterpartyId: 'counterparty-two' }),
+      );
+      expect(decision).toBe('denied');
+    }
+  }),
+);
+
+it.effect('admits a Counterparty-governed read only with the exact owner permission (R5b-1)', () =>
+  Effect.gen(function* exactOwnerPermission() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    for (const [operationKey, permission] of UNPUBLISHED_COUNTERPARTY_READ_PERMISSIONS) {
+      const rowsWith = (permissionCode: string) => () => [{ ...ownerRow('ACTIVE'), permission_code: permissionCode }];
+      const granted = yield* overlay.authorize(
+        transactionWith(rowsWith(permission)),
+        factInput(operationKey, { counterpartyId }),
+      );
+      const wrongPermission = yield* overlay.authorize(
+        transactionWith(rowsWith('counterparty.access.manage')),
+        factInput(operationKey, { counterpartyId }),
+      );
+      expect(granted).toBe('allowed');
+      expect(wrongPermission).toBe('denied');
+    }
+  }),
+);
+
+it.effect('denies an unmapped operation that carries a Counterparty fact (R5b-1 default case)', () =>
+  Effect.gen(function* unmappedCounterpartyOperation() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    // A Counterparty fact with no owner permission mapped is never allowed to reach the scope-wide
+    // capability (O67-Q1, O70).
+    const decision = yield* overlay.authorize(
+      transactionWith(grantRowsFor(counterpartyId)),
+      factInput('commerce.customer-context.api.some-unmapped-counterparty-read', { counterpartyId }),
+    );
+    expect(decision).toBe('denied');
+  }),
+);
+
+it.effect('denies a Counterparty capability whose descriptor declares no owner facts', () =>
+  Effect.gen(function* missingFactResolver() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const noFact = yield* overlay.authorize(
+      transactionWith(() => []),
+      factInput('commerce.customer-context.grant-counterparty-commerce-access'),
+    );
+    const noRow = yield* overlay.authorize(
+      transactionWith(grantRowsFor()),
+      factInput('commerce.customer-context.grant-counterparty-commerce-access', { counterpartyId }),
+    );
+
+    expect(noFact).toBe('denied');
+    expect(noRow).toBe('denied');
+  }),
+);
+
+it.effect('denies a Counterparty capability whose fact bag names no Counterparty', () =>
+  Effect.gen(function* malformedFactBag() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const storefrontOnly = yield* overlay.authorize(
+      transactionWith(grantRowsFor(counterpartyId)),
+      factInput('commerce.customer-context.grant-counterparty-commerce-access', { storefrontId: 'storefront-one' }),
+    );
+
+    expect(storefrontOnly).toBe('denied');
+  }),
+);
+
+it.effect('leaves a declared but empty fact bag owner-neutral for a guest resolution', () =>
+  Effect.gen(function* guestResolution() {
+    const calls: string[] = [];
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const decision = yield* overlay.authorize(
+      transactionWith((routineKey) => {
+        calls.push(routineKey);
+        return [];
+      }),
+      factInput('commerce.customer-context.api.invoice-recipient-resolution', {}),
+    );
+
+    // The owner declared the request names no Counterparty record; the v2 gate and the read
+    // handler own it, so the overlay stays neutral and never guesses a Counterparty (O70).
+    expect(decision).toBe('allowed');
+    expect(calls).toEqual([]);
+  }),
+);
+
+it.effect('leaves a capability without owner-governed Counterparty authority to the v2 gate', () =>
+  Effect.gen(function* capabilityOnly() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const decision = yield* overlay.authorize(
+      transactionWith(() => []),
+      factInput('commerce.customer-context.test.ungoverned-capability'),
+    );
+
+    expect(decision).toBe('allowed');
+  }),
+);
+
+it.effect('denies a Retail capability whose profile fact or retail permission is missing', () =>
+  Effect.gen(function* retailFactsRequired() {
+    const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+    const profileOnly = yield* overlay.authorize(
+      transactionWith(() => []),
+      factInput('commerce.customer-context.api.retail-access-decision', { retailProfileId: 'profile-one' }),
+    );
+    const permissionOnly = yield* overlay.authorize(
+      transactionWith(() => []),
+      factInput('commerce.customer-context.api.retail-access-decision', { retailPermission: 'retail.profile.read' }),
+    );
+    const unboundProfile = yield* overlay.authorize(
+      transactionWith(() => []),
+      factInput('commerce.customer-context.api.retail-access-decision', {
+        retailPermission: 'retail.profile.read',
+        retailProfileId: 'profile-one',
+      }),
+    );
+
+    expect(profileOnly).toBe('denied');
+    expect(permissionOnly).toBe('denied');
+    // The owner profile has no binding for this principal: the durable owner state is unavailable,
+    // which is a 503 and never an allow (fail closed, O48).
+    expect(unboundProfile).toBe('unavailable');
   }),
 );

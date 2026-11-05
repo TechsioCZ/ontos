@@ -23,7 +23,7 @@ const unavailable = (cause: unknown) => {
 
 const privacySubjectsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.subjects.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.privacy-subjects',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -31,6 +31,14 @@ const privacySubjectsEntrypoint = defineTenantModuleEntrypoint({
 
 export const privacySubjectsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.privacy-subject.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'subjects', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: privacySubjectsEntrypoint,
     evidencePolicy: {
@@ -40,7 +48,6 @@ export const privacySubjectsRead = defineRead(
     inputSchema: PrivacySubjectsRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.privacy-subjects',
     resultSchema: PrivacySubjectsResponseSchema,
@@ -86,5 +93,4 @@ export const privacySubjectsRead = defineRead(
     }).pipe(Effect.mapError(unavailable));
   },
   (transaction, scope) => privacyOperationRepositoryForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';
 import type {
   PricingCommercialTotalReady,
@@ -137,6 +138,7 @@ export interface CurrentPricingDecisionEvaluationFactoryService {
     source: CurrentPricingDecisionWholeEvaluationPort,
     scopedPricingGateway: PricingOwnerMaterialEvidenceFenceGateway | undefined,
     compositionRevision: string,
+    scope: OperationalScope,
     requirements?: PricingWholeEvaluationRequirements,
   ) => CurrentPricingDecisionEvaluationService;
 }
@@ -271,6 +273,12 @@ const publicationIndeterminate = (
 
 type PublishResolvedDecision = (
   request: PricingOrdinaryCurrentPublicationRequest,
+) => Effect.Effect<PricingCommercialTotalSafeProjection, PricingOrdinaryCurrentPublicationIndeterminate>;
+
+/** The verified scope is the subject-bearing context the owner final fence acts for; it is never copied. */
+type PublishResolvedForScope = (
+  request: PricingOrdinaryCurrentPublicationRequest,
+  scope: OperationalScope,
 ) => Effect.Effect<PricingCommercialTotalSafeProjection, PricingOrdinaryCurrentPublicationIndeterminate>;
 
 const nonResolvedEvaluation = (
@@ -468,28 +476,28 @@ export const makeCurrentPricingDecisionEvaluationService = (
 };
 
 export const makeCurrentPricingDecisionEvaluationFactory = (
-  publishResolved: PublishResolvedDecision,
+  publishResolved: PublishResolvedForScope,
   publishWithScopedPricingGateway?: (
     gateway: PricingOwnerMaterialEvidenceFenceGateway,
     compositionRevision: string,
     requirements?: PricingWholeEvaluationRequirements,
-  ) => PublishResolvedDecision,
+  ) => PublishResolvedForScope,
 ): CurrentPricingDecisionEvaluationFactoryService => ({
-  make: (source, scopedPricingGateway, compositionRevision, requirements) =>
-    makeCurrentPricingDecisionEvaluationService(
-      source,
+  make: (source, scopedPricingGateway, compositionRevision, scope, requirements) => {
+    const publish =
       scopedPricingGateway === undefined || publishWithScopedPricingGateway === undefined
         ? publishResolved
-        : publishWithScopedPricingGateway(scopedPricingGateway, compositionRevision, requirements),
-    ),
+        : publishWithScopedPricingGateway(scopedPricingGateway, compositionRevision, requirements);
+    return makeCurrentPricingDecisionEvaluationService(source, (request) => publish(request, scope));
+  },
 });
 
 const publishResolvedWithOwners = (
   externalOwnerValidation: PricingExternalOwnerEvidenceValidationService,
   ownerFinalFence: PricingMaterialEvidenceOwnerFencePort,
-): PublishResolvedDecision => {
-  const publishResolved: PublishResolvedDecision = (request) =>
-    publishOrdinaryCurrentPricingForCustomer(request).pipe(
+): PublishResolvedForScope => {
+  const publishResolved: PublishResolvedForScope = (request, scope) =>
+    publishOrdinaryCurrentPricingForCustomer(request, scope).pipe(
       Effect.provideService(PricingExternalOwnerEvidenceValidation, externalOwnerValidation),
       Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, ownerFinalFence),
     );

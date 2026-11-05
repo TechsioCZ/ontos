@@ -29,7 +29,9 @@ import { makePricingCurrentDecisionMarketOwnerFinalFenceGateway } from '../../sr
 import { makePricingMaterialEvidenceOwnerFinalFenceFromGateways } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import type { PricingOwnerMaterialEvidenceFenceGateway } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import { makePromotionModuleNotInstalledFinalFenceGateway } from '../../src/integrations/promotion-module-not-installed-final-fence.ts';
-import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
+import { OwnerGatewayConnectionError } from '../../src/integrations/owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from '../../src/integrations/owner-gateway-connection.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 import { makeCurrentPricingDecisionWholeEvaluationService } from '../../src/services/current-pricing-decision-whole-evaluation.service.ts';
 import { makeCurrentPricingDecisionEvaluationService } from '../../src/services/current-pricing-decision-evaluation.service.ts';
 import {
@@ -361,19 +363,21 @@ const evaluateWhole = Effect.fn('MarketWholePricing1250.evaluateWhole')(function
   const { at, purchaseContextEvidence, request, requestedAt, unit } = setup;
   const selectedDefinitionRefs: string[] = [];
   const ordinals: number[] = [];
-  const issuer = {
-    issue: (input: Parameters<MarketFixture['issue']>[0]) =>
-      owner.issue(input).pipe(
-        Effect.mapError(
-          () =>
-            new PricingCommercialContextUnavailable({
-              code: 'pricing_commercial_context_unavailable',
-              reason: 'Owned native Market gateway is unavailable',
-              retryable: true,
-            }),
-        ),
-      ),
-  };
+  const marketAcquire: OwnerGatewayConnectionAcquire = (input) =>
+    input.legalEntityScope !== 'subject' || input.scope.legalEntityId === undefined
+      ? Effect.fail(new OwnerGatewayConnectionError({ reason: 'Owned native Market gateway is unavailable' }))
+      : owner
+          .issue({
+            audience: 'commerce-market-catalog',
+            compositionRevision: input.compositionRevision,
+            legalEntityId: input.scope.legalEntityId,
+            requestCorrelation: input.requestCorrelation,
+          })
+          .pipe(
+            Effect.mapError(
+              () => new OwnerGatewayConnectionError({ reason: 'Owned native Market gateway is unavailable' }),
+            ),
+          );
   const execute: Parameters<typeof makePricingCurrentDecisionMarketOwnerFinalFenceGateway>[0]['execute'] = (
     payload,
     credential,
@@ -714,11 +718,22 @@ const evaluateWhole = Effect.fn('MarketWholePricing1250.evaluateWhole')(function
       compositionRevision: owner.compositionRevision,
       legalEntityId: owner.legalEntityId,
       requestCorrelation: '1250:whole-pricing',
+      scope: verifiedTestScope({
+        correlationId: '1250:whole-pricing',
+        legalEntityId: owner.legalEntityId,
+        principalId: '66666666-6666-4666-8666-666666661250',
+        tenantId: owner.tenantId,
+      }),
       tenantId: owner.tenantId,
     },
     {
       applicationComposition: { load: Effect.succeed(owner.snapshot) },
       catalog: {
+        acquire: () =>
+          Effect.succeed({
+            baseUrl: new URL('https://1250-precondition.invalid'),
+            credential: Redacted.make('1250:declared-catalog-precondition'),
+          }),
         execute: (input) =>
           Effect.sync(() => {
             expect(input).toEqual(catalogRequest);
@@ -728,19 +743,12 @@ const evaluateWhole = Effect.fn('MarketWholePricing1250.evaluateWhole')(function
           Schema.decodeUnknownEffect(QuantityBasisCompatibilityResponseSchema)(setup.quantityBasis.evidence).pipe(
             Effect.orDie,
           ),
-        issuer: {
-          issue: () =>
-            Effect.succeed({
-              baseUrl: new URL('https://1250-precondition.invalid'),
-              credential: Redacted.make('1250:declared-catalog-precondition'),
-            }),
-        },
       },
       customerContext: {
+        acquire: () => Effect.die('Guest precondition must not acquire a profile credential'),
         execute: () => Effect.die('Guest precondition must not query a profile Price Group'),
-        issuer: { issue: () => Effect.die('Guest precondition must not acquire a profile credential') },
       },
-      market: { execute, issuer },
+      market: { acquire: marketAcquire, execute },
       validation,
     },
   );
@@ -841,14 +849,24 @@ const evaluateWhole = Effect.fn('MarketWholePricing1250.evaluateWhole')(function
         owner.compositionRevision,
         nativeClock,
       ),
-      'commerce.market-catalog': makePricingCurrentDecisionMarketOwnerFinalFenceGateway({ execute, issuer }),
+      'commerce.market-catalog': makePricingCurrentDecisionMarketOwnerFinalFenceGateway({
+        acquire: marketAcquire,
+        execute,
+      }),
       'commerce.pricing': fixedPreconditionGateway(pricingDeclarations, owner.compositionRevision, nativeClock),
       'commerce.promotion': makePromotionModuleNotInstalledFinalFenceGateway(Effect.succeed(owner.snapshot)),
     },
     owner.compositionRevision,
   );
+  // The owner fences ask for credentials in the subject's company, so the publishing subject acts in the Market's.
+  const publicationScope = verifiedTestScope({
+    correlationId: '1250:whole-pricing-publication',
+    legalEntityId: owner.legalEntityId,
+    principalId: '66666666-6666-4666-8666-666666661251',
+    tenantId: owner.tenantId,
+  });
   const evaluation = makeCurrentPricingDecisionEvaluationService(service, (input) =>
-    publishOrdinaryCurrentPricingForCustomer(input).pipe(
+    publishOrdinaryCurrentPricingForCustomer(input, publicationScope).pipe(
       Effect.provideService(PricingExternalOwnerEvidenceValidation, validation),
       Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence),
     ),

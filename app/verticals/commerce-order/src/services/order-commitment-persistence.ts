@@ -172,10 +172,7 @@ const approvalIssuerMatches = (
   issuer: NonNullable<OrderCommitmentState['order']>['approvalIssuer'],
   actorPrincipalId: string | undefined,
   buyerPrincipalId: string,
-): boolean =>
-  issuer.kind === 'BUYER'
-    ? issuer.buyerPrincipalId === buyerPrincipalId && actorPrincipalId === buyerPrincipalId
-    : actorPrincipalId === issuer.serviceProofActorPrincipalId;
+): boolean => issuer.buyerPrincipalId === buyerPrincipalId && actorPrincipalId === buyerPrincipalId;
 
 const pricingProofMatchesBundle = (state: OrderCommitmentState, pricingProof: OrderPricingCommitProof): boolean => {
   const { confirmation } = pricingProof;
@@ -196,6 +193,17 @@ const pricingProofMatchesBundle = (state: OrderCommitmentState, pricingProof: Or
     )
   );
 };
+
+/**
+ * O91: the payload's frozen purchase value must be the exact value the stored Bundle carries before
+ * anything is written. The gate admits on the payload value, so this in-transaction check is what
+ * makes it authoritative — a forged lower value or a stale Bundle is refused (fail closed, O18).
+ */
+export const purchaseValueMatchesFrozenBundle = (
+  frozen: OrderCommitmentState['bundle']['finalization']['purchaseValue'],
+  purchaseValue: CommitOrderInput['purchaseValue'],
+): boolean =>
+  Schema.toEquivalence(OrderAcceptanceBundleSchema.fields.finalization.fields.purchaseValue)(frozen, purchaseValue);
 
 const proofMatchesPreparedOrder = (
   state: OrderCommitmentState,
@@ -288,12 +296,16 @@ interface OwnerScope {
   readonly legalEntityId: string;
   readonly tenantId: string;
 }
-const isConfiguredApiKeyVerifier = (scope: OperationalScope, configuredPrincipalId: string | undefined): boolean =>
-  configuredPrincipalId !== undefined &&
-  scope.principalId === configuredPrincipalId &&
-  scope.authMethod === 'api_key' &&
-  scope.authBindingId !== undefined &&
-  scope.impersonatedByPrincipalId === undefined;
+/**
+ * Worker-admitted work acts for the subject that enqueued it. The subject of a delegated call is the
+ * buyer, so it must be the buyer the record names; any other human is denied before a row is read or written.
+ */
+export const isBuyerSubject = (subjectPrincipalId: string, buyerPrincipalId: string): boolean =>
+  subjectPrincipalId === buyerPrincipalId;
+const requireBuyerSubject = (subjectPrincipalId: string, buyerPrincipalId: string) =>
+  isBuyerSubject(subjectPrincipalId, buyerPrincipalId)
+    ? Effect.void
+    : rejected('order_commitment_permission_denied', 'The subject is not the buyer of this Order work');
 const attemptMatchesBinding = (
   attempt: { readonly bundleHash: string; readonly bundleId: string },
   binding: OrderFinalBinding,
@@ -498,6 +510,8 @@ type OrderCommitmentTransition = (
   input: RecordPrecommitFailureInput,
   evidence?: ProofEvidence,
 ) => Effect.Effect<OrderCommitmentState, OrderCommitmentRejected>;
+/** The selectors a retained proof set is recovered by; it never needs the frozen purchase value. */
+type RetainedProofSelector = Pick<CommitOrderInput, 'binding' | 'expectedRevision' | 'revalidationRef'>;
 /** Closed transaction-bound Order commitment methods handed to Order services. */
 export interface OrderCommitmentPersistence {
   readonly assertNoPendingProof: (binding: OrderFinalBinding) => Effect.Effect<void, OrderCommitmentRejected>;
@@ -564,7 +578,9 @@ export interface OrderCommitmentPersistence {
     readonly binding: OrderFinalBinding;
     readonly idempotencyKey: string;
   }) => Effect.Effect<OrderProofProgressRecord, OrderCommitmentRejected>;
-  readonly retainedProof: (input: CommitOrderInput) => Effect.Effect<OrderRetainedProofSet, OrderCommitmentRejected>;
+  readonly retainedProof: (
+    input: RetainedProofSelector,
+  ) => Effect.Effect<OrderRetainedProofSet, OrderCommitmentRejected>;
   readonly verifyBinding: (
     input: VerifyOrderBindingInput,
   ) => Effect.Effect<VerifiedOrderBinding, OrderCommitmentRejected>;
@@ -575,21 +591,15 @@ export const makeOrderCommitmentPersistence = (
   transaction: ScopedTransactionExecutor,
   context: {
     readonly businessBuyerPrincipalId?: string;
-    readonly committedEvidencePrincipalId?: string;
     readonly operationId: string;
-    readonly preparedEvidencePrincipalId?: string;
     readonly scope: OperationalScope;
     readonly serviceActorPrincipalId?: string;
   },
 ): OrderCommitmentPersistence => {
   const { operationId, scope } = context;
   const buyerPrincipalId = context.businessBuyerPrincipalId ?? scope.principalId;
-  const service =
-    context.serviceActorPrincipalId !== undefined &&
-    scope.principalId === context.serviceActorPrincipalId &&
-    scope.authMethod === 'api_key' &&
-    scope.authBindingId !== undefined &&
-    scope.impersonatedByPrincipalId === undefined;
+  // The verified calling module is this Order module (admitted by the caller); the scope's principal is the subject.
+  const service = context.serviceActorPrincipalId !== undefined;
   const scoped = () => {
     if (
       (context.businessBuyerPrincipalId !== undefined && !service) ||
@@ -598,6 +608,11 @@ export const makeOrderCommitmentPersistence = (
       transaction.scope.legalEntityId !== scope.legalEntityId
     ) {
       return Effect.fail(rejected('order_commitment_permission_denied', 'A verified selling Legal Entity is required'));
+    }
+    if (context.businessBuyerPrincipalId !== undefined) {
+      return requireBuyerSubject(scope.principalId, context.businessBuyerPrincipalId).pipe(
+        Effect.as({ legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }),
+      );
     }
     return Effect.succeed({ legalEntityId: scope.legalEntityId, tenantId: scope.tenantId });
   };
@@ -744,12 +759,6 @@ export const makeOrderCommitmentPersistence = (
   const loadPreparedForVerifier = Effect.fn('OrderCommitment.loadPreparedForVerifier')(
     function* loadPreparedOrderForVerifier(binding: OrderFinalBinding) {
       const ownerScope = yield* scoped();
-      if (!isConfiguredApiKeyVerifier(scope, context.preparedEvidencePrincipalId)) {
-        return yield* rejected(
-          'order_commitment_permission_denied',
-          'Prepared Order evidence requires the configured verifier',
-        );
-      }
       if (binding.attemptRef.tenantId !== ownerScope.tenantId || binding.bundleRef.tenantId !== ownerScope.tenantId) {
         return yield* conflict();
       }
@@ -767,6 +776,8 @@ export const makeOrderCommitmentPersistence = (
       if (attempt === undefined) {
         return yield* rejected('order_commitment_not_found', 'Prepared Order evidence is unavailable');
       }
+      // Pricing and Customer Context verify a preparation on behalf of its buyer, never another subject.
+      yield* requireBuyerSubject(scope.principalId, attempt.buyerPrincipalId);
       const state = yield* loadForBuyer(binding, attempt.buyerPrincipalId);
       if (state.order !== null || (state.attempt.status !== 'READY' && state.attempt.status !== 'PRECOMMIT_FAILED')) {
         return yield* conflict();
@@ -778,7 +789,10 @@ export const makeOrderCommitmentPersistence = (
       return state;
     },
   );
-  /** Only the configured, Core-authenticated CCC verifier may obtain committed historical proof. */
+  /**
+   * Admitted by the read's accessActor gate (Customer Context). The subject is not bound to the buyer
+   * here: the approver of a committed Order may act for it. Open question for the root (see C08 report).
+   */
   const loadCommittedApprovalEvidence = Effect.fn('OrderCommitment.loadCommittedApprovalEvidence')(
     function* loadCommittedOrderEvidence(input: {
       readonly finalBinding: OrderFinalBinding;
@@ -786,12 +800,6 @@ export const makeOrderCommitmentPersistence = (
       readonly revalidationRef: ResourceRef;
     }) {
       const ownerScope = yield* scoped();
-      if (!isConfiguredApiKeyVerifier(scope, context.committedEvidencePrincipalId)) {
-        return yield* rejected(
-          'order_commitment_permission_denied',
-          'Committed approval evidence requires the configured verifier',
-        );
-      }
       if (committedOrderRefInvalid(input, ownerScope)) {
         return yield* conflict();
       }
@@ -1112,6 +1120,12 @@ export const makeOrderCommitmentPersistence = (
     pricingProof?: OrderPricingCommitProof,
   ) {
     const state = yield* load(input.binding, true);
+    // O91: the frozen purchase value the gate admitted on must equal the stored Bundle's own value,
+    // checked here in the same transaction and before any write; a mismatch or stale Bundle is
+    // refused, so the payload value never authorizes anything on its own (O18).
+    if (!purchaseValueMatchesFrozenBundle(state.bundle.finalization.purchaseValue, input.purchaseValue)) {
+      return yield* conflict();
+    }
     if (state.order !== null) {
       if (!sameRef(state.order.approvalProof.revalidationRef, input.revalidationRef)) {
         return yield* conflict();
@@ -1307,9 +1321,10 @@ export const makeOrderCommitmentPersistence = (
     }
     const query = transaction.select().from(finalizationIntents).where(intentWhere(ref.resourceId));
     const [row] = yield* (lock === true ? query.for('update') : query).pipe(Effect.mapError(unavailable));
-    if (row === undefined || !sameRef(ref, intentRef(row)) || (!service && row.buyerPrincipalId !== buyerPrincipalId)) {
+    if (row === undefined || !sameRef(ref, intentRef(row))) {
       return yield* rejected('order_commitment_not_found', 'The original finalization intent was not found');
     }
+    yield* requireBuyerSubject(scope.principalId, row.buyerPrincipalId);
     return row;
   });
   const originalIntent = Effect.fn('OrderCommitment.originalIntent')(function* originalIntent(
@@ -1600,7 +1615,9 @@ export const makeOrderCommitmentPersistence = (
     }
     return yield* Effect.void;
   });
-  const retainedProof = Effect.fn('OrderCommitment.retainedProof')(function* retainedProof(input: CommitOrderInput) {
+  const retainedProof = Effect.fn('OrderCommitment.retainedProof')(function* retainedProof(
+    input: RetainedProofSelector,
+  ) {
     const retainedRows = transaction
       .select()
       .from(finalizationIntents)
@@ -1680,6 +1697,7 @@ export const makeOrderCommitmentPersistence = (
     if (attempt === undefined) {
       return yield* conflict();
     }
+    yield* requireBuyerSubject(scope.principalId, attempt.buyerPrincipalId);
     return yield* loadForBuyer(order.binding, attempt.buyerPrincipalId);
   });
   return {

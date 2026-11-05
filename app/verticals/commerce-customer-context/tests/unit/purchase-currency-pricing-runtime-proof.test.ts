@@ -1,11 +1,11 @@
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { CurrentSupportedCurrenciesResponseSchema } from '@app/pricing-contracts';
-import { Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { Effect, Match, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { PurchaseCurrencyPurchasingContextPort } from '../../shared/domain/purchase-currency-context-port.ts';
 import { PurchaseCurrencyDependencyUnavailable } from '../../shared/domain/purchase-currency-dependency.ts';
 import { PurchaseCurrencyPolicyPort } from '../../shared/domain/purchase-currency-policy-port.ts';
-import { PurchaseCurrencyPricingGatewayCredentialService } from '../../shared/domain/purchase-currency-pricing-gateway-credential.ts';
 import { PurchaseCurrencyPricingPort } from '../../shared/domain/purchase-currency-pricing-port.ts';
 import type { PurchaseCurrencyPricingPortService } from '../../shared/domain/purchase-currency-pricing-port.ts';
 import { ExplicitPurchaseCurrencyChoiceInvalid } from '../../shared/domain/purchase-currency-resolution.ts';
@@ -14,6 +14,11 @@ import {
   makePurchaseCurrencyResolutionServices,
 } from '../../src/api/purchase-currency-resolution.read.ts';
 import { purchaseCurrencyPricingPortFromEnvironment } from '../../src/integrations/purchase-currency-pricing.ts';
+import {
+  fakeDelegatedAcquire,
+  issuedDelegatedContext,
+  originatorSubject,
+} from '../support/delegated-gateway-acquisition.fixture.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const sellingLegalEntityId = '40000000-0000-4000-8000-000000000001';
@@ -57,13 +62,9 @@ const policy = {
   defaultCurrency: 'CZK' as const,
   policyRevisionIds: ['10000000-0000-4000-8000-000000000007'] as const,
 };
-const credentialLayer = Layer.succeed(PurchaseCurrencyPricingGatewayCredentialService, {
-  issue: () =>
-    Effect.succeed({
-      baseUrl: new URL('https://shell.example.test/owner-api'),
-      credential: Redacted.make('Bearer pricing-owner-issued'),
-    }),
-});
+const issued = issuedDelegatedContext({ compositionRevision: 'a'.repeat(64), token: 'pricing-owner-issued' });
+const acquire = fakeDelegatedAcquire(issued);
+const pricingSubject = originatorSubject('a'.repeat(64), '20000000-0000-4000-8000-000000000001');
 const handlerScope = {
   authMethod: 'system' as const,
   correlationId: 'pricing-runtime-proof',
@@ -162,15 +163,15 @@ describe('Purchase Currency Pricing runtime proof', () => {
       const pricingCalls: unknown[] = [];
       const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment(
         {
-          compositionRevision: 'a'.repeat(64),
-          legalEntityId: sellingLegalEntityId,
           requestCorrelation: handlerScope.correlationId,
+          subject: pricingSubject,
         },
         (payload, credential, correlation, options) => {
           pricingCalls.push({ correlation, credential: Redacted.value(credential), options, payload });
           return Effect.succeed(currentPricingResponse(payload.effectiveAt));
         },
-      ).pipe(Effect.provide(credentialLayer));
+        acquire,
+      ).pipe(Effect.provide(nodeCryptoLayer));
       const services = yield* runtimeServices(pricingPort);
       const response = yield* handlePurchaseCurrencyResolution(request, {
         readKey: 'commerce.customer-context.api.purchase-currency-resolution',
@@ -218,12 +219,12 @@ describe('Purchase Currency Pricing runtime proof', () => {
     Effect.gen(function* unsupportedExplicitCurrency() {
       const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment(
         {
-          compositionRevision: 'a'.repeat(64),
-          legalEntityId: sellingLegalEntityId,
           requestCorrelation: handlerScope.correlationId,
+          subject: pricingSubject,
         },
         (payload) => Effect.succeed(currentPricingResponse(payload.effectiveAt)),
-      ).pipe(Effect.provide(credentialLayer));
+        acquire,
+      ).pipe(Effect.provide(nodeCryptoLayer));
       const services = yield* runtimeServices(pricingPort);
       const failure = yield* handlePurchaseCurrencyResolution(
         { ...request, explicitChoice: 'EUR' },
@@ -255,9 +256,8 @@ describe('Purchase Currency Pricing runtime proof', () => {
       ] as const) {
         const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment(
           {
-            compositionRevision: 'a'.repeat(64),
-            legalEntityId: sellingLegalEntityId,
             requestCorrelation: handlerScope.correlationId,
+            subject: pricingSubject,
           },
           (payload) =>
             Effect.succeed(
@@ -279,7 +279,8 @@ describe('Purchase Currency Pricing runtime proof', () => {
                     },
               ),
             ),
-        ).pipe(Effect.provide(credentialLayer));
+          acquire,
+        ).pipe(Effect.provide(nodeCryptoLayer));
         const services = yield* runtimeServices(pricingPort);
         const failure = yield* handlePurchaseCurrencyResolution(request, {
           readKey: 'commerce.customer-context.api.purchase-currency-resolution',

@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug archive-customer-profile
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/archive-customer-profile.ts';
 
 export { ArchiveCustomerProfilePayloadSchema } from '../actions/archive-customer-profile.ts';
-
 export const ArchiveCustomerProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ArchiveCustomerProfileActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const ArchiveCustomerProfileActionForbiddenProblemSchema = makeProblemDet
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -149,7 +150,7 @@ export const archiveCustomerProfileActionGroupDefinition = HttpApiGroup.make('ar
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/archive-customer-profile', {
       error: actionErrors,
       payload: Schema.toEncoded(ArchiveCustomerProfilePayloadSchema),
-      success: ArchiveCustomerProfileResultSchema,
+      success: [ActionProposalAcceptedSchema, ArchiveCustomerProfileResultSchema],
     }),
   )
   .middleware(ArchiveCustomerProfileActionSchemaErrorMiddleware);

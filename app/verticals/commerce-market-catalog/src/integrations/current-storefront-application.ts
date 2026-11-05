@@ -5,10 +5,10 @@ import type {
   CurrentStorefrontApplicationResponse,
 } from '@app/storefront-registry-contracts';
 import { executeCurrentStorefrontApplicationWithAuthorization } from '@app/storefront-registry-contracts/current-storefront-application/client';
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
-import { acquireOwnerGatewayContext } from './server-owner-gateway.ts';
+import { acquireMarketOwnerDelegation } from './market-owner-delegation.ts';
 
 import { StorefrontApplicationEvidenceStale } from '../actions/storefront-application-evidence-stale.ts';
 import { StorefrontApplicationNotCurrent } from '../actions/storefront-application-not-current.ts';
@@ -154,20 +154,12 @@ export const makeServerCurrentStorefrontApplicationAuthority = ({
             'Storefront validation requires the original trusted Tenant and Legal Entity scope',
           );
         }
-        const admitted = yield* acquireOwnerGatewayContext(
-          scope,
-          crypto,
-          {
-            audience: 'storefront-registry',
-            operationKey: 'commerce.storefront-registry.api.current-storefront-application',
-          },
-          compositionRevision,
-        );
+        const admitted = yield* acquireMarketOwnerDelegation(scope, crypto, 'storefront-registry', compositionRevision);
         return yield* executeCurrentStorefrontApplicationWithAuthorization(
           payload,
-          Redacted.value(admitted.authorization),
+          admitted.authorization,
           scope.correlationId,
-          { baseUrl: admitted.apiUrl, compositionRevision },
+          { baseUrl: new URL(admitted.apiBaseUrl), compositionRevision },
         );
       },
       Effect.mapError((cause) =>

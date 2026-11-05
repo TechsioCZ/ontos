@@ -18,6 +18,7 @@ import {
   PrincipalResolverLive,
   TenantModuleStateServiceLive,
   loadDatabaseConnectionPair,
+  LegalEntityContextLive,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
@@ -48,7 +49,7 @@ import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { AuthenticationServiceLive, makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { GatewayIssuerLive } from '../../api/auth/gateway-issuer.ts';
-import { GatewayRelaySourceBindingSchema } from '../../api/auth/gateway-relay-policy.ts';
+import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
 import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
 import { AuthPersistenceLive } from '../../api/auth/runtime-infrastructure.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -63,6 +64,7 @@ import {
   ShellNativeRelaySourceIssueCommandSchema,
   ShellNativeRelaySourceBoundCommandSchema,
 } from '../fixtures/api-key-gateway-native.ts';
+import { nativeShellAccessGateLive } from './native-shell-access-gate.ts';
 
 class ShellNativeChildUnavailable extends Schema.TaggedError<ShellNativeChildUnavailable>()(
   'ShellNativeChildUnavailable',
@@ -74,6 +76,7 @@ const unavailable = (cause?: unknown) =>
     reason: 'The owned Shell child is unavailable',
   });
 const bounded = Effect.timeoutOrElse({ duration: Duration.seconds(20), orElse: () => Effect.fail(unavailable()) });
+
 const sendPrivate = Effect.fn('ShellNativeChild.sendPrivate')(function* sendPrivate(
   writer: Socket.Writer,
   response: typeof ShellNativeChildResponseSchema.Encoded,
@@ -184,6 +187,11 @@ const serve = Effect.scoped(
       Layer.provide(ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition))),
       Layer.provide(GatewayScopeGrantRegistrarLive),
     );
+    // The child scripts one access gate for the fixture's own manager journey: a scripted ALLOW, and the
+    // tenant's own companies for the company question.
+    const accessGate = nativeShellAccessGateLive.pipe(
+      Layer.provide(LegalEntityContextLive.pipe(Layer.provide(runtimeCore))),
+    );
     const runtime = makeShellAuthenticationApiRuntime(
       runtimeAuthentication,
       issuer,
@@ -191,6 +199,10 @@ const serve = Effect.scoped(
       undefined,
       false,
       ContextAccessLive,
+      undefined,
+      undefined,
+      undefined,
+      accessGate,
     );
     const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
     if (!Schema.is(Schema.Struct({ port: Schema.Int }))(server.address)) {
@@ -210,7 +222,7 @@ const serve = Effect.scoped(
               layer: runtime.layer.pipe(
                 Layer.provideMerge(
                   ConfigProvider.layer(
-                    ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_RELAY_SOURCE_BINDINGS: bindings }).pipe(
+                    ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_MODULE_BINDINGS: bindings }).pipe(
                       ConfigProvider.orElse(originalProvider),
                     ),
                   ),
@@ -410,10 +422,10 @@ const serve = Effect.scoped(
             if (Option.isNone(relaySource) || Option.isNone(sourceKey)) {
               return yield* unavailable();
             }
-            const bindings = yield* Schema.decodeEffect(Schema.Array(GatewayRelaySourceBindingSchema))([
+            const bindings = yield* Schema.decodeEffect(Schema.Array(GatewayModuleBindingSchema))([
               { ...relaySource.value, providerKeyId: sourceKey.value },
             ]).pipe(
-              Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayRelaySourceBindingSchema)))),
+              Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayModuleBindingSchema)))),
               Effect.mapError(unavailable),
             );
             yield* keys.clearPendingCleanup(sourceKey.value);

@@ -63,7 +63,7 @@ const recoverReactivateVariant = Effect.fn('ReactivateVariantRecoveryRead.recove
 
 const reactivateVariantRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.reactivate-variant-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.reactivate-variant-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const reactivateVariantRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const reactivateVariantRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.reactivate-variant-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: reactivateVariantRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const reactivateVariantRecoveryRead = defineRead(
     inputSchema: ReactivateVariantRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.reactivate-variant-recovery',
     resultSchema: ReactivateVariantRecoveryResponseSchema,
@@ -90,5 +97,4 @@ export const reactivateVariantRecoveryRead = defineRead(
     recoverReactivateVariant(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

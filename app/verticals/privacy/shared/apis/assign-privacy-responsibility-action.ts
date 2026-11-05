@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug assign-privacy-responsibility
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/assign-privacy-responsibility.ts';
 
 export { AssignPrivacyResponsibilityPayloadSchema } from '../actions/assign-privacy-responsibility.ts';
-
 export const AssignPrivacyResponsibilityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignPrivacyResponsibilityActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const AssignPrivacyResponsibilityActionForbiddenProblemSchema = makeProbl
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const assignPrivacyResponsibilityActionGroupDefinition = HttpApiGroup.mak
     HttpApiEndpoint.post('execute', '/privacy/actions/assign-privacy-responsibility', {
       error: actionErrors,
       payload: Schema.toEncoded(AssignPrivacyResponsibilityPayloadSchema),
-      success: AssignPrivacyResponsibilityResultSchema,
+      success: [ActionProposalAcceptedSchema, AssignPrivacyResponsibilityResultSchema],
     }),
   )
   .middleware(AssignPrivacyResponsibilityActionSchemaErrorMiddleware);

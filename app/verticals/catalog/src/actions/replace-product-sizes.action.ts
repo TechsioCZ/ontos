@@ -61,6 +61,14 @@ export const handleReplaceProductSizes = Effect.fn('ReplaceProductSizesAction.ha
 
 export const replaceProductSizesAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-sizes.replace',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.replace-product-sizes.access.v1',
@@ -72,7 +80,7 @@ export const replaceProductSizesAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey: catalogModuleKey,
       role: 'action',

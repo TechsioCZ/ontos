@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug record-anti-resurrection-protection
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/record-anti-resurrection-protection.ts';
 
 export { RecordAntiResurrectionProtectionPayloadSchema } from '../actions/record-anti-resurrection-protection.ts';
-
 export const RecordAntiResurrectionProtectionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordAntiResurrectionProtectionActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const RecordAntiResurrectionProtectionActionForbiddenProblemSchema = make
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -144,7 +145,7 @@ export const recordAntiResurrectionProtectionActionGroupDefinition = HttpApiGrou
     HttpApiEndpoint.post('execute', '/privacy/actions/record-anti-resurrection-protection', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordAntiResurrectionProtectionPayloadSchema),
-      success: RecordAntiResurrectionProtectionResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordAntiResurrectionProtectionResultSchema],
     }),
   )
   .middleware(RecordAntiResurrectionProtectionActionSchemaErrorMiddleware);

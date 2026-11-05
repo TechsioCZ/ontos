@@ -3,14 +3,14 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { OfficialIdentifierAssertionSchema } from '../domain/identifier-contracts.ts';
+import { OfficialIdentifierAssertionViewSchema } from '../domain/identifier-contracts.ts';
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 
 export const PartyOfficialIdentifierDetailRequestSchema = Schema.Struct({
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
 });
 export type PartyOfficialIdentifierDetailRequest = typeof PartyOfficialIdentifierDetailRequestSchema.Type;
-export const PartyOfficialIdentifierDetailResponseSchema = OfficialIdentifierAssertionSchema;
+export const PartyOfficialIdentifierDetailResponseSchema = OfficialIdentifierAssertionViewSchema;
 export type PartyOfficialIdentifierDetailResponse = typeof PartyOfficialIdentifierDetailResponseSchema.Type;
 
 export const PartyOfficialIdentifierDetailAuthenticationProblemSchema = makeProblemDetailsSchema(

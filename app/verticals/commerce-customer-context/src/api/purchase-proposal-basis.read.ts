@@ -18,10 +18,7 @@ const MODULE_KEY = 'commerce.customer-context' as const;
 
 const purchaseProposalBasisEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'module.access',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.purchase-proposal-basis',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -29,6 +26,19 @@ const purchaseProposalBasisEntrypoint = defineTenantModuleEntrypoint({
 
 export const purchaseProposalBasisRead = defineRead(
   {
+    accessActor: {
+      callers: ['pricing'],
+      reason: 'Pricing preapproval calls this read to fetch the purchase proposal basis for the buyer',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.purchase-proposal-basis.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'purchasing-approval', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     domainErrorSchema: ReadPolicyDenied,
     entrypoint: purchaseProposalBasisEntrypoint,
@@ -39,7 +49,6 @@ export const purchaseProposalBasisRead = defineRead(
     inputSchema: PurchaseProposalBasisRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.purchase-proposal-basis',
     resultSchema: PurchaseProposalBasisResponseSchema,
@@ -93,8 +102,4 @@ export const purchaseProposalBasisRead = defineRead(
       ),
     ),
   purchaseProposalBasisService,
-  () => ({
-    kind: 'module',
-    moduleId: MODULE_KEY,
-  }),
 );

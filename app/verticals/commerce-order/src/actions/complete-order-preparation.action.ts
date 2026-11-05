@@ -32,6 +32,19 @@ const handleCompleteOrderPreparation = Effect.fn('CompleteOrderPreparation.handl
 );
 export const completeOrderPreparationAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'The Order finalization worker completes the preparation intent it was delivered.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.order.preparation.complete',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'order-finalization', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.order.complete-order-preparation.access.v1',
@@ -42,7 +55,7 @@ export const completeOrderPreparationAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.order.complete-order-preparation',
       moduleKey,
       role: 'action',

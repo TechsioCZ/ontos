@@ -5,10 +5,8 @@ import {
   recoverPartyCreateWithAuthorization,
 } from '@app/party-registry/api/client';
 import type { createParty, executePartyMatch, recoverPartyCreate } from '@app/party-registry/api/client';
-import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Config, Effect, Match, Option, Redacted, Schema } from 'effect';
-import { Base64Url } from 'effect/encoding';
+import { Effect, Match, Option, Redacted, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import {
@@ -32,6 +30,8 @@ import {
   PARTY_CANDIDATE_MATCHED_OUTCOME_CODE,
   retailSelfEnrollmentEvidenceReference,
 } from './retail-self-enrollment-contracts.ts';
+import { acquireRetailOwnerCredential } from './retail-owner-gateway-credential.ts';
+import type { RetailEnrollmentOriginator } from './retail-owner-gateway-credential.ts';
 
 /**
  * Party Registry candidate submission as one Retail self-enrollment owner transition. A Party is
@@ -73,7 +73,10 @@ export interface RetailPartyCandidateOwnerInput {
   /** The exact Party candidate submitted for this Attempt.  It never enters a Commerce digest. */
   readonly candidate: PartyCandidate;
   readonly compositionRevision: string;
+  readonly crypto: Crypto.Crypto;
   readonly legalEntityId: string;
+  /** The Action invocation the Attempt was created under: the Party Registry acts for its subject. */
+  readonly originator: RetailEnrollmentOriginator;
   readonly requestCorrelation: string;
   readonly tenantId: string;
 }
@@ -83,67 +86,25 @@ const PARTY_REGISTRY_UNAVAILABLE_CODE = 'party_registry_unavailable';
 const unavailable = (reason: string, cause?: unknown) =>
   ownerUnavailable(PARTY_REGISTRY_UNAVAILABLE_CODE, reason, cause);
 
-const httpUrl = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username.length === 0 &&
-    url.password.length === 0 &&
-    url.search.length === 0 &&
-    url.hash.length === 0
-      ? undefined
-      : 'Shell gateway URL must be HTTP(S) without credentials, query, or fragment',
-  ),
-);
-const partyGatewayConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
-  baseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
-
 const makeRetailPartyCandidateOwnerExecutors = (
   input: RetailPartyCandidateOwnerInput,
 ): RetailPartyCandidateOwnerExecutors => {
-  const { compositionRevision, legalEntityId, requestCorrelation, tenantId } = input;
+  const { compositionRevision, crypto, legalEntityId, originator, requestCorrelation, tenantId } = input;
   const acquire = Effect.fn('RetailPartyCandidateOwnerEffect.acquireGateway')(function* acquireGateway() {
-    const configured = yield* partyGatewayConfiguration.pipe(
-      Effect.mapError((cause) => unavailable('The Party Registry server gateway configuration is unavailable', cause)),
-    );
-    const response = yield* issueApiKeyGatewayContext(
-      {
-        audience: 'party-registry',
-        compositionRevision,
-        legalEntityId,
-      },
-      { apiKey: configured.apiKey, baseUrl: configured.baseUrl, requestCorrelation },
-    ).pipe(
-      Effect.mapError((cause) => unavailable('The Party Registry server gateway credential is unavailable', cause)),
-    );
-    if (response.compositionRevision !== compositionRevision) {
-      return yield* unavailable('The Party Registry gateway credential does not match the original Attempt release');
+    if (originator.tenantId !== tenantId) {
+      return yield* unavailable('The Party Registry owner credential does not match the original Attempt scope');
     }
-    // This cross-checks the authenticated issuer response against the durable Attempt scope.
-    // The receiving Party runtime independently verifies the signature and redeems the assertion.
-    const tokenParts = response.token.split('.');
-    const tokenPayload = tokenParts.length === 3 ? tokenParts[1] : undefined;
-    if (tokenPayload === undefined) {
-      return yield* unavailable('The Party Registry issuer returned an unusable credential');
-    }
-    const claims = yield* Effect.fromResult(Base64Url.decodeString(tokenPayload)).pipe(
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(SupportedGatewayContextClaimsSchema))),
-      Effect.mapError((cause) => unavailable('The Party Registry issuer returned an unusable credential scope', cause)),
-    );
-    if (
-      claims.aud !== 'party-registry' ||
-      claims.compositionRevision !== compositionRevision ||
-      claims.principal.tenantId !== tenantId ||
-      claims.principal.legalEntityId !== legalEntityId ||
-      claims.principal.authMethod !== 'api_key'
-    ) {
-      return yield* unavailable('The Party Registry issuer credential does not match the original Attempt scope');
-    }
+    const owner = yield* acquireRetailOwnerCredential({
+      audience: 'party-registry',
+      crypto,
+      legalEntityId,
+      originator,
+      requestCorrelation,
+    }).pipe(Effect.mapError((cause) => unavailable('The Party Registry owner credential is unavailable', cause)));
     return {
-      credential: Redacted.make(`Bearer ${response.token}`),
+      credential: owner.credential,
       options: {
-        baseUrl: new URL(response.apiBaseUrl, configured.baseUrl),
+        baseUrl: owner.baseUrl,
         compositionRevision,
       },
     };

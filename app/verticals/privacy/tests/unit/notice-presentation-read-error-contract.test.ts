@@ -107,18 +107,35 @@ const cases = [
 ] as const;
 
 it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared handler failures', (suite) => {
+  suite.effect('is a v2 protected read decided by its own sensitive declaration (A1)', () =>
+    Effect.sync(() => {
+      // A1 classified this read PROTECT: the one access gate decides it, no legacy permission target or
+      // SpiceDB resource tuple is consulted, and the scope-wide declaration carries no record selectors.
+      // The subject binding stays the owner's own policy (the request still names its exact subject).
+      expect(noticePresentationRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(noticePresentationRead.descriptor.accessDeclaration).toMatchObject({
+        key: 'privacy.core.notice.presentation.read',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'notices', level: 'basic' },
+        risk: 'sensitive',
+        selectors: [],
+      });
+    }),
+  );
+
   for (const testCase of cases) {
     suite.effect(
       `preserves ${testCase.schema.name} through the real Read lifecycle and maps HTTP ${testCase.status}`,
       () =>
         Effect.gen(function* registeredNoticeFailure() {
           const harness = yield* makeReadTestHarness({
+            access: 'allowed',
             compositionRevision,
             executeOwnerQuery: () => Effect.die('Unexpected owner query after authority rejection'),
             operationTime: new Date('2026-10-20T12:00:00.000Z'),
             ownerAuthorizationDecision: 'allowed',
             ownerRegistration: privacyRegistration,
-            permissionDecision: 'allowed',
             scope: { ...principal, correlationId: 'notice-read-contract' },
           });
           const integrity = yield* makePrivacyNoticePresentationService({
@@ -172,9 +189,8 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, namespaceLive))('Notice read declared 
           expect(authorityCalls).toBe(2);
           expect(harness.snapshot().ownerQueries).toEqual([]);
           expect(harness.snapshot().evidenceWrites).toBe(testCase.status === 403 ? 2 : 0);
-          expect(harness.snapshot().statements.at(-1)).toBe(
-            testCase.status === 403 || testCase.status === 409 ? 'COMMIT' : 'ROLLBACK',
-          );
+          // An owner's typed answer commits the decision row it was decided with; only an outage rolls back.
+          expect(harness.snapshot().statements.at(-1)).toBe(testCase.status === 503 ? 'ROLLBACK' : 'COMMIT');
         }),
     );
   }
@@ -212,12 +228,12 @@ it.live('GET decodes exact targets, trusts only the verified Tenant and redeems 
           .sign(privateKey),
       );
       const harness = yield* makeReadTestHarness({
+        access: 'allowed',
         compositionRevision: composition.composition.revision,
         executeOwnerQuery: () => Effect.die('Unexpected owner SQL after controlled Subject rejection'),
         operationTime: new Date('2026-10-20T12:00:00.000Z'),
         ownerAuthorizationDecision: 'allowed',
         ownerRegistration: privacyRegistration,
-        permissionDecision: 'allowed',
         scope: { ...principal, correlationId: 'notice-get-contract' },
       });
       const integrity = yield* makePrivacyNoticePresentationService({

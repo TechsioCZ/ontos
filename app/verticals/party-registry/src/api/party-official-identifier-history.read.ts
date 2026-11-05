@@ -8,10 +8,11 @@ import {
   PartyOfficialIdentifierHistoryResponseSchema,
 } from '../../shared/apis/party-official-identifier-history.ts';
 import { listOfficialIdentifierHistory } from '../services/party-official-identifier-persistence.service.ts';
+import { rowsVisibleToListAccess } from '../access/list-access-rows.ts';
 import { readUnavailable } from './read-outcome.ts';
 
 const partyOfficialIdentifierHistoryEntrypoint = defineTenantModuleEntrypoint({
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   access: 'historical_read',
   entrypointKey: 'party.registry.api.party-official-identifier-history',
   moduleKey: 'party.registry',
@@ -23,6 +24,26 @@ interface Services {
 const unavailable = readUnavailable('Official Identifier history is unavailable', true);
 export const partyOfficialIdentifierHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'party.registry.official-identifier.read-history',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'identity-review', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['items.normalizedValue', 'items.originalInputDigits', 'items.externalEvidence'],
+        key: 'party.registry.official-identifier-value.read-history',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'list',
     entrypoint: partyOfficialIdentifierHistoryEntrypoint,
     evidencePolicy: {
@@ -32,7 +53,6 @@ export const partyOfficialIdentifierHistoryRead = defineRead(
     inputSchema: PartyOfficialIdentifierHistoryRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-official-identifier-history',
     resultSchema: PartyOfficialIdentifierHistoryResponseSchema,
@@ -41,14 +61,21 @@ export const partyOfficialIdentifierHistoryRead = defineRead(
   (input, context: ReadHandlerContext<Services>) =>
     context.services.list(input.partyRef.resourceId).pipe(
       Effect.mapError(unavailable),
-      Effect.map((items) => ({
-        evidence: { resultCount: items.length },
-        result: { items },
-      })),
+      // The gate's row filter bounds the assertions this caller may see (D16, O25).
+      Effect.map((listed) => {
+        const items = rowsVisibleToListAccess({
+          filter: context.listAccess,
+          row: ({ officialIdentifierRef }) => ({ recordKey: officialIdentifierRef.resourceId }),
+          rows: listed,
+        });
+        return {
+          evidence: { resultCount: items.length },
+          result: { items },
+        };
+      }),
     ),
   (transaction, scope) =>
     Effect.succeed({
       list: (partyId: string) => listOfficialIdentifierHistory(transaction, scope.tenantId, partyId),
     }),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

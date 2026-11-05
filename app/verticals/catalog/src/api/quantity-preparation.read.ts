@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect } from 'effect';
@@ -24,7 +23,7 @@ const moduleKey = 'commerce.catalog';
 
 const quantityPreparationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.quantity-preparation' },
+  authorization: { kind: 'protected' },
   entrypointKey: readKey,
   moduleKey,
   role: 'api',
@@ -55,6 +54,20 @@ export const readQuantityPreparation = Effect.fn('QuantityPreparationRead.read')
 
 export const quantityPreparationRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-cart', 'commerce-customer-context'],
+      reason:
+        'The Cart and Customer Context services prepare catalog quantity for a selection of the buyer during cart and approval work',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.catalog.quantity-preparation.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: quantityPreparationEntrypoint,
     evidencePolicy: {
@@ -64,13 +77,8 @@ export const quantityPreparationRead = defineRead(
     inputSchema: QuantityPreparationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'commerce.catalog.api.quantity-preparation',
-    resourcePermission: defineReadResourcePermission<QuantityPreparationRequest>(({ selection }) => ({
-      permission: 'read',
-      resource: selection.productRef,
-    })),
     resultSchema: QuantityPreparationResponseSchema,
     schemaVersion: '1',
   },
@@ -82,5 +90,4 @@ export const quantityPreparationRead = defineRead(
     return { evidence: { resultCount: result.status === 'READY' ? 1 : 0 }, result };
   }),
   (transaction, scope) => Effect.succeed(catalogQuantityHandoffForScope(transaction, scope)),
-  ({ selection }) => ({ kind: 'resource', resource: selection.productRef }),
 );

@@ -1,14 +1,11 @@
-import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { randomUUID } from 'node:crypto';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
   ActionPermissionDenied,
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
   ContextAccessLive,
   defineScopedRoutine,
   loadDatabaseConnectionPair,
-  OperationContextDenied,
+  OwnerAuthorizationOverlay,
   runAction,
   ReadRuntime,
   ScopedRoutineInvocationError,
@@ -26,6 +23,7 @@ import { sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
   Config,
+  ConfigProvider,
   Context,
   Effect,
   FileSystem,
@@ -44,7 +42,11 @@ import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } fr
 import { expect, it } from 'effect-rstest';
 import type { RemoveCustomerPaymentTermPayload } from '../../shared/actions/remove-customer-payment-term.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
-import { PaymentTermCatalogGatewayCredentialService } from '../../shared/domain/payment-term-catalog-gateway-credential.ts';
+import {
+  delegatedGatewayConfiguration,
+  delegatedGatewayRoute,
+  serveDelegatedGatewayContext,
+} from '../support/delegated-gateway-shell.fixture.ts';
 import { removeCustomerPaymentTerm } from '../../shared/domain/payment-terms.ts';
 import type { changeCustomerPaymentTerms } from '../../shared/domain/payment-terms.ts';
 import {
@@ -54,10 +56,12 @@ import {
 import { removeCustomerPaymentTermAction } from '../../src/actions/remove-customer-payment-term.action.ts';
 import { customerPaymentTermEntitlementReadRead } from '../../src/api/customer-payment-term-entitlement-read.read.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { makeCommerceCustomerContextDeniedAccess } from '../support/live-access-authority.ts';
+import { nativeTestDatabaseContainer } from '../support/native-test-database.ts';
+import { makeVerifiedGatewayPrincipals } from '../support/verified-gateway-principal.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -87,7 +91,31 @@ const ensureProfile = defineScopedRoutine({
 const ProfileSchema = Schema.Struct({
   profileRef: Schema.Struct({ resourceId: Schema.String.pipe(Schema.brand('NativeCounterpartyProfileId')) }),
 });
-const beginGrant = defineScopedRoutine({
+const grantAccess = defineScopedRoutine({
+  name: 'grant_access',
+  ownerModuleKey: 'commerce.customer-context',
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { nullable: true, source: 'input', type: 'text' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { nullable: true, source: 'input', type: 'text' },
+    { source: 'input', type: 'boolean' },
+  ],
+  resultSchema: Schema.Struct({ grant_id: Schema.String, state: Schema.Literal('ACTIVE') }),
+  routineKey: 'test.payment-entitlement.grant-access',
+  schema: 'commerce_customer_context',
+});
+/**
+ * The grant routines of the pre-forward storage this proof upgrades from. The legacy source is
+ * migrated only to the history before the finite-entitlement forward, where access was granted in
+ * two steps; the current storage grants it in one (`grant_access`).
+ */
+const legacyBeginGrant = defineScopedRoutine({
   name: 'begin_access_grant',
   ownerModuleKey: 'commerce.customer-context',
   parameters: [
@@ -103,10 +131,10 @@ const beginGrant = defineScopedRoutine({
     { source: 'input', type: 'boolean' },
   ],
   resultSchema: Schema.Struct({ grant_id: Schema.String, mutation_id: Schema.String }),
-  routineKey: 'test.payment-entitlement.begin-access',
+  routineKey: 'test.payment-entitlement.legacy-begin-access',
   schema: 'commerce_customer_context',
 });
-const activateGrant = defineScopedRoutine({
+const legacyActivateGrant = defineScopedRoutine({
   name: 'transition_access_grant',
   ownerModuleKey: 'commerce.customer-context',
   parameters: [
@@ -118,7 +146,7 @@ const activateGrant = defineScopedRoutine({
     { source: 'input', type: 'text' },
   ],
   resultSchema: Schema.Struct({ state: Schema.String }),
-  routineKey: 'test.payment-entitlement.activate-access',
+  routineKey: 'test.payment-entitlement.legacy-activate-access',
   schema: 'commerce_customer_context',
 });
 const readOwner = defineScopedRoutine({
@@ -173,7 +201,7 @@ const journalFingerprint = Effect.fn('FiniteEntitlement.journalFingerprint')(fun
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',
@@ -224,7 +252,7 @@ const copyOwnerBookkeeping = Effect.fn('FiniteEntitlement.copyOwnerBookkeeping')
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'pg_dump',
       '--host',
       'localhost',
@@ -253,7 +281,7 @@ const copyOwnerBookkeeping = Effect.fn('FiniteEntitlement.copyOwnerBookkeeping')
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',
@@ -435,6 +463,7 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
   const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(coreEvidenceContext));
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionKeys: [
         changeCustomerPaymentTermsAction.descriptor.actionKey,
         removeCustomerPaymentTermAction.descriptor.actionKey,
@@ -449,10 +478,11 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
     }),
     (resource) => resource.close().pipe(Effect.orDie),
   );
-  const owner = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-    Layer.provide(profileRetailPermissionReaderFactoryLive),
-    Layer.provide(ContextAccessLive),
-  );
+  const owner = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive));
+  // The v2 capability gate answers ALLOWED for every request in this fixture; the per-principal
+  // owner rule is the decider. A suite names the principal it must refuse here (O67-Q1, O70).
+  const ownerContext = yield* Layer.build(owner);
+  const deniedAccess = makeCommerceCustomerContextDeniedAccess(Context.get(ownerContext, OwnerAuthorizationOverlay));
   const server = yield* HttpServer.HttpServer;
   if (!Schema.is(Schema.Struct({ port: Schema.Number }))(server.address)) {
     return yield* Effect.die('Missing native catalog fixture port');
@@ -463,6 +493,14 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
   yield* server.serve(
     Effect.gen(function* currentCatalogFixture() {
       const request = yield* HttpServerRequest.HttpServerRequest;
+      if (new URL(request.url, origin).pathname === delegatedGatewayRoute) {
+        return yield* serveDelegatedGatewayContext({
+          apiBaseUrl: '/payment-term-catalog',
+          audience: 'payment-term-catalog',
+          compositionRevision: snapshot.composition.revision,
+          token: Effect.succeed('bounded-native-catalog-credential'),
+        });
+      }
       const input = yield* request.json.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(CurrentPaymentTermsRequestSchema)),
       );
@@ -508,16 +546,11 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
   );
   const context = yield* Layer.build(
     Layer.mergeAll(
-      fixture.layer.pipe(Layer.provide(owner)),
+      fixture.layer.pipe(Layer.provide(deniedAccess.layer)),
       FetchHttpClient.layer,
-      Layer.succeed(PaymentTermCatalogGatewayCredentialService, {
-        issue: () =>
-          Effect.succeed({ baseUrl: origin, credential: Redacted.make('Bearer bounded-native-catalog-credential') }),
-      }),
+      ConfigProvider.layer(delegatedGatewayConfiguration(origin)),
     ),
   );
-  const businessContext = yield* Layer.build(BusinessPermissionRelationshipMutationLive);
-  const business = Context.get(businessContext, BusinessPermissionRelationshipMutation);
   const counterpartyRef = {
     moduleId: 'party.registry',
     resourceId: randomUUID(),
@@ -555,51 +588,47 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
     tenantId: fixture.tenantId,
   } as const;
   yield* fixture.grantResourceAccess(profileRef, fixture.manager.principalId);
-  for (const permission of ['counterparty.settings.payment_terms.manage', 'counterparty.profile.read'] as const) {
-    const grant = {
+  // The upgrade proof grants on the pre-forward storage in two legacy steps; current storage grants in one.
+  const grantPermission = Effect.fnUntraced(function* grantPermission(permission: string) {
+    const grantInput = [
+      counterpartyRef.resourceId,
+      fixture.manager.principalId,
       permission,
-      principal: { principalId: fixture.manager.principalId, tenantId: fixture.tenantId },
-      target: {
-        counterpartyId: counterpartyRef.resourceId,
-        kind: 'counterparty' as const,
-        legalEntityId: fixture.legalEntityId,
-        tenantId: fixture.tenantId,
-      },
-    };
-    const pending = yield* fixture
-      .prepareOwner(
-        (transaction) =>
-          transaction.invoke(beginGrant, [
-            counterpartyRef.resourceId,
-            fixture.manager.principalId,
-            permission,
-            null,
-            fixture.manager.principalId,
-            randomUUID(),
-            'Native entitlement proof',
-            false,
-          ]),
-        'required',
-      )
-      .pipe(Effect.provideContext(context));
-    yield* business.mutate({ ...grant, operation: 'grant', target: customerOwnerPermissionTarget(grant) });
-    yield* Effect.addFinalizer(() =>
-      business
-        .mutate({ ...grant, operation: 'revoke', target: customerOwnerPermissionTarget(grant) })
-        .pipe(Effect.orDie),
-    );
-    const [intent] = pending;
-    if (intent === undefined) {
-      return yield* Effect.die('No owner access grant intent');
+      null,
+      fixture.manager.principalId,
+      randomUUID(),
+      'Native entitlement proof',
+      false,
+    ] as const;
+    if (legacySource) {
+      const [intent] = yield* fixture
+        .prepareOwner((transaction) => transaction.invoke(legacyBeginGrant, grantInput), 'required')
+        .pipe(Effect.provideContext(context));
+      if (intent === undefined) {
+        return yield* Effect.die('No legacy owner access grant intent');
+      }
+      return yield* fixture
+        .prepareOwner(
+          (transaction) =>
+            transaction.invoke(legacyActivateGrant, [intent.grant_id, intent.mutation_id, 'grant', 'ACTIVE']),
+          'required',
+        )
+        .pipe(Effect.asVoid, Effect.provideContext(context));
     }
-    yield* fixture
-      .prepareOwner(
-        (transaction) => transaction.invoke(activateGrant, [intent.grant_id, intent.mutation_id, 'grant', 'ACTIVE']),
-        'required',
-      )
+    const granted = yield* fixture
+      .prepareOwner((transaction) => transaction.invoke(grantAccess, grantInput), 'required')
       .pipe(Effect.provideContext(context));
+    return granted.length === 1 ? undefined : yield* Effect.die('The owner access grant was not applied');
+  });
+  for (const permission of ['counterparty.settings.payment_terms.manage', 'counterparty.profile.read'] as const) {
+    yield* grantPermission(permission);
   }
-  const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
+  // The catalog dependency is called for the requester, so the manager acts through a redeemed Gateway assertion.
+  const redeem = yield* makeVerifiedGatewayPrincipals({
+    runtimeConnectionString: isolated.connections.runtime.connectionString,
+    snapshot,
+  });
+  const principal = yield* redeem({ ...fixture.manager, legalEntityId: fixture.legalEntityId });
   const executeChange = (
     changes: Parameters<typeof changeCustomerPaymentTerms>[0]['changes'],
     expectedRevision: number,
@@ -1249,36 +1278,34 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
   yield* Effect.gen(function* scopedOwnerIsolationControls() {
     const before = yield* observeOwner();
     const evidenceBefore = yield* fixture.evidence(coreEvidenceExecutor);
-    const denied = yield* runAction({
-      payload: { ...payload, expectedRevision: raceState.revision },
-      principal: { ...fixture.denied, legalEntityId: fixture.legalEntityId },
-      registration: removeCustomerPaymentTermAction,
-      transport: {
-        correlationId: randomUUID(),
-        idempotencyKey: randomUUID(),
-        targetModuleKey: 'commerce.customer-context',
-      },
-    }).pipe(Effect.provideContext(context), Effect.result);
-    expect(Result.isFailure(denied)).toBe(true);
-    if (Result.isFailure(denied)) {
-      expect(Schema.is(OperationContextDenied)(denied.failure)).toBe(true);
+    // The v2 removal capability is scope-wide (Q2): a member no longer differs from another by a
+    // SpiceDB tuple, and the one gate decides the capability itself (CUTOVER-PLAN §3.1). The gate
+    // answers ALLOWED here, so the per-principal owner rule is the decider: a principal the owner
+    // rule refuses is refused without an invocation, and the owner rows stay exactly as they were.
+    const removalCapability = removeCustomerPaymentTermAction.descriptor.accessDeclaration?.key ?? '';
+    expect(removalCapability).toBe('commerce.customer-context.customer-payment-term.remove');
+    deniedAccess.deny(fixture.denied.principalId, removalCapability);
+    deniedAccess.deny(fixture.legalEntityOnly.principalId, removalCapability);
+    for (const actor of [fixture.denied, fixture.legalEntityOnly]) {
+      const refusal = yield* runAction({
+        payload: { ...payload, expectedRevision: raceState.revision },
+        principal: { ...actor, legalEntityId: fixture.legalEntityId },
+        registration: removeCustomerPaymentTermAction,
+        transport: {
+          correlationId: randomUUID(),
+          idempotencyKey: randomUUID(),
+          targetModuleKey: 'commerce.customer-context',
+        },
+      }).pipe(Effect.provideContext(context), Effect.result);
+      expect(Result.isFailure(refusal)).toBe(true);
+      if (Result.isFailure(refusal)) {
+        expect(Schema.is(ActionPermissionDenied)(refusal.failure)).toBe(true);
+      }
     }
-    // This actor has selected-LE membership, but no exact owner permission. Tenant membership
-    // can inherit Action execution permission, so this is not an executor-negative claim.
-    const ownerDenied = yield* runAction({
-      payload: { ...payload, expectedRevision: raceState.revision },
-      principal: { ...fixture.legalEntityOnly, legalEntityId: fixture.legalEntityId },
-      registration: removeCustomerPaymentTermAction,
-      transport: {
-        correlationId: randomUUID(),
-        idempotencyKey: randomUUID(),
-        targetModuleKey: 'commerce.customer-context',
-      },
-    }).pipe(Effect.provideContext(context), Effect.result);
-    expect(Result.isFailure(ownerDenied)).toBe(true);
-    if (Result.isFailure(ownerDenied)) {
-      expect(Schema.is(ActionPermissionDenied)(ownerDenied.failure)).toBe(true);
-    }
+    expect(yield* observeOwner()).toEqual(before);
+    const deniedEvidence = yield* fixture.evidence(coreEvidenceExecutor);
+    expect(deniedEvidence.events).toHaveLength(evidenceBefore.events.length);
+    expect(deniedEvidence.outbox).toHaveLength(evidenceBefore.outbox.length);
     const mismatched = yield* fixture
       .prepareOwner(
         (transaction) => transaction.invoke(readOwner, [profileId, 'COUNTERPARTY', randomUUID()]),
@@ -1288,6 +1315,7 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
     expect(mismatched[0]?.outcome).toBe('PROFILE_COUNTERPARTY_MISMATCH');
     const foreign = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
+        access: 'allowed',
         actionKeys: [],
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
         allowedAudiences: ['commerce-customer-context'],

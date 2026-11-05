@@ -4,7 +4,7 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { ActionInvocationIdSchema } from '../domain/correction-contracts.ts';
-import { PartyMatchDecisionRecordSchema } from '../domain/matching-contracts.ts';
+import { PartyMatchDecisionRecordViewSchema } from '../domain/matching-contracts.ts';
 import { PartyMatchDecisionRefSchema } from '../resources/party-match-decision.ts';
 
 export const PartyMatchDecisionRequestSchema = Schema.Struct({
@@ -18,7 +18,7 @@ export const PartyMatchDecisionRequestSchema = Schema.Struct({
   ),
 );
 export type PartyMatchDecisionRequest = typeof PartyMatchDecisionRequestSchema.Type;
-export const PartyMatchDecisionResponseSchema = PartyMatchDecisionRecordSchema;
+export const PartyMatchDecisionResponseSchema = PartyMatchDecisionRecordViewSchema;
 export type PartyMatchDecisionResponse = typeof PartyMatchDecisionResponseSchema.Type;
 
 export const PartyMatchDecisionAuthenticationProblemSchema = makeProblemDetailsSchema(

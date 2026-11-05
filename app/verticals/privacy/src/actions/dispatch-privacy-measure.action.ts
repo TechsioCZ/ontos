@@ -66,6 +66,14 @@ const handleDispatchPrivacyMeasure = Effect.fn('DispatchPrivacyMeasureAction.han
 
 export const dispatchPrivacyMeasureAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.privacy-measure.dispatch',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'privacy-measures', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.dispatch-privacy-measure.access.v1',
@@ -77,7 +85,7 @@ export const dispatchPrivacyMeasureAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.dispatch-privacy-measure',
       moduleKey: MODULE_KEY,
       role: 'action',

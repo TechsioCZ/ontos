@@ -142,9 +142,10 @@ it('rejects fabricated revision IDs and guards both endpoints with tenant read p
     }),
   ).toThrow();
   for (const read of [setCompositionCurrentRead, setCompositionHistoryRead]) {
-    expect(read.descriptor.entrypoint.authorization.kind).toBe('context_permission');
+    expect(read.descriptor.entrypoint.authorization.kind).toBe('protected');
     expect(read.descriptor.legalEntityScope).toBe('forbidden');
-    expect(read.descriptor.permissionTarget).toBe('tenant');
+    // v2: the declaration is the only authority identity; a scope-wide read carries no selectors (O62).
+    expect(read.descriptor.accessDeclaration?.selectors).toEqual([]);
   }
   expect(setCompositionHistoryRead.descriptor.entrypoint.access).toBe('historical_read');
 });

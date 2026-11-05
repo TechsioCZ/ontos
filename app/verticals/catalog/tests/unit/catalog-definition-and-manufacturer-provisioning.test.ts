@@ -39,7 +39,7 @@ describe('Catalog definition and manufacturer provisioning (#477)', () => {
       'commerce.catalog.set-product-unit-target-divisibility',
     ]);
     for (const { descriptor } of definitionActions) {
-      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(descriptor.entrypoint.access).toBe('write');
       expect(descriptor.idempotency).toBe('required');
       expect(descriptor.legalEntityScope).toBe('forbidden');
@@ -53,7 +53,7 @@ describe('Catalog definition and manufacturer provisioning (#477)', () => {
       'commerce.catalog.remove-product-manufacturer',
     ]);
     for (const { descriptor } of productEditorActions) {
-      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'action_execution', provisioning: 'explicit' });
+      expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(descriptor.entrypoint.access).toBe('write');
       expect(descriptor.idempotency).toBe('required');
       expect(descriptor.legalEntityScope).toBe('forbidden');

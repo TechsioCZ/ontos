@@ -72,6 +72,14 @@ export const handleCreateVariant = Effect.fn('CreateVariantAction.handle')(funct
 
 export const createVariantAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.create-variant.access.v1',
@@ -83,7 +91,7 @@ export const createVariantAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

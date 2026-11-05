@@ -7,7 +7,6 @@ import { priceGroupCatalogManifest } from './vertical.manifest.ts';
 import { priceGroupDefinitionRead } from './src/api/price-group-definition.read.ts';
 import { createPriceGroupAction } from './src/actions/create-price-group.action.ts';
 import { createPriceGroupDefinitionRevisionAction } from './src/actions/create-price-group-definition-revision.action.ts';
-import { reconcilePriceGroupContainmentProjectionWorker } from './src/workers/reconcile-price-group-containment-projection.worker.ts';
 import { retirePriceGroupAction } from './src/actions/retire-price-group.action.ts';
 import { validatePriceGroupCompatibilityRead } from './src/api/validate-price-group-compatibility.read.ts';
 // </generated-module-registration-imports>
@@ -47,7 +46,6 @@ export const priceGroupCatalogRegistration = defineVerticalRuntimeRegistration({
   manifest: priceGroupCatalogManifest,
   outboxWorkers: [
     // <generated-module-registration-workers>
-    reconcilePriceGroupContainmentProjectionWorker,
     // </generated-module-registration-workers>
   ],
   reads: [

@@ -35,7 +35,7 @@ import { requirePricingCatalogOperation } from '../integrations/pricing-operatio
 import type { CommercialFeeCatalogTargetAssessmentPort } from '../integrations/commercial-fee-catalog-target-evidence.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
-import { PricingCatalogSelectionUnavailable } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { CurrencySupportPersistenceUnavailable } from './currency-support-persistence-unavailable.ts';
 
 export {
@@ -321,6 +321,17 @@ export const handleReviseCommercialFee = Effect.fn('ReviseCommercialFeeAction.ha
 
 export const reviseCommercialFeeAction = defineAction(
   {
+    // O18: this payload is a union whose RETIRE branch states no money value, so the declaration
+    // names no governed amount. Under an amount ceiling the gate refuses `deny.amount_required`
+    // rather than trusting a caller-supplied total; a per-branch amount needs a contract change.
+    accessDeclaration: {
+      key: 'commerce.pricing.commercial-fee.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commercial-fees', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.revise-commercial-fee.access.v1',
@@ -344,7 +355,7 @@ export const reviseCommercialFeeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.revise-commercial-fee',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -375,6 +386,7 @@ export const reviseCommercialFeeAction = defineAction(
             compositionRevision,
             legalEntityId,
             requestCorrelation: scope.correlationId,
+            scope,
           }),
           currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
           persistence: commercialFeePersistenceForScope(transaction, scope),

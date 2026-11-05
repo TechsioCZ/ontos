@@ -42,7 +42,9 @@ const payload = {
 it.effect('declares required legal-entity permission and composed onboarding result flags', () =>
   Effect.gen(function* contract() {
     expect(counterpartyCustomerOnboardAction.descriptor.legalEntityScope).toBe('required');
-    expect(counterpartyCustomerOnboardAction.descriptor.legalEntityPermission).toBe('manage_counterparty');
+    expect(counterpartyCustomerOnboardAction.descriptor.accessDeclaration?.key).toBe(
+      'party.registry.counterparty.onboard',
+    );
     expect(counterpartyCustomerOnboardAction.descriptor.idempotency).toBe('required');
     const decoded = yield* Schema.decodeEffect(CounterpartyCustomerOnboardPayloadSchema)(payload);
     expect(decoded.customerEvidence.method).toBe('BINDING_ORDER');

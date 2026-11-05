@@ -11,10 +11,13 @@ import {
   externalIdentityRepositoryFromTransaction,
 } from '../../auth/external-identity/repository.ts';
 import { ExternalIdentityAdmission } from '../../auth/external-identity/resolve.ts';
+import {
+  GrantedProvisioningNamespaces,
+  authorizeProvisioningNamespace,
+} from '../../auth/external-identity/namespace-authority.ts';
 import { AuthenticationNamespaceRegistry } from '../../auth/external-identity/verifier.ts';
 import type {
   ExternalIdentityAdmissionContext,
-  ExternalIdentityRepositoryDependencies,
   ExternalIdentityRepositoryService,
   PrepareExternalIdentityInput,
 } from '../../auth/external-identity/repository.ts';
@@ -27,8 +30,6 @@ import {
   ReservePrincipalBindingPayloadSchema,
   ReservePrincipalBindingResultSchema,
 } from '../../auth/external-identity-contracts.ts';
-import { externalIdentityFailure } from '../../auth/external-identity/errors.ts';
-import { ContextAccess } from '../../permissions/context-access.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 import {
   createReservePrincipalBindingCoreIdentityPrincipalBindingReservedV1OutboxMessage,
@@ -44,38 +45,6 @@ type Services = Readonly<{
 
 const malformedResult = (cause: unknown): ExternalIdentityError =>
   Object.assign(new ExternalIdentityError({ code: 'identity_unavailable' }), { cause });
-
-const authorizeNamespace = (
-  contextAccess: Option.Option<(typeof ContextAccess)['Service']>,
-  scope: { readonly principalId: string; readonly tenantId: string },
-  authenticationNamespaceId: string,
-) => {
-  if (Option.isNone(contextAccess) || contextAccess.value.identityNamespaces === undefined) {
-    return Effect.fail(externalIdentityFailure('identity_unavailable', 'Identity namespace access is unavailable'));
-  }
-  return contextAccess.value
-    .identityNamespaces({
-      authenticationNamespaceIds: [authenticationNamespaceId],
-      principalId: scope.principalId,
-      tenantId: scope.tenantId,
-    })
-    .pipe(
-      Effect.flatMap((decisions) => {
-        const decision =
-          decisions.length === 1 && decisions[0]?.key === authenticationNamespaceId
-            ? decisions[0].decision
-            : 'unavailable';
-        return decision === 'allowed'
-          ? Effect.void
-          : Effect.fail(
-              externalIdentityFailure(
-                decision === 'denied' ? 'identity_forbidden' : 'identity_unavailable',
-                'The Actor is not authorized to provision this identity namespace',
-              ),
-            );
-      }),
-    );
-};
 
 const handleReservePrincipalBinding = Effect.fn('ReservePrincipalBindingAction.handle')(function* handle(
   payload: ReservePrincipalBindingPayload,
@@ -156,9 +125,16 @@ const handleReservePrincipalBinding = Effect.fn('ReservePrincipalBindingAction.h
 
 export const reservePrincipalBindingAction = defineAction(
   {
+    // Namespace and binding provisioning is a trusted machine (system-workload) capability checked by the
+    // identity-namespace provisioner and trusted admission; no human or agent holds it as a capability.
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.reserve-principal-binding.access.v1',
+    },
+    accessWorkload: {
+      reason:
+        'Reserving a principal binding is a machine provisioning step that the identity-namespace provisioner runs after trusted admission; a human or agent capability would let callers pre-claim identities (O29, O36, O59).',
+      workloads: ['core.identity-provider'],
     },
     actionKey: 'core.identity.reserve-principal-binding',
     auditEvidenceSchema: ExternalIdentityActionAuditEvidenceSchema,
@@ -167,7 +143,7 @@ export const reservePrincipalBindingAction = defineAction(
     domainEvents: principalBindingLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.reserve-principal-binding',
       moduleKey: 'core.identity',
       role: 'action',
@@ -183,17 +159,18 @@ export const reservePrincipalBindingAction = defineAction(
   handleReservePrincipalBinding,
   Effect.fn('ReservePrincipalBindingAction.services')(function* makeServices(transaction, scope) {
     const registry = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
-    const contextAccess = yield* Effect.serviceOption(ContextAccess);
-    const dependencies: ExternalIdentityRepositoryDependencies = Option.isSome(registry)
-      ? {
-          authorizeNamespace: (authenticationNamespaceId) =>
-            authorizeNamespace(contextAccess, scope, authenticationNamespaceId),
-          registry: registry.value,
-        }
-      : {
-          authorizeNamespace: (authenticationNamespaceId) =>
-            authorizeNamespace(contextAccess, scope, authenticationNamespaceId),
-        };
+    const granted = yield* Effect.serviceOption(GrantedProvisioningNamespaces);
+    // The namespace qualification of a provisioning workload is not a SpiceDB grant (O29, O36, O59,
+    // O67-Q4): the gate admits only a trusted workload on this `accessWorkload` carrier, which may
+    // provision the namespace it is registered in or the exact namespace its trusted composition
+    // granted it for this request.
+    const dependencies = {
+      authorizeNamespace: (authenticationNamespaceId: string) =>
+        authorizeProvisioningNamespace({ authenticationNamespaceId, granted, scope }),
+    };
+    if (Option.isSome(registry)) {
+      Object.assign(dependencies, { registry: registry.value });
+    }
     const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
     return {
       admission: yield* Effect.serviceOption(ExternalIdentityAdmission),

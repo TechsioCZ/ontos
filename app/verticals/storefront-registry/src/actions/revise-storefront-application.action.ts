@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.storefront-registry
 // @ontos-action-slug revise-storefront-application
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   ReviseStorefrontApplicationPayloadSchema,
@@ -122,6 +122,15 @@ export const handleReviseStorefrontApplication = Effect.fn('ReviseStorefrontAppl
 
 export const reviseStorefrontApplicationAction = defineAction(
   {
+    // Critical: revise accepts terminal RETIRED, which the persistence routine never reopens.
+    accessDeclaration: {
+      key: 'commerce.storefront-registry.storefront-application.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'storefront-applications', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.storefront-registry.revise-storefront-application.access.v1',
@@ -133,7 +142,7 @@ export const reviseStorefrontApplicationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.storefront-registry.revise-storefront-application',
       moduleKey: 'commerce.storefront-registry',
       role: 'action',
@@ -143,9 +152,6 @@ export const reviseStorefrontApplicationAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: ReviseStorefrontApplicationPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ReviseStorefrontApplicationPayload>(
-      ({ storefrontApplicationRef }) => ({ permission: 'write', resource: storefrontApplicationRef }),
-    ),
     resultSchema: ReviseStorefrontApplicationResultSchema,
     schemaVersion: '1',
   },

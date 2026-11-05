@@ -36,6 +36,7 @@ import {
 } from '../../src/services/ordinary-current-pricing-publication.service.ts';
 import { unitPriceGroupAbsencePredicateRef } from '../../src/services/unit-price-material-evidence.service.ts';
 import { candidateRef, makeIssue779PreRoundScenario, money } from './support/issue-779-line-value.fixture.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 
 const decodedSource = Schema.decodeUnknownSync(PricingSourceEvidenceResultSchema, {
   onExcessProperty: 'error',
@@ -690,7 +691,15 @@ describe('ordinary Current Pricing publication #786', () => {
     Effect.gen(function* refusesPublicationWithoutOwnerAuthority() {
       const request = yield* publicationRequest();
       const ownerCalls: string[] = [];
-      const failure = yield* publishOrdinaryCurrentPricingForCustomer(request).pipe(
+      const failure = yield* publishOrdinaryCurrentPricingForCustomer(
+        request,
+        verifiedTestScope({
+          correlationId: 'material-evidence-assembly-786',
+          legalEntityId: '33333333-3333-4333-8333-333333333786',
+          principalId: '44444444-4444-4444-8444-444444444786',
+          tenantId: '22222222-2222-4222-8222-222222222786',
+        }),
+      ).pipe(
         Effect.provideService(
           PricingExternalOwnerEvidenceValidation,
           makePricingExternalOwnerEvidenceValidationService(),

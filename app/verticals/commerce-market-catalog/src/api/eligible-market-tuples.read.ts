@@ -4,6 +4,7 @@ import {
   ReadPermissionDenied,
   defineRead,
   defineTenantModuleEntrypoint,
+  readVerifiedGatewayActor,
   requireModuleOperation,
 } from '@app/core-runtime';
 import { Crypto, Effect, Option } from 'effect';
@@ -30,7 +31,7 @@ const commerceMarketCatalogModuleKey = 'commerce.market-catalog';
 
 const eligibleMarketTuplesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.market-catalog.api.eligible-market-tuples',
   moduleKey: commerceMarketCatalogModuleKey,
   role: 'api',
@@ -46,11 +47,11 @@ const validateTrustedScope = (
   input: EligibleMarketTuplesRequest,
   context: ReadHandlerContext<EligibleMarketTuplesServices>,
 ) => {
-  // Shell API-key service credentials cannot carry a signed Storefront; callers on that path prove Storefront
-  // currentness through the Storefront Registry themselves. Session callers must still match their trusted Storefront.
+  // A delegated module call carries no signed Storefront; the verified calling module proves Storefront currentness
+  // through the Storefront Registry itself. Every other caller must match its trusted Storefront.
   const storefrontTrusted =
     context.scope.trustedStorefrontId === undefined
-      ? context.scope.authMethod === 'api_key'
+      ? readVerifiedGatewayActor(context.scope) !== undefined
       : input.storefrontRef.appId === context.scope.trustedStorefrontId;
   if (input.storefrontRef.tenantId !== context.scope.tenantId || !storefrontTrusted) {
     return Effect.fail(
@@ -112,6 +113,20 @@ export const handleEligibleMarketTuples = Effect.fn('EligibleMarketTuplesRead.ha
 
 export const eligibleMarketTuplesRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason:
+        'Commerce Customer Context resolves eligible Market tuples for a verified purchasing subject during order and bootstrap reads.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market-eligibility.list',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'markets', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: eligibleMarketTuplesEntrypoint,
     evidencePolicy: {
@@ -121,45 +136,39 @@ export const eligibleMarketTuplesRead = defineRead(
     inputSchema: EligibleMarketTuplesRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: commerceMarketCatalogModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.market-catalog.api.eligible-market-tuples',
     resultSchema: EligibleMarketTuplesResponseSchema,
     schemaVersion: '1',
   },
   handleEligibleMarketTuples,
-  (transaction, scope, compositionRevision) =>
-    Effect.all(
-      {
-        crypto: Crypto.Crypto,
-        persistence: marketResolutionPersistenceForScope(transaction, scope, compositionRevision),
-      },
-      { concurrency: 2 },
-    ).pipe(
-      Effect.map(({ crypto, persistence }) => {
-        const reader = makeServerMarketSubjectRestrictionsReader({
-          compositionRevision,
-          crypto,
-          scope,
-        });
-        return {
-          ...persistence,
-          current: (...parameters: Parameters<MarketSubjectRestrictionsReader['current']>) =>
-            requireModuleOperation('commerce.market-catalog.requirement.eligible-market-tuples-subject').pipe(
-              Effect.mapError((cause) =>
-                Object.defineProperty(
-                  new MarketSubjectRestrictionsUnavailable({
-                    code: 'market_subject_restrictions_unavailable',
-                    reason: 'Current subject restrictions contract is unavailable',
-                  }),
-                  'cause',
-                  { configurable: true, value: cause },
-                ),
+  Effect.fn('EligibleMarketTuplesRead.serviceFactory')(
+    function* marketReadServiceFactory(transaction, scope, compositionRevision, listAccess) {
+      const persistence = yield* marketResolutionPersistenceForScope(
+        transaction,
+        scope,
+        compositionRevision,
+        listAccess,
+      );
+      const crypto = yield* Crypto.Crypto;
+      const reader = makeServerMarketSubjectRestrictionsReader({ compositionRevision, crypto, scope });
+      return {
+        ...persistence,
+        current: (...parameters: Parameters<MarketSubjectRestrictionsReader['current']>) =>
+          requireModuleOperation('commerce.market-catalog.requirement.eligible-market-tuples-subject').pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new MarketSubjectRestrictionsUnavailable({
+                  code: 'market_subject_restrictions_unavailable',
+                  reason: 'Current subject restrictions contract is unavailable',
+                }),
+                'cause',
+                { configurable: true, value: cause },
               ),
-              Effect.andThen(reader.current(...parameters)),
             ),
-        };
-      }),
-    ),
-  () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
+            Effect.andThen(reader.current(...parameters)),
+          ),
+      };
+    },
+  ),
 );

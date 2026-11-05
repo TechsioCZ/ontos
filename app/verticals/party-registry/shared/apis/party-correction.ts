@@ -3,14 +3,14 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { PartyCorrectionDetailSchema } from '../domain/correction-contracts.ts';
+import { PartyCorrectionDetailViewSchema } from '../domain/correction-contracts.ts';
 import { PartyCorrectionRefSchema } from '../resources/party-correction.ts';
 
 export const PartyCorrectionRequestSchema = Schema.Struct({
   correctionRef: PartyCorrectionRefSchema,
 });
 export type PartyCorrectionRequest = typeof PartyCorrectionRequestSchema.Type;
-export const PartyCorrectionResponseSchema = PartyCorrectionDetailSchema;
+export const PartyCorrectionResponseSchema = PartyCorrectionDetailViewSchema;
 export type PartyCorrectionResponse = typeof PartyCorrectionResponseSchema.Type;
 
 export const PartyCorrectionAuthenticationProblemSchema = makeProblemDetailsSchema(

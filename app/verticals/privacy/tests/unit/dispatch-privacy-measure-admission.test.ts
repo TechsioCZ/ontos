@@ -48,11 +48,9 @@ const request = (idempotencyKey: string) => ({
 });
 const harnessFor = (admitMeasureDispatch: PrivacyOperationRepositoryService['admitMeasureDispatch']) =>
   makeActionTestHarness({
-    actionPermission: 'allowed',
-    legalEntityPermission: 'allowed',
+    access: 'allowed',
     ownerRegistration: privacyRegistration,
     services: [bindActionTestServices(dispatchPrivacyMeasureAction, { admitMeasureDispatch })],
-    tenantPermission: 'allowed',
   });
 
 it.effect('registered dispatch emits one linked event and targeted message only for a new owner insertion', () =>

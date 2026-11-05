@@ -1167,6 +1167,7 @@ jobs:
 
   # The one required status check of the main ruleset, so new gate jobs join it here, not the ruleset.
   # It passes when every gate passed, or when the merge queue already proved this commit and the gates were skipped.
+  # OntOS runs on Zerops only; the Cloudflare artifact build still runs and reports, but it no longer gates a merge.
   workspace-gates:
     name: Workspace gates
     if: ${{ always() }}
@@ -1458,7 +1459,6 @@ jobs:
             plan_arguments+=(--reconcile-workers)
           fi
           mise exec -- pnpm deployment-impact:plan \
-            --authorization-environment "$DEPLOY_ENVIRONMENT" \
             --outbox-worker-mode "$OUTBOX_WORKER_MODE" \
             "${plan_arguments[@]}" \
             --head "$GITHUB_SHA"
@@ -2843,7 +2843,6 @@ jobs:
             base_arguments+=(--reconcile-workers)
           fi
           mise exec -- pnpm deployment-impact:plan \
-            --authorization-environment stage \
             --outbox-worker-mode "$OUTBOX_WORKER_MODE" \
             "${base_arguments[@]}" \
             --head "$GITHUB_SHA"

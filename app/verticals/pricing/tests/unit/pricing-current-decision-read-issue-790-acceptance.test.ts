@@ -457,7 +457,8 @@ describe('issue #790 Current Pricing Decision read acceptance', () => {
       expect(currentPricingDecisionRead.descriptor).toMatchObject({
         entrypoint: {
           access: 'read',
-          authorization: { kind: 'authenticated_principal' },
+          // Audit A1: the read is gated by its own capability, not merely authenticated (O21).
+          authorization: { kind: 'protected' },
         },
         legalEntityScope: 'required',
       });

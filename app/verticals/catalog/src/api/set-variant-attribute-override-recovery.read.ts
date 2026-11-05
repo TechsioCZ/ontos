@@ -66,10 +66,7 @@ const recoverSetVariantAttributeOverride = Effect.fn('SetVariantAttributeOverrid
 
 const setVariantAttributeOverrideRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.set-variant-attribute-override-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.set-variant-attribute-override-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -77,6 +74,14 @@ const setVariantAttributeOverrideRecoveryEntrypoint = defineTenantModuleEntrypoi
 
 export const setVariantAttributeOverrideRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.set-variant-attribute-override-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: setVariantAttributeOverrideRecoveryEntrypoint,
     evidencePolicy: {
@@ -86,7 +91,6 @@ export const setVariantAttributeOverrideRecoveryRead = defineRead(
     inputSchema: SetVariantAttributeOverrideRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.set-variant-attribute-override-recovery',
     resultSchema: SetVariantAttributeOverrideRecoveryResponseSchema,
@@ -98,5 +102,4 @@ export const setVariantAttributeOverrideRecoveryRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

@@ -88,6 +88,14 @@ it('technical records, managed Legal Entities and multiple subjects fail closed'
 
 it('review configuration cannot waive evidence and eligible review remains atomic', () => {
   expect(createPartyAction.descriptor.policies).toEqual([]);
+  expect(createPartyAction.descriptor.accessActor).toEqual(
+    expect.objectContaining({
+      callers: ['commerce-customer-context'],
+      reason: expect.any(String),
+      subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
+    }),
+  );
   expect(decideAtomicCreateWithoutStrongIdentifier(candidate(), false).decision).toBe('REVIEW_REQUIRED');
   expect(decideAtomicCreateWithoutStrongIdentifier(candidate(), true).decision).toBe('ALLOW');
   expect(decideAtomicCreateWithoutStrongIdentifier(candidate({ subjectEvidence: [] }), true).decision).toBe('DENY');

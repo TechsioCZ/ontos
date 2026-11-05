@@ -60,6 +60,11 @@ const unverifiable = (cause?: unknown) => {
 const sameRequest = Schema.toEquivalence(PricingPurchaseContextVerificationRequestSchema);
 const sameSubject = Schema.toEquivalence(CurrentPricingDecisionRequestSchema.fields.subject);
 
+const PREPROPOSAL_CONTEXT_PATTERN = /^ccc:preproposal:[a-f0-9-]{36}$/u;
+/** Order finalization and preproposal contexts name their buyer, who must be the verified subject. */
+const isSubjectBoundPurchaseContext = (contextRef: string): boolean =>
+  isOrderFinalizationPricingContext(contextRef) || PREPROPOSAL_CONTEXT_PATTERN.test(contextRef);
+
 const requestPayload = (input: CurrentPricingDecisionSubjectAuthorityInput) => {
   const { commercialScope, operationTime, purchasingContext, tenantId } = input.request.decision;
   const { principal, sellingLegalEntityId } = input.scope;
@@ -70,20 +75,19 @@ const requestPayload = (input: CurrentPricingDecisionSubjectAuthorityInput) => {
   ) {
     return Effect.fail(unverifiable());
   }
+  if (
+    input.request.subject.kind === 'PROFILE' &&
+    isSubjectBoundPurchaseContext(purchasingContext.contextRef) &&
+    (purchasingContext.actor.kind !== 'PRINCIPAL' || purchasingContext.actor.principalId !== principal.principalId)
+  ) {
+    return Effect.fail(unverifiable());
+  }
   return Schema.decodeUnknownEffect(PricingPurchaseContextVerificationRequestSchema, {
     onExcessProperty: 'error',
   })({
     actor:
       input.request.subject.kind === 'PROFILE'
-        ? {
-            kind: 'AUTHENTICATED_CUSTOMER',
-            principalId:
-              (isOrderFinalizationPricingContext(purchasingContext.contextRef) ||
-                /^ccc:preproposal:[a-f0-9-]{36}$/u.test(purchasingContext.contextRef)) &&
-              purchasingContext.actor.kind === 'PRINCIPAL'
-                ? purchasingContext.actor.principalId
-                : principal.principalId,
-          }
+        ? { kind: 'AUTHENTICATED_CUSTOMER', principalId: principal.principalId }
         : { kind: 'GUEST' },
     operationTime,
     purchasingContext: {

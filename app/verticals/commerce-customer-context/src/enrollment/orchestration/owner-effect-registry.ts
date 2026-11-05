@@ -1,4 +1,3 @@
-import { ContextAccess } from '@app/core-runtime';
 import type { ReadHandlerUnavailable } from '@app/core-runtime';
 import { ReadPrincipalBindingPayloadSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { PartyMatchRequestSchema } from '@app/party-registry/api';
@@ -8,9 +7,7 @@ import type {
   ExternalIdentityClientPort,
   ReadPrincipalBindingRequest,
 } from '@app/shared-contracts/server/external-identity-client';
-import { ProfileRetailPermissionReaderFactory } from '../../integrations/retail-permission-reader.ts';
-import type { ProfileRetailPermissionReaderFactoryService } from '../../integrations/retail-permission-reader.ts';
-import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { CommercePortalAuthAccountLookupService } from '../../../api/portal-auth/provider/account-lookup-service.ts';
 import type { CommercePortalAuthAccountLookup } from '../../../api/portal-auth/provider/account-lookup-service.ts';
@@ -59,6 +56,7 @@ import {
 import type { JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
 import { retailPartyCandidateOwnerEffect } from '../journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../journeys/retail-self-enrollment-party-owner.ts';
+import type { RetailEnrollmentOriginator } from '../journeys/retail-owner-gateway-credential.ts';
 import type { RetailSelfEnrollmentPreparationSubject } from '../journeys/retail-self-enrollment-preparation.ts';
 import {
   CommerceActionCommitResolutionFailed,
@@ -273,38 +271,64 @@ const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party
   },
 );
 
-const partyEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
-  transition: JourneyTransitionSpec,
+/**
+ * The Action invocation the Attempt was created under is the originator every owner call acts for.
+ * An Attempt that never recorded one fails typed: it is never given a credential it cannot prove.
+ */
+const originatorFor = (
   context: CommerceEnrollmentOwnerEffectContext,
-): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
-  // Two independent in-memory derivations from the same durable Attempt; neither reaches a shared
-  // downstream resource.
-  const { candidate, requestDigest } = yield* Effect.all(
-    {
-      candidate: partyCandidateFor(context),
-      requestDigest: retailDigestFor(
-        {
-          partyCandidateDigest: context.subject.partyCandidateDigest,
-          sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
-          step: 'PARTY_CANDIDATE',
-        },
-        transition,
-        context,
-      ),
-    },
-    { concurrency: 2 },
-  );
-  return registered(
-    retailPartyCandidateOwnerEffect({
-      candidate,
-      compositionRevision: context.attempt.compositionRevision,
-      legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
-      requestCorrelation: context.requestCorrelation,
-      tenantId: context.attempt.tenantId,
-    }),
-    requestDigest,
-  );
-});
+): Effect.Effect<RetailEnrollmentOriginator, CommerceEnrollmentAttemptError> => {
+  const { attempt } = context;
+  return attempt.originatorActionInvocationId === undefined
+    ? Effect.fail(
+        attemptRejected(
+          'The Enrollment Attempt does not record the Action invocation it was created under',
+          attempt.portalEnrollmentAttemptId,
+        ),
+      )
+    : Effect.succeed({
+        actionInvocationId: attempt.originatorActionInvocationId,
+        compositionRevision: attempt.compositionRevision,
+        tenantId: attempt.tenantId,
+      });
+};
+
+const partyEntry = (crypto: Crypto.Crypto): RegistryEntry =>
+  Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
+    transition: JourneyTransitionSpec,
+    context: CommerceEnrollmentOwnerEffectContext,
+  ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
+    // Two independent in-memory derivations from the same durable Attempt; neither reaches a shared
+    // downstream resource.
+    const { candidate, requestDigest } = yield* Effect.all(
+      {
+        candidate: partyCandidateFor(context),
+        requestDigest: retailDigestFor(
+          {
+            partyCandidateDigest: context.subject.partyCandidateDigest,
+            sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
+            step: 'PARTY_CANDIDATE',
+          },
+          transition,
+          context,
+        ),
+      },
+      { concurrency: 2 },
+    );
+    const originator = yield* originatorFor(context);
+    return registered(
+      retailPartyCandidateOwnerEffect({
+        candidate,
+        compositionRevision: context.attempt.compositionRevision,
+        crypto,
+        legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+        originator,
+        requestCorrelation: context.requestCorrelation,
+        tenantId: context.attempt.tenantId,
+      }),
+      requestDigest,
+    );
+  });
 
 /**
  * The governed Action runtime resolves whether one invocation committed, but it republishes no
@@ -417,7 +441,10 @@ const bindProfileCommitResolution = (
           ),
         );
 
-const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+const ensureProfileEntry = (
+  run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
+  crypto: Crypto.Crypto,
+): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensureProfile')(function* ensureProfileEntryEffect(
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
@@ -437,7 +464,9 @@ const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactio
     );
     const input = {
       compositionRevision: context.attempt.compositionRevision,
+      crypto,
       effectiveAt: context.attempt.createdAt,
+      originator: yield* originatorFor(context),
       partyRef: partyRef.value,
       requestCorrelation: context.requestCorrelation,
       sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
@@ -453,7 +482,7 @@ const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactio
 
 const bindProfileEntry = (
   run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
-  reader: Option.Option<ProfileRetailPermissionReaderFactoryService>,
+  crypto: Crypto.Crypto,
 ): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindProfile')(function* bindProfileEntryEffect(
     transition: JourneyTransitionSpec,
@@ -490,8 +519,10 @@ const bindProfileEntry = (
     );
     const input = {
       compositionRevision: context.attempt.compositionRevision,
+      crypto,
       effectiveAt: context.attempt.createdAt,
       enrollmentEvidenceRef: String(context.attempt.portalEnrollmentAttemptId),
+      originator: yield* originatorFor(context),
       principalRef: context.subject.principalRef,
       profileRef,
       reason: RETAIL_PORTAL_BINDING_REASON,
@@ -503,7 +534,7 @@ const bindProfileEntry = (
         bindProfile: retailPortalBindingActionExecutor(input),
         commitResolution: bindProfileCommitResolution(run, context, String(profileResourceId.value)),
         confirmCurrentBinding: (result) => {
-          if (Option.isNone(run) || Option.isNone(reader)) {
+          if (Option.isNone(run)) {
             return Effect.succeed(false);
           }
           const scope = {
@@ -515,16 +546,11 @@ const bindProfileEntry = (
             run.value,
             context,
           )((invoker) =>
-            retailEnrollmentBindingIsCurrentForPrincipal(
-              invoker,
-              scope,
-              {
-                bindingId: result.bindingRef.resourceId,
-                enrollmentEvidenceRef: input.enrollmentEvidenceRef,
-                profileId: input.profileRef.resourceId,
-              },
-              reader.value.make(scope),
-            ),
+            retailEnrollmentBindingIsCurrentForPrincipal(invoker, scope, {
+              bindingId: result.bindingRef.resourceId,
+              enrollmentEvidenceRef: input.enrollmentEvidenceRef,
+              profileId: input.profileRef.resourceId,
+            }),
           );
         },
       }),
@@ -592,16 +618,12 @@ type CounterpartyInvitationClaimVerdict =
   | { readonly kind: 'ACCEPTED'; readonly resultReference: string }
   | { readonly kind: 'UNKNOWN'; readonly reason: string };
 
-/** The three lifecycles the claim Action's own transaction can leave an invitation in. */
-const CLAIMED_INVITATION_LIFECYCLES: ReadonlySet<string> = new Set(['CLAIMED', 'CLAIMING', 'RECONCILIATION_REQUIRED']);
-
 /**
  * The invitation's own reading of one claim.
  *
  * Redemption never moves the invitation, so a still PENDING invitation is a claim that did not
- * commit. A claim that did commit stamps the claimant and the claim proof in the Action's own
- * transaction — whether its staged grants have finished or not — so those two fields, not the
- * lifecycle a later grant pass moves on, are what identify this Attempt's own claim.
+ * commit. A claim that did commit is CLAIMED in the Action's own transaction, together with every
+ * grant it carries, and stamps the claimant and the claim proof that identify this Attempt's claim.
  */
 const counterpartyInvitationClaimVerdict = (
   claimability: CounterpartyInvitationClaimability,
@@ -622,7 +644,7 @@ const counterpartyInvitationClaimVerdict = (
       reason: 'The Counterparty Access invitation was claimed by another Principal',
     };
   }
-  if (CLAIMED_INVITATION_LIFECYCLES.has(lifecycle)) {
+  if (lifecycle === 'CLAIMED') {
     return claimedByPrincipalId === boundPrincipalId && claimProofReference !== undefined
       ? { kind: 'ACCEPTED', resultReference: claimProofReference }
       : { kind: 'UNKNOWN', reason: 'The Counterparty Access invitation names no claimant for this claim yet' };
@@ -667,31 +689,31 @@ const claimabilityFor = (
     ),
   ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason, failure)));
 
-/** Layer construction captures the actual Core checker; owner callbacks remain closed effects. */
+/**
+ * The original accepted claim, re-read from the owner's own invitation row: the owner's grant rows
+ * are the only authority left to prove it is still Current (O67-Q1).
+ */
+const originalClaimFor = (
+  run: CommerceEnrollmentOwnerTransactionRun,
+  subject: CounterpartyInvitationClaimReconciliationSubject,
+  input: CommerceEnrollmentOwnerReconciliationInput,
+) => {
+  const base = { invitationId: subject.invitationId, principalId: subject.boundPrincipalId };
+  const identity =
+    input.ownerResultReference === undefined ? base : { ...base, expectedAttestation: input.ownerResultReference };
+  return run({ legalEntityId: subject.legalEntityId, tenantId: subject.tenantId }, (transaction) =>
+    readEnrollmentInvitationClaimCurrent(transaction, subject, identity).pipe(
+      Effect.mapError((failure) =>
+        attemptUnavailable('The original accepted claim is unavailable', subject.portalEnrollmentAttemptId, failure),
+      ),
+    ),
+  ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason, failure)));
+};
+
+/** Reconcile-only owner factory: every callback is a closed effect over the owner transaction. */
 export const counterpartyInvitationClaimReconciliationFactory: Effect.Effect<CounterpartyInvitationClaimReconciliationFactory> =
-  Effect.gen(function* makeCounterpartyInvitationClaimReconciliationFactory() {
-    const contextAccess = Option.getOrUndefined(yield* Effect.serviceOption(ContextAccess));
-    const originalClaimFor = (
-      run: CommerceEnrollmentOwnerTransactionRun,
-      subject: CounterpartyInvitationClaimReconciliationSubject,
-      input: CommerceEnrollmentOwnerReconciliationInput,
-    ) => {
-      const base = { invitationId: subject.invitationId, principalId: subject.boundPrincipalId };
-      const identity =
-        input.ownerResultReference === undefined ? base : { ...base, expectedAttestation: input.ownerResultReference };
-      return run({ legalEntityId: subject.legalEntityId, tenantId: subject.tenantId }, (transaction) =>
-        readEnrollmentInvitationClaimCurrent(transaction, subject, identity, contextAccess).pipe(
-          Effect.mapError((failure) =>
-            attemptUnavailable(
-              'The original accepted claim is unavailable',
-              subject.portalEnrollmentAttemptId,
-              failure,
-            ),
-          ),
-        ),
-      ).pipe(Effect.mapError((failure) => claimUnavailable(failure.reason, failure)));
-    };
-    return (run, subject) =>
+  Effect.sync(
+    () => (run, subject) =>
       Effect.fn('CommerceEnrollmentCounterpartyInvitationClaim.reconcile')(function* reconcileInvitationClaim(
         input: CommerceEnrollmentOwnerReconciliationInput,
       ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
@@ -749,8 +771,8 @@ export const counterpartyInvitationClaimReconciliationFactory: Effect.Effect<Cou
           reconciliationRef,
           status: 'FAILED',
         });
-      });
-  });
+      }),
+  );
 
 export const counterpartyInvitationClaimReconciliationFor = Effect.fn(
   'CommerceEnrollmentCounterpartyInvitationClaim.make',
@@ -1000,7 +1022,6 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
   CommerceEnrollmentOwnerEffectRegistry,
   Effect.gen(function* makeCommerceEnrollmentOwnerEffectRegistry() {
     const accountLookup = yield* CommercePortalAuthAccountLookupService;
-    const retailReader = yield* Effect.serviceOption(ProfileRetailPermissionReaderFactory);
     const claimReconciliationFactory = yield* counterpartyInvitationClaimReconciliationFactory;
     const accountCreationReconciliation = yield* CommercePortalAuthAccountCreationReconciliationService;
     const client = yield* ExternalIdentityClient;
@@ -1013,6 +1034,7 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     const ownerTransactionRun = (yield* Effect.serviceOption(CommerceEnrollmentOwnerTransactionRunner)).pipe(
       Option.map((runner) => runner.run),
     );
+    const crypto = yield* Crypto.Crypto;
     const core: CoreIdentitySeam = {
       client,
       clientOptions: (context) =>
@@ -1023,14 +1045,14 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     };
     const portalAccount = portalAccountEntry(accountLookup, accountCreationReconciliation);
     const entries: ReadonlyMap<string, RegistryEntry> = new Map([
-      [registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY), partyEntry],
+      [registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY), partyEntry(crypto)],
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY),
-        ensureProfileEntry(ownerTransactionRun),
+        ensureProfileEntry(ownerTransactionRun, crypto),
       ],
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY),
-        bindProfileEntry(ownerTransactionRun, retailReader),
+        bindProfileEntry(ownerTransactionRun, crypto),
       ],
       [
         registryKey(COUNTERPARTY_ACCESS_OWNER_MODULE_KEY, CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY),

@@ -10,7 +10,9 @@ export const ProjectOwnerCandidatesRequestSchema = Schema.Struct({
 });
 export type ProjectOwnerCandidatesRequest = typeof ProjectOwnerCandidatesRequestSchema.Type;
 export const ProjectOwnerCandidatesResponseSchema = Schema.Struct({
-  candidates: Schema.Array(Schema.Struct({ displayName: Schema.String, principalId: ProjectUuidSchema })),
+  candidates: Schema.Array(
+    Schema.Struct({ displayName: Schema.optionalKey(Schema.String), principalId: ProjectUuidSchema }),
+  ),
 });
 
 export const ProjectOwnerCandidatesAuthenticationProblemSchema = makeProblemDetailsSchema(

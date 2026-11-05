@@ -6,6 +6,7 @@ import type {
   PaymentTermAffectedUseAssessmentRequest,
   PaymentTermAffectedUseAssessmentResponse,
 } from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
+import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Option, Redacted } from 'effect';
 
 import {
@@ -86,7 +87,7 @@ const unavailableAuthority: PaymentTermAffectedUseAuthority = {
 };
 
 export const customerPaymentTermAffectedUseAuthorityFromEnvironment = (
-  requestCorrelation: string,
+  scope: OperationalScope,
   execute: AuthorizedAffectedUseExecutor = executeAuthorizedAffectedUse,
 ): Effect.Effect<PaymentTermAffectedUseAuthority> =>
   Effect.serviceOption(CustomerContextGatewayCredentialService).pipe(
@@ -94,11 +95,12 @@ export const customerPaymentTermAffectedUseAuthorityFromEnvironment = (
       if (Option.isNone(issuerOption)) {
         return unavailableAuthority;
       }
-      return customerPaymentTermAffectedUseAuthority(requestCorrelation, (payload, correlation) =>
+      return customerPaymentTermAffectedUseAuthority(scope.correlationId, (payload, correlation) =>
         issuerOption.value
           .issue({
             audience: 'commerce-customer-context',
             requestCorrelation: correlation,
+            scope,
           })
           .pipe(Effect.flatMap((credential) => execute(payload, credential, correlation))),
       );

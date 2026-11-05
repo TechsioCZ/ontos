@@ -63,7 +63,7 @@ const recoverReorderCatalogMedia = Effect.fn('ReorderCatalogMediaRecoveryRead.re
 
 const reorderCatalogMediaRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.reorder-catalog-media-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.reorder-catalog-media-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const reorderCatalogMediaRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const reorderCatalogMediaRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.reorder-catalog-media-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: reorderCatalogMediaRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const reorderCatalogMediaRecoveryRead = defineRead(
     inputSchema: ReorderCatalogMediaRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.reorder-catalog-media-recovery',
     resultSchema: ReorderCatalogMediaRecoveryResponseSchema,
@@ -90,5 +97,4 @@ export const reorderCatalogMediaRecoveryRead = defineRead(
     recoverReorderCatalogMedia(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

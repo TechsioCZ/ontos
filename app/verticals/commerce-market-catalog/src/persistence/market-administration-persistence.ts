@@ -1,5 +1,10 @@
 /* oxlint-disable effect-native/no-string-timestamp-schema -- These owner-private command DTOs carry already-encoded UTC instants into JSONB routine parameters; the public schemas remain the temporal authority; expires: 2027-03-31. */
-import type { OperationalScope, ReadServiceFactory, ScopedRoutineInvocationError } from '@app/core-runtime';
+import type {
+  ActionServiceFactory,
+  OperationalScope,
+  ReadServiceFactory,
+  ScopedRoutineInvocationError,
+} from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import type {
@@ -228,7 +233,7 @@ const marketAdministrationPersistenceForTransaction = (
       : Effect.fail(unavailable({ reason: 'The Market lifecycle scope is inconsistent' })),
 });
 
-export const marketAdministrationPersistenceForScope: ReadServiceFactory<MarketAdministrationPersistence> = (
+export const marketAdministrationPersistenceForScope: ActionServiceFactory<MarketAdministrationPersistence> = (
   transaction,
   scope,
 ) => {

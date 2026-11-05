@@ -1,6 +1,18 @@
 import { Result, Schema } from 'effect';
 
+import { AccessDeclarationSchema, accessCarrierIssue } from '../authorization/access-declaration.ts';
+import type { AccessDeclarationInput } from '../authorization/access-declaration.ts';
+import type { ModuleEntrypointDescriptor } from './module-entrypoint.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
+
+const accessDeclaration = Schema.optionalKey(AccessDeclarationSchema);
+/** O62: a protected Shell carrier must declare its access; an unprotected one carries none. */
+const protectedDeclaration = Schema.makeFilter(
+  (descriptor: {
+    readonly accessDeclaration?: AccessDeclarationInput;
+    readonly entrypoint: ModuleEntrypointDescriptor;
+  }) => accessCarrierIssue(descriptor),
+);
 
 const stableKey = Schema.String.check(
   Schema.isMinLength(3),
@@ -155,61 +167,69 @@ const writableApiEntrypoint = ModuleEntrypointSchema.pipe(
 );
 
 export const ShellNavigationContributionSchema = Schema.Struct({
+  accessDeclaration,
   contributionKey,
   entrypoint: pageEntrypoint,
   groupKey,
   order,
   pageKey,
-});
+}).check(protectedDeclaration);
 
 export const ShellPageContributionSchema = Schema.Struct({
+  accessDeclaration,
   componentKey,
   contributionKey,
   entrypoint: pageEntrypoint,
   expose,
   routePath,
-});
+}).check(protectedDeclaration);
 
 export const ShellPublicComponentContributionSchema = Schema.Struct({
+  accessDeclaration,
   componentKey,
   contributionKey,
   entrypoint: componentEntrypoint,
   expose,
-});
+}).check(protectedDeclaration);
 
 export const ShellSearchContributionSchema = Schema.Struct({
+  accessDeclaration,
   contributionKey,
   entrypoint: searchEntrypoint,
   searchKey,
-});
+}).check(protectedDeclaration);
 
 export const ShellResourceDetailContributionSchema = Schema.Struct({
+  accessDeclaration,
   apiKey,
   contributionKey,
   entrypoint: readableApiEntrypoint,
   resourceType: stableKey,
-});
+}).check(protectedDeclaration);
 
 export const ShellTimelineContributionSchema = Schema.Struct({
+  accessDeclaration,
   apiKey,
   contributionKey,
   entrypoint: readableApiEntrypoint,
   resourceType: stableKey,
-});
+}).check(protectedDeclaration);
 
 export const ShellReportContributionSchema = Schema.Struct({
+  accessDeclaration,
   contributionKey,
   entrypoint: reportEntrypoint,
   reportKey,
-});
+}).check(protectedDeclaration);
 
 export const ShellMediaAttachmentContributionSchema = Schema.Struct({
+  accessDeclaration,
   actionKey,
   apiKey,
   contributionKey,
   entrypoint: writableApiEntrypoint,
   resourceType: stableKey,
-});
+}).check(protectedDeclaration);
 
 export const OntosShellContributionsSchema = Schema.Struct({
   mediaAttachments: Schema.Array(ShellMediaAttachmentContributionSchema),

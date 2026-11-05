@@ -1,4 +1,12 @@
+# Generated from ONTOS_SPICEDB_SCHEMA (packages/core-runtime/src/permissions/schema.ts).
+# Do not edit by hand: change the schema constant and regenerate (see
+# src/install/spicedb-bootstrap-schema.ts, pinned by tests/unit/spicedb-database-bootstrap.test.ts).
+#
+# Schema only. Core projects every relationship from PostgreSQL intent, so a bootstrap file never
+# carries development or stage grants, and the engine reads this file only when its datastore is empty.
 schema: |-
+  use expiration
+
   definition principal {}
 
   definition tenant {
@@ -91,98 +99,183 @@ schema: |-
     permission is_restricted = restriction
     permission execute = executor
   }
-relationships: |-
-  action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#restriction@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
-  action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#executor@principal:allowed-principal
-  action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#executor@tenant:test-tenant#member
-  action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#restriction@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
-  action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#restriction@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
-  action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#restriction@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ
-  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#restriction@action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz
-  action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#restriction@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ
-  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#restriction@action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz
-  action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#restriction@action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u
-  action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#executor@principal:allowed-principal
-  tenant:test-tenant#member@principal:allowed-principal
-  legal_entity:test-tenant--entity-one#tenant@tenant:test-tenant
-  legal_entity:test-tenant--entity-one#member@principal:allowed-principal
-  module_access:test-tenant--entity-one--property-registry#legal_entity@legal_entity:test-tenant--entity-one
-  module_access:test-tenant--entity-one--property-registry#accessor@principal:allowed-principal
-  resource:test-tenant--entity-one--property-registry--unit--unit-one#module@module_access:test-tenant--entity-one--property-registry
-  resource:test-tenant--entity-one--property-registry--unit--unit-one#reader@principal:allowed-principal
-  resource:test-tenant--entity-one--property-registry--unit--unit-one#writer@principal:allowed-principal
-  tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#member@principal:6c67676e-cc38-47fa-b258-f37c529b2586
-  tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#member@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
-  legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#tenant@tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76
-  legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#member@principal:6c67676e-cc38-47fa-b258-f37c529b2586
-  legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#member@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
-  module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjb250YWN0cy5jb3JlIl0#legal_entity@legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ
-  module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjb250YWN0cy5jb3JlIl0#accessor@principal:6c67676e-cc38-47fa-b258-f37c529b2586
-  module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjb250YWN0cy5jb3JlIl0#accessor@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
-  tenant:50000000-0000-4000-8000-000000000001#member@principal:60000000-0000-4000-8000-000000000001
-  tenant:50000000-0000-4000-8000-000000000001#identity_admin@principal:60000000-0000-4000-8000-000000000001
-  tenant:50000000-0000-4000-8000-000000000001#support@principal:60000000-0000-4000-8000-000000000001
-  legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#tenant@tenant:50000000-0000-4000-8000-000000000001
-  legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#member@principal:60000000-0000-4000-8000-000000000001
-  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJjb250YWN0cy5jb3JlIl0#legal_entity@legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
-  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJjb250YWN0cy5jb3JlIl0#accessor@principal:60000000-0000-4000-8000-000000000001
-  tenant:50000000-0000-4000-8000-000000000002#member@principal:60000000-0000-4000-8000-000000000002
-  legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#tenant@tenant:50000000-0000-4000-8000-000000000002
-  legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#member@principal:60000000-0000-4000-8000-000000000002
-  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjb250YWN0cy5jb3JlIl0#legal_entity@legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
-  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjb250YWN0cy5jb3JlIl0#accessor@principal:60000000-0000-4000-8000-000000000002
 
-assertions:
-  assertTrue:
-    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
-    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:allowed-principal
-    - action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
-    - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
-    - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u
-    - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#execute@principal:allowed-principal
-    - tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
-    - tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
-    - legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
-    - legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
-    - module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjb250YWN0cy5jb3JlIl0#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
-    - module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjb250YWN0cy5jb3JlIl0#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
-    - tenant:50000000-0000-4000-8000-000000000001#manage_identity@principal:60000000-0000-4000-8000-000000000001
-    - tenant:50000000-0000-4000-8000-000000000001#impersonate@principal:60000000-0000-4000-8000-000000000001
-    - module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJjb250YWN0cy5jb3JlIl0#access@principal:60000000-0000-4000-8000-000000000001
-    - module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjb250YWN0cy5jb3JlIl0#access@principal:60000000-0000-4000-8000-000000000002
-    - legal_entity:test-tenant--entity-one#access@principal:allowed-principal
-    - module_access:test-tenant--entity-one--property-registry#access@principal:allowed-principal
-    - resource:test-tenant--entity-one--property-registry--unit--unit-one#read@principal:allowed-principal
-    - resource:test-tenant--entity-one--property-registry--unit--unit-one#write@principal:allowed-principal
-  assertFalse:
-    - action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA
-    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:denied-principal
-    - action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#execute@principal:denied-principal
-    - legal_entity:test-tenant--entity-one#access@principal:denied-principal
-    - module_access:test-tenant--entity-one--property-registry#access@principal:denied-principal
-    - resource:test-tenant--entity-one--property-registry--unit--unit-one#read@principal:denied-principal
-    - resource:test-tenant--entity-one--property-registry--unit--unit-one#write@principal:denied-principal
+  // Authorization v2 engine: the reference schema v2.2, added next to the legacy definitions above,
+  // which it never reads or changes. Reference names gain an access_ prefix (company becomes
+  // access_legal_entity, so scope.company becomes access_scope.legal_entity), and the reference's
+  // humans-only principal becomes access_human: the legacy principal is the object ID space of every
+  // core.principals kind (human, service, integration, agent, system), so v2 relations accept only
+  // access_human (a verified human) and agent, and no other principal kind ever reaches a v2 tuple.
+  // Core is the only writer. Scope equality, cardinality, immutable incarnations, cell metadata and
+  // delegation containment are Core writer invariants, and so are: never projecting an agent into a
+  // run or approve cell of a sensitive or critical capability, and correlating a mandate's
+  // assignments with the exact assignments its grants bind (access_mandate). SpiceDB cannot relate
+  // two targets of one resource for the same subject, so those correlations are extra CheckBulk items
+  // Core proves in the same snapshot; a caveat without context or an indeterminate answer is denied
+  // (fail closed), and only a transport or deadline failure is unavailable. PostgreSQL owns intent and
+  // deadlines; Core's wall-clock fence stays mandatory even when a fully consistent datastore still
+  // serves a pre-expiry revision. Agent connection ceilings are Core intent, intersected outside the
+  // graph.
+  caveat amount_ceiling(amount_minor int, currency string, limit_minor int, limit_currency string) {
+    amount_minor >= 0 && amount_minor <= limit_minor && currency == limit_currency
+  }
+
+  caveat target_set(resource_key string, resource_keys list<string>) {
+    resource_key in resource_keys
+  }
+
+  caveat bounded_target_set(resource_key string, resource_keys list<string>, amount_minor int, currency string, limit_minor int, limit_currency string) {
+    resource_key in resource_keys &&
+    amount_minor >= 0 && amount_minor <= limit_minor && currency == limit_currency
+  }
+
+  definition agent {}
+
+  // A verified human. Only this type and agent appear in v2 relations; service, integration and
+  // system principals stay outside v2 (their own workload classification is legacy/O29).
+  definition access_human {}
+
+  definition access_tenant {
+    relation member: access_human | access_human with expiration | agent | agent with expiration
+    relation owner: access_human
+    relation suspended: access_human | agent
+    permission access = member - suspended
+    permission administer = owner & access
+  }
+
+  definition access_legal_entity {
+    relation tenant: access_tenant
+    relation member: access_human | access_human with expiration | agent | agent with expiration
+    relation access_admin: access_human
+    relation suspended: access_human | agent
+    permission access = (member & tenant->access) - suspended
+    permission administer = ((access_admin & access) + tenant->administer) - suspended
+    permission select = access + administer
+  }
+
+  definition access_scope {
+    relation tenant: access_tenant
+    // Exactly one context, never a null-legal-entity wildcard.
+    relation legal_entity: access_legal_entity
+    relation tenant_context: access_tenant
+    permission access = (legal_entity->access + tenant_context->access) & tenant->access
+    permission administer = (legal_entity->administer + tenant_context->administer) & tenant->access
+    permission select = access + administer
+  }
+
+  definition access_installation {
+    relation enabled_scope: access_scope
+    permission access = enabled_scope->access
+  }
+
+  definition access_assignment {
+    relation scope: access_scope
+    // One holder, never reused after removal or replacement.
+    relation holder: access_human | access_human with expiration
+    relation agent_holder: agent | agent with expiration
+    permission eligible = (holder + agent_holder) & scope->access
+  }
+
+  definition access_role_binding {
+    relation scope: access_scope
+    // One immutable revision in one scope. Assignment IDs survive role edits.
+    relation member: access_assignment#holder
+    relation agent_member: access_assignment#agent_holder
+    permission eligible = (member + agent_member) & scope->access
+    permission human_eligible = member & scope->access
+  }
+
+  definition access_delegation {
+    relation scope: access_scope
+    relation manager: access_human | access_human with expiration
+    permission manage = manager & scope->access
+  }
+
+  definition access_capability {
+    relation scope: access_scope
+    relation installation: access_installation
+    relation delegated_manager: access_delegation
+    permission available = installation->access & scope->access
+    // Management survives uninstall. It never implies business execution.
+    permission configure = scope->administer + delegated_manager->manage
+
+    relation run_all_grant: access_grant
+    relation run_assigned_grant: access_grant
+    relation run_entrusted_grant: access_grant
+    relation run_team_grant: access_grant
+    permission run_all = run_all_grant->use & available
+    permission run_assigned = run_assigned_grant->use & available
+    permission run_entrusted = run_entrusted_grant->use & available
+    permission run_team = run_team_grant->use & available
+
+    relation propose_all_grant: access_grant
+    relation propose_assigned_grant: access_grant
+    relation propose_entrusted_grant: access_grant
+    relation propose_team_grant: access_grant
+    permission propose_all = propose_all_grant->use & available
+    permission propose_assigned = propose_assigned_grant->use & available
+    permission propose_entrusted = propose_entrusted_grant->use & available
+    permission propose_team = propose_team_grant->use & available
+
+    relation approve_all_grant: access_grant
+    relation approve_assigned_grant: access_grant
+    relation approve_entrusted_grant: access_grant
+    relation approve_team_grant: access_grant
+    permission approve_all = approve_all_grant->human_use & available
+    permission approve_assigned = approve_assigned_grant->human_use & available
+    permission approve_entrusted = approve_entrusted_grant->human_use & available
+    permission approve_team = approve_team_grant->human_use & available
+  }
+
+  definition access_grant {
+    relation capability: access_capability
+    // One complete cell per role revision x scope, not per assignee.
+    // A personal grant is the SAME shape with a one-assignment binding.
+    // Core checks the exact capability-slot -> grant -> binding -> assignment
+    // userset links in the SAME CheckBulk snapshot, not independent allows: a
+    // binding member is access_assignment:<id>#holder, so a witness on
+    // binding->member for that exact userset subject correlates one incarnation.
+    relation binding: access_role_binding | access_role_binding with amount_ceiling | access_role_binding with target_set | access_role_binding with bounded_target_set
+    permission use = binding->eligible & capability->available
+    permission human_use = binding->human_eligible & capability->available
+  }
+
+  definition access_team {
+    relation scope: access_scope
+    relation member: access_human | agent
+    permission eligible = member & scope->access
+  }
+
+  definition access_projection {}
+
+  definition access_record {
+    relation projection: access_projection
+    relation scope: access_scope
+    relation assigned: access_human | agent
+    relation entrusted: access_human | agent
+    relation team: access_team
+    relation creator: access_human | agent
+    // Predicates only. No portal, field, self-service or legacy bypass.
+    permission assigned_match = assigned & scope->access
+    permission entrusted_match = entrusted & scope->access
+    permission team_match = team->eligible & scope->access
+  }
+
+  definition access_mandate {
+    relation scope: access_scope
+    relation executor: access_human with expiration
+    relation execution_assignment: access_assignment
+    relation approval_assignment: access_assignment
+    relation execution_grant: access_grant
+    relation approval_grant: access_grant
+    // The executor is the approver (P5). A different member of the shared binding cannot revive the
+    // approver's removed incarnation: Core binds membership incarnations and original cells, and on an
+    // equal-or-broader role edit re-points grant witnesses atomically. Revocation events permanently
+    // delete executor and mark the proposal lapsed.
+    // use/human_use only prove the approver holds SOME assignment in each grant's binding, because a
+    // permission cannot compare two relation targets. Core therefore proves, in the same CheckBulk
+    // snapshot, that each grant's binding carries this mandate's exact assignment userset
+    // (access_assignment:<id>#holder on access_role_binding#member) and that scope, assignments and
+    // grants agree (O49).
+    permission live = executor & execution_assignment->eligible & approval_assignment->eligible & execution_grant->human_use & approval_grant->human_use & scope->access
+  }

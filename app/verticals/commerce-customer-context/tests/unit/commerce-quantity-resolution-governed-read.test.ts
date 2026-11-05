@@ -2,17 +2,14 @@ import { Effect, Schema } from 'effect';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 
-import { getReadConditionalPermissionPlan, getReadServiceFactory } from '@app/core-runtime/testing/reads';
+import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 
 import {
   CommerceQuantityResolutionRequestSchema,
   CommerceQuantityResolutionResponseSchema,
 } from '../../shared/apis/commerce-quantity-resolution.ts';
 import {
-  commerceQuantityGuestPermissionTargets,
-  commerceQuantityProfilePermissionTargets,
   commerceQuantityResolutionProductionServices,
-  commerceQuantityResolutionPermission,
   commerceQuantityResolutionRead,
   makeCommerceQuantityResolutionServices,
   handleCommerceQuantityResolution,
@@ -145,39 +142,14 @@ it.effect('the registered production factory fails closed without authoritative 
   }),
 );
 
-it('declares finite Guest, Retail, and Counterparty authorization targets', () => {
-  const plan = getReadConditionalPermissionPlan(commerceQuantityResolutionPermission);
-  expect(commerceQuantityResolutionPermission.branchTags).toEqual(['COUNTERPARTY', 'GUEST', 'RETAIL']);
-  expect(plan.branches.GUEST.requiredKinds).toEqual(['module']);
-  expect(plan.branches.RETAIL.requiredKinds).toEqual(['module', 'resource_read']);
-  expect(plan.branches.COUNTERPARTY.requiredKinds).toEqual(['module', 'resource_read']);
-  expect(commerceQuantityGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
-
-  const retailSubject = {
-    kind: 'RETAIL' as const,
-    profileRef: {
-      moduleId: 'commerce.customer-context' as const,
-      resourceId: '40000000-0000-4000-8000-000000000001',
-      resourceType: 'commerce.customer-context.retail-customer-profile' as const,
-      tenantId,
-    },
-  };
-  expect(
-    commerceQuantityProfilePermissionTargets(
-      Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({ ...request, subject: retailSubject }),
-      retailSubject,
-      scope,
-    ),
-  ).toEqual([
-    { kind: 'module', moduleId: 'commerce.customer-context' },
-    {
-      kind: 'resource_read',
-      permission: 'read',
-      resource: {
-        moduleId: retailSubject.profileRef.moduleId,
-        resourceId: retailSubject.profileRef.resourceId,
-        resourceType: retailSubject.profileRef.resourceType,
-      },
-    },
-  ]);
+it('declares one scope-wide capability and keeps no per-record permission plan', () => {
+  // One declaration cannot branch per Guest/Retail/Counterparty subject, so the branch rule moved into
+  // the owner facts; here the payload names no Counterparty the overlay could check, so the read keeps
+  // its single scope-wide capability and declares no owner facts (O62.4, O67-Q1).
+  expect(commerceQuantityResolutionRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.customer-context.commerce-quantity.resolve',
+    kind: 'read',
+    selectors: [],
+  });
+  expect(commerceQuantityResolutionRead.descriptor.accessOwnerFacts).toBeUndefined();
 });

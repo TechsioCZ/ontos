@@ -247,10 +247,7 @@ describe('Revise Product Type Action contract', () => {
   it('declares stale basis and owner/persistence unavailability under the Action lifecycle', () => {
     const { descriptor } = reviseProductTypeAction;
     expect(descriptor.idempotency).toBe('required');
-    expect(descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(
       Schema.is(descriptor.domainErrorSchema)(
         ReviseProductTypeStaleBasisSchema.make({

@@ -43,12 +43,24 @@ import type {
   ReadRuntime,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import {
+  makeAccessProjectionCompiler,
+  makeDeferredAccessProjectionTransport,
+} from '@app/core-runtime/access/compiler/spice-db-compiler';
+import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
+import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
+import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
+import { AccessPortalAdmissionsLive, AccessPortalProjectionLive } from '@app/core-runtime/access/portal/runtime';
+import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -143,7 +155,6 @@ import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../src/per
 import { commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive } from '../src/persistence/invitation-claim-action-preflight.ts';
 import { profileReconfirmationPolicyUnavailableLive } from '../src/integrations/profile-reactivation-eligibility.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../src/profile-counterparty-role-eligibility.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../src/integrations/retail-permission-reader.ts';
 import { purchaseLimitPersistenceLayer } from '../src/persistence/purchase-limit-persistence.ts';
 import { purchaseProposalBasisCurrentnessLive as purchaseLimitEvaluationCurrentnessLive } from '../src/services/purchase-proposal-basis.service.ts';
 import { purchaseApprovalCurrentnessFactoryLive } from '../src/persistence/purchase-approval-currentness-persistence.ts';
@@ -532,8 +543,15 @@ const runtimeObservabilityLive = Layer.mergeAll(
 );
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(commercePortalAuthPlatformCryptoLive),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const compositionHttpClientLive = FetchHttpClient.layer.pipe(
@@ -545,7 +563,13 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
 );
 const readRuntimeCoreLive = makeReadRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
   Layer.provide(
-    Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
+    Layer.mergeAll(
+      CorePersistenceLive,
+      ContextAccessLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
   ),
   Layer.provide(activeApplicationCompositionLive),
 );
@@ -629,7 +653,9 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   operationalScopeResolverLive,
 );
 const actionRuntimeCoreLive = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration).pipe(
-  Layer.provide(commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive),
+  Layer.provide(
+    Layer.mergeAll(commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive, accessEnforcementLive),
+  ),
   Layer.provide(actionRuntimeDependenciesLive),
 );
 /** Real owner preflight, assembled independently so runtime requirements remain explicit. */
@@ -758,7 +784,6 @@ const commerceEnrollmentOwnerEffectRegistryRealmLive = CommerceEnrollmentOwnerEf
   Layer.provide(
     Layer.mergeAll(
       ContextAccessLive,
-      profileRetailPermissionReaderFactoryLive.pipe(Layer.provide(ContextAccessLive)),
       commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
       commercePortalAuthAccountCreationReconciliationRealmLive,
       commerceCoreIdentityRealmLive,
@@ -827,12 +852,31 @@ const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
     ),
   ),
 );
+/**
+ * The engine transport Core's single projection writer writes through. It opens on the first portal write and
+ * closes with the runtime, so this backend starts and answers readiness without reaching SpiceDB.
+ */
+const accessProjectionCompilerLive = Layer.effect(
+  AccessProjectionCompiler,
+  makeDeferredAccessProjectionTransport(loadSpiceDbConfig()).pipe(Effect.map(makeAccessProjectionCompiler)),
+);
+/**
+ * Core's portal access of this deployment: the projection every portal-writing Action reconciles through
+ * once it committed, and the admissions the invitation claim commits in Core's own transaction.
+ */
+const accessPortalRuntimeLive = Layer.mergeAll(
+  AccessPortalProjectionLive.pipe(
+    Layer.provide(AccessProjectionWriterLive),
+    Layer.provide(Layer.mergeAll(TenantIntentLoaderLive, AccessWriteJournalStoreLive, accessProjectionCompilerLive)),
+  ),
+  AccessPortalAdmissionsLive,
+).pipe(Layer.provide(Layer.mergeAll(CorePersistenceLive, commercePortalAuthPlatformCryptoLive)));
 /** The owner preflight remains an explicit input to the enrollment-aware runtime. */
 const actionRuntimeAwaitingOwnerPreflight = commerceEnrollmentActionRuntimeLive.pipe(
   Layer.provideMerge(activeApplicationCompositionLive),
   Layer.provideMerge(ContextAccessLive),
   Layer.provideMerge(PurchaseApprovalFinalBindingAuthorityLive.pipe(Layer.provide(activeApplicationCompositionLive))),
-  Layer.provide(Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeDependenciesLive)),
+  Layer.provide(Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeDependenciesLive, accessEnforcementLive)),
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
@@ -842,6 +886,9 @@ const actionRuntimeAwaitingOwnerPreflight = commerceEnrollmentActionRuntimeLive.
   // Scoped owner factories execute after receiving; their declared Crypto requirement must remain
   // visible in the runtime context, exactly as for the Read runtime.
   Layer.provideMerge(commercePortalAuthPlatformCryptoLive),
+  // Every portal-writing Action reconciles after its attempt, and the invitation claim admits its
+  // recipient, through the runtime context the governed routes run with.
+  Layer.provideMerge(accessPortalRuntimeLive),
   Layer.provide(DatabaseConfigLive),
 );
 const actionRuntimeAwaitingOwnerPreparation = actionRuntimeAwaitingOwnerPreflight.pipe(
@@ -864,7 +911,6 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
 );
 const configuredProductionExternalPortsLive = commerceCustomerContextProductionExternalPortsLive.pipe(
   Layer.provide(activeApplicationCompositionLive),
-  Layer.provide(commercePortalAuthPlatformCryptoLive),
 );
 export const commerceCustomerContextInvitationClaimPreflightLive = invitationClaimPreflightWithOwnerServicesLive.pipe(
   Layer.provide(configuredProductionExternalPortsLive),

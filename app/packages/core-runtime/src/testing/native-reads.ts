@@ -7,7 +7,7 @@ import { ActiveApplicationCompositionService } from '../modules/active-applicati
 import { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import { getVerticalRuntimeActions, getVerticalRuntimeReads } from '../modules/runtime-registration.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
-import { OwnerAuthorizationOverlay } from '../permissions/owner-authorization-overlay.ts';
+import { OwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
 import { makeActionPermissionLive, toSpiceDbActionObjectId } from '../permissions/service.ts';
 import { getReadPermissionTargetResolver } from '../reads/definition.ts';
 import type { ReadRegistration } from '../reads/definition.ts';
@@ -55,6 +55,8 @@ import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gatewa
 import { makeModuleStateGate } from '../modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../operations/context.ts';
+import type { BoundAccessGate } from '../operations/access-gate.ts';
+import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from './access-gate.ts';
 import type { OperationalScope, OperationalScopeRequest } from '../operations/context.ts';
 import type { OperationContextError } from '../operations/errors.ts';
 import {
@@ -86,9 +88,36 @@ const unavailable = (cause?: unknown, reason = 'The isolated native Read test fi
 const requiredObjectId = (id: string | undefined) =>
   id === undefined ? Effect.fail(unavailable()) : Effect.succeed(id);
 
+/**
+ * The one access gate this native harness binds: a protected Read is decided here and nowhere else
+ * (CUTOVER-PLAN §3.1). The harness carries only the legacy SpiceDB graph, so a suite states its
+ * authority explicitly; the default is a denial, never an implicit allow.
+ */
+export const nativeReadAccessDecision = (
+  access?: 'allowed' | 'denied' | 'needs_approval' | 'unavailable',
+): BoundAccessGate => makeScriptedBoundAccessGate(access ?? 'denied').bound;
+
+/**
+ * The one gate a native Read context binds: a suite's prebuilt, controllable gate when it passes one
+ * (C1: allow → revoke → deny mid-run), otherwise the scripted answer. Pure, so the precedence is
+ * unit-testable without a database; an unstated authority stays a denial.
+ */
+export const nativeReadAccessGate = (
+  options: Pick<NativeReadTestContextOptions, 'access' | 'accessDecision'>,
+): BoundAccessGate => options.accessDecision ?? nativeReadAccessDecision(options.access);
+
 export { NativeReadTestOwnerRegistration } from './native-read-owner-registration.ts';
 
 export interface NativeReadTestContextOptions {
+  /** The one access gate's scripted answer for every protected Read (CUTOVER-PLAN §3.1). */
+  readonly access?: 'allowed' | 'denied' | 'needs_approval' | 'unavailable';
+  /**
+   * A prebuilt, controllable gate instead of the scripted answer. A suite that must revoke and
+   * re-grant authority mid-run (C1: allow → revoke → deny) passes its own mutable `BoundAccessGate`,
+   * so the one seam a protected Read is decided at stays real while its answer changes. When given it
+   * replaces `access`; the default behaviour is unchanged (an unstated authority is a denial).
+   */
+  readonly accessDecision?: BoundAccessGate;
   /** Only the disposable localhost database created by the isolated-native-database fixture. */
   readonly connections?: {
     readonly admin: { readonly connectionString: Redacted.Redacted };
@@ -160,7 +189,7 @@ const relation = (resourceType: string, resourceId: string, name: string, subjec
  * must never leave immutable owner history orphaned. Revoke exact SpiceDB grants independently.
  * Disposal of the dedicated sandbox/database requires the operator's later explicit authorization.
  */
-export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')(function* makeNativeReadTestContext(
+export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')(function* nativeReadTestContext(
   options: NativeReadTestContextOptions,
   ownerRegistration?: VerticalRuntimeRegistration,
 ) {
@@ -401,10 +430,21 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     { concurrency: 1 },
   );
   yield* write([...relationships.values()], v1.RelationshipUpdate_Operation.TOUCH);
-  const contextAccess = yield* makeContextAccessLive();
-  const scopeResolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
+  // The scope's company check is the access gate's question; this harness builds the legacy SpiceDB
+  // graph only, so its scope answers exactly the company the fixture resolved.
+  const { contextAccess, scopeResolver } = yield* Effect.all(
+    {
+      contextAccess: makeContextAccessLive(),
+      scopeResolver: makeOperationalScopeResolver(
+        makeOperationalScopeRepository(database),
+        makeTestOperationalScopeAccess(),
+      ),
+    },
+    { concurrency: 2 },
+  );
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   const gateway = makeModuleEntrypointGateway(moduleStateGate);
+  const accessDecision = nativeReadAccessGate(options);
   const optionalOwnerRegistration = yield* Effect.serviceOption(NativeReadTestOwnerRegistration);
   const runtimeOptions =
     ownedRuntimeOptions ??
@@ -412,12 +452,16 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
       onNone: () => ({}),
       onSome: (registration) => ({ ownerRegistration: registration }),
     });
-  const runtime = makeReadRuntime(database, gateway, scopeResolver, contextAccess, runtimeOptions);
+  const runtime = makeReadRuntime(database, gateway, scopeResolver, contextAccess, {
+    ...runtimeOptions,
+    accessDecision,
+  });
   const actionRuntime =
     ownedRuntimeOptions === undefined
       ? undefined
       : makeActionRuntime(database, makeActionRepository(crypto), yield* makeActionPermissionLive(), scopeResolver, {
           ...ownedRuntimeOptions,
+          accessDecision,
           contextAccess,
           moduleEntrypointGateway: gateway,
           moduleStateGate,
@@ -689,8 +733,7 @@ const verifiedNativeReadRevision = (input: VerifiedNativeReadScopeInput) => {
     !Schema.is(ModuleEntrypointSchema)(input.entrypoint) ||
     input.entrypoint.scope !== 'tenant' ||
     input.entrypoint.access !== 'read' ||
-    input.entrypoint.authorization.kind !== 'context_permission' ||
-    input.entrypoint.authorization.permission !== 'module.access'
+    input.entrypoint.authorization.kind !== 'protected'
   ) {
     return Option.none();
   }
@@ -755,8 +798,10 @@ export const withVerifiedNativeReadScope = Effect.fn('NativeReadTestContext.with
     ) {
       return yield* unavailable(undefined, 'Native verified Read requires the restricted runtime database role');
     }
-    const contextAccess = yield* makeContextAccessLive();
-    const resolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
+    const resolver = yield* makeOperationalScopeResolver(
+      makeOperationalScopeRepository(database),
+      makeTestOperationalScopeAccess(),
+    );
     const scope = yield* resolver.resolve({
       audience: input.audience,
       correlationId: input.correlationId,
@@ -774,19 +819,6 @@ export const withVerifiedNativeReadScope = Effect.fn('NativeReadTestContext.with
     const gateway = makeModuleEntrypointGateway(makeModuleStateGate(makeTenantModuleStateService(database)));
     const snapshot = yield* gateway.prepareSnapshot(scope, [input.entrypoint]);
     yield* gateway.check(snapshot, input.entrypoint);
-    const moduleAccess = yield* contextAccess.modules({
-      legalEntityId: scope.legalEntityId,
-      moduleIds: [input.entrypoint.moduleKey],
-      principalId: scope.principalId,
-      tenantId: scope.tenantId,
-    });
-    if (
-      moduleAccess.length !== 1 ||
-      moduleAccess[0]?.key !== input.entrypoint.moduleKey ||
-      moduleAccess[0]?.decision !== 'allowed'
-    ) {
-      return yield* unavailable(undefined, 'Native verified Read module access was not allowed');
-    }
     return yield* database.executor.transaction(
       Effect.fn('NativeReadTestContext.withVerifiedScopeTransaction')(
         function* verifiedScopeTransaction(

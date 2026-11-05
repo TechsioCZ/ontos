@@ -49,6 +49,14 @@ export const confirmGtinAction: ActionRegistration<
   ConfirmGtinServices
 > = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.gtin.confirm',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.confirm-gtin.access.v1',
@@ -60,7 +68,7 @@ export const confirmGtinAction: ActionRegistration<
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

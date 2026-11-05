@@ -1066,7 +1066,8 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   expect(byName.get("Resolve the environment's last successful deployment")?.run).toContain(
     DEPLOY_ENVIRONMENT_ARGUMENT,
   );
-  expect(planRun).toContain('--authorization-environment "$DEPLOY_ENVIRONMENT"');
+  // The plan carries no authorization promotion gate: v2 replaced the rollout contract (O62).
+  expect(planRun).not.toContain('--authorization-environment');
   // The Outbox Worker mode, not the deploy target, chooses the workers the plan deploys and stops.
   expect(planRun).toContain('--outbox-worker-mode "$OUTBOX_WORKER_MODE"');
   expect(planRun).not.toContain('--deploy-target');
@@ -1587,7 +1588,10 @@ const ROOT_GATE_JOBS = [
   'service-integration',
   NODE_ARTIFACT_BUILD_JOB,
 ] as const;
-/** Every gate job; each target's artifact proofs run inside its own build shards. */
+/**
+ * Every gate job; each target's artifact proofs run inside its own build shards. OntOS runs on Zerops
+ * only, so the Cloudflare artifact build still runs beside the gates but no longer gates a merge.
+ */
 const GATE_JOBS = ROOT_GATE_JOBS;
 const GatedJobsSchema = Schema.Struct({
   jobs: Schema.Record(
@@ -1647,7 +1651,7 @@ it('skips the gates on main only for a commit the merge queue already proved', (
   expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
   expect(lookup).toContain('actions/runs/$GITHUB_RUN_ID');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-  for (const gate of ROOT_GATE_JOBS) {
+  for (const gate of [...ROOT_GATE_JOBS, CLOUDFLARE_ARTIFACT_BUILD_JOB]) {
     expect(jobs[gate]?.needs).toEqual(
       gate === 'service-integration' || gate === WORKSPACE_GATE_JOB
         ? [QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB]

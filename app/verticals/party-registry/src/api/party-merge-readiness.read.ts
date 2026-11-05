@@ -9,7 +9,7 @@ import {
 import { evaluateDisabledMergeReadiness } from '../merge/merge-readiness.ts';
 
 const partyMergeReadinessEntrypoint = defineTenantModuleEntrypoint({
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-merge-readiness',
   moduleKey: 'party.registry',
@@ -18,6 +18,17 @@ const partyMergeReadinessEntrypoint = defineTenantModuleEntrypoint({
 
 export const partyMergeReadinessRead = defineRead(
   {
+    // No accessTarget: a readiness question names two or more Parties, and a single-record target
+    // cannot express the conjunction of both ends a merge needs (O11). The `all` slot decides it
+    // scope-wide; an explicit-target grant stays refused instead of checking only one end.
+    accessDeclaration: {
+      key: 'party.registry.party-merge.read-readiness',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'identity-review', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
     accessKind: 'detail',
     entrypoint: partyMergeReadinessEntrypoint,
     evidencePolicy: {
@@ -27,7 +38,6 @@ export const partyMergeReadinessRead = defineRead(
     inputSchema: PartyMergeReadinessRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-merge-readiness',
     resultSchema: PartyMergeReadinessResponseSchema,
@@ -45,5 +55,4 @@ export const partyMergeReadinessRead = defineRead(
       result: evaluateDisabledMergeReadiness(input.partyRefs),
     }),
   () => Effect.succeed({}),
-  () => ({ kind: 'tenant', permission: 'merge_party_identity' }),
 );

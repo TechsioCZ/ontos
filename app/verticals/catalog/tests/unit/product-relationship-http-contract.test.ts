@@ -46,10 +46,10 @@ describe('Product relationship HTTP Actions', () => {
       expect(api).toBeDefined();
       expect(client).toBeDefined();
       expect(catalogPublicOperationContracts[key]).toEqual({
+        accessKind: 'action',
         authorityBundle: 'PRODUCT_EDITOR',
         businessTarget: 'product-relationship',
         permission: key,
-        permissionKind: 'action_execution',
         scope: 'tenant',
         version: '1',
       });

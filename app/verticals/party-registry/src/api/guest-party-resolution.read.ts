@@ -17,7 +17,7 @@ import { resolveGuestPartyEvidence } from '../services/guest-party-resolution.se
 
 const guestPartyResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'party.registry.api.guest-party-resolution',
   moduleKey: 'party.registry',
   role: 'api',
@@ -73,6 +73,22 @@ const readGuestPartyResolution = (
 
 export const guestPartyResolutionRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason:
+        "Commerce Customer Context resolves guest evidence for the buyer it relays, under that buyer's own rights.",
+      subject: 'rights',
+    },
+    accessDeclaration: {
+      key: 'party.registry.guest-party.resolve',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'party-identity', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // No field group: the result names an outcome and opaque Party references (O2), and the candidate
+    // evidence the caller supplied is echoed by identity, not by a governed personal field.
     accessKind: 'detail',
     entrypoint: guestPartyResolutionEntrypoint,
     evidencePolicy: {
@@ -82,7 +98,6 @@ export const guestPartyResolutionRead = defineRead(
     inputSchema: GuestPartyResolutionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.guest-party-resolution',
     resultSchema: GuestPartyResolutionResponseSchema,
@@ -94,5 +109,4 @@ export const guestPartyResolutionRead = defineRead(
       resolve: (input: Parameters<typeof resolveGuestPartyEvidence>[1]) =>
         resolveGuestPartyEvidence(transaction, input),
     }),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

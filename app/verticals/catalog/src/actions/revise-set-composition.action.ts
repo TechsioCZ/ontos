@@ -65,6 +65,14 @@ export const handleReviseSetComposition = Effect.fn('ReviseSetCompositionAction.
 
 export const reviseSetCompositionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.set-composition.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'set-composition', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.revise-set-composition.access.v1',
@@ -75,7 +83,7 @@ export const reviseSetCompositionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.revise-set-composition',
       moduleKey: MODULE_KEY,
       role: 'action',

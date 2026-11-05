@@ -45,7 +45,7 @@ const SearchResultItem = ({
         to="/resources/$moduleId/$resourceType/$resourceId"
         variant="secondary"
       >
-        {result.title}
+        {result.title ?? t('shell.search.name_hidden')}
       </LinkButton>
       <div className="shell:flex shell:flex-wrap shell:gap-2">
         <Badge size="sm" variant="outline">

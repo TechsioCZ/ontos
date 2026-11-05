@@ -8,6 +8,7 @@ export const catalogCorsAllowedHeaders = [
   'Content-Type',
   'Idempotency-Key',
   'Traceparent',
+  'X-Action-Intent',
   'X-Correlation-Id',
   'X-Modernjs-Bff-Operation-Context',
   'X-Ontos-Composition-Revision',

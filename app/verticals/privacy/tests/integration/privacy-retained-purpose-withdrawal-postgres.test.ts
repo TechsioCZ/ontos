@@ -1,4 +1,5 @@
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { recordConsentDecisionAction } from '../../src/actions/record-consent-decision.action.ts';
 import { addProcessingPurposeVersionAction } from '../../src/actions/add-processing-purpose-version.action.ts';
@@ -62,6 +63,7 @@ const makeRetainedNative = Effect.fn('RetainedWithdrawal.makeNative')(function* 
 ) {
   const { isolated } = yield* makeRetainedIsolation();
   return yield* makeNativeReadTestContext({
+    access: 'allowed',
     connections: {
       admin: { connectionString: Redacted.make(isolated.connections.admin.connectionString) },
       runtime: { connectionString: Redacted.make(isolated.connections.runtime.connectionString) },
@@ -838,6 +840,7 @@ it.live(
       const { isolated, snapshot } = yield* makeRetainedIsolation();
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [
             addProcessingPurposeVersionAction.descriptor.actionKey,
             recordConsentDecisionAction.descriptor.actionKey,
@@ -879,7 +882,10 @@ it.live(
             .pipe(Effect.orDie),
         );
       }
-      const context = yield* Layer.build(fixture.layer);
+      // The one access gate this suite scripts (the native database carries no v2 access intent and
+      // reaches no engine), plus the per-principal refusals it names (see `live-access-authority`).
+      const deniedAccess = createPrivacyDeniedAccess();
+      const context = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
       const original = yield* fixture
         .prepareOwner(prepareOriginalConsent, 'required')
         .pipe(Effect.provideContext(context));
@@ -930,29 +936,10 @@ it.live(
           tenantId: fixture.tenantId,
         });
         const runtime = yield* ReadRuntime.pipe(Effect.provideContext(context));
-        const missingModule = yield* runtime
-          .runRead({
-            input: { scopeRefs: [withdrawal.scope.scopeRef] },
-            principal,
-            registration: currentConsentRead,
-            transport: { correlationId: yield* nextId },
-          })
-          .pipe(Effect.provideContext(context), Effect.result);
-        expect(Result.isFailure(missingModule)).toBe(true);
-        if (Result.isFailure(missingModule)) {
-          expect(missingModule.failure).toMatchObject({ code: 'read_permission_denied' });
-        }
-        // This genuine produced Purpose reference supplies exact Privacy module access;
-        // the Consent Read itself still targets the module and separately requires its context permission.
-        yield* fixture.grantResourceAccess(original.purpose.purposeRef, fixture.manager.principalId, 'reader');
-        const consentPermission = { moduleId: 'privacy.core', permission: 'privacy.consent.read' };
-        yield* permissions.mutate({
-          legalEntityId: fixture.legalEntityId,
-          operation: 'revoke',
-          principal,
-          target: consentPermission,
-          tenantId: fixture.tenantId,
-        });
+        // v2: one access gate decides this read (O62). The removed legacy permission tuples no longer
+        // refuse anyone, so the suite flips the fixture's own gate answer and proves both the refusal
+        // and the same request succeeding once it is restored.
+        deniedAccess.deny(principal.principalId, 'privacy.core.consent.read');
         const missingContext = yield* runtime
           .runRead({
             input: { scopeRefs: [withdrawal.scope.scopeRef] },
@@ -965,13 +952,7 @@ it.live(
         if (Result.isFailure(missingContext)) {
           expect(missingContext.failure).toMatchObject({ code: 'read_permission_denied' });
         }
-        yield* permissions.mutate({
-          legalEntityId: fixture.legalEntityId,
-          operation: 'grant',
-          principal,
-          target: consentPermission,
-          tenantId: fixture.tenantId,
-        });
+        deniedAccess.allow(principal.principalId, 'privacy.core.consent.read');
         const current = yield* runtime
           .runRead({
             input: { scopeRefs: [withdrawal.scope.scopeRef] },

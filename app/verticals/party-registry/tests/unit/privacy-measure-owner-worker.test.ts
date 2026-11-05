@@ -1,7 +1,7 @@
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import type { OwnerExecutionOutcome, OwnerExecutionStatus } from '@app/privacy/domain/privacy-measure-handoff';
 import type { OutboxPayload } from '@app/privacy/outbox/privacy-measure-dispatched';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { fingerprintPrivacyMeasureHandoff } from '../../src/privacy-measure-handoff.ts';
@@ -36,7 +36,7 @@ const payload: OutboxPayload = {
     tenantId,
   },
 };
-const context: OutboxWorkerHandlerContext = {
+const contextWithoutOriginator: OutboxWorkerHandlerContext = {
   compositionRevision: 'test-composition',
   attemptNumber: 1,
   claimId: 'claim:1',
@@ -49,6 +49,10 @@ const context: OutboxWorkerHandlerContext = {
   tenantSequenceNo: 1n,
   topic: 'privacy.measure.dispatched',
   workerKey: 'party.registry.execute-privacy-measure-worker',
+};
+const context: OutboxWorkerHandlerContext = {
+  ...contextWithoutOriginator,
+  originatorInvocationId: '30000000-0000-4000-8000-000000000009',
 };
 const outcome: OwnerExecutionOutcome = {
   attempt: 1,
@@ -135,6 +139,25 @@ it.effect('fails closed when an owner Resource reference crosses Legal Entity sc
   }),
 );
 
+it.effect('fails closed without an originating invocation and never calls the owner', () =>
+  Effect.gen(function* missingOriginator() {
+    const calls: string[] = [];
+    const failure = yield* Effect.flip(
+      run(
+        {
+          execute: () => Effect.sync(() => calls.push('execute')).pipe(Effect.as(outcome)),
+          load: () => Effect.sync(() => calls.push('load')).pipe(Effect.as(Option.none())),
+          report: () => Effect.sync(() => calls.push('report')),
+        },
+        payload,
+        contextWithoutOriginator,
+      ),
+    );
+    expect(failure).toMatchObject({ code: 'WORKER_CONTEXT_INVALID', retryable: false });
+    expect(calls).toEqual([]);
+  }),
+);
+
 const terminalStatuses: readonly OwnerExecutionStatus[] = ['SUCCEEDED', 'BUSINESS_REJECTED', 'NOT_APPLICABLE'];
 for (const status of terminalStatuses) {
   it.effect(`acknowledges terminal ${status} only after reporting the authoritative outcome`, () =>
@@ -154,11 +177,10 @@ for (const status of terminalStatuses) {
           Effect.sync(() => {
             calls.push('load');
           }).pipe(Effect.andThen(Effect.succeedNone)),
-        report: (value, scope, correlation, revision) =>
+        report: (value, correlation, revision) =>
           Effect.sync(() => {
             calls.push('report');
             expect(value).toEqual(terminal);
-            expect(scope).toBe(legalEntityId);
             expect(correlation).toBe(context.messageId);
             expect(revision).toBe(context.compositionRevision);
           }),

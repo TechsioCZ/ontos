@@ -381,6 +381,14 @@ export const handleManageZeroFloorAuthorization = Effect.fn('ManageZeroFloorAuth
 
 export const manageZeroFloorAuthorizationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.zero-floor-authorization.manage',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'pricing-governance', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.manage-zero-floor-authorization.access.v1',
@@ -402,7 +410,7 @@ export const manageZeroFloorAuthorizationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.manage-zero-floor-authorization',
       moduleKey: MODULE_KEY,
       role: 'action',

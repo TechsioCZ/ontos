@@ -69,7 +69,6 @@ import {
 } from './generated-governed-http-boundary.mts';
 import {
   toPascalCase,
-  readGeneratedReadAuthorization,
   generatedApiGroup,
   generatedProviderIdentities,
   hasExactGeneratedProviderIdentityTopology,
@@ -77,6 +76,7 @@ import {
   hasEngagementLifecycleRegistrationContract,
   hasGeneratedOperationGatewayContract,
   hasMatchingGeneratedProviderAuthorization,
+  hasMatchingProviderLegalEntityScope,
   hasGeneratedProviderApiContract,
   hasGeneratedProviderManifest,
   hasGeneratedProviderReadContract,
@@ -288,13 +288,6 @@ const resolveTopLevelStringConstant = (source: string, identifier: string): stri
   return matches.length === 1 ? matches[0]?.groups?.value : undefined;
 };
 
-const readActionExecution = (properties: ReadonlyMap<string, string>): InventoryAuthorization | undefined => {
-  const provisioning = properties.get('provisioning');
-  return properties.size === 2 && (provisioning === 'explicit' || provisioning === 'tenant_membership_default')
-    ? { kind: 'action_execution', provisioning }
-    : undefined;
-};
-
 const readCapabilityIssuance = (properties: ReadonlyMap<string, string>): InventoryAuthorization | undefined => {
   const credential = properties.get('credential');
   return properties.size === 2 && (credential === 'api_key' || credential === 'session')
@@ -302,24 +295,21 @@ const readCapabilityIssuance = (properties: ReadonlyMap<string, string>): Invent
     : undefined;
 };
 
+/**
+ * The closed `authorization` classification (O62, CUTOVER-PLAN §4.2). `action_execution` and
+ * `context_permission` are gone: a protected surface carries `{ kind: 'protected' }` and the
+ * capability lives only in its access declaration or workload marker.
+ */
 const readAuthorization = (
   tokens: readonly SourceToken[],
   openBraceIndex: number,
-  entrypointOpen: number,
-  entrypointClose: number,
 ): InventoryAuthorization | undefined => {
   const properties = readObjectStringProperties(tokens, openBraceIndex).values;
   return Match.value(properties.get('kind')).pipe(
     Match.when('public', (kind) => (properties.size === 1 ? { kind } : undefined)),
     Match.when('authenticated_principal', (kind) => (properties.size === 1 ? { kind } : undefined)),
     Match.when('owner_local_background', (kind) => (properties.size === 1 ? { kind } : undefined)),
-    Match.when('context_permission', () => {
-      const authorization = readGeneratedReadAuthorization(tokens, entrypointOpen, entrypointClose);
-      return authorization?.kind === 'context_permission' && authorization.permission !== undefined
-        ? { kind: authorization.kind, permission: authorization.permission }
-        : undefined;
-    }),
-    Match.when('action_execution', () => readActionExecution(properties)),
+    Match.when('protected', (kind) => (properties.size === 1 ? { kind } : undefined)),
     Match.when('capability_issuance', () => readCapabilityIssuance(properties)),
     Match.orElse(EffectFunction.constUndefined),
   );
@@ -395,7 +385,7 @@ const readEntrypointAuthorization = (
   let authorization: InventoryAuthorization | undefined;
   for (let cursor = start; cursor < end; cursor += 1) {
     if (tokens[cursor]?.value === 'authorization' && isPropertyValue(tokens, cursor, SyntaxKind.OpenBraceToken)) {
-      authorization = readAuthorization(tokens, cursor + 2, start - 1, end);
+      authorization = readAuthorization(tokens, cursor + 2);
     }
   }
   return authorization;
@@ -508,16 +498,9 @@ const authorizationEquals = (left: InventoryAuthorization | undefined, right: In
   if (left?.kind !== right.kind) {
     return false;
   }
-  if (right.kind === 'action_execution') {
-    return left.kind === right.kind && left.provisioning === right.provisioning;
-  }
-  if (right.kind === 'capability_issuance') {
-    return left.kind === right.kind && left.credential === right.credential;
-  }
-  if (right.kind === 'context_permission') {
-    return left.kind === right.kind && left.permission === right.permission;
-  }
-  return true;
+  return right.kind === 'capability_issuance' && left.kind === 'capability_issuance'
+    ? left.credential === right.credential
+    : true;
 };
 
 const sourceOrEmpty = (sourceMap: ReadonlyMap<string, string>, file: string): string => sourceMap.get(file) ?? '';
@@ -766,8 +749,7 @@ const readActionEntrypoints = (
     {
       access: 'write',
       authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
+        kind: 'protected',
       },
       entrypointKey: `party.registry.${action}`,
       moduleKey: 'party.registry',
@@ -813,12 +795,9 @@ const requireGeneratedActionEntrypoint = (sourceMap: ReadonlyMap<string, string>
     const definedAction = yield* requireDefined(action, file, descriptorMessage);
     const entrypoints = readActionEntrypoints(sourceMap, file, source);
     const rawAuthorization = entrypoints[0]?.authorization;
-    const authorization = yield* rawAuthorization?.kind === 'action_execution'
+    const authorization = yield* rawAuthorization?.kind === 'protected'
       ? Effect.succeed(rawAuthorization)
-      : fail(
-          file,
-          'regenerate this Action with scaffold:action so it declares action_execution authorization and provisioning intent',
-        );
+      : fail(file, 'regenerate this Action with scaffold:action so it declares a protected authorization');
     yield* requireExactEntrypoint(
       file,
       source,
@@ -3063,6 +3042,7 @@ const validateGeneratedProviderClient = (
       clientHeader: hasGeneratedSourceHeader(clientSource, generatedHeader),
       contractHeader: hasGeneratedSourceHeader(contractSource, generatedHeader),
       endpointGroup: expectedGroups.has(endpointGroup),
+      legalEntityScope: hasMatchingProviderLegalEntityScope(providerSource, manifest, moduleId, name, kind),
       manifest: hasGeneratedProviderManifest(manifest, moduleId, name, kind),
       operationGateway: hasGeneratedOperationGatewayContract(gateway, deploymentAppId),
       providerHeader: hasGeneratedSourceHeader(providerSource, generatedHeader),
@@ -3376,18 +3356,29 @@ const validateCanonicalModuleRoute = (state: BoundaryCheckState) =>
       'the Shell must declare its generic governed canonical module route',
     );
     const tokens = tokenize(source);
-    const declarationIndex = tokens.findIndex(
+    const routeMetaIndex = tokens.findIndex(
       (token, index) =>
         token.kind === SyntaxKind.Identifier &&
         token.value === 'routeMeta' &&
-        tokenKindAt(tokens, index + 1) === SyntaxKind.EqualsToken &&
-        tokenKindAt(tokens, index + 2) === SyntaxKind.OpenBraceToken,
+        tokenKindAt(tokens, index + 1) === SyntaxKind.EqualsToken,
     );
-    const properties = readObjectStringProperties(tokens, declarationIndex + 2);
+    // The carrier is authored either as a bare literal or wrapped in `defineRouteMeta(...)` (O62, §4.3).
+    const wrappedRouteMeta =
+      tokens[routeMetaIndex + 2]?.kind === SyntaxKind.Identifier &&
+      tokens[routeMetaIndex + 2]?.value === 'defineRouteMeta' &&
+      tokenKindAt(tokens, routeMetaIndex + 3) === SyntaxKind.OpenParenToken;
+    const carrierOffset = wrappedRouteMeta ? 4 : 2;
+    const openBraceIndex =
+      routeMetaIndex === -1 || tokenKindAt(tokens, routeMetaIndex + carrierOffset) !== SyntaxKind.OpenBraceToken
+        ? -1
+        : routeMetaIndex + carrierOffset;
+    const declarationIndex = routeMetaIndex;
+    const properties = readObjectStringProperties(tokens, openBraceIndex);
     if (
       declarationIndex === -1 ||
+      openBraceIndex === -1 ||
       properties.values.get('canonicalPath') !== '/*' ||
-      !hasExplicitPrivateMetadata(tokens, declarationIndex + 2, properties.closeBraceIndex)
+      !hasExplicitPrivateMetadata(tokens, openBraceIndex, properties.closeBraceIndex)
     ) {
       yield* fail(
         CANONICAL_MODULE_ROUTE,
@@ -3564,8 +3555,8 @@ interface GatewayIssuerBinding {
   readonly path: string;
 }
 
-// These are the existing Shell issuer contracts, including the actor-preserving
-// relay authenticated by an API key. Credential kind alone cannot select a handler.
+// These are the existing Shell issuer contracts, including the module delegation
+// authenticated by an API key. Credential kind alone cannot select a handler.
 const gatewayIssuerBinding = (entrypointKey: string): GatewayIssuerBinding | null =>
   Match.value(entrypointKey).pipe(
     Match.when('shell.gateway-context.issue.session', (): GatewayIssuerBinding => ({
@@ -3578,10 +3569,10 @@ const gatewayIssuerBinding = (entrypointKey: string): GatewayIssuerBinding | nul
       handler: 'issueApiKeyGatewayContext',
       path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
     })),
-    Match.when('shell.gateway-context.issue.relay', (): GatewayIssuerBinding => ({
+    Match.when('shell.gateway-context.issue.delegated', (): GatewayIssuerBinding => ({
       credential: 'api_key',
-      handler: 'issueRelayedGatewayContext',
-      path: shellGatewayContextContract.issueRelayedGatewayContextPath,
+      handler: 'issueDelegatedGatewayContext',
+      path: shellGatewayContextContract.issueDelegatedGatewayContextPath,
     })),
     Match.orElse(() => null),
   );
@@ -3612,7 +3603,7 @@ export const validateGatewayIssuerEntrypoints = (issuers: readonly GatewayIssuer
     if (issuers.length !== 3 || !exactIssuers) {
       yield* fail(
         'packages/shared-contracts/src/gateway-context.ts',
-        'gateway authorization contract must classify exactly the session, direct API-key, and actor-preserving relay issuers',
+        'gateway authorization contract must classify exactly the session, direct API-key, and module delegation issuers',
       );
     }
   });

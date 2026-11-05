@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug establish-external-stock-correlation
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/establish-external-stock-correlation.ts';
 
 export { EstablishExternalStockCorrelationPayloadSchema } from '../actions/establish-external-stock-correlation.ts';
-
 const EstablishExternalStockCorrelationActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -28,6 +28,7 @@ export const EstablishExternalStockCorrelationActionForbiddenProblemSchema = mak
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -146,7 +147,7 @@ export const establishExternalStockCorrelationActionGroupDefinition = HttpApiGro
       error: actionErrors,
       headers: EstablishExternalStockCorrelationActionHeadersSchema,
       payload: Schema.toEncoded(EstablishExternalStockCorrelationPayloadSchema),
-      success: EstablishExternalStockCorrelationResultSchema,
+      success: [ActionProposalAcceptedSchema, EstablishExternalStockCorrelationResultSchema],
     }),
   )
   .middleware(EstablishExternalStockCorrelationActionSchemaErrorMiddleware);

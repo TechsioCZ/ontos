@@ -33,7 +33,13 @@ it('publishes one tenant-qualified Legal Entity target with explicit lifecycle s
       legalEntityRef: { ...legalEntityRef, resourceType: 'party.registry.party' },
     }),
   ).toThrow();
-  expect(legalEntityDetailRead.descriptor.permissionTarget).toBe('legal_entity');
+  expect(legalEntityDetailRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'core.identity.legal-entity.read',
+    kind: 'read',
+    risk: 'sensitive',
+    selectors: [],
+  });
+  expect(legalEntityDetailRead.descriptor.permissionTarget).toBeUndefined();
   expect(legalEntityDetailRead.descriptor.legalEntityScope).toBe('optional');
 });
 

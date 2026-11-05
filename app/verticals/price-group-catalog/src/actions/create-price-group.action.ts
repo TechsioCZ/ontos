@@ -4,7 +4,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
-import { definePriceGroupActionPermissions } from '../permissions/authorization.ts';
 
 import {
   CreatePriceGroupPayloadSchema,
@@ -103,6 +102,14 @@ export const handleCreatePriceGroup = Effect.fn('CreatePriceGroupAction.handle')
 
 export const createPriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'pricing.price-group-catalog.price-group.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'price-groups', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'pricing.price-group-catalog.create-price-group.access.v1',
@@ -114,21 +121,13 @@ export const createPriceGroupAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'pricing.price-group-catalog.create-price-group',
       moduleKey: 'pricing.price-group-catalog',
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'forbidden',
-    ownerPermissions: definePriceGroupActionPermissions<CreatePriceGroupPayload>((_payload, scope) => ({
-      permission: 'pricing.price_group.create',
-      target: {
-        kind: 'pricing_catalog',
-        pricingCatalogId: scope.tenantId,
-        tenantId: scope.tenantId,
-      },
-    })),
     owningModuleKey: 'pricing.price-group-catalog',
     payloadSchema: CreatePriceGroupPayloadSchema,
     policies: [],

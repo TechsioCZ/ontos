@@ -97,6 +97,14 @@ const handleAssignCatalogMedia = Effect.fn('AssignCatalogMediaAction.handle')(fu
 
 export const assignCatalogMediaAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.catalog-media.assign',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.assign-catalog-media.access.v1',
@@ -108,7 +116,7 @@ export const assignCatalogMediaAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

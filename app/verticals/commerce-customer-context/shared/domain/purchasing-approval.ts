@@ -14,8 +14,7 @@ import { ApprovalRouteRefSchema } from '../resources/approval-route.ts';
 import { PurchaseProposalRevisionRefSchema } from '../resources/purchase-proposal-revision.ts';
 import { HistoricalRecordRefSchema } from './record-visibility-contracts.ts';
 import { MonetaryAmountSchema, PurchaseValueSchema, compareExactDecimals } from './purchase-limit.ts';
-// oxlint-disable-next-line eslint/no-unused-vars -- PurchaseValue remains reserved beside the retained purchase-value contract helpers.
-import type { MonetaryAmount, PurchaseValue } from './purchase-limit.ts';
+import type { MonetaryAmount } from './purchase-limit.ts';
 import { PurchaseLimitSourceRevisionVectorSchema } from './purchase-limit-evaluation.ts';
 
 const text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));

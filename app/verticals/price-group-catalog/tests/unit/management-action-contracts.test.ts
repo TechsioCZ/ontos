@@ -2,9 +2,7 @@ import { pricingPriceGroupReadPermission } from '../../shared/permissions/pricin
 import { describe, expect, it } from 'effect-rstest';
 import { Result, Schema } from 'effect';
 
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
-import type { OwnerPermissionAccessTarget } from '@app/core-runtime';
-
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { PriceGroupActionCommittedRetryReceiptSchema } from '../../shared/domain/action-committed-retry-receipt.ts';
 import { CreatePriceGroupDefinitionRevisionPayloadSchema } from '../../shared/actions/create-price-group-definition-revision.ts';
 import {
@@ -28,11 +26,6 @@ import { pricingPriceGroupRevisionCreatePermission } from '../../shared/permissi
 import { createPriceGroupDefinitionRevisionAction } from '../../src/actions/create-price-group-definition-revision.action.ts';
 import { createPriceGroupAction } from '../../src/actions/create-price-group.action.ts';
 import { retirePriceGroupAction } from '../../src/actions/retire-price-group.action.ts';
-
-const permissionRequest = (targets: readonly OwnerPermissionAccessTarget[] | undefined) => {
-  const first = targets?.[0];
-  return first === undefined ? undefined : { permission: first.definition.key, target: first.target };
-};
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const principalId = '22222222-2222-4222-8222-222222222222';
@@ -82,12 +75,6 @@ const retirementPayload = {
   effectiveAt: '2026-12-01T00:00:00.000Z',
   expectedCurrent,
   reason: 'Retire the classification from future use.',
-};
-const scope = {
-  authMethod: 'system' as const,
-  correlationId: 'price-group-management-contracts',
-  principalId,
-  tenantId,
 };
 
 describe('Price Group management Action contracts', () => {
@@ -159,63 +146,33 @@ describe('Price Group management Action contracts', () => {
 
   it('declares tenant-only Action execution with required idempotency', () => {
     for (const action of [createPriceGroupAction, createPriceGroupDefinitionRevisionAction, retirePriceGroupAction]) {
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(action.descriptor.accessDeclaration).toMatchObject({ kind: 'action', selectors: [] });
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
       expect(action.descriptor.entrypoint.scope).toBe('tenant');
     }
   });
 
-  it('resolves the exact catalog or stable Price Group business permission target', () => {
+  it('carries one scope-wide capability per Action instead of a per-catalog target', () => {
+    // O67-Q2: the Price Group catalog is one implicit catalog per Tenant, so its capabilities are
+    // scope-wide and the retired per-catalog/per-Price-Group business targets are gone.
     expect(
-      permissionRequest(getActionOwnerPermissionTargetResolver(createPriceGroupAction)?.(createPayload, scope)),
-    ).toEqual({
-      permission: 'pricing.price_group.create',
-      target: { kind: 'pricing_catalog', pricingCatalogId: tenantId, tenantId },
-    });
-    expect(
-      permissionRequest(
-        getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(revisionPayload, scope),
+      [createPriceGroupAction, createPriceGroupDefinitionRevisionAction, retirePriceGroupAction].map(
+        ({ descriptor }) => descriptor.accessDeclaration?.key,
       ),
-    ).toEqual({
-      permission: 'pricing.price_group.revision.create',
-      target: {
-        kind: 'price_group',
-        priceGroupId: priceGroupRef.resourceId,
-        pricingCatalogId: tenantId,
-        tenantId,
-      },
-    });
+    ).toEqual([
+      'pricing.price-group-catalog.price-group.create',
+      'pricing.price-group-catalog.price-group-definition-revision.create',
+      'pricing.price-group-catalog.price-group.retire',
+    ]);
     expect(
-      permissionRequest(getActionOwnerPermissionTargetResolver(retirePriceGroupAction)?.(retirementPayload, scope)),
-    ).toEqual({
-      permission: 'pricing.price_group.retire',
-      target: {
-        kind: 'price_group',
-        priceGroupId: priceGroupRef.resourceId,
-        pricingCatalogId: tenantId,
-        tenantId,
-      },
-    });
-
-    const foreignTenantId = '77777777-7777-4777-8777-777777777777';
-    const foreignExpectedCurrent = {
-      ...expectedCurrent,
-      priceGroupRef: { ...priceGroupRef, tenantId: foreignTenantId },
-    };
-    expect(
-      permissionRequest(
-        getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(
-          { ...revisionPayload, expectedCurrent: foreignExpectedCurrent },
-          scope,
-        ),
-      ),
-    ).toMatchObject({
-      target: { pricingCatalogId: foreignTenantId, tenantId: foreignTenantId },
-    });
+      [
+        getActionOwnerPermissionTargetResolver(createPriceGroupAction),
+        getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction),
+        getActionOwnerPermissionTargetResolver(retirePriceGroupAction),
+      ].filter((resolver) => resolver !== undefined),
+    ).toEqual([]);
   });
 
   it('registers every permission against its exact protected Action entrypoint', () => {

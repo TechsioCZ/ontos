@@ -21,6 +21,7 @@ export const UpdateProjectActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -49,7 +50,7 @@ export const UpdateProjectActionConflictProblemSchema = makeProblemDetailsSchema
 export const UpdateProjectActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'UpdateProjectActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'project_owner_ineligible']) },
+  { code: Schema.Literal('action_policy_denied') },
 );
 export const UpdateProjectActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'UpdateProjectActionPreconditionProblem',
@@ -66,7 +67,6 @@ export const UpdateProjectActionUnavailableProblemSchema = makeRetryableProblemD
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
-      'project_owner_eligibility_unavailable',
       'project_persistence_unavailable',
     ]),
   },

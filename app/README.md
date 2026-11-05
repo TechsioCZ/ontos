@@ -11,6 +11,7 @@ Read this guide, then only the rows that govern the task.
 | MicroVertical seams, BFFs, and staff identity         | [MicroVertical Architecture](docs/architecture/MICROVERTICALS.md)                                                   |
 | State-changing operations                             | [Action Execution](docs/architecture/ACTIONS.md)                                                                    |
 | Typed failures and HTTP responses                     | [Effect Error and HTTP Contracts](docs/architecture/ERRORS.md)                                                      |
+| Access declarations, roles, approvals, and agents     | [Granular Authorization](docs/architecture/AUTHORIZATION.md)                                                        |
 | PostgreSQL ownership and governed access              | [Database Architecture](docs/architecture/DATABASE.md) and [Governed Data Access](docs/architecture/DATA_ACCESS.md) |
 | Drizzle cohort, migration layout, and re-proof steps  | [Drizzle v1 Upgrade](docs/architecture/DRIZZLE_V1_UPGRADE.md)                                                       |
 | Asynchronous consumers                                | [Outbox Worker Architecture](docs/architecture/OUTBOX_WORKERS.md)                                                   |
@@ -123,7 +124,7 @@ Codesmith-generated module API, search-provider, and report clients construct th
 
 A MicroVertical's own API client (`src/api/*-client.ts`) calls the native `makeEffectHttpApiClient(<owner contract>Api, options)` directly, because `api:check` proves only native factory calls on the owner's own contract. Build its options with `makeEffectBffClientOptions` from `@app/shared-contracts/client-runtime`, which carries the owner prefix, operation context, locale, traceparent, and transport headers; do not wrap the native factory.
 
-Generated report descriptor `label` and `dimensions` are owner-adaptable presentation and report shape metadata. Search/report `accessFiltering` may also be adapted; `tenant_scope` requires an explicit `tenantPermission`. Reruns preserve these adaptations but keep the generated descriptor identity, owning module, and resource types fixed.
+Generated report descriptor `label`, `dimensions` and `accessFiltering` are owner-adaptable presentation and report shape metadata. Reruns preserve these adaptations but keep the generated descriptor identity, owning module, and resource types fixed.
 
 Client `baseUrl` overrides are trusted application/test transport configuration, never request, form, query-string, or tenant-controlled input. Callers supplying an override are responsible for selecting the owning BFF destination; payload data must not choose where an assertion is sent.
 
@@ -146,21 +147,20 @@ mise exec -- pnpm contract:check
 
 Do not copy a generator release into prose or add compatibility shims around source that still needs migration.
 
-## Protected-entrypoint authorization rollout
+## Protected-entrypoint authorization
 
-Codesmith-generated entrypoint descriptors carry explicit authorization classification for Actions, reads, pages, public components, APIs, search providers, reports, and Workers. Repository checks reject missing or invalid classification. Each protected surface retains its owning runtime gate; do not infer one universal runtime policy from shared metadata or add an unconfigured allow path. The focused contracts live in [Actions](docs/architecture/ACTIONS.md), [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md), and [Deployment](docs/architecture/DEPLOYMENT.md).
+Codesmith-generated entrypoint descriptors carry exactly one authorization classification for Actions, reads, pages, public components, APIs, search providers, reports, and Workers. Repository checks reject a missing or invalid classification and a protected entrypoint without an `accessDeclaration` or `accessWorkload`. Every protected surface asks the same Core gate (`AccessDecisionService`); do not add an unconfigured allow path or a second permission check. The focused contracts live in [Granular Authorization](docs/architecture/AUTHORIZATION.md), [Actions](docs/architecture/ACTIONS.md), and [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md).
 
-Use the source-owned operator evidence commands:
+Use the source-owned catalog commands:
 
 ```sh
 mise exec -- pnpm authorization:inventory:check
-mise exec -- pnpm authorization:impact:report -- .codex/reports/authorization/would-deny.json
-mise exec -- pnpm authorization:readiness:check -- stage
-mise exec -- pnpm deployment-impact:plan -- --authorization-environment stage --outbox-worker-mode host
+mise exec -- pnpm authorization:catalog:report
+mise exec -- pnpm deployment-impact:plan -- --outbox-worker-mode host
 mise exec -- pnpm test:scripts
 ```
 
-Readiness accepts a fixed environment name and loads source-controlled contexts from `topology/authorization-contexts/` plus fixed report paths. Those files are reproducible rollout evidence, not runtime policy. Production remains blocked until its source-controlled context, required evidence, and governance approval exist; do not weaken that gate in documentation.
+The catalog report is a review artifact, not runtime policy. It lists every declaration, field group and review finding the installed modules carry; a missing or invalid declaration fails the check.
 
 ## Validation
 

@@ -2,11 +2,11 @@
 // @ontos-action-owner commerce.catalog
 // @ontos-action-slug set-product-type
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Option } from 'effect';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { SetProductTypePayloadSchema, SetProductTypeResultSchema } from '../../shared/actions/set-product-type.ts';
 import type { SetProductTypePayload } from '../../shared/actions/set-product-type.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import { CatalogPersistenceUnavailable } from '../persistence/errors.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
@@ -70,6 +70,14 @@ const handleSetProductType = Effect.fn('SetProductTypeAction.handle')(function* 
 
 export const setProductTypeAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-type.set',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-product-type.access.v1',
@@ -81,7 +89,7 @@ export const setProductTypeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey,
       role: 'action',
@@ -96,7 +104,7 @@ export const setProductTypeAction = defineAction(
   },
   handleSetProductType,
   Effect.fn('SetProductTypeAction.makeServices')(function* makeSetProductTypeServices(transaction, scope) {
-    const openSelections = yield* cartOpenSelectionPopulationFromEnvironment;
+    const openSelections = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     const services = yield* productTypeAssignmentPersistenceForScope(
       transaction,
       scope,

@@ -3,19 +3,26 @@ import { makeModuleContractFixture } from '../../src/testing/module-contract.ts'
 import {
   failClosedOwnerAuthorizationOverlay,
   OwnerAuthorizationOverlay,
-} from '../../src/permissions/owner-authorization-overlay.ts';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+} from '../../src/access/enforcement/owner-overlay.ts';
+import { DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { NodeCrypto } from '@effect/platform-node';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { makeTestBoundAccessGate } from '../../src/testing/access-gate.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
 import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
 } from '../../src/auth/staff-authentication-namespace.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { makeNativeReadTestContext, withVerifiedNativeReadScope } from '../../src/testing/native-reads.ts';
+import {
+  makeNativeReadTestContext,
+  nativeReadAccessDecision,
+  nativeReadAccessGate,
+  withVerifiedNativeReadScope,
+} from '../../src/testing/native-reads.ts';
 
 // Deliberately misleading metadata: the fixture must reparse the actual URLs.
 const connections = (admin: string, runtime: string) => ({
@@ -85,6 +92,55 @@ it.effect('rejects remote, mismatched and non-isolated fixture URLs before datab
   ),
 );
 
+it.effect('denies a protected Read by default and admits it only when a suite opts in', () =>
+  Effect.gen(function* scriptedNativeReadAuthority() {
+    const scope: OperationalScope = {
+      authBindingId: '40000000-0000-4000-8000-000000000001',
+      authContextRef: 'session:native-read-access-option',
+      authMethod: 'session',
+      correlationId: 'native-read-access-option',
+      principalId: '30000000-0000-4000-8000-000000000001',
+      tenantId: '10000000-0000-4000-8000-000000000001',
+    };
+    const question = {
+      carrier: {},
+      legalEntityScope: 'required' as const,
+      now: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T00:00:00.000Z')),
+      scope,
+    };
+    // The harness carries only the legacy SpiceDB graph, so an unstated authority is a denial.
+    expect((yield* nativeReadAccessDecision().decide(question)).outcome).toBe('DENIED');
+    expect((yield* nativeReadAccessDecision('allowed').decide(question)).outcome).toBe('ALLOWED');
+    expect((yield* nativeReadAccessDecision('unavailable').decide(question)).outcome).toBe('UNAVAILABLE');
+  }),
+);
+
+it.effect('binds a suite-supplied controllable gate ahead of the scripted answer', () =>
+  Effect.gen(function* nativeReadAccessGatePrecedence() {
+    const scope: OperationalScope = {
+      authBindingId: '40000000-0000-4000-8000-000000000002',
+      authContextRef: 'session:native-read-gate-option',
+      authMethod: 'session',
+      correlationId: 'native-read-gate-option',
+      principalId: '30000000-0000-4000-8000-000000000002',
+      tenantId: '10000000-0000-4000-8000-000000000002',
+    };
+    const question = {
+      carrier: {},
+      legalEntityScope: 'required' as const,
+      now: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T00:00:00.000Z')),
+      scope,
+    };
+    const controllable = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
+    // A prebuilt gate replaces the scripted answer entirely, so a suite can flip its own answer.
+    const supplied = nativeReadAccessGate({ access: 'denied', accessDecision: controllable.bound });
+    expect((yield* supplied.decide(question)).outcome).toBe('ALLOWED');
+    // With no prebuilt gate the scripted answer (and its denial default) still applies.
+    expect((yield* nativeReadAccessGate({ access: 'allowed' }).decide(question)).outcome).toBe('ALLOWED');
+    expect((yield* nativeReadAccessGate({}).decide(question)).outcome).toBe('DENIED');
+  }),
+);
+
 it.effect('reparses administrative identity instead of trusting supplied connection metadata', () =>
   Effect.scoped(
     Effect.gen(function* rejectsAdministrativeRuntimeIdentity() {
@@ -129,7 +185,7 @@ it.effect(
         });
         const entrypoint = defineTenantModuleEntrypoint({
           access: 'read',
-          authorization: { kind: 'context_permission', permission: 'module.access' },
+          authorization: { kind: 'protected' },
           entrypointKey: 'commerce.customer-context.api.invoice-recipient-resolution',
           moduleKey: 'commerce.customer-context',
           role: 'api',

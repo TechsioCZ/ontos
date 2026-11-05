@@ -284,6 +284,14 @@ const handleMigrateCustomerPriceGroup = Effect.fn('MigrateCustomerPriceGroupActi
 
 export const migrateCustomerPriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-price-group.migrate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-pricing', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.migrate-customer-price-group.access.v1',
@@ -296,7 +304,7 @@ export const migrateCustomerPriceGroupAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.migrate-customer-price-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',

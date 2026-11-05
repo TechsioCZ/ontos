@@ -12,6 +12,7 @@ import type { PrepareOrderCommitmentPayload } from '../../shared/actions/prepare
 import { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
 import { orderCommitmentService } from '../services/order-commitment.service.ts';
 import { preparationInputConflicts } from '../services/order-preparation-admission.ts';
+import { purchaseValueAccessAmount } from '../services/purchase-value-amount.ts';
 import { orderCommitmentDomainEvents, enqueueOrderFinalizationWork } from './order-commitment-action-support.ts';
 
 type Services = Effect.Success<ReturnType<typeof orderCommitmentService>>;
@@ -42,17 +43,39 @@ const handlePrepareOrderCommitment = Effect.fn('PrepareOrderCommitment.handle')(
 });
 export const prepareOrderCommitmentAction = defineAction(
   {
+    accessAmount: (payload) => purchaseValueAccessAmount(payload.taxCandidate),
+    accessDeclaration: {
+      amountInput: 'derived.purchaseValue',
+      key: 'commerce.order.commitment.prepare',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'orders', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.order.prepare-order-commitment.access.v1',
     },
+    accessFieldGroups: [
+      {
+        fieldClass: 'financial_amounts',
+        fields: ['taxCandidate.pricing.publishedLines', 'taxCandidate.shipping'],
+        key: 'commerce.order.commitment.prepare-commercial-amounts',
+        kind: 'field_write',
+        modes: ['run'],
+        placement: { group: 'orders-preparation-amounts', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     actionKey: 'commerce.order.prepare-order-commitment',
     auditProfile: 'standard',
     domainErrorSchema: OrderCommitmentRejected,
     domainEvents: orderCommitmentDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.order.prepare-order-commitment',
       moduleKey: 'commerce.order',
       role: 'action',

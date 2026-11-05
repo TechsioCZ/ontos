@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.market-catalog
 // @ontos-action-slug revise-storefront-association
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-  requireModuleOperation,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint, requireModuleOperation } from '@app/core-runtime';
 import { StorefrontApplicationIdSchema } from '@app/storefront-registry-contracts';
 import { Crypto, DateTime, Effect, Match, Schema } from 'effect';
 import {
@@ -189,6 +184,14 @@ const handleReviseStorefrontAssociation = Effect.fn('ReviseStorefrontAssociation
 
 export const reviseStorefrontAssociationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.storefront-association.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'storefront-associations', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.market-catalog.revise-storefront-association.access.v1',
@@ -200,7 +203,7 @@ export const reviseStorefrontAssociationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.market-catalog.revise-storefront-association',
       moduleKey: 'commerce.market-catalog',
       role: 'action',
@@ -210,10 +213,6 @@ export const reviseStorefrontAssociationAction = defineAction(
     owningModuleKey: 'commerce.market-catalog',
     payloadSchema: ReviseStorefrontAssociationPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ReviseStorefrontAssociationPayload>(({ associationRef }) => ({
-      permission: 'write',
-      resource: associationRef,
-    })),
     resultSchema: ReviseStorefrontAssociationResultSchema,
     schemaVersion: '1',
   },

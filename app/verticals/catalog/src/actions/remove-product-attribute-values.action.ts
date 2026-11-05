@@ -4,7 +4,7 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Option } from 'effect';
 import type { Crypto } from 'effect';
 
 import {
@@ -14,7 +14,7 @@ import {
   requireProductAttributeCorrection,
 } from '../../shared/actions/attribute-value-mutations.ts';
 import type { RemoveProductAttributeValuesPayload } from '../../shared/actions/attribute-value-mutations.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import { OutboxPayloadSchema as SelectionSourceChangedEventSchema } from '../../shared/outbox/commerce-catalog-selection-source-changed-v1.ts';
 import { VariantRefSchema } from '../../shared/resources/variant.ts';
@@ -144,6 +144,14 @@ const toSnapshotFailure = (cause: unknown): ActionTransactionError => {
 };
 export const removeProductAttributeValuesAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-attribute-values.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.remove-product-attribute-values.access.v1',
@@ -160,7 +168,7 @@ export const removeProductAttributeValuesAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.remove-product-attribute-values',
       moduleKey: 'commerce.catalog',
       role: 'action',
@@ -176,7 +184,7 @@ export const removeProductAttributeValuesAction = defineAction(
   handleRemoveProductAttributeValues,
   Effect.fn('RemoveProductAttributeValuesAction.makeServices')(
     function* makeRemoveProductAttributeValuesServices(transaction, scope) {
-      const openSelections = yield* cartOpenSelectionPopulationFromEnvironment;
+      const openSelections = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
       const services = yield* attributeValuesPersistenceForScope(transaction, scope);
       return {
         ...services,

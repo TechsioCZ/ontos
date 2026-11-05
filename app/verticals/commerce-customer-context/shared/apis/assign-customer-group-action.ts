@@ -2,12 +2,12 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug assign-customer-group
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { AssignCustomerGroupPayloadSchema, AssignCustomerGroupResultSchema } from '../actions/assign-customer-group.ts';
 
 export { AssignCustomerGroupPayloadSchema } from '../actions/assign-customer-group.ts';
-
 export const AssignCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignCustomerGroupActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const AssignCustomerGroupActionForbiddenProblemSchema = makeProblemDetail
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -151,7 +152,7 @@ export const assignCustomerGroupActionGroupDefinition = HttpApiGroup.make('assig
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/assign-customer-group', {
       error: actionErrors,
       payload: Schema.toEncoded(AssignCustomerGroupPayloadSchema),
-      success: AssignCustomerGroupResultSchema,
+      success: [ActionProposalAcceptedSchema, AssignCustomerGroupResultSchema],
     }),
   )
   .middleware(AssignCustomerGroupActionSchemaErrorMiddleware);

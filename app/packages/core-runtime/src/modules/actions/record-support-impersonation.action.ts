@@ -103,10 +103,21 @@ const handle = Effect.fn('RecordSupportImpersonationAction.handle')(function* re
 });
 export const recordSupportImpersonationAction = defineAction(
   {
+    // Requesting and starting support impersonation is administrative. The `stopped` checkpoint only
+    // takes the impersonation away from the person, so no grant may block it (O35, O71).
+    accessDeclaration: {
+      key: 'core.identity.support.impersonate',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'support', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.record-support-impersonation.access.v1',
     },
+    accessReducesAuthority: (payload) => payload.checkpoint === 'stopped',
     actionKey: 'core.identity.record-support-impersonation',
     auditEvidenceSchema: RecordSupportImpersonationPayloadSchema,
     auditProfile: 'sensitive',
@@ -114,10 +125,7 @@ export const recordSupportImpersonationAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.record-support-impersonation',
       moduleKey: 'core.identity',
       role: 'action',
@@ -129,7 +137,6 @@ export const recordSupportImpersonationAction = defineAction(
     policies: [],
     resultSchema: RecordSupportImpersonationResultSchema,
     schemaVersion: '1',
-    tenantPermission: (payload) => (payload.checkpoint === 'stopped' ? undefined : 'impersonate'),
   },
   handle,
   (transaction, scope) => {

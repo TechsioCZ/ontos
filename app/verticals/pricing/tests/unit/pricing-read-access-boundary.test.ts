@@ -1,5 +1,5 @@
 import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
-import { ReadPermissionDenied, toContextPermissionAccessKey } from '@app/core-runtime';
+import { ReadPermissionDenied } from '@app/core-runtime';
 import { CurrentSupportedCurrenciesRequestSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { PricingExplicitInputContextSchema } from '@app/pricing-contracts/domain/broken-explicit-input';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
@@ -8,6 +8,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import { makeTestBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { pricingCommercialFeeReadPermission } from '../../shared/permissions/pricing-commercial-fee-read.ts';
 import { pricingCurrencySupportReadPermission } from '../../shared/permissions/pricing-currency-support-read.ts';
 import { pricingExactPriceResolutionReadPermission } from '../../shared/permissions/pricing-exact-price-resolution-read.ts';
@@ -52,11 +53,10 @@ const exactPriceRequest = Schema.decodeSync(PricingExplicitInputContextSchema)({
 
 interface HarnessOptions {
   readonly operationalScope?: OperationalScope;
-  readonly permissionDecision: 'allowed' | 'denied';
+  readonly readAccess: 'allowed' | 'denied';
 }
 
 const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: HarnessOptions) {
-  const contextPermissions: string[] = [];
   const routineCalls: string[] = [];
   const stages: string[] = [];
   const operationalScope = options.operationalScope ?? scope;
@@ -110,17 +110,12 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
     }),
   };
   const contextAccess: ContextAccessService = {
-    contextPermissions: ({ targets }) =>
-      Effect.succeed(
-        targets.map((target) => {
-          contextPermissions.push(target.permission);
-          return { decision: options.permissionDecision, key: toContextPermissionAccessKey(target) };
-        }),
-      ),
+    // The one access gate decides a v2 read; no legacy context or owner target is consulted (O62).
+    contextPermissions: () => Effect.die('Pricing reads are decided by the one access gate'),
     legalEntities: ({ legalEntityIds }) =>
       Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    ownerPermissions: () => Effect.die('Currency Support reads must not use business-target permissions'),
+    ownerPermissions: () => Effect.die('Pricing reads are decided by the one access gate'),
     resources: ({ resources }) =>
       Effect.succeed(
         resources.map((resource) => ({
@@ -130,19 +125,26 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
       ),
     tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
   };
+  const gate = makeTestBoundAccessGate(
+    options.readAccess === 'allowed' ? { defaultAnswer: { outcome: 'ALLOWED' } } : {},
+  );
   const runtime = makeReadRuntime(
     database,
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(operationalScope) },
     contextAccess,
     {
+      accessDecision: gate.bound,
       onStage: (stage) => {
         stages.push(stage);
       },
       ownerRegistration: pricingRegistration,
     },
   );
-  return { contextPermissions, routineCalls, runtime, stages };
+  /** The capability keys the one gate was asked for, in order. */
+  const askedCapabilities = () =>
+    gate.accessDecision.askedDecisions.map((one) => one.carrier.accessDeclaration?.key ?? '<missing>');
+  return { askedCapabilities, routineCalls, runtime, stages };
 });
 
 describe('Pricing read access boundary', () => {
@@ -188,24 +190,38 @@ describe('Pricing read access boundary', () => {
         priceScheduleRead,
       ].map(({ descriptor }) => descriptor.entrypoint.authorization),
     ).toEqual([
-      { kind: 'context_permission', permission: 'pricing.commercial_fee.read' },
-      { kind: 'context_permission', permission: 'pricing.commercial_fee.read' },
-      { kind: 'context_permission', permission: 'pricing.currency_support.read' },
-      { kind: 'context_permission', permission: 'pricing.exact_price_resolution.read' },
-      { kind: 'context_permission', permission: 'pricing.price.read' },
-      { kind: 'context_permission', permission: 'pricing.price.read' },
+      { kind: 'protected' },
+      { kind: 'protected' },
+      { kind: 'protected' },
+      { kind: 'protected' },
+      { kind: 'protected' },
+      { kind: 'protected' },
     ]);
-    expect(setSupportedCurrenciesAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(
+      [
+        commercialFeeDefinitionRead,
+        commercialFeeScheduleRead,
+        currentSupportedCurrenciesRead,
+        exactPriceResolutionRead,
+        priceDefinitionRead,
+        priceScheduleRead,
+      ].map(({ descriptor }) => descriptor.accessDeclaration?.key),
+    ).toEqual([
+      'commerce.pricing.commercial-fee.read-definition',
+      'commerce.pricing.commercial-fee.read-schedule',
+      'commerce.pricing.currency-support.read-current',
+      'commerce.pricing.price.resolve-exact',
+      'commerce.pricing.price.read-definition',
+      'commerce.pricing.price.read-schedule',
+    ]);
+    expect(setSupportedCurrenciesAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
   });
 
   it.effect(
     'requires the exact Currency Support permission before the owner routine and keeps Tenant scope exact',
     () =>
       Effect.gen(function* currentSupportedCurrenciesPermission() {
-        const denied = yield* makeHarness({ permissionDecision: 'denied' });
+        const denied = yield* makeHarness({ readAccess: 'denied' });
         const denial = yield* denied.runtime
           .runRead({
             input: request,
@@ -216,10 +232,10 @@ describe('Pricing read access boundary', () => {
           .pipe(Effect.flip);
 
         expect(Schema.is(ReadPermissionDenied)(denial)).toBe(true);
-        expect(denied.contextPermissions).toEqual(['pricing.currency_support.read']);
+        expect(denied.askedCapabilities()).toEqual(['commerce.pricing.currency-support.read-current']);
         expect(denied.routineCalls).toEqual([]);
 
-        const allowed = yield* makeHarness({ permissionDecision: 'allowed' });
+        const allowed = yield* makeHarness({ readAccess: 'allowed' });
         const result = yield* allowed.runtime.runRead({
           input: request,
           principal,
@@ -231,13 +247,13 @@ describe('Pricing read access boundary', () => {
           code: 'pricing_currency_support_not_initialized',
           outcome: 'SUPPORTED_CURRENCIES_UNAVAILABLE',
         });
-        expect(allowed.contextPermissions).toEqual(['pricing.currency_support.read']);
+        expect(allowed.askedCapabilities()).toEqual(['commerce.pricing.currency-support.read-current']);
         expect(allowed.routineCalls).toEqual([
           'read_tenant_currency_support_v1',
           'revalidate_tenant_currency_support_v1',
         ]);
 
-        const crossTenant = yield* makeHarness({ permissionDecision: 'allowed' });
+        const crossTenant = yield* makeHarness({ readAccess: 'allowed' });
         const crossTenantFailure = yield* crossTenant.runtime
           .runRead({
             input: { ...request, tenantId: foreignTenantId },
@@ -255,7 +271,7 @@ describe('Pricing read access boundary', () => {
   it.effect('denies exact Price resolution at the atomic permission gate before owner scope or handler execution', () =>
     Effect.gen(function* exactPricePermissionDeniedBeforeOwner() {
       const exactScope = { ...scope, legalEntityId } satisfies OperationalScope;
-      const denied = yield* makeHarness({ operationalScope: exactScope, permissionDecision: 'denied' });
+      const denied = yield* makeHarness({ operationalScope: exactScope, readAccess: 'denied' });
       const denial = yield* denied.runtime
         .runRead({
           input: exactPriceRequest,
@@ -266,7 +282,7 @@ describe('Pricing read access boundary', () => {
         .pipe(Effect.flip);
 
       expect(Schema.is(ReadPermissionDenied)(denial)).toBe(true);
-      expect(denied.contextPermissions).toEqual(['pricing.exact_price_resolution.read']);
+      expect(denied.askedCapabilities()).toEqual(['commerce.pricing.price.resolve-exact']);
       expect(denied.routineCalls).toEqual([]);
       expect(denied.stages).toEqual(['input_decoded', 'scope_validated', 'module_state_checked', 'permission_checked']);
       expect(denied.stages).not.toContain('scope_installed');

@@ -44,6 +44,14 @@ const handleCreatePrivacySubject = Effect.fn('CreatePrivacySubjectAction.handle'
 
 export const createPrivacySubjectAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.privacy-subject.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'subjects', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.create-privacy-subject.access.v1',
@@ -55,7 +63,7 @@ export const createPrivacySubjectAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.create-privacy-subject',
       moduleKey: 'privacy.core',
       role: 'action',

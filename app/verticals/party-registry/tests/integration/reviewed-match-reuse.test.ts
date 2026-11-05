@@ -6,6 +6,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
@@ -93,6 +94,7 @@ it.layer(
         const connections = { ...isolated.connections, runtime: native.partyConfiguration };
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            access: 'allowed',
             actionKeys: [
               createPartyAction,
               matchPartyAction,
@@ -107,6 +109,8 @@ it.layer(
           }),
           (value) => value.close().pipe(Effect.orDie),
         );
+        const deniedAccess = makePartyDeniedAccess();
+        const fixtureLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
         const adminLayer = PgClient.layer({ url: Redacted.make(connections.admin.connectionString) }).pipe(
           Layer.provideMerge(Reactivity.layer),
         );
@@ -139,7 +143,7 @@ it.layer(
             ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
           ),
           Layer.provide(redemption),
-          Layer.provide(fixture.layer),
+          Layer.provide(fixtureLayer),
           Layer.provide(
             ConfigProvider.layer(
               ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -151,7 +155,7 @@ it.layer(
             HttpRouter.toWebHandler(
               HttpApiBuilder.layer(api).pipe(
                 Layer.provide(handlers),
-                Layer.provideMerge(fixture.layer),
+                Layer.provideMerge(fixtureLayer),
                 Layer.provide(HttpServer.layerServices),
                 Layer.provide(NodeCrypto.layer),
               ),
@@ -435,6 +439,11 @@ it.layer(
             'PartyCommandConflictProblem',
           ),
         ).toBe(true);
+        // v2: the one access gate decides this Action (O62); a principal it does not admit is
+        // refused before any owner work. The fixture scripts its gate per capability, so the refusal
+        // of this one principal is named on the fixture's own per-request owner seam (the removed
+        // SpiceDB executor tuple no longer refuses anyone).
+        deniedAccess.deny(fixture.denied.principalId);
         expect(
           Predicate.isTagged(
             yield* Effect.flip(
@@ -452,6 +461,7 @@ it.layer(
         expect(yield* ownerSnapshot()).toEqual(beforeDenials);
         const foreignFixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            access: 'allowed',
             actionKeys: [createPartyAction, matchPartyAction, resolveDuplicateCandidateMatchAction].map(
               (action) => action.descriptor.actionKey,
             ),

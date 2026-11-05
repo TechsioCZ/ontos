@@ -86,30 +86,18 @@ class PrivacyCompletionTestFailure extends Schema.TaggedError<PrivacyCompletionT
 ) {}
 const failure = (reason: string) => new PrivacyCompletionTestFailure({ reason });
 export const PUBLIC_COMPLETION_COMMAND = 'dispatch-business-rejected-and-ack';
-export const LEGACY_DISPATCH_SHA256 = 'dc8a3848294951d5f54ce8758e506ca556ce37c42911c2a693c406a02a5c8132';
-export const PublicCompletionProducerSchema = Schema.Literals(['current', 'legacy']);
 export const PublicCompletionCapabilitySchema = Schema.Struct({
   creatorPid: Schema.Int.check(Schema.isGreaterThan(0)),
   databaseName: Schema.String.check(Schema.isPattern(/^ontos_test_party_gateway_[a-f\d]{32}$/u)),
   databaseOid: Schema.String.check(Schema.isPattern(/^\d+$/u)),
   systemIdentifier: Schema.String.check(Schema.isPattern(/^\d+$/u)),
 });
-export const frozenDispatchMatches = (source: string) =>
-  createHash('sha256').update(source).digest('hex') === LEGACY_DISPATCH_SHA256;
 const digest = (source: string) => createHash('sha256').update(source).digest('hex');
 const markerSchema = Schema.Struct({
   appId: Schema.Literals(['privacy', partyAppId]),
   buildMarker: Schema.String,
 });
 const readySchema = Schema.Struct({
-  legacy: Schema.optionalKey(
-    Schema.Struct({
-      producerRevision: Schema.Literal('0325cbf9ffdb36a2e3781b8292df25d67d564f10'),
-      producerSha256: Schema.Literal(LEGACY_DISPATCH_SHA256),
-      runtimePid: Schema.Int,
-      wrapperPid: Schema.Int,
-    }),
-  ),
   marker: markerSchema,
   port: Schema.Number,
   type: Schema.Literal('ready'),
@@ -127,6 +115,7 @@ const shellReadySchema = Schema.Struct({
   apiKey: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))),
   legalEntityId: Schema.requiredKey(TrustedPrincipalContextSchema.fields.legalEntityId),
   marker: shellMarkerSchema,
+  moduleApiKey: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))),
   principal: TrustedPrincipalContextSchema,
   protocolVersion: Schema.Literal(2),
   responseTransport: Schema.Literal('private-unix-socket'),
@@ -142,6 +131,7 @@ const runtimeDescriptionSchema = Schema.Struct({
 const privacyDescriptionSchema = Schema.Struct({ marker: markerSchema, runtime: runtimeDescriptionSchema });
 const partyDescriptionSchema = Schema.Struct({
   marker: markerSchema,
+  originatorActions: Schema.Array(Schema.String),
   runtime: runtimeDescriptionSchema,
   subscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
 });
@@ -349,6 +339,7 @@ const describe = Effect.fn('PrivacyPublicSession.describe')(function* describe(p
   return lines[0];
 });
 const fullOwnerDml = 'select, insert, update, delete';
+const appendAndPruneDml = 'select, insert, delete';
 const sessionDirectoryPrefix = '.1258-session-';
 const fixtureRuntimeInventory = [
   {
@@ -362,6 +353,13 @@ const fixtureRuntimeInventory = [
     rls: false,
     schema: 'auth',
     tables: ['support_impersonation_recovery'],
+  },
+  {
+    // The Shell's delegated-context replay ledger: prune expired slots, then reserve one per exchange.
+    operations: appendAndPruneDml,
+    rls: false,
+    schema: 'auth',
+    tables: ['gateway_relay_exchanges'],
   },
   {
     operations: fullOwnerDml,
@@ -395,7 +393,7 @@ const fixtureRuntimeInventory = [
     tables: ['organization_engagement_profiles', 'person_engagement_profiles'],
   },
   {
-    operations: 'select, insert, delete',
+    operations: appendAndPruneDml,
     rls: false,
     schema: 'contacts',
     tables: ['gateway_assertion_redemptions'],
@@ -507,7 +505,6 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
   path: string,
   env: Readonly<Record<string, string>>,
   privateReply: boolean,
-  legacy: boolean,
   ownedPids: number[],
   bootstrap?: Parameters<typeof receivePrivateShellResponse>[2],
 ) {
@@ -534,7 +531,7 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
         Effect.forkScoped,
       );
   }
-  const child = yield* ChildProcess.make(process.execPath, legacy ? [path, '--serve-legacy-dispatch'] : [path], {
+  const child = yield* ChildProcess.make(process.execPath, [path], {
     cwd: appRoot,
     env: childEnvironment(transport, { ...env, ...responseEnvironment }),
     extendEnv: false,
@@ -616,7 +613,7 @@ const bootstrapOwnerCapabilities = Effect.fn('PrivacyPublicSession.bootstrapOwne
             sql`grant select,insert on ${sql.identifier(item.schema)}.${sql.identifier(table)} to ${role}`,
             'objects',
           );
-        } else if (item.operations === 'select, insert, delete') {
+        } else if (item.operations === appendAndPruneDml) {
           yield* database.executor.execute(
             sql`grant select,insert,delete on ${sql.identifier(item.schema)}.${sql.identifier(table)} to ${role}`,
             'objects',
@@ -682,12 +679,10 @@ const hasExactCurrentDebt = (
 interface PublicCompletionSessionInput {
   readonly capability: typeof PublicCompletionCapabilitySchema.Type;
   readonly connections: DatabaseConnectionPair;
-  readonly producer: typeof PublicCompletionProducerSchema.Type;
 }
 const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open')(
   function* openPrivacyPublicCompletionSession(input: PublicCompletionSessionInput, ownedPids: number[]) {
     const capability = yield* Schema.decodeUnknownEffect(PublicCompletionCapabilitySchema)(input.capability);
-    yield* Schema.decodeUnknownEffect(PublicCompletionProducerSchema)(input.producer);
     if (
       capability.creatorPid !== process.pid ||
       ![input.connections.admin, input.connections.runtime].every(
@@ -782,6 +777,7 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           appId: marker.appId,
           buildMarker: marker.buildMarker,
           moduleId,
+          originatorActions: isParty ? party.originatorActions : undefined,
           outboxSubscriptions: ownerRuntime.outboxSubscriptions,
         });
         const manifest = {
@@ -928,8 +924,11 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
     const bootstrap = yield* makeLiveOperationFixtureBootstrap((providerSubjectId) =>
       Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [
             'core.identity.bind-self-api-key',
+            'core.identity.create-non-human-principal',
+            'core.identity.bind-managed-api-key',
             'core.modules.change-tenant-module-state',
             'privacy.core.dispatch-privacy-measure',
             'privacy.core.record-owner-execution-outcome',
@@ -955,7 +954,6 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
       paths.shell,
       { ...childConfig, SHELL_GATEWAY_ISSUER_DATABASE_URL: nativeIdentityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL },
       true,
-      false,
       ownedPids,
       bootstrap,
     );
@@ -967,7 +965,6 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
     const partyProcess = yield* start(
       paths.party,
       { ...receiving, PARTY_REGISTRY_DATABASE_URL: nativeIdentityUrls.PARTY_REGISTRY_DATABASE_URL },
-      false,
       false,
       ownedPids,
     );
@@ -981,14 +978,8 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
       ONTOS_PRIVACY_MEASURE_WORKER_API_KEY: Redacted.value(shell.apiKey),
       ONTOS_SHELL_GATEWAY_BASE_URL: shellUrl,
     };
-    const privacyProcess = yield* start(paths.privacy, ownerEnvironment, false, input.producer === 'legacy', ownedPids);
+    const privacyProcess = yield* start(paths.privacy, ownerEnvironment, false, ownedPids);
     const privacy = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(readySchema))(privacyProcess.line);
-    if (input.producer === 'legacy' && privacy.legacy?.producerSha256 !== LEGACY_DISPATCH_SHA256) {
-      return yield* failure('Legacy process did not describe the frozen producer');
-    }
-    if (privacy.legacy !== undefined) {
-      ownedPids.push(privacy.legacy.runtimePid);
-    }
     const privacyUrl = `http://127.0.0.1:${privacy.port}`;
     let used = false;
     const run = Effect.fn('PrivacyPublicSession.dispatchBusinessRejectedAndAck')(
@@ -1046,16 +1037,8 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           .select()
           .from(applicationCompositionDurableWork)
           .where(eq(applicationCompositionDurableWork.workId, debtId));
-        if (input.producer === 'current' && !hasExactCurrentDebt(message, beforeDebt, snapshot.composition.revision)) {
-          return yield* failure('Current public producer did not enroll exact debt');
-        }
-        if (
-          input.producer === 'legacy' &&
-          (message.completionOriginalRevision !== null ||
-            message.completionConsumerModuleKey !== null ||
-            beforeDebt.length !== 0)
-        ) {
-          return yield* failure('Frozen old producer unexpectedly enrolled current metadata');
+        if (!hasExactCurrentDebt(message, beforeDebt, snapshot.composition.revision)) {
+          return yield* failure('Public producer did not enroll exact debt');
         }
         const worker = yield* start(
           paths.worker,
@@ -1064,9 +1047,9 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
             ONTOS_1258_TEST_BARRIER: 'none',
             ONTOS_1258_TEST_CLOCK_ADVANCE_MS: '0',
             ONTOS_1258_TEST_RETRY_SESSION: 'single',
+            ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(shell.moduleApiKey),
             ONTOS_PRIVACY_API_BASE_URL: privacyUrl,
           },
-          false,
           false,
           ownedPids,
         );
@@ -1189,8 +1172,6 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           ),
           originalRevision: message.completionOriginalRevision,
           outcomeId: receipt.value.outcome.outcomeId,
-          producer: input.producer,
-          producerSha256: input.producer === 'legacy' ? LEGACY_DISPATCH_SHA256 : null,
           revision: snapshot.composition.revision,
           status: receipt.value.outcome.status,
           tenantId: shell.tenantId,

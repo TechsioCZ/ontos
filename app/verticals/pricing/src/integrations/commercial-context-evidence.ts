@@ -1,17 +1,15 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { executeCurrentMarketCatalogWithAuthorization } from '@app/commerce-market-catalog/api/client';
 import type {
   CurrentMarketCatalogRequest,
   CurrentMarketCatalogResponse,
 } from '@app/commerce-market-catalog/api/client';
 import type { PriceCommercialScope } from '@app/pricing-contracts/domain/price-definition';
-import { Context, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Context, DateTime, Effect, Redacted, Schema, Crypto } from 'effect';
 
-import {
-  CommercialContextGatewayCredentialService,
-  PricingCommercialContextUnavailable,
-  unavailableCommercialContextGatewayCredentialIssuer,
-} from '../../shared/domain/commercial-context-gateway-credential.ts';
-import type { CommercialContextGatewayCredentialIssuer } from '../../shared/domain/commercial-context-gateway-credential.ts';
+import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
 type CurrentMarketCatalogExecutor = (
   payload: CurrentMarketCatalogRequest,
@@ -116,14 +114,15 @@ const assessCurrentMarketResponse = (
   });
 };
 
-const makeCommercialContextAssessmentPort = (dependencies: {
+export const makeCommercialContextAssessmentPort = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
   };
   readonly execute: CurrentMarketCatalogExecutor;
-  readonly issuer: CommercialContextGatewayCredentialIssuer;
 }): CommercialContextAssessmentPort =>
   CommercialContextAssessmentService.of({
     assess: (request) => {
@@ -133,12 +132,13 @@ const makeCommercialContextAssessmentPort = (dependencies: {
           status: 'INVALID' as const,
         });
       }
-      return dependencies.issuer
-        .issue({
+      return dependencies
+        .acquire({
           audience: 'commerce-market-catalog',
           compositionRevision: dependencies.context.compositionRevision,
-          legalEntityId: dependencies.context.legalEntityId,
+          legalEntityScope: 'subject',
           requestCorrelation: dependencies.context.requestCorrelation,
+          scope: dependencies.context.scope,
         })
         .pipe(
           Effect.flatMap(({ baseUrl, credential }) =>
@@ -157,20 +157,21 @@ const makeCommercialContextAssessmentPort = (dependencies: {
     },
   });
 
-export const commercialContextAssessmentPortFromEnvironment = (
+export const commercialContextAssessmentPortFromEnvironment = Effect.fn(
+  'commercialContextAssessmentPortFromEnvironment',
+)(function* commercialContextAssessmentPortFromEnvironment(
   context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
   },
   execute: CurrentMarketCatalogExecutor = executeCurrentMarketCatalog,
-): Effect.Effect<CommercialContextAssessmentPort> =>
-  Effect.serviceOption(CommercialContextGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      makeCommercialContextAssessmentPort({
-        context,
-        execute,
-        issuer: Option.isSome(issuerOption) ? issuerOption.value : unavailableCommercialContextGatewayCredentialIssuer,
-      }),
-    ),
-  );
+): Effect.fn.Return<CommercialContextAssessmentPort, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
+  return makeCommercialContextAssessmentPort({
+    acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+    context,
+    execute,
+  });
+});

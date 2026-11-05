@@ -216,6 +216,14 @@ export const handleSetSupportedCurrencies = Effect.fn('SetSupportedCurrenciesAct
 
 export const setSupportedCurrenciesAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.currency-support.set',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'currency-support', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.set-supported-currencies.access.v1',
@@ -227,7 +235,7 @@ export const setSupportedCurrenciesAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.set-supported-currencies',
       moduleKey: MODULE_KEY,
       role: 'action',

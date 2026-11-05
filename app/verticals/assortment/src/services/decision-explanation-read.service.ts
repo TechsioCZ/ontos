@@ -1,4 +1,3 @@
-import type { AssortmentPermissionAccessTarget } from '../permissions/authorization-targets.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import type {
@@ -21,7 +20,6 @@ import type {
 import { AssortmentPolicyTargetInvariant } from '../../shared/domain/policy-errors.ts';
 import type { AssortmentPolicyPersistenceUnavailable } from '../../shared/domain/policy-errors.ts';
 import { assortmentMeaningFingerprint } from './policy-administration.service.ts';
-import { toCommercialScopeTarget, toResourceAccessTarget } from '../actions/policy-administration-support.ts';
 
 type Failure =
   | InstanceType<typeof AssortmentPolicyPersistenceUnavailable>
@@ -50,10 +48,6 @@ const subjectRef = (subject: AssortmentDecisionSubject): AssortmentOwnerResource
   }
   return subject.subject.kind === 'COUNTERPARTY' ? subject.subject.counterpartyRef : subject.subject.profileRef;
 };
-const requestTarget = (request: AssortmentDecisionRequest) =>
-  request.decisionPurpose === 'VISIBILITY'
-    ? { kind: 'PRODUCT' as const, productRef: request.productRef }
-    : { kind: 'CATALOG_SELECTION' as const, selection: request.constituent.catalogSelection };
 const requestFingerprint = (request: AssortmentDecisionRequest): string => {
   const normalized = {
     ...request,
@@ -131,32 +125,4 @@ export const assortmentDecisionExplanationReadService = (
     };
   });
   return { explain };
-};
-
-export const decisionExplanationPermissionTarget = (
-  request: AssortmentDecisionRequest,
-  scope: OperationalScope,
-): Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_decision' }> => {
-  if (!requestInScope(request, scope)) {
-    throw invalid('Decision explanation permission target is outside the trusted scope');
-  }
-  const target = requestTarget(request);
-  const catalogSelection = target.kind === 'PRODUCT' ? target.productRef : target.selection.variantRef;
-  const subject = subjectRef(request.subject);
-  let permissionSubject;
-  if (request.subject.kind === 'GUEST_PURCHASE_CONTEXT') {
-    permissionSubject = { kind: 'GUEST' as const };
-  } else if (request.subject.subject.kind === 'COUNTERPARTY') {
-    permissionSubject = { kind: 'COUNTERPARTY' as const, ref: toResourceAccessTarget(subject) };
-  } else {
-    permissionSubject = { kind: 'RETAIL_CUSTOMER_PROFILE' as const, ref: toResourceAccessTarget(subject) };
-  }
-  return {
-    catalogSelection: toResourceAccessTarget(catalogSelection),
-    commercialScope: toCommercialScopeTarget(request.trustedContext),
-    kind: 'assortment_decision' as const,
-    permission: 'assortment.decision.explain' as const,
-    purpose: request.decisionPurpose,
-    subject: permissionSubject,
-  };
 };

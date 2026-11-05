@@ -56,8 +56,6 @@ services:
     type: nodejs@24
   - hostname: commercecstmrcntxtworker
     type: nodejs@24
-  - hostname: pricegroupcatalogworker
-    type: nodejs@24
   - hostname: inventoryworker
     type: nodejs@24
   - hostname: privacyworker

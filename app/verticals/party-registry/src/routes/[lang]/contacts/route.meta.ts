@@ -1,11 +1,20 @@
 import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
+const routeMeta = defineRouteMeta({
+  accessDeclaration: {
+    key: 'party.registry.contacts-page.open',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'parties', level: 'basic' },
+    risk: 'routine',
+    selectors: [],
+  },
   canonicalPath: '/contacts',
   descriptionKey: 'party-registry.pages.contacts.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    authorization: { kind: 'context_permission', permission: 'module.access' },
+    authorization: { kind: 'protected' },
     entrypointKey: 'party.registry.page.contacts',
     moduleKey: 'party.registry',
     role: 'page',
@@ -23,7 +32,7 @@ const routeMeta = {
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: 'party-registry.pages.contacts.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };

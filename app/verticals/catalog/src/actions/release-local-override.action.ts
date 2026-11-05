@@ -78,6 +78,14 @@ const handleReleaseLocalOverride = Effect.fn('ReleaseLocalOverrideAction.handle'
 
 export const releaseLocalOverrideAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.local-override.release',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'catalog-source', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.release-local-override.access.v1',
@@ -89,7 +97,7 @@ export const releaseLocalOverrideAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

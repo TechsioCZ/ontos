@@ -44,6 +44,7 @@ const execute = Effect.fn('CorrectPaymentTermActionServer.execute')(function* ex
       authorization: Redacted.make(request.headers['authorization']),
       'x-correlation-id': correlationId,
     },
+    successContract: 'result-or-proposal',
   });
 });
 

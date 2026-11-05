@@ -19,7 +19,7 @@ const moduleKey = 'commerce.catalog';
 
 const externalTargetResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.external-target-resolution' },
+  authorization: { kind: 'protected' },
   entrypointKey: readKey,
   moduleKey,
   role: 'api',
@@ -73,13 +73,20 @@ export const readExternalTargetResolution = Effect.fn('ExternalTargetResolutionR
 /** Connector Registry and deterministic-rule evidence are deployment bindings; no binding fails closed. */
 export const externalTargetResolutionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.external-target-resolution.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'catalog-source', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: externalTargetResolutionEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: `${readKey}.evidence.v1` },
     inputSchema: ExternalTargetResolutionRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: moduleKey,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.external-target-resolution',
     resultSchema: ExternalTargetResolutionResponseSchema,
@@ -90,5 +97,4 @@ export const externalTargetResolutionRead = defineRead(
       Effect.map((result) => ({ evidence: { resultCount: result.status === 'RESOLVED' ? 1 : 0 }, result })),
     ),
   () => Effect.void,
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

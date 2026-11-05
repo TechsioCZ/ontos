@@ -12,7 +12,7 @@ import type { PrivacyMeasureExecutionService } from '../services/privacy-measure
 
 const privacyMeasureExecutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'party.registry.api.privacy-measure-execution',
   moduleKey: 'party.registry',
   role: 'api',
@@ -20,6 +20,23 @@ const privacyMeasureExecutionEntrypoint = defineTenantModuleEntrypoint({
 
 export const privacyMeasureExecutionRead = defineRead(
   {
+    accessActor: {
+      callers: ['party-registry'],
+      reason:
+        'The Party Registry privacy measure worker reads its own execution receipt for a verified originating requester.',
+      subject: 'identity',
+    },
+    // No accessTarget: the receipt is addressed by the caller's idempotency key, not by the record's
+    // immutable id (O2, O9). The declared `all` slot decides it scope-wide; a grant restricted to
+    // explicit record sets stays refused rather than naming a record this request does not carry.
+    accessDeclaration: {
+      key: 'party.registry.privacy-measure.read-receipt',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'privacy', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
     accessKind: 'detail',
     entrypoint: privacyMeasureExecutionEntrypoint,
     evidencePolicy: {
@@ -29,7 +46,6 @@ export const privacyMeasureExecutionRead = defineRead(
     inputSchema: PrivacyMeasureExecutionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'module',
     policies: [],
     readKey: 'party.registry.api.privacy-measure-execution',
     resultSchema: PrivacyMeasureExecutionResponseSchema,
@@ -52,5 +68,4 @@ export const privacyMeasureExecutionRead = defineRead(
       })),
     ),
   (transaction, scope) => privacyMeasureExecutionService(transaction, scope),
-  () => ({ kind: 'module', moduleId: 'party.registry' }),
 );

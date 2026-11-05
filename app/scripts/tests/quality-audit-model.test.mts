@@ -477,7 +477,7 @@ it.live(
         },
       },
     };
-    const native = yield* runPinnedKnip(root, consumerPath, { config: base, consumerSource: '' }).pipe(
+    const native = yield* runPinnedKnip(root, consumerPath, { config: base, consumerFiles: [] }).pipe(
       Effect.provide(NodeServices.layer),
     );
     expect(native.status, native.stderr).toBe(1);
@@ -2123,13 +2123,13 @@ it.live(
     expect(model.evidence.some((fact) => fact.reason === rstestEnvironmentReason && fact.target === 'happy-dom')).toBe(
       true,
     );
-    for (const [consumerSource, expectedUnused] of [
-      [model.consumerSource, false],
-      ['', true],
+    for (const [consumerFiles, expectedUnused] of [
+      [model.consumerFiles, false],
+      [model.consumerFiles.map((file) => ({ ...file, source: '' })), true],
     ] as const) {
       const run = yield* runPinnedKnip(root, consumerPath, {
         ...model,
-        consumerSource,
+        consumerFiles,
       }).pipe(Effect.provide(NodeServices.layer));
       expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
       expect(run.stderr).toBe('');

@@ -1,38 +1,11 @@
-import {
-  ActiveApplicationCompositionService,
-  BusinessPermissionRelationshipMutationLive,
-  ContextAccessLive,
-  extractOutboxWorkerSubscriptions,
-  getVerticalRuntimeOutboxWorkers,
-  loadDatabaseConnectionPair,
-  matchOutboxMessages,
-  OutboxRepositoryLive,
-  OutboxRuntime,
-  publishApplicationCompositionAuthority,
-  scopedRoutineInvokerFromTransaction,
-} from '@app/core-runtime';
-import type { OutboxCycleError, OutboxCycleResult } from '@app/core-runtime';
-import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
-import {
-  defineOutboxWorkerEntry,
-  OutboxWorkerInfrastructureLive,
-  OutboxWorkerLegalEntityScopeFanoutLive,
-} from '@app/core-runtime/outbox/worker';
-import { NodeCrypto } from '@effect/platform-node';
-import { PgClient } from '@effect/sql-pg';
+import { loadDatabaseConnectionPair, scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import { eq, sql } from 'drizzle-orm';
-import { Context, DateTime, Deferred, Effect, Layer, Schema } from 'effect';
-import type { Exit } from 'effect';
+import { Context, Effect, Schema } from 'effect';
 
 import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { acquireFixturePgClient } from './fixture-pg-client.ts';
 import { installEnrollmentTestAuthority } from './enrollment-composition-authority.ts';
-import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
-import { AccessAuthorizationMutationReconciliationLive } from '../../src/workers/access-authorization-mutation-reconciliation-live.ts';
-import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from '../../src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 import {
   commerceCustomerContextRelations,
@@ -77,8 +50,6 @@ export interface EnrollmentAcceptanceFixture {
   readonly compositionRevision: string;
   /** The production generic owner store, backed by one real transaction per phase. */
   readonly ownerStore: CommerceEnrollmentOwnerAttemptStore;
-  /** One real claim-worker pass against this fixture's runtime client and TEST authority. */
-  readonly progressInvitationClaim: () => ReturnType<typeof progressEnrollmentAcceptanceInvitationClaim>;
   readonly run: CommerceEnrollmentOwnerTransactionRun;
   /**
    * The same runtime-role transaction as `runWorker`, with the fixture's verified Tenant installed
@@ -154,115 +125,6 @@ const acceptanceWorkerRun =
         ),
       );
 
-const progressEnrollmentAcceptanceInvitationClaim = Effect.fn('EnrollmentAcceptance.progressInvitationClaim')(
-  function* progressEnrollmentAcceptanceInvitationClaim(
-    admin: EnrollmentAcceptanceDatabase,
-    adminClient: PgClient.PgClient,
-    runtimeClient: PgClient.PgClient,
-    compositionRevision: string,
-    tenantId: string,
-  ) {
-    const { producerModuleKey, topic, workerKey } =
-      reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker.descriptor;
-    const streamKey = `${producerModuleKey}:${topic}`;
-    // This finalizer belongs to the caller fixture scope, registered after the realm's tenant
-    // cleanup. It runs first and removes only the checkpoint this bounded worker can create.
-    yield* Effect.addFinalizer(() =>
-      admin
-        .execute(
-          sql`delete from core.worker_checkpoints
-          where tenant_id = ${tenantId}::uuid
-            and consumer_name = ${workerKey}
-            and stream_key = ${streamKey}`,
-          'objects',
-        )
-        .pipe(Effect.asVoid, Effect.orDie),
-    );
-    return yield* Effect.scoped(
-      Effect.gen(function* runOwnedClaimWorker() {
-        const registrations = [reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker] as const;
-        const subscriptions = extractOutboxWorkerSubscriptions(registrations);
-        const snapshot = yield* enrollmentApplicationCompositionSnapshot;
-        if (snapshot.composition.revision !== compositionRevision) {
-          return yield* Effect.die('The claim worker requires this fixture original Composition Revision');
-        }
-        const adminExecutor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
-        // Publish the complete genuine catalog at the same revision without resetting lifecycle or admission.
-        yield* adminExecutor.transaction((transaction) =>
-          publishApplicationCompositionAuthority(transaction, snapshot),
-        );
-        const executor = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, runtimeClient));
-        const persistence = Layer.succeed(CoreDatabase, { executor });
-        const services = Layer.mergeAll(
-          OutboxWorkerInfrastructureLive,
-          OutboxWorkerLegalEntityScopeFanoutLive,
-          AccessAuthorizationMutationReconciliationLive,
-        ).pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              OutboxRepositoryLive.pipe(Layer.provide(persistence)),
-              ContextAccessLive,
-              BusinessPermissionRelationshipMutationLive,
-              persistence,
-            ),
-          ),
-          Layer.provide(NodeCrypto.layer),
-        );
-        const context = yield* Layer.build(services);
-        return yield* Effect.gen(function* matchAndRunClaimWorker() {
-          const matched = yield* matchOutboxMessages({ compositionRevision });
-          // Deliveries use the database clock for available_at; sample that same clock after matching.
-          const [row] = yield* admin.execute<{ readonly at: string }>(
-            sql`select to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at`,
-            'objects',
-          );
-          const clock = yield* Schema.decodeUnknownEffect(Schema.Struct({ at: Schema.DateTimeUtcFromString }))(row);
-          const input = {
-            claimOwner: `enrollment-acceptance-claim-${tenantId}`,
-            compositionRevision,
-            maxDeliveries: 100,
-            now: DateTime.toDateUtc(clock.at),
-            registrations,
-            subscriptions,
-          };
-          const outbox = yield* OutboxRuntime;
-          const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
-          const preserveCycleExit = (exit: Exit.Exit<OutboxCycleResult, OutboxCycleError>) =>
-            Deferred.done(completed, exit);
-          const entry = defineOutboxWorkerEntry({
-            claimOwnerPrefix: 'enrollment-acceptance-claim',
-            expectedDeployment: ultramodernApiMarker,
-            layer: Layer.mergeAll(
-              Layer.succeedContext(context),
-              Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
-              Layer.succeed(OutboxRuntime, {
-                ...outbox,
-                // Preserve the original bounded native cycle inside the public receiving lifetime.
-                runCycle: () =>
-                  outbox.runCycle(input).pipe(Effect.provideContext(context), Effect.onExit(preserveCycleExit)),
-              }),
-            ),
-            ownerRegistration: commerceCustomerContextRegistration,
-            registrations,
-            subscriptions: extractOutboxWorkerSubscriptions(
-              getVerticalRuntimeOutboxWorkers(commerceCustomerContextRegistration),
-            ),
-          });
-          const cycle = yield* Effect.raceFirst(
-            Deferred.await(completed),
-            entry
-              .runLoop({
-                config: { claimOwner: input.claimOwner, maxDeliveries: input.maxDeliveries, pollIntervalMs: 1000 },
-              })
-              .pipe(Effect.andThen(Effect.never)),
-          );
-          return { cycle, matched };
-        }).pipe(Effect.provideContext(context));
-      }),
-    );
-  },
-);
-
 /** Acquires the admin and runtime clients and builds the production owner store on the runtime role. */
 export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeEnrollmentAcceptanceFixture(
   scope: CommerceEnrollmentOwnerScope,
@@ -307,14 +169,6 @@ export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeE
     cleanup,
     compositionRevision,
     ownerStore: commerceEnrollmentOwnerAttemptStoreForRun(scope, run),
-    progressInvitationClaim: () =>
-      progressEnrollmentAcceptanceInvitationClaim(
-        admin,
-        adminClient,
-        runtimeClient,
-        compositionRevision,
-        scope.tenantId,
-      ),
     run,
     runRequestScoped: acceptanceWorkerRun(runtime, scope),
     runWorker: acceptanceWorkerRun(runtime),

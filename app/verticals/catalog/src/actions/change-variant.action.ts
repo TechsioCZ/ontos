@@ -2,13 +2,13 @@
 // @ontos-action-owner commerce.catalog
 // @ontos-action-slug change-variant
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Schema, Option } from 'effect';
 import type { Crypto } from 'effect';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import { ChangeVariantPayloadSchema, ChangeVariantResultSchema } from '../../shared/actions/change-variant.ts';
 import type { ChangeVariantPayload, ChangeVariantResult } from '../../shared/actions/change-variant.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { decideVariantUseChange } from '../../shared/domain/variant-use-change.ts';
 import type { VariantUseChangeOperation } from '../../shared/domain/variant-use-change.ts';
 import type { VariantPersistence } from '../persistence/variant-persistence.ts';
@@ -152,6 +152,14 @@ export const handleChangeVariant = Effect.fn('ChangeVariantAction.handle')(funct
 
 export const changeVariantAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant.change',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.change-variant.access.v1',
@@ -163,7 +171,7 @@ export const changeVariantAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',
@@ -178,7 +186,7 @@ export const changeVariantAction = defineAction(
   },
   handleChangeVariant,
   Effect.fn('ChangeVariantAction.makeServices')(function* makeChangeVariantServices(transaction, scope) {
-    const openSelections = yield* cartOpenSelectionPopulationFromEnvironment;
+    const openSelections = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     return yield* variantPersistenceForScope(transaction, scope).pipe(
       Effect.map((services): ChangeVariantServices => ({
         ...services,

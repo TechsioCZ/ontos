@@ -60,6 +60,14 @@ const ACTION_KEY = 'commerce.catalog.create-package-definition' as const;
 
 export const createPackageDefinitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.package-definition.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'package-definition', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.create-package-definition.access.v1',
@@ -71,7 +79,7 @@ export const createPackageDefinitionAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

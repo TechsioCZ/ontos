@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { ContextAccess, ScopedRoutineInvocationError } from '@app/core-runtime';
+import { ScopedRoutineInvocationError } from '@app/core-runtime';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
@@ -79,7 +79,6 @@ const scenario = Effect.fn('ApprovalCurrentness.nativeScenario')(function* nativ
   const approved = yield* chain.decide();
   expect(approved.request.status).toBe('APPROVED');
   const factory = Context.get(owner.runtimeContext, PurchaseApprovalCurrentnessFactory);
-  const access = Context.get(owner.runtimeContext, ContextAccess);
   let externalCurrentCalls = 0;
   const externalCurrentness = {
     resolveCurrent: () =>
@@ -133,7 +132,7 @@ const scenario = Effect.fn('ApprovalCurrentness.nativeScenario')(function* nativ
               legalEntityId: wrongLegalEntity ? randomUUID() : owner.legalEntityId,
               trustedStorefrontId: owner.storefrontId,
             };
-            const service = factory.make(transaction, trusted, access, externalCurrentness, evaluationSource);
+            const service = factory.make(transaction, trusted, externalCurrentness, evaluationSource);
             return yield* service.resolveRevalidation({
               claimed: { ...claimed, ...patch },
               scope: {

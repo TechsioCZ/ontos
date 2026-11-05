@@ -21,6 +21,7 @@ export const SuspendMarketActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',

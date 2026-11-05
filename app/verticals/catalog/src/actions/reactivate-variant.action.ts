@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.catalog
 // @ontos-action-slug reactivate-variant
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Schema, Option } from 'effect';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import {
@@ -10,7 +10,7 @@ import {
   ReactivateVariantResultSchema,
 } from '../../shared/actions/reactivate-variant.ts';
 import type { ReactivateVariantPayload, ReactivateVariantResult } from '../../shared/actions/reactivate-variant.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import type { VariantPersistence } from '../persistence/variant-persistence.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import type { CatalogPersistenceConflict, CatalogPersistenceUnavailable } from '../persistence/errors.ts';
@@ -73,6 +73,14 @@ export const handleReactivateVariant = Effect.fn('ReactivateVariantAction.handle
 
 export const reactivateVariantAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant.reactivate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.reactivate-variant.access.v1',
@@ -84,7 +92,7 @@ export const reactivateVariantAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',
@@ -99,7 +107,7 @@ export const reactivateVariantAction = defineAction(
   },
   handleReactivateVariant,
   Effect.fn('ReactivateVariantAction.makeServices')(function* makeReactivateVariantServices(transaction, scope) {
-    const openSelections = yield* cartOpenSelectionPopulationFromEnvironment;
+    const openSelections = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     const services = yield* variantPersistenceForScope(
       transaction,
       scope,

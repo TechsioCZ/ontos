@@ -110,8 +110,11 @@ it('all Duplicate Candidate resolutions are reviewed, idempotent tenant Actions'
   ]) {
     expect(action.descriptor.legalEntityScope).toBe('optional');
     expect(action.descriptor.idempotency).toBe('required');
-    // SAFETY: these descriptors use a constant permission resolver and never inspect the payload.
-    expect(action.descriptor.tenantPermission?.({} as never)).toBe('review_party_identity');
+    // The one gate decides these Actions from their own declaration, naming the Duplicate Candidate
+    // case each request resolves (O9, O27).
+    expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(action.descriptor.accessDeclaration?.key).toBeDefined();
+    expect(action.descriptor.accessTarget).toBeDefined();
   }
 });
 

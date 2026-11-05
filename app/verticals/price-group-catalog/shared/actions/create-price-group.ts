@@ -54,7 +54,7 @@ export const CreatePriceGroupPayloadSchema = Schema.Struct({
 );
 export type CreatePriceGroupPayload = typeof CreatePriceGroupPayloadSchema.Type;
 
-export const PriceGroupAuthorizationTopologyMutationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+const PriceGroupAuthorizationTopologyMutationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PriceGroupAuthorizationTopologyMutationId'),
   Schema.decodeTo(Schema.String),
 );

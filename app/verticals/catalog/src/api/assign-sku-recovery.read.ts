@@ -63,7 +63,7 @@ const recoverAssignSku = Effect.fn('AssignSkuRecoveryRead.recover')(function* re
 
 const assignSkuRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.assign-sku-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.assign-sku-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const assignSkuRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const assignSkuRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.assign-sku-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: assignSkuRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const assignSkuRecoveryRead = defineRead(
     inputSchema: AssignSkuRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.assign-sku-recovery',
     resultSchema: AssignSkuRecoveryResponseSchema,
@@ -90,5 +97,4 @@ export const assignSkuRecoveryRead = defineRead(
     recoverAssignSku(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

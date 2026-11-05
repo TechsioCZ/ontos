@@ -10,9 +10,12 @@ import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
+import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from './access-gate.ts';
+import type { TestAccessOutcome } from './access-gate.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
+import type { OwnerAuthorizationDecision, OwnerAuthorizationInput } from '../access/enforcement/owner-overlay.ts';
 import type {
   OwnerPermissionAccessTarget,
   ContextAccessDecision,
@@ -29,15 +32,26 @@ export interface ReadTestOwnerQuery {
 }
 
 export interface ReadTestHarnessOptions {
+  /** The access gate's scripted answer for every protected Read (a v2 carrier decides here). */
+  readonly access?: TestAccessOutcome | Readonly<Record<string, TestAccessOutcome>>;
   readonly compositionRevision?: string;
   /** Explicit driver rows for owner SQL; unexpected statements must fail rather than supply empty. */
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
+  /** Observes the owner overlay input the runtime builds inside the transaction and answers it (O70). */
+  readonly onOwnerAuthorization?: (input: OwnerAuthorizationInput) => OwnerAuthorizationDecision;
   readonly operationTime: Date;
   readonly ownerAuthorizationDecision?: ContextAccessDecision;
   readonly ownerPermissionDecision?: (target: OwnerPermissionAccessTarget) => ContextAccessDecision;
   readonly ownerRegistration?: VerticalRuntimeRegistration;
+  /**
+   * The legacy context-access answer (scope admission and the legacy permission targets). A v2 read
+   * decides through `access`, so a harness that scripts a gate answer is admitted into its scope by
+   * default; override this only to exercise a refused scope.
+   */
   readonly permissionDecision?: ContextAccessDecision;
   readonly scope: OperationalScope;
+  /** The scope admission answer on its own, for a test that scripts a gate answer *and* a refused scope. */
+  readonly scopeAccess?: ContextAccessDecision;
 }
 
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
@@ -145,7 +159,15 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
   const executor = yield* makeWithDefaults({ relations: coreRelations }).pipe(
     Effect.provideService(PgClient.PgClient, Context.get(clientContext, PgClient.PgClient)),
   );
-  const decision = options.permissionDecision ?? 'denied';
+  /**
+   * The scope admission answer (O28). It is the harness's own question, answered by the V2 SCRIPT, never
+   * by the legacy context-access answer: a bag that scripts the gate through `access` is admitted into
+   * its scope, and `scopeAccess` is the explicit override for a test that is about a refused scope. The
+   * legacy `permissionDecision` is consulted only for a bag that has not migrated yet (no `access`), so
+   * the codemod's removal of that key can never turn a scope red; it disappears entirely in C03b step 3.
+   */
+  const decision: ContextAccessDecision =
+    options.scopeAccess ?? (options.access === undefined ? (options.permissionDecision ?? 'denied') : 'allowed');
   const contextAccess: ContextAccessService = {
     legalEntities: ({ legalEntityIds }) => Effect.succeed(legalEntityIds.map((key) => ({ decision, key }))),
     modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
@@ -181,7 +203,7 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
           tenantStatus: 'active',
         }),
     },
-    contextAccess,
+    makeTestOperationalScopeAccess({ decision }),
   );
   const gateway = makeModuleEntrypointGateway({
     check: checkModuleEntrypoint,
@@ -202,10 +224,14 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     recheckWrite: () => Effect.void,
   });
   const runtimeOptions: ReadRuntimeOptions = {
+    accessDecision: makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied').bound,
     onStage: (stage) => {
       stages.push(stage);
     },
-    ownerAuthorizationOverlay: { authorize: () => Effect.succeed(options.ownerAuthorizationDecision ?? 'denied') },
+    ownerAuthorizationOverlay: {
+      authorize: (_transaction, input) =>
+        Effect.succeed(options.onOwnerAuthorization?.(input) ?? options.ownerAuthorizationDecision ?? 'denied'),
+    },
   };
   const runtime = makeReadRuntime(
     { executor },

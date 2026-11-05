@@ -25,7 +25,7 @@ type ProcessingEligibilityServices = Pick<PrivacyOperationRepositoryService, 're
 
 const processingEligibilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.eligibility.evaluate' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.processing-eligibility',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -33,6 +33,14 @@ const processingEligibilityEntrypoint = defineTenantModuleEntrypoint({
 
 export const processingEligibilityRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.processing-eligibility.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'consent', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: processingEligibilityEntrypoint,
     evidencePolicy: {
@@ -42,7 +50,6 @@ export const processingEligibilityRead = defineRead(
     inputSchema: ProcessingEligibilityRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.processing-eligibility',
     resultSchema: ProcessingEligibilityResponseSchema,
@@ -90,5 +97,4 @@ export const processingEligibilityRead = defineRead(
         resolveEligibilityInputs: repository.resolveEligibilityInputs,
       })),
     ),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

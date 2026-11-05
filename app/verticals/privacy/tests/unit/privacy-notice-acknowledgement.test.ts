@@ -487,7 +487,7 @@ it.effect(
       );
       reads.length = 0;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         ownerRegistration: privacyRegistration,
         services: [
           bindActionTestServices(recordNoticeProvisionAction, {
@@ -564,7 +564,7 @@ it.effect('the real acknowledgement Action commits the actual read metadata with
     const services = yield* operations(unit);
     const presented = yield* services.present(target);
     const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
+      access: 'allowed',
       ownerRegistration: privacyRegistration,
       services: [bindActionTestServices(acknowledgePrivacyNoticeAction, services)],
     });
@@ -639,7 +639,7 @@ it.effect('the real acknowledgement Action commits the actual read metadata with
     );
     expect(JSON.stringify(commits.map(({ evidence }) => evidence.dataAccessEvents))).not.toContain(notice.wording);
     const rejectingHarness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
+      access: 'allowed',
       ownerRegistration: privacyRegistration,
       services: [
         bindActionTestServices(acknowledgePrivacyNoticeAction, {

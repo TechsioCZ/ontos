@@ -9,6 +9,7 @@ import { Console, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { Argument, CliConfig, Command, Flag, GlobalFlag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import actionHttpGenerator from './action-http/scaffold.mts';
+import { actionHttpProposalGenerator } from './action-http/proposal.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
 import actionGenerator from './action/scaffold.mts';
 import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
@@ -19,14 +20,16 @@ import moduleContractGenerator from './module-contract/scaffold.mts';
 import outboxMessageGenerator from './outbox-message/scaffold.mts';
 import outboxWorkerGenerator from './outbox-worker/scaffold.mts';
 import policyGenerator from './policy/scaffold.mts';
-import permissionGenerator from './permission/scaffold.mts';
 import publicComponentGenerator from './public-component/scaffold.mts';
 import reportGenerator from './report/scaffold.mts';
 import resourceGenerator from './resource/scaffold.mts';
 import retireContributionGenerator from './retire-contribution/scaffold.mts';
 import searchProviderAccessGenerator from './search-provider-access/generator.mts';
 import searchProviderGenerator from './search-provider/scaffold.mts';
+import { ACCESS_DECLARATION_RISKS, ACCESS_DECLARATION_SELECTORS } from './shared.mts';
 import type {
+  AccessDeclarationRisk,
+  AccessDeclarationSelector,
   ActionScaffoldConfig,
   ActionScaffoldResult,
   ActionHttpScaffoldConfig,
@@ -47,8 +50,6 @@ import type {
   PageScaffoldResult,
   PolicyScaffoldConfig,
   PolicyScaffoldResult,
-  PermissionScaffoldConfig,
-  PermissionScaffoldResult,
   ResourceScaffoldConfig,
   ResourceScaffoldResult,
   RetireContributionScaffoldConfig,
@@ -60,19 +61,21 @@ import type {
   SearchProviderAccessScaffoldResult,
 } from './shared.mts';
 
+const MODULE_API_COMMAND = 'module-api';
+const ACTION_HTTP_COMMAND = 'action-http';
+
 const scaffoldCommandValues = [
   'action',
-  'action-http',
+  ACTION_HTTP_COMMAND,
   'action-service',
   'external-http-adapter',
   'microvertical-action-boundary',
   'microvertical-page',
   'module-contract',
-  'module-api',
+  MODULE_API_COMMAND,
   'outbox-message',
   'outbox-worker',
   'policy',
-  'permission',
   'public-component',
   'report',
   'resource',
@@ -84,10 +87,13 @@ const scaffoldCommandValues = [
 const DOMAIN_PROBLEM_FLAG = 'domain-problem';
 const SCHEMA_MODULE_FLAG = 'schema-module';
 const RESULT_SCHEMA_FLAG = 'result-schema';
-const ACCESS_FILTERING_FLAG = 'access-filtering';
 const LEGAL_ENTITY_SCOPE_FLAG = 'legal-entity-scope';
 const REQUEST_FILTERS_FLAG = 'request-filters';
-const TENANT_PERMISSION_FLAG = 'tenant-permission';
+const ACCESS_RISK_FLAG = 'access-risk';
+const ACCESS_SELECTORS_FLAG = 'access-selectors';
+const ACCESS_WORKLOAD_FLAG = 'access-workload';
+const ACCESS_WORKLOAD_KEYS_FLAG = 'access-workload-keys';
+const PROPOSAL_ONLY_FLAG = 'proposal-only';
 
 export const ScaffoldCommandSchema = Schema.Literals(scaffoldCommandValues);
 export type ScaffoldCommand = typeof ScaffoldCommandSchema.Type;
@@ -109,7 +115,6 @@ type GeneratorResult =
   | OutboxWorkerScaffoldResult
   | PageScaffoldResult
   | PolicyScaffoldResult
-  | PermissionScaffoldResult
   | ResourceScaffoldResult
   | RetireContributionScaffoldResult
   | SearchProviderAccessScaffoldResult;
@@ -127,7 +132,6 @@ type GeneratorConfig =
   | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
   | PolicyScaffoldConfig
-  | PermissionScaffoldConfig
   | ResourceScaffoldConfig
   | RetireContributionScaffoldConfig
   | SearchProviderAccessScaffoldConfig;
@@ -154,7 +158,10 @@ export interface RunScaffoldOptions {
 }
 
 interface ParsedScaffoldFlags {
-  readonly accessFiltering: string | undefined;
+  readonly accessRisk: string | undefined;
+  readonly accessSelectors: string | undefined;
+  readonly accessWorkload: string | undefined;
+  readonly accessWorkloadKeys: string | undefined;
   readonly action: string | undefined;
   readonly authorizationMode: string | undefined;
   readonly core: boolean;
@@ -165,18 +172,16 @@ interface ParsedScaffoldFlags {
   readonly name: string | undefined;
   readonly operation: string | undefined;
   readonly page: string | undefined;
-  readonly permission: string | undefined;
   readonly policy: string | undefined;
   readonly producer: string | undefined;
+  readonly proposalOnly: boolean;
   readonly provider: string | undefined;
-  readonly provisioning: string | undefined;
   readonly requestFilters: string | undefined;
   readonly resource: string | undefined;
   readonly resultSchema: string | undefined;
   readonly schemaModule: string | undefined;
   readonly scope: string | undefined;
   readonly service: string | undefined;
-  readonly tenantPermission: string | undefined;
   readonly topic: string | undefined;
   readonly url: string | undefined;
   readonly vertical: string | undefined;
@@ -285,6 +290,15 @@ const defineCommand = <Config extends GeneratorConfig, Result extends GeneratorR
   requiredFlags: definition.requiredFlags,
 });
 
+/**
+ * `scaffold:action-http` selects its mode explicitly: the full scaffold stays the default for a fresh
+ * endpoint, and `--proposal-only` runs the surgical proposal upgrade instead.
+ */
+const actionHttpGeneratorEntry: LocalGenerator<ActionHttpScaffoldConfig, ActionHttpScaffoldResult> = (context, core) =>
+  context.config.proposalOnly === true
+    ? actionHttpProposalGenerator(context, core)
+    : actionHttpGenerator(context, core);
+
 const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
   Effect.gen(function* defaultRouteRefreshEffect() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -316,44 +330,128 @@ const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
 const LegalEntityScope = Schema.Literals(['required', 'optional', 'forbidden']);
 const isLegalEntityScope = Schema.is(LegalEntityScope);
 
-const ReadAuthorization = Schema.Literals(['authenticated_principal', 'context_permission', 'public']);
+const ReadAuthorization = Schema.Literals(['authenticated_principal', 'protected', 'public']);
 const isReadAuthorization = Schema.is(ReadAuthorization);
 const RequestFilter = Schema.Literals(['includeArchived', 'role']);
 const isRequestFilter = Schema.is(RequestFilter);
+const isAccessRisk = Schema.is(Schema.Literals(ACCESS_DECLARATION_RISKS));
+const isAccessSelector = Schema.is(Schema.Literals(ACCESS_DECLARATION_SELECTORS));
 
-const requireReadAuthorization = (
-  flags: ParsedScaffoldFlags,
-): Effect.Effect<Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>, ScaffoldingError> =>
-  Effect.gen(function* requireReadAuthorizationEffect() {
-    if (!isReadAuthorization(flags.authorizationMode)) {
-      return yield* failScaffolding('--authorization must be public, authenticated_principal, or context_permission');
+/** The access carrier flags a generated descriptor may carry; risk and selectors are optional. */
+interface AccessCarrierFlags {
+  readonly accessRisk?: AccessDeclarationRisk | undefined;
+  readonly accessSelectors?: readonly AccessDeclarationSelector[] | undefined;
+  readonly accessWorkload?: string | undefined;
+  readonly accessWorkloadKeys?: readonly string[] | undefined;
+}
+
+/** The registered workload keys a generated marker admits (O73): comma-separated, never empty. */
+const parseAccessWorkloadKeys = (
+  value: string | undefined,
+): Effect.Effect<Option.Option<readonly string[]>, ScaffoldingError> => {
+  if (value === undefined) {
+    return Effect.succeed(Option.none());
+  }
+  const keys = value
+    .split(',')
+    .map((key) => key.trim())
+    .filter((key) => key.length > 0);
+  return keys.length === 0
+    ? Effect.fail(new ScaffoldingError({ message: '--access-workload-keys must name at least one workload key' }))
+    : Effect.succeed(Option.some(keys));
+};
+
+const parseAccessSelectors = (
+  value: string | undefined,
+): Effect.Effect<Option.Option<readonly AccessDeclarationSelector[]>, ScaffoldingError> => {
+  if (value === undefined) {
+    return Effect.succeed(Option.none());
+  }
+  const selectors = value.split(',').map((selector) => selector.trim());
+  if (selectors.length === 0 || selectors.some((selector) => selector.length === 0)) {
+    return failScaffolding('--access-selectors must be a comma-separated list of record selectors');
+  }
+  if (!selectors.every(isAccessSelector)) {
+    return failScaffolding(`--access-selectors may contain only ${ACCESS_DECLARATION_SELECTORS.join(', ')}`);
+  }
+  const parsed = selectors.filter(isAccessSelector);
+  if (new Set(parsed).size !== parsed.length) {
+    return failScaffolding('--access-selectors may not repeat a selector');
+  }
+  return Effect.succeed(Option.some(parsed));
+};
+
+const requireAccessRisk = (
+  value: string | undefined,
+): Effect.Effect<Option.Option<AccessDeclarationRisk>, ScaffoldingError> => {
+  if (value === undefined) {
+    return Effect.succeed(Option.none());
+  }
+  return isAccessRisk(value)
+    ? Effect.succeed(Option.some(value))
+    : failScaffolding(`--access-risk must be ${ACCESS_DECLARATION_RISKS.join(', ')}`);
+};
+
+const requireAccessCarrierFlags = (flags: ParsedScaffoldFlags): Effect.Effect<AccessCarrierFlags, ScaffoldingError> =>
+  Effect.gen(function* requireAccessCarrierFlagsEffect() {
+    const accessRisk = Option.getOrUndefined(yield* requireAccessRisk(flags.accessRisk));
+    const accessSelectors = Option.getOrUndefined(yield* parseAccessSelectors(flags.accessSelectors));
+    if (accessSelectors !== undefined || accessRisk !== undefined) {
+      return accessSelectors === undefined ? { accessRisk } : { accessRisk, accessSelectors };
     }
-    if (flags.authorizationMode === 'context_permission') {
-      if (flags.permission === undefined) {
-        return yield* failScaffolding('--permission is required for context_permission authorization');
-      }
-      return {
-        authorization: flags.authorizationMode,
-        permission: flags.permission,
-      };
-    }
-    if (flags.permission !== undefined) {
-      return yield* failScaffolding('--permission is valid only for context_permission authorization');
-    }
-    return { authorization: flags.authorizationMode };
+    return {};
   });
 
-const isActionProvisioning = Schema.is(Schema.Literals(['tenant_membership_default', 'explicit']));
-const isAccessFiltering = Schema.is(Schema.Literals(['resource_permission', 'tenant_scope']));
+const isRecordScopedRead = (command: ScaffoldCommand): boolean => command === MODULE_API_COMMAND;
+
+/**
+ * A generated read is either protected (and then carries its own `accessDeclaration`) or one of the
+ * two unprotected classifications, which carry no access metadata at all (CUTOVER-PLAN §4.2).
+ */
+const requireReadAuthorization = (
+  flags: ParsedScaffoldFlags,
+  command: ScaffoldCommand,
+): Effect.Effect<Pick<GovernedContributionScaffoldConfig, 'authorization'> & AccessCarrierFlags, ScaffoldingError> =>
+  Effect.gen(function* requireReadAuthorizationEffect() {
+    if (!isReadAuthorization(flags.authorizationMode)) {
+      return yield* failScaffolding('--authorization must be public, authenticated_principal, or protected');
+    }
+    const authorization = flags.authorizationMode;
+    const carrier = yield* requireAccessCarrierFlags(flags);
+    if (authorization !== 'protected') {
+      if (carrier.accessRisk !== undefined || carrier.accessSelectors !== undefined) {
+        return yield* failScaffolding('--access-risk and --access-selectors require protected authorization');
+      }
+      return { authorization };
+    }
+    if (!isRecordScopedRead(command) && carrier.accessSelectors !== undefined) {
+      return yield* failScaffolding(
+        '--access-selectors require a single-record read: a list, search, report, page or component row is decided per row',
+      );
+    }
+    return { authorization, ...carrier };
+  });
+
 const isSearchLegalEntityScope = Schema.is(Schema.Literals(['required', 'optional']));
 
 const commandDefinitions = {
   action: defineCommand({
-    flags: ['action', 'authorization', LEGAL_ENTITY_SCOPE_FLAG, 'module', 'provisioning', 'scope', 'vertical'],
+    flags: [
+      ACCESS_RISK_FLAG,
+      ACCESS_SELECTORS_FLAG,
+      ACCESS_WORKLOAD_FLAG,
+      ACCESS_WORKLOAD_KEYS_FLAG,
+      'action',
+      'authorization',
+      LEGAL_ENTITY_SCOPE_FLAG,
+      'module',
+      'scope',
+      'vertical',
+    ],
     generator: actionGenerator,
     help: `Usage:
-  pnpm scaffold:action -- --vertical <vertical> --action <action> --legal-entity-scope <required|optional|forbidden> --authorization action_execution --provisioning <tenant_membership_default|explicit>
-  pnpm scaffold:action -- --scope core --module <core.module> --action <action> --legal-entity-scope <required|optional|forbidden> --authorization action_execution --provisioning <tenant_membership_default|explicit>
+  pnpm scaffold:action -- --vertical <vertical> --action <action> --legal-entity-scope <required|optional|forbidden> --authorization protected [--access-risk <routine|sensitive|critical>] [--access-selectors <all|assigned|entrusted|team>[,...]] [--access-workload <reason>] [--access-workload-keys <key>[,...]]
+  pnpm scaffold:action -- --scope core --module <core.module> --action <action> --legal-entity-scope <required|optional|forbidden> --authorization protected [--access-risk <routine|sensitive|critical>] [--access-selectors <all|assigned|entrusted|team>[,...]] [--access-workload <reason>] [--access-workload-keys <key>[,...]]
 
 Generate one typed, fail-closed Action registration with a governed write entrypoint.
 MicroVertical Actions are tenant-scoped; Core Actions are explicitly system-scoped.
@@ -364,13 +462,16 @@ Required flags:
   --vertical <vertical>  Existing generated vertical folder; exclusive with Core ownership
   --scope core           Required only for Core ownership; forbidden with --vertical
   --module <core.module> Stable core.* module key; required only with --scope core
-  --authorization       Must be action_execution
-  --provisioning        tenant_membership_default or explicit
+  --authorization       Must be protected: every Action carries its own access carrier
 
 Options:
+  --access-risk <risk>   Declaration risk tier; defaults to sensitive
+  --access-selectors <selectors>  Record slots the capability is granted on; defaults to none (scope-wide)
+  --access-workload <reason>      Emit a trusted-workload marker instead of a human capability (O29/O59)
+  --access-workload-keys <keys>   Registered workload keys the marker admits, comma-separated; required with --access-workload (O73)
   --help                 Show this help without writing
 `,
-    requiredFlags: ['action', 'authorization', LEGAL_ENTITY_SCOPE_FLAG, 'provisioning'],
+    requiredFlags: ['action', 'authorization', LEGAL_ENTITY_SCOPE_FLAG],
     toConfig: (flags) =>
       Effect.gen(function* actionConfigEffect() {
         const action = flags.action ?? '';
@@ -378,12 +479,23 @@ Options:
         if (!isLegalEntityScope(legalEntityScope)) {
           return yield* failScaffolding('--legal-entity-scope must be required, optional, or forbidden');
         }
-        if (flags.authorizationMode !== 'action_execution') {
-          return yield* failScaffolding('--authorization must be action_execution for Actions');
+        if (flags.authorizationMode !== 'protected') {
+          return yield* failScaffolding('--authorization must be protected for Actions');
         }
-        if (!isActionProvisioning(flags.provisioning)) {
-          return yield* failScaffolding('--provisioning must be tenant_membership_default or explicit');
+        const accessCarrier = yield* requireAccessCarrierFlags(flags);
+        const { accessWorkload } = flags;
+        if (
+          accessWorkload !== undefined &&
+          (accessCarrier.accessRisk !== undefined || accessCarrier.accessSelectors !== undefined)
+        ) {
+          return yield* failScaffolding('a workload Action declares no access risk or selectors');
         }
+        const workloadKeys = Option.getOrUndefined(yield* parseAccessWorkloadKeys(flags.accessWorkloadKeys));
+        if (accessWorkload !== undefined && workloadKeys === undefined) {
+          return yield* failScaffolding('--access-workload requires --access-workload-keys (O73)');
+        }
+        const carrier: AccessCarrierFlags =
+          accessWorkload === undefined ? accessCarrier : { accessWorkload, accessWorkloadKeys: workloadKeys };
         const { module, scope, vertical } = flags;
         if (vertical !== undefined) {
           if (scope !== undefined || module !== undefined) {
@@ -391,9 +503,9 @@ Options:
           }
           return {
             action,
-            authorization: 'action_execution',
+            authorization: 'protected' as const,
             legalEntityScope,
-            provisioning: flags.provisioning,
+            ...carrier,
             vertical,
           };
         }
@@ -405,18 +517,18 @@ Options:
         }
         return {
           action,
-          authorization: 'action_execution',
+          authorization: 'protected' as const,
           legalEntityScope,
           module,
-          provisioning: flags.provisioning,
+          ...carrier,
           scope,
         };
       }),
   }),
   'action-http': defineCommand({
-    flags: ['action', 'vertical', SCHEMA_MODULE_FLAG, RESULT_SCHEMA_FLAG, DOMAIN_PROBLEM_FLAG],
-    generator: actionHttpGenerator,
-    help: `Usage: pnpm scaffold:action-http -- --vertical <vertical> --action <action>
+    flags: ['action', PROPOSAL_ONLY_FLAG, 'vertical', SCHEMA_MODULE_FLAG, RESULT_SCHEMA_FLAG, DOMAIN_PROBLEM_FLAG],
+    generator: actionHttpGeneratorEntry,
+    help: `Usage: pnpm scaffold:action-http -- --vertical <vertical> --action <action> [--proposal-only]
 
 Generate one explicit, typed public HTTP transport for an existing MicroVertical Action.
 
@@ -425,6 +537,12 @@ Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
 
 Options:
+  --proposal-only        Upgrade only the parked-proposal transport of an existing endpoint: the 202
+                         success entry, the trusted handler's success contract and the client intent.
+                         Preserves owner error schemas, problem mappers, recovery text, custom server
+                         header decoding, custom client composition and runtime argument positions.
+                         Never rewrites problem mappers, barrels or package files, and leaves a
+                         run-only or ephemeral Action unchanged.
   --domain-problem <Tag=shared/module.ts#Schema#Mapper> Preserve a typed domain Problem (repeatable)
   --schema-module <path> Adopt canonical schema exports from an owner shared/ module
   --result-schema <name> Result schema export (requires --schema-module)
@@ -432,8 +550,8 @@ Options:
 `,
     requiredFlags: ['action', 'vertical'],
     toConfig: (flags) =>
-      Effect.sync(() => {
-        const config = { action: flags.action ?? '', vertical: flags.vertical ?? '' };
+      Effect.gen(function* actionHttpConfigEffect() {
+        const config = { action: flags.action ?? '', proposalOnly: flags.proposalOnly, vertical: flags.vertical ?? '' };
         if (flags.domainProblem !== undefined) {
           Object.assign(config, { domainProblems: flags.domainProblem.split(',') });
         }
@@ -442,6 +560,14 @@ Options:
         }
         if (flags.resultSchema !== undefined) {
           Object.assign(config, { resultSchema: flags.resultSchema });
+        }
+        if (
+          flags.proposalOnly &&
+          (flags.domainProblem !== undefined || flags.schemaModule !== undefined || flags.resultSchema !== undefined)
+        ) {
+          return yield* failScaffolding(
+            '--proposal-only upgrades only the parked-proposal transport and takes no --domain-problem, --schema-module or --result-schema',
+          );
         }
         return config;
       }),
@@ -525,20 +651,20 @@ Options:
         return yield* Effect.void;
       });
     },
-    flags: ['authorization', 'page', 'permission', 'url', 'vertical'],
+    flags: [ACCESS_RISK_FLAG, ACCESS_SELECTORS_FLAG, 'authorization', 'page', 'url', 'vertical'],
     generator: microverticalPageGenerator,
-    help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> --authorization <public|authenticated_principal|context_permission> [--permission <permission>] [--url <url>]
+    help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> --authorization <public|authenticated_principal|protected> [--access-risk <routine|sensitive|critical>] [--url <url>]
 
 Generate one localized, private-first page with a governed tenant page/read entrypoint.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --page <page>          Stable page name (lower-kebab-case)
-  --authorization       Explicit route authorization classification
+  --authorization       Explicit page authorization classification
 
 Options:
   --url <url>            Root-relative canonical template of lowercase kebab segments and unique named :parameters; defaults to /<vertical>/<page>
-  --permission <value>   Required only with context_permission
+  --access-risk <risk>   Declaration risk tier of a protected page; defaults to sensitive
   --help                 Show this help without writing
 
 Example:
@@ -550,15 +676,15 @@ Example:
         const page = flags.page ?? '';
         const vertical = flags.vertical ?? '';
         const { url } = flags;
-        const authorization = yield* requireReadAuthorization(flags);
+        const authorization = yield* requireReadAuthorization(flags, 'microvertical-page');
         return url === undefined ? { ...authorization, page, vertical } : { ...authorization, page, url, vertical };
       }),
   }),
-  'module-api': defineCommand({
-    flags: ['authorization', 'core', 'module', 'name', 'permission', 'vertical'],
+  [MODULE_API_COMMAND]: defineCommand({
+    flags: [ACCESS_RISK_FLAG, ACCESS_SELECTORS_FLAG, 'authorization', 'core', 'module', 'name', 'vertical'],
     generator: moduleApiGenerator,
-    help: `Usage: pnpm scaffold:module-api -- --vertical <vertical> --name <name> --authorization <public|authenticated_principal|context_permission> [--permission <permission>]
-  pnpm scaffold:module-api -- --core --module <core.module> --name <name> --authorization <authenticated_principal|context_permission> [--permission <permission>]
+    help: `Usage: pnpm scaffold:module-api -- --vertical <vertical> --name <name> --authorization <public|authenticated_principal|protected> [--access-risk <routine|sensitive|critical>] [--access-selectors <all|assigned|entrusted|team>[,...]]
+  pnpm scaffold:module-api -- --core --module <core.module> --name <name> --authorization <authenticated_principal|protected> [--access-risk <routine|sensitive|critical>] [--access-selectors <all|assigned|entrusted|team>[,...]]
 
 Generate one typed owner-local module API contract and generated Effect client adapter.
 
@@ -568,15 +694,16 @@ Required flags:
   --module <core.module> Stable Core module key, required with --core
   --name <name>          API name (lower-kebab-case)
   --authorization       Explicit API authorization classification
-  --permission <value>  Required only with context_permission
 
 Options:
-  --help                 Show this help without writing
+  --access-risk <risk>            Declaration risk tier of a protected read; defaults to sensitive
+  --access-selectors <selectors>  Record slots of a record-scoped read; adds the accessTarget scaffold
+  --help                          Show this help without writing
 `,
     requiredFlags: ['authorization', 'name'],
     toConfig: (flags) =>
       Effect.gen(function* moduleApiConfigEffect() {
-        const authorization = yield* requireReadAuthorization(flags);
+        const authorization = yield* requireReadAuthorization(flags, MODULE_API_COMMAND);
         if (flags.core) {
           if (flags.vertical !== undefined || flags.module === undefined) {
             return yield* failScaffolding('--core requires --module and forbids --vertical');
@@ -687,52 +814,6 @@ Options:
         };
       }),
   }),
-  permission: defineCommand({
-    flags: ['permission', 'scope', 'vertical'],
-    generator: permissionGenerator,
-    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <stable.lowercase.code> --scope <module|retail_profile|counterparty|counterparty_storefront|inventory_resource|pricing_catalog|price_group|assortment_configuration|assortment_decision|assortment_rule|assortment_binding|assortment_boundary|tax_selling_legal_entity>
-
-Generate one versioned, fail-closed Permission declaration and register it in the module manifest.
-Generated Permissions start non-delegable and with no authority-group or protected-entrypoint membership.
-
-Required flags:
-  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
-  --permission <code>    Stable lowercase dotted Permission code
-  --scope <scope>        Exact module or compatible business target scope
-
-Options:
-  --help                 Show this help without writing
-`,
-    requiredFlags: ['permission', 'scope', 'vertical'],
-    toConfig: (flags) =>
-      Effect.gen(function* permissionConfigEffect() {
-        const { scope } = flags;
-        if (
-          scope !== 'retail_profile' &&
-          scope !== 'counterparty' &&
-          scope !== 'counterparty_storefront' &&
-          scope !== 'inventory_resource' &&
-          scope !== 'module' &&
-          scope !== 'pricing_catalog' &&
-          scope !== 'price_group' &&
-          scope !== 'assortment_configuration' &&
-          scope !== 'assortment_decision' &&
-          scope !== 'assortment_rule' &&
-          scope !== 'assortment_binding' &&
-          scope !== 'assortment_boundary' &&
-          scope !== 'tax_selling_legal_entity'
-        ) {
-          return yield* failScaffolding(
-            '--scope must be module, retail_profile, counterparty, counterparty_storefront, inventory_resource, pricing_catalog, price_group, assortment_configuration, assortment_decision, assortment_rule, assortment_binding, assortment_boundary, or tax_selling_legal_entity',
-          );
-        }
-        return {
-          permission: flags.permission ?? '',
-          scope,
-          vertical: flags.vertical ?? '',
-        };
-      }),
-  }),
   policy: defineCommand({
     flags: ['policy', 'scope', 'vertical'],
     generator: policyGenerator,
@@ -762,9 +843,9 @@ Options:
       }),
   }),
   'public-component': defineCommand({
-    flags: ['authorization', 'name', 'permission', 'vertical'],
+    flags: [ACCESS_RISK_FLAG, ACCESS_SELECTORS_FLAG, 'authorization', 'name', 'vertical'],
     generator: publicComponentGenerator,
-    help: `Usage: pnpm scaffold:public-component -- --vertical <vertical> --name <name> --authorization <public|authenticated_principal|context_permission> [--permission <permission>]
+    help: `Usage: pnpm scaffold:public-component -- --vertical <vertical> --name <name> --authorization <public|authenticated_principal|protected> [--access-risk <routine|sensitive|critical>]
 
 Generate one owner-local public component with safe Shell contribution and lazy registration.
 
@@ -772,15 +853,15 @@ Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --name <name>          Component name (lower-kebab-case)
   --authorization       Explicit authorization classification
-  --permission <value>  Required only with context_permission
 
 Options:
+  --access-risk <risk>   Declaration risk tier of a protected component; defaults to sensitive
   --help                 Show this help without writing
 `,
     requiredFlags: ['authorization', 'name', 'vertical'],
     toConfig: (flags) =>
       Effect.gen(function* publicComponentConfigEffect() {
-        const authorization = yield* requireReadAuthorization(flags);
+        const authorization = yield* requireReadAuthorization(flags, 'public-component');
         return {
           ...authorization,
           name: flags.name ?? '',
@@ -789,9 +870,9 @@ Options:
       }),
   }),
   report: defineCommand({
-    flags: ['authorization', 'name', 'permission', 'resource', 'vertical'],
+    flags: [ACCESS_RISK_FLAG, ACCESS_SELECTORS_FLAG, 'authorization', 'name', 'resource', 'vertical'],
     generator: reportGenerator,
-    help: `Usage: pnpm scaffold:report -- --vertical <vertical> --name <name> --resource <resource> --authorization <authenticated_principal|context_permission> [--permission <permission>]
+    help: `Usage: pnpm scaffold:report -- --vertical <vertical> --name <name> --resource <resource> --authorization <authenticated_principal|protected> [--access-risk <routine|sensitive|critical>]
 
 Generate one owner-local report provider with a generated Effect adapter and safe Shell binding.
 
@@ -800,15 +881,15 @@ Required flags:
   --name <name>          Report name (lower-kebab-case)
   --resource <resource>  Existing owner-local resource key (lower-kebab-case)
   --authorization       Explicit authorization classification
-  --permission <value>  Required only with context_permission
 
 Options:
+  --access-risk <risk>   Declaration risk tier of a protected report; defaults to sensitive
   --help                 Show this help without writing
 `,
     requiredFlags: ['authorization', 'name', 'resource', 'vertical'],
     toConfig: (flags) =>
       Effect.gen(function* reportConfigEffect() {
-        const authorization = yield* requireReadAuthorization(flags);
+        const authorization = yield* requireReadAuthorization(flags, 'report');
         return {
           ...authorization,
           name: flags.name ?? '',
@@ -864,9 +945,9 @@ Options:
       }),
   }),
   'search-provider': defineCommand({
-    flags: ['authorization', 'name', 'permission', 'resource', 'vertical'],
+    flags: [ACCESS_RISK_FLAG, ACCESS_SELECTORS_FLAG, 'authorization', 'name', 'resource', 'vertical'],
     generator: searchProviderGenerator,
-    help: `Usage: pnpm scaffold:search-provider -- --vertical <vertical> --name <name> --resource <resource> --authorization <authenticated_principal|context_permission> [--permission <permission>]
+    help: `Usage: pnpm scaffold:search-provider -- --vertical <vertical> --name <name> --resource <resource> --authorization <authenticated_principal|protected> [--access-risk <routine|sensitive|critical>]
 
 Generate one owner-local search provider with a generated Effect adapter and safe Shell binding.
 
@@ -875,15 +956,15 @@ Required flags:
   --name <name>          Provider name (lower-kebab-case)
   --resource <resource>  Existing owner-local resource key (lower-kebab-case)
   --authorization       Explicit authorization classification
-  --permission <value>  Required only with context_permission
 
 Options:
+  --access-risk <risk>   Declaration risk tier of a protected provider read; defaults to sensitive
   --help                 Show this help without writing
 `,
     requiredFlags: ['authorization', 'name', 'resource', 'vertical'],
     toConfig: (flags) =>
       Effect.gen(function* searchProviderConfigEffect() {
-        const authorization = yield* requireReadAuthorization(flags);
+        const authorization = yield* requireReadAuthorization(flags, 'search-provider');
         return {
           ...authorization,
           name: flags.name ?? '',
@@ -893,58 +974,39 @@ Options:
       }),
   }),
   'search-provider-access': defineCommand({
-    flags: [
-      ACCESS_FILTERING_FLAG,
-      LEGAL_ENTITY_SCOPE_FLAG,
-      'name',
-      REQUEST_FILTERS_FLAG,
-      TENANT_PERMISSION_FLAG,
-      'vertical',
-    ],
+    flags: [LEGAL_ENTITY_SCOPE_FLAG, 'name', REQUEST_FILTERS_FLAG, 'vertical'],
     generator: searchProviderAccessGenerator,
-    help: `Usage: pnpm scaffold:search-provider-access -- --vertical <vertical> --name <name> --legal-entity-scope <required|optional> --access-filtering <resource_permission|tenant_scope> --request-filters <includeArchived[,role]> [--tenant-permission read_party_identity]
+    help: `Usage: pnpm scaffold:search-provider-access -- --vertical <vertical> --name <name> --legal-entity-scope <required|optional> --request-filters <includeArchived[,role]>
 
 Safely update only Codesmith-owned access metadata and request filters for an existing search provider.
+The descriptor's accessKey is the declaration key of the provider's own governed search read.
 
 Required flags:
   --vertical <vertical>          Existing generated vertical folder (lower-kebab-case)
   --name <name>                  Existing generated provider name (lower-kebab-case)
   --legal-entity-scope <scope>   required or optional
-  --access-filtering <mode>      resource_permission or tenant_scope
   --request-filters <filters>    Comma-separated includeArchived and role allowlist
 
 Options:
-  --tenant-permission read_party_identity  Required exactly for tenant_scope
-  --help                                  Show this help without writing
+  --help                         Show this help without writing
 `,
-    requiredFlags: [ACCESS_FILTERING_FLAG, LEGAL_ENTITY_SCOPE_FLAG, 'name', REQUEST_FILTERS_FLAG, 'vertical'],
+    requiredFlags: [LEGAL_ENTITY_SCOPE_FLAG, 'name', REQUEST_FILTERS_FLAG, 'vertical'],
     toConfig: (flags) =>
       Effect.gen(function* searchProviderAccessConfigEffect() {
-        const { accessFiltering, legalEntityScope, tenantPermission } = flags;
+        const { legalEntityScope } = flags;
         const filters = (flags.requestFilters ?? '').split(',').filter((value) => value !== '');
-        if (!isAccessFiltering(accessFiltering)) {
-          return yield* failScaffolding('--access-filtering must be resource_permission or tenant_scope');
-        }
         if (!isSearchLegalEntityScope(legalEntityScope)) {
           return yield* failScaffolding('--legal-entity-scope must be required or optional');
         }
         if (!filters.every(isRequestFilter)) {
           return yield* failScaffolding('--request-filters may contain only includeArchived and role');
         }
-        if (tenantPermission !== undefined && tenantPermission !== 'read_party_identity') {
-          return yield* failScaffolding('--tenant-permission must be read_party_identity');
-        }
-        const validatedFilters = filters.filter(isRequestFilter);
         const config: SearchProviderAccessScaffoldConfig = {
-          accessFiltering,
           legalEntityScope,
           name: flags.name ?? '',
-          requestFilters: validatedFilters,
+          requestFilters: filters.filter(isRequestFilter),
           vertical: flags.vertical ?? '',
         };
-        if (tenantPermission !== undefined) {
-          return { ...config, tenantPermission };
-        }
         return config;
       }),
   }),
@@ -1001,8 +1063,19 @@ const parseFlags = (
     if (coreCount > 1) {
       return yield* failScaffolding('flag --core may be supplied only once');
     }
-    const core = command === 'module-api' && coreCount === 1;
-    const normalizedArguments = core ? argumentsList.filter((argument) => argument !== '--core') : argumentsList;
+    const core = command === MODULE_API_COMMAND && coreCount === 1;
+    const proposalOnlyCount = argumentsList.filter((argument) => argument === `--${PROPOSAL_ONLY_FLAG}`).length;
+    if (proposalOnlyCount > 1) {
+      return yield* failScaffolding(`flag --${PROPOSAL_ONLY_FLAG} may be supplied only once`);
+    }
+    const proposalOnly = command === ACTION_HTTP_COMMAND && proposalOnlyCount === 1;
+    const booleanArguments = [core ? '--core' : undefined, proposalOnly ? `--${PROPOSAL_ONLY_FLAG}` : undefined].filter(
+      (argument) => argument !== undefined,
+    );
+    const normalizedArguments =
+      booleanArguments.length === 0
+        ? argumentsList
+        : argumentsList.filter((argument) => !booleanArguments.includes(argument));
     for (let index = 0; index < normalizedArguments.length; index += 2) {
       const flag = normalizedArguments[index];
       const value = normalizedArguments[index + 1];
@@ -1014,7 +1087,10 @@ const parseFlags = (
       }
     }
     return {
-      accessFiltering: parsed.get(ACCESS_FILTERING_FLAG),
+      accessRisk: parsed.get(ACCESS_RISK_FLAG),
+      accessSelectors: parsed.get(ACCESS_SELECTORS_FLAG),
+      accessWorkload: parsed.get(ACCESS_WORKLOAD_FLAG),
+      accessWorkloadKeys: parsed.get(ACCESS_WORKLOAD_KEYS_FLAG),
       action: parsed.get('action'),
       authorizationMode: parsed.get('authorization'),
       core,
@@ -1025,18 +1101,16 @@ const parseFlags = (
       name: parsed.get('name'),
       operation: parsed.get('operation'),
       page: parsed.get('page'),
-      permission: parsed.get('permission'),
       policy: parsed.get('policy'),
       producer: parsed.get('producer'),
+      proposalOnly,
       provider: parsed.get('provider'),
-      provisioning: parsed.get('provisioning'),
       requestFilters: parsed.get(REQUEST_FILTERS_FLAG),
       resource: parsed.get('resource'),
       resultSchema: parsed.get(RESULT_SCHEMA_FLAG),
       schemaModule: parsed.get(SCHEMA_MODULE_FLAG),
       scope: parsed.get('scope'),
       service: parsed.get('service'),
-      tenantPermission: parsed.get(TENANT_PERMISSION_FLAG),
       topic: parsed.get('topic'),
       url: parsed.get('url'),
       vertical: parsed.get('vertical'),
@@ -1066,7 +1140,10 @@ export const runScaffoldEffect = Effect.fn('runScaffold')(function* runScaffoldE
 const optionalTextFlag = (name: string) => Flag.String(name).pipe(Flag.optional);
 const forwardedArguments = Argument.variadic(Argument.String('forwarded flags'));
 const cliFlags = {
-  accessFiltering: optionalTextFlag(ACCESS_FILTERING_FLAG),
+  accessRisk: optionalTextFlag(ACCESS_RISK_FLAG),
+  accessSelectors: optionalTextFlag(ACCESS_SELECTORS_FLAG),
+  accessWorkload: optionalTextFlag(ACCESS_WORKLOAD_FLAG),
+  accessWorkloadKeys: optionalTextFlag(ACCESS_WORKLOAD_KEYS_FLAG),
   action: optionalTextFlag('action'),
   authorization: optionalTextFlag('authorization'),
   core: Flag.Boolean('core').pipe(Flag.withDefault(false)),
@@ -1080,18 +1157,16 @@ const cliFlags = {
   name: optionalTextFlag('name'),
   operation: optionalTextFlag('operation'),
   page: optionalTextFlag('page'),
-  permission: optionalTextFlag('permission'),
   policy: optionalTextFlag('policy'),
   producer: optionalTextFlag('producer'),
+  proposalOnly: Flag.Boolean(PROPOSAL_ONLY_FLAG).pipe(Flag.withDefault(false)),
   provider: optionalTextFlag('provider'),
-  provisioning: optionalTextFlag('provisioning'),
   requestFilters: optionalTextFlag(REQUEST_FILTERS_FLAG),
   resource: optionalTextFlag('resource'),
   resultSchema: optionalTextFlag(RESULT_SCHEMA_FLAG),
   schemaModule: optionalTextFlag(SCHEMA_MODULE_FLAG),
   scope: optionalTextFlag('scope'),
   service: optionalTextFlag('service'),
-  tenantPermission: optionalTextFlag(TENANT_PERMISSION_FLAG),
   topic: optionalTextFlag('topic'),
   url: optionalTextFlag('url'),
   vertical: optionalTextFlag('vertical'),
@@ -1101,13 +1176,14 @@ const cliFlags = {
 const cliFlagName = (key: string): string => key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 
 const toCliArguments = (
-  values: Readonly<Partial<Record<Exclude<keyof typeof cliFlags, 'core'>, Option.Option<string>>>> & {
+  values: Readonly<Partial<Record<Exclude<keyof typeof cliFlags, 'core' | 'proposalOnly'>, Option.Option<string>>>> & {
     readonly core?: boolean;
+    readonly proposalOnly?: boolean;
   },
 ): readonly string[] =>
   Object.entries(values).flatMap(([key, value]) => {
-    if (key === 'core') {
-      return value === true ? ['--core'] : [];
+    if (key === 'core' || key === 'proposalOnly') {
+      return value === true ? [`--${cliFlagName(key)}`] : [];
     }
     return value !== undefined && Option.isOption(value) && Option.isSome(value)
       ? [`--${cliFlagName(key)}`, value.value]
@@ -1119,9 +1195,10 @@ const executeCliCommand =
   ({
     forwarded,
     ...values
-  }: Readonly<Partial<Record<Exclude<keyof typeof cliFlags, 'core'>, Option.Option<string>>>> & {
+  }: Readonly<Partial<Record<Exclude<keyof typeof cliFlags, 'core' | 'proposalOnly'>, Option.Option<string>>>> & {
     readonly core?: boolean;
     readonly forwarded: readonly string[];
+    readonly proposalOnly?: boolean;
   }) =>
     Effect.gen(function* executeCliCommandEffect() {
       const result = yield* runScaffoldEffect(command, [...toCliArguments(values), ...forwarded]);

@@ -229,7 +229,7 @@ export const handleMarketBootstrapResolution = Effect.fn('MarketBootstrapResolut
 
 const marketBootstrapResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.market-bootstrap-resolution',
   moduleKey,
   role: 'api',
@@ -248,6 +248,14 @@ const marketBootstrapResolutionServices = (
 
 export const marketBootstrapResolutionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.market-bootstrap.resolve',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'commerce-policy', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: marketBootstrapResolutionEntrypoint,
     evidencePolicy: {
@@ -257,7 +265,6 @@ export const marketBootstrapResolutionRead = defineRead(
     inputSchema: MarketBootstrapResolutionRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.market-bootstrap-resolution',
     resultSchema: MarketBootstrapResolutionResponseSchema,
@@ -315,5 +322,4 @@ export const marketBootstrapResolutionRead = defineRead(
       );
     },
   ),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

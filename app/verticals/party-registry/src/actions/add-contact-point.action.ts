@@ -140,6 +140,15 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
 
 export const addContactPointAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.contact-point.add',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'contact-data', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.partyRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.add-contact-point.access.v1',
@@ -152,10 +161,7 @@ export const addContactPointAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.add-contact-point',
       moduleKey: 'party.registry',
       role: 'action',
@@ -167,7 +173,6 @@ export const addContactPointAction = defineAction(
     policies: [],
     resultSchema: AddContactPointResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleAddContactPoint,
   (transaction, scope) =>

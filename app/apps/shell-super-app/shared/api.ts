@@ -1,4 +1,11 @@
 import { GatewayContextApiGroup } from '@app/shared-contracts';
+import {
+  accessAdminApprovalsGroup,
+  accessAdminChangesGroup,
+  accessAdminExplainGroup,
+  accessAdminPeopleGroup,
+  accessAdminRolesGroup,
+} from './access-admin-api.ts';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
@@ -151,13 +158,23 @@ export const IdentityListPayloadSchema = Schema.Struct({
   limit: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 });
+/** A list row can omit governed binding metadata even when the list itself is admitted. */
+export const ApiKeyListItemSchema = Schema.Struct({
+  authBindingId: Schema.optionalKey(AuthBindingIdSchema),
+  cleanupPending: Schema.optionalKey(Schema.Boolean),
+  createdAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  enabled: Schema.optionalKey(Schema.Boolean),
+  expiresAt: Schema.optionalKey(Schema.Union([Schema.Null, Schema.DateTimeUtcFromString])),
+  name: Schema.optionalKey(Schema.Union([Schema.Null, Schema.String])),
+  start: Schema.optionalKey(Schema.Union([Schema.Null, Schema.String])),
+});
 export const SelfApiKeyListResponseSchema = Schema.Struct({
-  items: Schema.Array(ApiKeyLifecycleResponseSchema),
+  items: Schema.Array(ApiKeyListItemSchema),
   nextOffset: Schema.Union([Schema.Null, Schema.Finite]),
 });
 export const ManagedApiKeyListItemSchema = Schema.Struct({
-  displayName: Schema.String,
-  key: Schema.Union([Schema.Null, ApiKeyLifecycleResponseSchema]),
+  displayName: Schema.optionalKey(Schema.String),
+  key: Schema.Union([Schema.Null, ApiKeyListItemSchema]),
   kind: nonHumanPrincipalKind,
   principalId: PrincipalIdSchema,
   principalStatus,
@@ -443,7 +460,8 @@ const ShellSearchResultSchema = Schema.Union([
     kind: Schema.Literal('party'),
     matchedViaAlias: Schema.Boolean,
     ref: ResourceRefSchema,
-    title: searchTitle,
+    // The Party name is a governed field: a caller without it receives the row without its title (O17, O58).
+    title: Schema.optionalKey(searchTitle),
   }),
   Schema.Struct({
     collision: Schema.optionalKey(
@@ -462,10 +480,10 @@ const ShellSearchResultSchema = Schema.Union([
       archived: Schema.Boolean,
       matchedViaAlias: Schema.Boolean,
       ref: ResourceRefSchema,
-      title: searchTitle,
+      title: Schema.optionalKey(searchTitle),
     }),
     ref: ResourceRefSchema,
-    title: searchTitle,
+    title: Schema.optionalKey(searchTitle),
   }),
 ]);
 
@@ -867,7 +885,12 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   // @ontos-codesmith-core-read-api-groups:end
   .add(GatewayContextApiGroup)
-  .add(ExternalIdentityApiGroup);
+  .add(ExternalIdentityApiGroup)
+  .add(accessAdminRolesGroup)
+  .add(accessAdminPeopleGroup)
+  .add(accessAdminChangesGroup)
+  .add(accessAdminApprovalsGroup)
+  .add(accessAdminExplainGroup);
 
 const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
   `/shell-super-app-api${endpoint.path}` as const;

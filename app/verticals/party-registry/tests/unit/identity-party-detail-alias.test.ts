@@ -69,7 +69,6 @@ it.effect('Party Detail reads the final canonical Party after the complete histo
 
     expect(result).toEqual({
       currentFactAssertions: [],
-      factHistory: Option.none(),
       party: canonicalParty,
       resolution: {
         aliasChain: [partyRef('party-b'), partyRef('party-a')],
@@ -81,7 +80,7 @@ it.effect('Party Detail reads the final canonical Party after the complete histo
     expect(lookups).toEqual(['party-c']);
     expect(Schema.is(PartyDetailResponseSchema)(result)).toBe(true);
     const encoded = yield* Schema.encodeEffect(PartyDetailResponseSchema)(result);
-    expect(encoded.factHistory).toBe(null);
+    expect(encoded.factHistory).toBeUndefined();
     expect(encoded.party).toEqual(canonicalPartyWire);
   }),
 );

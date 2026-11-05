@@ -125,7 +125,7 @@ const binding = {
   },
   completeness: 'FULL',
   grantedPermissions: ['retail.profile.read', 'retail.consent.manage'],
-  permissionsFreshness: freshness('core.identity'),
+  permissionsFreshness: freshness('commerce.customer-context'),
   provenance: [{ freshness: freshness('commerce.customer-context', '2'), projection: 'PROFILE' }],
 };
 const access = {
@@ -138,7 +138,7 @@ const access = {
   provenance: [
     { freshness: freshness('commerce.customer-context', '2'), projection: 'PROFILE' },
     { freshness: freshness('commerce.customer-context', 'mutation:original'), projection: 'RETAIL_BINDING' },
-    { freshness: freshness('core.identity'), projection: 'OWNING_CAPABILITY' },
+    { freshness: freshness('commerce.customer-context'), projection: 'OWNING_CAPABILITY' },
   ],
   requiredPermission: 'retail.consent.manage',
 };
@@ -164,7 +164,6 @@ const party = {
       value: 'PERSON',
     },
   ],
-  factHistory: null,
   party: {
     archivedAt: null,
     businessName: null,
@@ -328,7 +327,6 @@ it.effect(
           binding: {
             ...binding,
             authorizationFreshness: { ...binding.authorizationFreshness, status: 'INDETERMINATE' },
-            binding: { ...binding.binding, authorizationState: 'PENDING_GRANT' },
           },
         },
         { binding: { ...binding, grantedPermissions: ['retail.profile.read'] } },

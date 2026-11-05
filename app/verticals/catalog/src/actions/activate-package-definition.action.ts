@@ -3,7 +3,7 @@
 // @ontos-action-slug activate-package-definition
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Schema, Option } from 'effect';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 
 import {
@@ -20,7 +20,7 @@ import { PackageDefinitionSelectionRevisionSchema } from '../../shared/domain/ca
 import { PackageDefinitionRefSchema } from '../../shared/resources/package-definition.ts';
 import { packageActivationPersistenceForScope } from '../persistence/package-activation-persistence.ts';
 import type { PackageActivationPersistence } from '../persistence/package-activation-persistence.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { packageActivationSelectionImpactForScope } from '../persistence/catalog-selection-change-impact.ts';
 import { packageContentBasisForTransaction } from './package-definition-action-support.ts';
 
@@ -100,7 +100,7 @@ const activatePackageDefinitionPersistenceServiceFactory = Effect.fn('ActivatePa
     transaction: Parameters<typeof packageActivationPersistenceForScope>[0],
     scope: Parameters<typeof packageActivationPersistenceForScope>[1],
   ) {
-    const configuredPopulation = yield* cartOpenSelectionPopulationFromEnvironment;
+    const configuredPopulation = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     return packageActivationPersistenceForScope(
       transaction,
       scope,
@@ -114,6 +114,14 @@ const ACTION_KEY = 'commerce.catalog.activate-package-definition' as const;
 
 export const activatePackageDefinitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.package-definition.activate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'package-definition', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.activate-package-definition.access.v1',
@@ -125,7 +133,7 @@ export const activatePackageDefinitionAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: moduleId,
       role: 'action',

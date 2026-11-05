@@ -122,6 +122,9 @@ it.live(
       expect((yield* owner.read(owner.componentA.selected)).evidence).toMatchObject({ status: 'INVALID' });
       expect((yield* owner.read(owner.componentB.selected)).evidence).toMatchObject({ status: 'VALID' });
       expect(yield* owner.observeOuter()).toEqual(before);
+      // v2: the one access gate decides this read (O62), so the principal with no assignment is
+      // named on the fixture's own per-request owner seam (see `live-access-authority`).
+      owner.deniedAccess.deny(owner.fixture.denied.principalId, 'commerce.catalog.selection-evidence.read');
       expect(
         Schema.is(SelectionEvidenceForbiddenProblemSchema)(
           yield* owner.read(owner.selected, owner.fixture.denied).pipe(Effect.flip),

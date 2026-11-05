@@ -1,8 +1,8 @@
-import type { OperationalScope, OwnerPermissionAccessTarget } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
 import {
   CorrectTaxRuleRevisionPayloadSchema,
@@ -17,11 +17,6 @@ import { createTaxRuleAction } from '../../src/actions/create-tax-rule.action.ts
 import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-vat-regime.action.ts';
 import { endTaxRuleRevisionAction } from '../../src/actions/end-tax-rule-revision.action.ts';
 import { importSellerVatRegimeDeclarationsAction } from '../../src/actions/import-seller-vat-regime-declarations.action.ts';
-
-const permissionRequest = (targets: readonly OwnerPermissionAccessTarget[] | undefined) => {
-  const first = targets?.[0];
-  return first === undefined ? undefined : { permission: first.definition.key, target: first.target };
-};
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -56,12 +51,11 @@ const czechRevision = {
 const attribution = { provenanceRef: 'test:tax-governance-permissions', reason: 'Governed tax change' };
 const ruleRevisionRef = ref('commerce.tax.tax-rule-revision', 'revision-1');
 
-interface TaxRequest {
-  readonly permission: string;
-  readonly target: object;
-}
-type ResolveFor = (scope: OperationalScope) => TaxRequest | undefined;
-
+/**
+ * The governed Tax Rule Actions. v2 replaced the per-seller business Permission target with the
+ * Action's own scope-wide capability decided in the Selling Legal Entity's access scope (O7,
+ * O67-Q2), so these suites read the declaration and the payload each Action still decodes.
+ */
 const governedActions = Effect.gen(function* decodeGovernedActions() {
   const createRule = yield* Schema.decodeUnknownEffect(CreateTaxRulePayloadSchema)({
     ...attribution,
@@ -88,24 +82,13 @@ const governedActions = Effect.gen(function* decodeGovernedActions() {
     expectedBasisFingerprint,
     taxRuleRevisionRef: ruleRevisionRef,
   });
-  return {
-    [correctTaxRuleRevisionAction.descriptor.actionKey]: (scope) =>
-      permissionRequest(getActionOwnerPermissionTargetResolver(correctTaxRuleRevisionAction)?.(correctRevision, scope)),
-    [createTaxRuleAction.descriptor.actionKey]: (scope) =>
-      permissionRequest(getActionOwnerPermissionTargetResolver(createTaxRuleAction)?.(createRule, scope)),
-    [createTaxRuleRevisionAction.descriptor.actionKey]: (scope) =>
-      permissionRequest(getActionOwnerPermissionTargetResolver(createTaxRuleRevisionAction)?.(createRevision, scope)),
-    [endTaxRuleRevisionAction.descriptor.actionKey]: (scope) =>
-      permissionRequest(getActionOwnerPermissionTargetResolver(endTaxRuleRevisionAction)?.(endRevision, scope)),
-  } satisfies Record<string, ResolveFor>;
+  return [
+    { action: correctTaxRuleRevisionAction, payload: correctRevision },
+    { action: createTaxRuleAction, payload: createRule },
+    { action: createTaxRuleRevisionAction, payload: createRevision },
+    { action: endTaxRuleRevisionAction, payload: endRevision },
+  ] as const;
 });
-
-/** Core's exact SpiceDB object identity: a grant admits only the identical permission, Tenant and seller. */
-const grantedTo = (grants: readonly TaxRequest[]) => {
-  const identities = new Set(grants.map((grant) => JSON.stringify(grant)));
-  return (resolved: TaxRequest | undefined): boolean =>
-    resolved !== undefined && identities.has(JSON.stringify(resolved));
-};
 
 it('#950 F14-F15 declares the Tax Rule management permission on the exact Selling Legal Entity scope', () => {
   expect(taxRuleManagePermission.allowedScopeKinds).toEqual(['tax_selling_legal_entity']);
@@ -116,61 +99,65 @@ it('#950 F14-F15 declares the Tax Rule management permission on the exact Sellin
   );
 });
 
-it.effect('#950 BDD Principal manages one seller scope: permission for A never admits a Tax Rule Action for B', () =>
+it.effect('#950 BDD a Selling Legal Entity capability is the Action scope: no per-record business target', () =>
   Effect.gen(function* principalManagesOneSeller() {
-    const rule = yield* governedActions;
-    const sellerARuleManager = grantedTo([
-      {
-        permission: 'tax.rule.manage',
-        target: { kind: 'tax_selling_legal_entity', legalEntityId: sellerA, tenantId },
-      },
-    ]);
-    for (const resolveFor of Object.values(rule)) {
-      expect(resolveFor(scopeFor(sellerA))).toEqual({
-        permission: 'tax.rule.manage',
-        target: { kind: 'tax_selling_legal_entity', legalEntityId: sellerA, tenantId },
-      });
-      expect(sellerARuleManager(resolveFor(scopeFor(sellerA)))).toBe(true);
-      expect(resolveFor(scopeFor(sellerB))?.target).toEqual({
-        kind: 'tax_selling_legal_entity',
-        legalEntityId: sellerB,
-        tenantId,
-      });
-      expect(sellerARuleManager(resolveFor(scopeFor(sellerB)))).toBe(false);
+    const governed = [
+      correctTaxRuleRevisionAction,
+      createTaxRuleAction,
+      createTaxRuleRevisionAction,
+      endTaxRuleRevisionAction,
+    ];
+    for (const action of governed) {
+      // The capability is decided in the selected seller's access scope and nowhere else (O7).
+      expect(action.descriptor.legalEntityScope).toBe('required');
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(action.descriptor.accessDeclaration?.selectors).toEqual([]);
+      // The retired per-seller business target is removed from the descriptor.
+      expect(Object.keys(action.descriptor)).not.toContain('ownerPermissions');
     }
+    expect(governed.map((action) => action.descriptor.accessDeclaration?.key)).toEqual([
+      'commerce.tax.tax-rule-revision.correct',
+      'commerce.tax.tax-rule.create',
+      'commerce.tax.tax-rule-revision.create',
+      'commerce.tax.tax-rule-revision.end',
+    ]);
+    // The seller never comes from the payload: one payload decodes for any selected seller.
+    const payloads = yield* governedActions;
+    expect(payloads).toHaveLength(4);
   }),
 );
 
-it.effect('#950 BDD Czech jurisdiction is not global administrator scope', () =>
+it.effect('#950 BDD Czech jurisdiction is not administrator scope', () =>
   Effect.gen(function* czechJurisdictionIsNotScope() {
-    const rule = yield* governedActions;
-    const sellerAManager = grantedTo([
-      {
-        permission: 'tax.rule.manage',
-        target: { kind: 'tax_selling_legal_entity', legalEntityId: sellerA, tenantId },
-      },
-    ]);
-    for (const resolveFor of Object.values(rule)) {
-      const otherCzechSeller = resolveFor(scopeFor(sellerB));
-      expect(Object.keys(otherCzechSeller?.target ?? {}).toSorted()).toEqual(['kind', 'legalEntityId', 'tenantId']);
-      expect(sellerAManager(otherCzechSeller)).toBe(false);
+    const governed = yield* governedActions;
+    for (const { action, payload } of governed) {
+      // The same request states the seller only through the trusted scope, never through the
+      // payload's jurisdiction or a payload-held seller id (O7, O12).
+      expect(scopeFor(sellerA).legalEntityId).toBe(sellerA);
+      expect(scopeFor(sellerB).legalEntityId).toBe(sellerB);
+      expect(action.descriptor.legalEntityScope).toBe('required');
+      expect(payload).toBeDefined();
     }
   }),
 );
 
-it('#907 Unit 10 declaring a Seller VAT Regime has no business Permission target (explicit Action provisioning instead)', () => {
+it('#907 Unit 10 declaring a Seller VAT Regime carries its own capability instead of an owner Permission target', () => {
   expect(getActionOwnerPermissionTargetResolver(declareSellerVatRegimeAction)).toBeUndefined();
-  expect(declareSellerVatRegimeAction.descriptor.entrypoint.authorization).toEqual({
-    kind: 'action_execution',
-    provisioning: 'explicit',
+  expect(declareSellerVatRegimeAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(declareSellerVatRegimeAction.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.tax.seller-vat-regime-declaration.declare',
+    kind: 'action',
+    selectors: [],
   });
 });
 
-it('907-Q08 #960 importing Seller VAT Regime declarations has no business Permission target (explicit Action provisioning instead)', () => {
+it('907-Q08 #960 importing Seller VAT Regime declarations carries its own capability instead of an owner Permission target', () => {
   expect(getActionOwnerPermissionTargetResolver(importSellerVatRegimeDeclarationsAction)).toBeUndefined();
-  expect(importSellerVatRegimeDeclarationsAction.descriptor.entrypoint.authorization).toEqual({
-    kind: 'action_execution',
-    provisioning: 'explicit',
+  expect(importSellerVatRegimeDeclarationsAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(importSellerVatRegimeDeclarationsAction.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.tax.seller-vat-regime-declaration.import',
+    kind: 'action',
+    selectors: [],
   });
 });
 

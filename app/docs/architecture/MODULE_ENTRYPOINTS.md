@@ -2,7 +2,7 @@
 
 Entrypoint `tenant`/`system` scope is independent from the descriptor's required/optional/forbidden legal-entity scope. Both must be explicit. Missing, malformed, denied, or indeterminate operation context fails closed before private implementation resolution as defined by [Governed Data Access and Operation Scope](./DATA_ACCESS.md).
 
-This document defines the Core-owned invariant for loading or dispatching OntOS Business Module entrypoints. It applies to Actions, pages, public components, module APIs, search providers, reports, and Outbox Workers. The gate is separate from authentication, SpiceDB authorization, and business Policy; passing module state never grants another kind of access.
+This document defines the Core-owned invariant for loading or dispatching OntOS Business Module entrypoints. It applies to Actions, pages, public components, module APIs, search providers, reports, and Outbox Workers. The gate is separate from authentication, the access decision gate, and business Policy; passing module state never grants another kind of access.
 
 ## Structured entrypoints
 
@@ -53,7 +53,7 @@ Snapshots are request-scoped, never process-global, browser-authoritative, TTL-b
 
 ## Runtime ordering
 
-Actions validate payload and trusted context, acquire/check state, and only then hash the request, create an invocation, call SpiceDB, evaluate Policies, or resolve the handler. A business Action rechecks `write` under the Core transaction after locking its invocation and tenant and before collector creation or handler resolution. A pre-invocation denial creates no evidence. A locked recheck failure rolls back and leaves the invocation open for existing retry semantics. The explicit system entrypoint for `core.modules.change-tenant-module-state` remains recoverable.
+Actions validate payload and trusted context, acquire/check state, and only then hash the request, create an invocation, call the access decision gate, evaluate Policies, or resolve the handler. A business Action rechecks `write` under the Core transaction after locking its invocation and tenant and before collector creation or handler resolution. A pre-invocation denial creates no evidence. A locked recheck failure rolls back and leaves the invocation open for existing retry semantics. The explicit system entrypoint for `core.modules.change-tenant-module-state` remains recoverable.
 
 Outbox claim eligibility evaluates the consumer with `background` semantics inside the existing atomic claim query. Producer state never authorizes a consumer. Ineligible or missing state leaves delivery pending with no claim or attempt. Private Worker handler resolution follows a successful eligible claim.
 
@@ -65,7 +65,7 @@ The Shell first establishes exactly one trusted tenant and active legal entity. 
 
 Generated exact page routes may use safe canonical named-parameter templates such as `/contacts/customers/:id/edit`; their owner and Shell filesystem routes use `[id]`. Dynamic templates are not normal navigation items. The generated connector selects only its declared parameter names and bounds each string value before calling the generic page loader. The generic loader keeps that plain record separate from the resolved target and never adds it to the module contract, target-resolution BFF input, trusted principal context, tenant/legal-entity context, module-state gate, or permission decision. Only after authentication, legal-entity selection, exact page resolution, lifecycle and permission success, approved lazy-client lookup, and successful remote loading may the Shell pass the record to the owner component. The owner treats every value as untrusted business input and validates it again before any domain read or Action.
 
-Search filters safe providers through the same context/state/module checks, then bulk-filters ResourceRefs by resource permission. Core repeats result-level resource authorization before a generated provider response can leave the receiving BFF. Zero providers/results is successful, mixed provider success is partial `200`, and total provider failure is retryable. Resource detail and timeline providers run only after catalog/type/state/module/resource gates and a fresh audience-scoped assertion for each attempt. Media attachment remains unavailable even when declared in a manifest until Codesmith generates and registers its Action; no provider mutation callback is part of the read gateway.
+Search filters safe providers through the same context/state/module checks, then decides each provider with the access gate over the manifest `accessKey`. Row-level filtering happens inside the owner query through the list predicate; Core repeats result-level authorization before a generated provider response can leave the receiving BFF. Zero providers/results is successful, mixed provider success is partial `200`, and total provider failure is retryable. Resource detail and timeline providers run only after catalog/type/state/module/resource gates and a fresh audience-scoped assertion for each attempt. Media attachment remains unavailable even when declared in a manifest until Codesmith generates and registers its Action; no provider mutation callback is part of the read gateway.
 
 ## Browser load sharing and capacity
 
@@ -140,7 +140,9 @@ Approved business-neutral Core database routines are consumed through their decl
 
 ## Authorization classification and inventory
 
-Every descriptor must declare exactly one authorization classification. `public` is an intentional authorization result, not the route-discovery `public` or `indexable` flag. Protected descriptors use `authenticated_principal`, `context_permission` with a stable permission, `action_execution` with a provisioning intent, `owner_local_background`, or API-only `capability_issuance` with its credential kind. Role-incompatible and excess fields fail decoding and generation.
+Every descriptor must declare exactly one authorization classification. `public` is an intentional authorization result, not the route-discovery `public` or `indexable` flag. A `protected` descriptor carries its own `accessDeclaration` or `accessWorkload` (an Action or a governed read may carry both); `authenticated_principal` and `owner_local_background` carry none; an API may be a `capability_issuance` issuer with its credential kind. A protected entrypoint without a carrier is a definition-time error. Role-incompatible and excess fields fail decoding and generation.
+
+Page route metadata is wrapped in `defineRouteMeta`, so a protected page carries its declaration beside its entrypoint and cannot drift from it. See [Granular Authorization](./AUTHORIZATION.md) for the carrier contract.
 
 `pnpm authorization:inventory:check` is the single repository derivation pass. It reconciles generated route metadata with runtime descriptors, current Action registrations, Outbox workers, and both Shell gateway issuers, then writes the non-secret deterministic artifact at `.codex/reports/authorization/protected-entrypoints.json`. Duplicate, missing, stale, ambiguous, or unclassified entries fail the check.
 

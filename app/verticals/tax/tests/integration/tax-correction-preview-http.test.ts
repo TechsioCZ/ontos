@@ -141,11 +141,11 @@ const grantAllContextPermissions: ContextAccessService['contextPermissions'] = (
 
 const makeGrantedHarness = Effect.fn('TaxCorrectionPreviewTest.makeGrantedHarness')(function* makeGrantedHarness() {
   const harness = yield* makeReadTestHarness({
+    access: 'allowed',
     executeOwnerQuery: () => Effect.die('The Tax correction preview reads no owner state'),
     operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-05T12:00:00.000Z')),
     ownerAuthorizationDecision: 'allowed',
     ownerRegistration: taxRegistration,
-    permissionDecision: 'allowed',
     scope,
   });
   const builtContext = yield* Layer.build(harness.layer);

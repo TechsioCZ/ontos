@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
@@ -23,7 +22,7 @@ const moduleKey = 'commerce.catalog';
 
 export const brandCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.brand-current' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.brand-current',
   moduleKey,
   role: 'api',
@@ -31,6 +30,14 @@ export const brandCurrentEntrypoint = defineTenantModuleEntrypoint({
 
 export const brandCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.brand-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'brand', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: brandCurrentEntrypoint,
     evidencePolicy: {
@@ -40,13 +47,8 @@ export const brandCurrentRead = defineRead(
     inputSchema: BrandCurrentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.brand-current',
-    resourcePermission: defineReadResourcePermission<BrandCurrentRequest>(({ brandRef }) => ({
-      permission: 'read',
-      resource: brandRef,
-    })),
     resultSchema: BrandCurrentResponseSchema,
     schemaVersion: '1',
   },
@@ -68,5 +70,4 @@ export const brandCurrentRead = defineRead(
     };
   }),
   (transaction, scope) => Effect.succeed(brandReadsForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

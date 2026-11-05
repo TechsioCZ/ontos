@@ -37,6 +37,7 @@ import { expect, it } from 'effect-rstest';
 import { Client } from 'pg';
 
 import { FinalizeOrderTaxResultSchema } from '../../shared/actions/order-tax-finalization.ts';
+import { makeSellerScopedAccessGate } from '../support/scoped-access-gate.ts';
 import { declareSellerVatRegimeAction } from '../../src/actions/declare-seller-vat-regime.action.ts';
 import { finalizeOrderTaxAction } from '../../src/actions/finalize-order-tax.action.ts';
 import { finalOrderTaxRead } from '../../src/api/final-order-tax.read.ts';
@@ -270,6 +271,27 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
       relationship('context_permission', permission, 'grantee', 'principal', actor.principalId),
     );
   }
+  // The runner re-decides every protected Action under its access scope's shared fence. Seed each
+  // tenant's context scope and every Selling Legal Entity scope with a Ready fence, as Core bootstrap does.
+  const accessScopes = [
+    ...tenantIds.map((id) => ({ legalEntityId: null, tenantContextId: id, tenantId: id })),
+    ...actorScopes.map((actor) => ({
+      legalEntityId: actor.legalEntityId,
+      tenantContextId: null,
+      tenantId: actor.tenantId,
+    })),
+  ];
+  for (const scope of accessScopes) {
+    const scopeId = yield* nextUuid;
+    yield* query(
+      'INSERT INTO core.access_scopes (scope_id,tenant_id,tenant_context_id,legal_entity_id) VALUES ($1,$2,$3,$4)',
+      [scopeId, scope.tenantId, scope.tenantContextId, scope.legalEntityId],
+    );
+    yield* query("INSERT INTO core.access_scope_fences (scope_id,tenant_id,state,revision) VALUES ($1,$2,'Ready',1)", [
+      scopeId,
+      scope.tenantId,
+    ]);
+  }
   for (const registration of [declareSellerVatRegimeAction, finalizeOrderTaxAction]) {
     ownedRelations.push(
       relationship(
@@ -286,10 +308,13 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   const moduleStates = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
   const stateGate = ModuleStateGateLive.pipe(Layer.provide(moduleStates));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
+  // The one access gate decides every protected read and Action (CUTOVER-PLAN §3.1): this fixture
+  // grants the capability in each actor's own Selling Legal Entity scope and nowhere else.
+  const accessGate = makeSellerScopedAccessGate(actorScopes.map((actor) => actor.legalEntityId));
   const resolver = OperationalScopeResolverLive.pipe(
-    Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+    Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessGate.layer)),
   );
-  const dependencies = Layer.mergeAll(CorePersistenceLive, ContextAccessLive, gateway, resolver);
+  const dependencies = Layer.mergeAll(CorePersistenceLive, ContextAccessLive, gateway, resolver, accessGate.layer);
   const compositionSource = Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) });
   const runtimes = Layer.mergeAll(
     makeReadRuntimeLive(deployment, taxRegistration).pipe(
@@ -417,6 +442,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   }
   const grant = relationship('context_permission', permissionId, 'grantee', 'principal', principalId);
   return {
+    accessGate,
     changeRelationships,
     compositionRevision: snapshot.composition.revision,
     evaluate,
@@ -477,26 +503,30 @@ it.layer(services, { excludeTestServices: true })('historical final Order Tax ac
       ),
   );
 
-  suite.effect('E30: real SpiceDB revocation and PostgreSQL scope prevent unauthorized historical final recovery', () =>
-    Effect.scoped(
-      Effect.gen(function* historicalAuthorization() {
-        const test = yield* fixture();
-        const active = yield* test.readFinal();
-        yield* test.setState('inactive');
-        yield* test.changeRelationships([test.grant], v1.RelationshipUpdate_Operation.DELETE);
-        expect(Schema.is(ReadPermissionDenied)(yield* test.readFinal().pipe(Effect.flip))).toBe(true);
-        yield* test.changeRelationships([test.grant], v1.RelationshipUpdate_Operation.TOUCH);
-        expect(yield* test.readFinal()).toEqual(active);
-        for (const principal of test.principals.slice(1)) {
-          expect(Schema.is(ReadHandlerNotFound)(yield* test.readFinal(principal).pipe(Effect.flip))).toBe(true);
-        }
-        const rows = yield* test.query(
-          'SELECT count(*)::int AS count FROM tax.tax_order_tax_finalizations WHERE tenant_id=$1 AND legal_entity_id=$2 AND submission_ref=$3',
-          [test.tenantId, test.sellerId, test.payload.submissionRef],
-        );
-        expect(rows.rows).toEqual([{ count: 1 }]);
-      }),
-    ),
+  suite.effect(
+    'E30: a revoked Selling Legal Entity capability and the PostgreSQL scope prevent unauthorized historical final recovery',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* historicalAuthorization() {
+          const test = yield* fixture();
+          const active = yield* test.readFinal();
+          yield* test.setState('inactive');
+          // v2 decides the read's own capability in the selected Selling Legal Entity's scope (O7);
+          // revoking the holder's assignment there denies the historical final before any owner lookup.
+          test.accessGate.revoke(test.sellerId);
+          expect(Schema.is(ReadPermissionDenied)(yield* test.readFinal().pipe(Effect.flip))).toBe(true);
+          test.accessGate.restore(test.sellerId);
+          expect(yield* test.readFinal()).toEqual(active);
+          for (const principal of test.principals.slice(1)) {
+            expect(Schema.is(ReadHandlerNotFound)(yield* test.readFinal(principal).pipe(Effect.flip))).toBe(true);
+          }
+          const rows = yield* test.query(
+            'SELECT count(*)::int AS count FROM tax.tax_order_tax_finalizations WHERE tenant_id=$1 AND legal_entity_id=$2 AND submission_ref=$3',
+            [test.tenantId, test.sellerId, test.payload.submissionRef],
+          );
+          expect(rows.rows).toEqual([{ count: 1 }]);
+        }),
+      ),
   );
 
   suite.effect('E31: invalid Composition denies the registered historical final before owner lookup', () =>

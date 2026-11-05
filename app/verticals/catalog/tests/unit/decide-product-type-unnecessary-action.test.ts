@@ -51,10 +51,7 @@ describe('Decide Product Type unnecessary Action contract', () => {
   });
 
   it('uses the generated authorized tenant Action and a typed domain rejection', () => {
-    expect(decideProductTypeUnnecessaryAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(decideProductTypeUnnecessaryAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(decideProductTypeUnnecessaryAction.descriptor.legalEntityScope).toBe('forbidden');
     expect(decideProductTypeUnnecessaryAction.descriptor.idempotency).toBe('required');
     expect(

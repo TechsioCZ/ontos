@@ -1,12 +1,12 @@
-import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
-  getActionOwnerPermissionTargetResolver,
+  getActionOwnerFactsResolver,
   getActionHandler,
+  getActionOwnerPermissionTargetResolver,
   getActionResourcePermissionTargetResolver,
-} from '@app/core-runtime/testing/actions';
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { repeatCounterpartyOrderAction } from '../../src/actions/repeat-counterparty-order.action.ts';
 import type { RepeatCounterpartyOrderPayload } from '../../src/actions/repeat-counterparty-order.action.ts';
 import { repeatRetailOrderAction } from '../../src/actions/repeat-retail-order.action.ts';
@@ -217,7 +217,7 @@ const collectors = <A extends typeof repeatRetailOrderAction | typeof repeatCoun
     action.descriptor.auditEvidenceSchema,
   );
 
-it('declares exact pre-handler business and Order resource permissions', () => {
+it('declares one scope-wide v2 capability and names the owner record instead of a permission target', () => {
   const retailPayload: RepeatRetailOrderPayload = {
     profileRef: retailProfileRef,
     sourceOrderRef: orderRef,
@@ -228,37 +228,25 @@ it('declares exact pre-handler business and Order resource permissions', () => {
     sourceOrderRef: orderRef,
     storefrontId: 'storefront-1',
   };
-  expect(getActionOwnerPermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope)).toMatchObject([
-    {
-      definition: { key: 'retail.repeat_order' },
-      target: { kind: 'retail_profile' },
-    },
-  ]);
-  expect(getActionOwnerPermissionTargetResolver(repeatCounterpartyOrderAction)?.(counterpartyPayload, scope)).toEqual([
-    customerOwnerPermissionTarget(
-      {
-        permission: 'counterparty.purchase.prepare',
-        target: {
-          counterpartyId: counterpartyRef.resourceId,
-          kind: 'counterparty_storefront',
-          legalEntityId,
-          storefrontId: 'storefront-1',
-          tenantId,
-        },
-      },
-      'action',
-    ),
-  ]);
-  expect(
-    getActionOwnerPermissionTargetResolver(repeatCounterpartyOrderAction)?.(counterpartyPayload, {
-      ...scope,
-      trustedStorefrontId: 'gateway-storefront',
-    }),
-  ).toMatchObject([{ requiredStorefrontId: 'storefront-1', target: { storefrontId: 'storefront-1' } }]);
-  expect(getActionResourcePermissionTargetResolver(repeatRetailOrderAction)?.(retailPayload, scope)).toEqual({
-    permission: 'read',
-    resource: orderRef,
+  // The v2 declaration gates each repeat capability; the owner facts name the Retail profile or the
+  // counterparty whose own grant the overlay checks (O67-Q1, O70).
+  expect(getActionOwnerFactsResolver(repeatRetailOrderAction)?.(retailPayload, scope)).toEqual({
+    retailPermission: 'retail.repeat_order',
+    retailProfileId: retailProfileRef.resourceId,
   });
+  expect(getActionOwnerFactsResolver(repeatCounterpartyOrderAction)?.(counterpartyPayload, scope)).toEqual({
+    counterpartyId: counterpartyRef.resourceId,
+    storefrontId: 'storefront-1',
+  });
+  // Negative control: the codemod removed the per-record permission resolvers, so neither repeat
+  // capability keeps a legacy target beside its declaration (O62.4, O67-Q1).
+  for (const action of [repeatRetailOrderAction, repeatCounterpartyOrderAction]) {
+    expect(action.descriptor.accessDeclaration?.selectors).toEqual([]);
+  }
+  expect(getActionOwnerPermissionTargetResolver(repeatRetailOrderAction)).toBeUndefined();
+  expect(getActionOwnerPermissionTargetResolver(repeatCounterpartyOrderAction)).toBeUndefined();
+  expect(getActionResourcePermissionTargetResolver(repeatRetailOrderAction)).toBeUndefined();
+  expect(getActionResourcePermissionTargetResolver(repeatCounterpartyOrderAction)).toBeUndefined();
 });
 
 it.effect('creates a new Cart from only current repeatable intent and preserves line outcomes', () =>

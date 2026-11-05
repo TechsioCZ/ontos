@@ -229,6 +229,15 @@ const handleUpdateContactPoint = Effect.fn('UpdateContactPointAction.handleUpdat
 
 export const updateContactPointAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.contact-point.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'contact-data', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.contactPointRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.update-contact-point.access.v1',
@@ -241,10 +250,7 @@ export const updateContactPointAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.update-contact-point',
       moduleKey: 'party.registry',
       role: 'action',
@@ -256,7 +262,6 @@ export const updateContactPointAction = defineAction(
     policies: [],
     resultSchema: UpdateContactPointResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleUpdateContactPoint,
   (transaction, scope) =>

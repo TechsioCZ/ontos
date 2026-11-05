@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug revise-set-composition
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/revise-set-composition.ts';
 
 export { ReviseSetCompositionPayloadSchema } from '../actions/revise-set-composition.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReviseSetCompositionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseSetCompositionActionInvalidProblem',
@@ -24,6 +26,7 @@ export const ReviseSetCompositionActionForbiddenProblemSchema = makeProblemDetai
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -129,7 +132,7 @@ export const ReviseSetCompositionActionApi = HttpApi.make('ReviseSetCompositionA
       HttpApiEndpoint.post('execute', '/catalog/actions/revise-set-composition', {
         error: actionErrors,
         payload: Schema.toEncoded(ReviseSetCompositionPayloadSchema),
-        success: ReviseSetCompositionResultSchema,
+        success: [ActionProposalAcceptedSchema, ReviseSetCompositionResultSchema],
       }),
     )
     .middleware(ReviseSetCompositionActionSchemaErrorMiddleware),

@@ -8,6 +8,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { defineAction } from '../../src/actions/definition.ts';
 import {
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
+  OntosActionContractSchema,
   OntosModuleDeploymentContractSchema,
   decodeOntosModuleDeploymentContract,
   defineOntosModuleManifest,
@@ -16,6 +17,7 @@ import {
   validateOntosModuleManifestFields,
 } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { fixtureActionAccess, fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
 import {
   defineVerticalRuntimeRegistration,
   extractVerticalRuntimeSafeDescriptors,
@@ -40,6 +42,7 @@ const UnitId = Schema.String.pipe(Schema.brand('UnitId'));
 const createAction = (owner = 'property.registry') =>
   defineAction(
     {
+      accessDeclaration: fixtureActionAccess(owner),
       accessEvidencePolicy: {
         captureMode: 'metadata_only',
         policyKey: `${owner}.read.v1`,
@@ -107,6 +110,7 @@ const emptyManifestInput = () => ({
 const createRead = (owner = 'property.registry', schemaVersion = 'read.v2') =>
   defineRead(
     {
+      accessDeclaration: fixtureReadAccess(owner),
       accessKind: 'detail',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'read',
@@ -618,7 +622,8 @@ it('defines a valid empty manifest, preserves literals, and freezes its public s
   const literal: 'property.registry' = manifest.module.id;
 
   expect(literal).toBe('property.registry');
-  expect(Object.keys(manifest)).toEqual(['activation', 'module', 'publicSurface']);
+  expect(Object.keys(manifest)).toEqual(['activation', 'module', 'publicSurface', 'originatorActions']);
+  expect(manifest.originatorActions).toEqual([]);
   expect(Object.isFrozen(manifest)).toBe(true);
   expect(Object.isFrozen(manifest.activation.supportedStates)).toBe(true);
   expect(Object.isFrozen(manifest.publicSurface.actions)).toBe(true);
@@ -728,6 +733,7 @@ it.effect('accepts populated typed surfaces and keeps executable values out of s
     expect(descriptors).toEqual({
       actions: [
         {
+          accessDeclaration: fixtureActionAccess('property.registry'),
           actionKey: 'property.registry.create-unit',
           auditProfile: 'standard',
           entrypoint: action.descriptor.entrypoint,
@@ -744,6 +750,23 @@ it.effect('accepts populated typed surfaces and keeps executable values out of s
     });
   }),
 );
+
+it('declares the Action keys the module may act for as an originator, exactly and without duplicates', () => {
+  const declared = defineOntosModuleManifest({
+    ...emptyManifestInput(),
+    originatorActions: ['privacy.core.dispatch-privacy-measure'],
+  });
+  expect(declared.originatorActions).toEqual(['privacy.core.dispatch-privacy-measure']);
+  expect(() =>
+    defineOntosModuleManifest({ ...emptyManifestInput(), originatorActions: ['not an action key'] }),
+  ).toThrow();
+  expect(() =>
+    defineOntosModuleManifest({
+      ...emptyManifestInput(),
+      originatorActions: ['privacy.core.dispatch-privacy-measure', 'privacy.core.dispatch-privacy-measure'],
+    }),
+  ).toThrow();
+});
 
 it('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
   expect(() =>
@@ -827,6 +850,57 @@ it('rejects invalid identities, private fields, duplicates, cross-owner values, 
   );
 });
 
+const searchableUnitSurface = (accessKey: string) => ({
+  ...emptyManifestInput().publicSurface,
+  resourceTypes: [
+    {
+      capabilities: {
+        graphVisible: true,
+        linkable: true,
+        mediaAttachable: true,
+        searchable: true,
+        timelineVisible: true,
+      },
+      description: 'A physical unit',
+      key: 'property.unit',
+      label: 'Unit',
+      owningModuleId: 'property.registry',
+    },
+  ] as const,
+  search: [
+    {
+      accessFiltering: 'legal_entity_scope',
+      accessKey,
+      key: 'property.unit-search',
+      owningModuleId: 'property.registry',
+      resourceType: 'property.unit',
+    },
+  ] as const,
+});
+
+it('decides a search provider by the governed read of its own module (O27, CUTOVER-PLAN §3.2)', () => {
+  const manifest = defineOntosModuleManifest({
+    ...emptyManifestInput(),
+    publicSurface: searchableUnitSurface('property.registry.unit.search'),
+  });
+  expect(manifest.publicSurface.search[0]?.accessKey).toBe('property.registry.unit.search');
+
+  // Negative control: a provider is decided by a read of the module that owns the descriptor.
+  expect(() =>
+    defineOntosModuleManifest({
+      ...emptyManifestInput(),
+      publicSurface: searchableUnitSurface('billing.invoice.unit.search'),
+    }),
+  ).toThrow(/must belong to module property\.registry/u);
+  // Negative control: the key keeps the declaration grammar.
+  expect(() =>
+    defineOntosModuleManifest({
+      ...emptyManifestInput(),
+      publicSurface: searchableUnitSurface('Property Registry Search'),
+    }),
+  ).toThrow();
+});
+
 it('deployment contract decoding is exact and versioned', () => {
   const contract = {
     deployment: { appId: 'property-registry', buildMarker: 'build-1' },
@@ -866,4 +940,117 @@ it('deployment contract decoding is exact and versioned', () => {
   ).toThrow();
   expect(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '0' })).toThrow();
   expect(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '999' })).toThrow();
+});
+
+const createDeclaredAction = () =>
+  defineAction(
+    {
+      accessDeclaration: {
+        key: 'property.registry.unit.add-note',
+        kind: 'action' as const,
+        modes: ['run'] as const,
+        placement: { group: 'units', level: 'basic' as const },
+        risk: 'routine' as const,
+        selectors: ['all'] as const,
+      },
+      accessEvidencePolicy: { captureMode: 'metadata_only' as const, policyKey: 'property.registry.read.v1' },
+      accessFieldGroups: [
+        {
+          fieldClass: 'margins' as const,
+          fields: ['unit.margin.amount'],
+          key: 'property.registry.unit.read-margins',
+          kind: 'field_write' as const,
+          modes: ['run'] as const,
+          placement: { group: 'units', level: 'manage' as const },
+          risk: 'sensitive' as const,
+          selectors: [] as const,
+        },
+      ],
+      actionKey: 'property.registry.add-note',
+      auditProfile: 'standard' as const,
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write' as const,
+        authorization: { kind: 'action_execution' as const, provisioning: 'tenant_membership_default' as const },
+        entrypointKey: 'property.registry.add-note',
+        moduleKey: 'property.registry',
+        role: 'action' as const,
+      }),
+      idempotency: 'required' as const,
+      legalEntityScope: 'optional' as const,
+      owningModuleKey: 'property.registry',
+      payloadSchema: Schema.Struct({
+        name: Schema.String,
+        unit: Schema.optionalKey(Schema.Struct({ margin: Schema.Struct({ amount: Schema.Number }) })),
+      }),
+      policies: [],
+      resultSchema: Schema.Struct({ id: Schema.String }),
+      schemaVersion: '1',
+    },
+    ({ name }) => Effect.succeed({ id: name }),
+  );
+
+/** A machine-only Action: O59 replaces the human declaration with the workload marker. */
+const createWorkloadAction = () => {
+  const { accessDeclaration: strippedDeclaration, ...workloadAction } = createAction().descriptor;
+  expect(strippedDeclaration?.key).toBe('property.registry.fixture.action');
+  return defineAction(
+    {
+      ...workloadAction,
+      accessWorkload: { reason: 'identity namespace provisioning only', workloads: ['property.machine-provisioner'] },
+    },
+    ({ name }) => Effect.succeed({ id: name }),
+  );
+};
+
+const contractFor = (action: ReturnType<typeof createAction> | ReturnType<typeof createDeclaredAction>) => {
+  const manifest = defineOntosModuleManifest({
+    ...emptyManifestInput(),
+    publicSurface: { ...emptyManifestInput().publicSurface, actions: [action] },
+  });
+  const registration = defineVerticalRuntimeRegistration({ actions: [action], manifest, outboxWorkers: [] });
+  const [contract] = extractVerticalRuntimeSafeDescriptors(registration).actions;
+  return contract;
+};
+
+it('projects every Action access carrier into the safe contract', () => {
+  const declared = contractFor(createDeclaredAction());
+  expect(declared?.accessDeclaration?.key).toBe('property.registry.unit.add-note');
+  expect(declared?.accessFieldGroups?.map((group) => group.key)).toStrictEqual(['property.registry.unit.read-margins']);
+  expect(declared === undefined ? undefined : Object.isFrozen(declared)).toBe(true);
+
+  expect(contractFor(createAction())?.accessDeclaration?.key).toBe('property.registry.fixture.action');
+  const workload = contractFor(createWorkloadAction());
+  expect(workload?.accessWorkload?.reason).toBe('identity namespace provisioning only');
+  expect(workload === undefined ? undefined : 'accessDeclaration' in workload).toBe(false);
+});
+
+it('refuses a protected Action contract that carries no access at all (O62)', () => {
+  const bare = {
+    actionKey: 'property.registry.bare',
+    auditProfile: 'standard',
+    entrypoint: {
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      entrypointKey: 'property.registry.bare',
+      moduleKey: 'property.registry',
+      role: 'action',
+      scope: 'tenant',
+    },
+    idempotency: 'required',
+    legalEntityScope: 'optional',
+    owningModuleId: 'property.registry',
+    schemaVersion: '1',
+  } as const;
+  expect(Schema.is(OntosActionContractSchema)(bare)).toBe(false);
+  expect(
+    Schema.is(OntosActionContractSchema)({ ...bare, accessDeclaration: fixtureActionAccess('property.registry') }),
+  ).toBe(true);
+  expect(
+    Schema.is(OntosActionContractSchema)({
+      ...bare,
+      accessWorkload: { reason: 'machine provisioning only', workloads: ['property.machine-provisioner'] },
+    }),
+  ).toBe(true);
 });

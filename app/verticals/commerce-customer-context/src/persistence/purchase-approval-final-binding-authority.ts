@@ -1,4 +1,4 @@
-import type { CoreSearchResourceRefSchema } from '@app/core-runtime';
+import type { CoreSearchResourceRefSchema, OperationalScope } from '@app/core-runtime';
 import type { PurchaseApprovalFinalBinding } from '../../shared/domain/purchasing-approval.ts';
 import {
   ActiveApplicationCompositionService,
@@ -6,9 +6,9 @@ import {
 } from '@app/core-runtime/modules/active-application-composition';
 import { executeVerifyOrderCommitmentBindingWithAuthorization } from '@app/commerce-order-contracts/verify-order-commitment-binding/client';
 import { executeCommittedOrderApprovalEvidenceWithAuthorization } from '@app/commerce-order-contracts/committed-order-approval-evidence/client';
-import { VerifyOrderCommitmentBindingRequestSchema } from '@app/commerce-order-contracts/verify-order-commitment-binding';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Clock, Config, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { VerifyOrderBindingInputSchema } from '@app/commerce-order-contracts/verify-order-commitment-binding';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import { Clock, Config, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { PurchaseApprovalFinalBindingAuthority } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import type { PurchaseApprovalFinalBindingAuthorityService } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import {
@@ -105,7 +105,7 @@ const committedBindingConflicts = ({
   readonly correlation: string;
   readonly now: number;
   readonly observed: number;
-  readonly request: Extract<typeof VerifyOrderCommitmentBindingRequestSchema.Type, { readonly mode: 'CONSUMPTION' }>;
+  readonly request: Extract<typeof VerifyOrderBindingInputSchema.Type, { readonly mode: 'CONSUMPTION' }>;
   readonly scope: { readonly legalEntityId: string; readonly tenantId: string };
   readonly until: number;
 }) =>
@@ -123,23 +123,26 @@ const committedBindingConflicts = ({
   until - observed > 30_000;
 
 const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_CCC_ORDER_GATEWAY_API_KEY'),
   orderBaseUrl: Config.schema(httpUrl, 'ONTOS_COMMERCE_ORDER_API_BASE_URL'),
-  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
 export const PurchaseApprovalFinalBindingAuthorityLive = Layer.effect(
   PurchaseApprovalFinalBindingAuthority,
   Effect.gen(function* finalBindingAuthorityLayer() {
     const composition = yield* ActiveApplicationCompositionService;
+    const crypto = yield* Crypto.Crypto;
     const configured = yield* configuration.pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
     const verify = Effect.fn('PurchaseApprovalFinalBindingAuthority.verify')(function* verify(
       input: VerificationClaim,
-      scope: { readonly legalEntityId: string; readonly tenantId: string },
+      scope: OperationalScope,
     ) {
-      const request = yield* Schema.decodeUnknownEffect(Schema.toType(VerifyOrderCommitmentBindingRequestSchema))(
-        input,
-      ).pipe(Effect.mapError(unavailable));
+      const { legalEntityId } = scope;
+      if (legalEntityId === undefined) {
+        return yield* conflict();
+      }
+      const request = yield* Schema.decodeUnknownEffect(Schema.toType(VerifyOrderBindingInputSchema))(input).pipe(
+        Effect.mapError(unavailable),
+      );
       if (Option.isNone(configured)) {
         return yield* unavailable();
       }
@@ -155,13 +158,14 @@ export const PurchaseApprovalFinalBindingAuthorityLive = Layer.effect(
         Effect.mapError(unavailable),
       );
       const correlation = request.commitmentCorrelationId;
-      const assertion = yield* issueApiKeyGatewayContext(
+      const assertion = yield* acquireDelegatedGatewayContext(
         {
           audience: 'commerce-order',
-          compositionRevision: active.composition.revision,
-          legalEntityId: scope.legalEntityId,
+          legalEntityScope: 'subject',
+          requestCorrelation: correlation,
+          subject: { _tag: 'Assertion', scope },
         },
-        { apiKey: configured.value.apiKey, baseUrl: configured.value.shellBaseUrl, requestCorrelation: correlation },
+        crypto,
       ).pipe(Effect.mapError(unavailable));
       if (
         assertion.compositionRevision !== active.composition.revision ||
@@ -176,7 +180,7 @@ export const PurchaseApprovalFinalBindingAuthorityLive = Layer.effect(
             orderRef: request.orderRef,
             revalidationRef: request.revalidationRef,
           },
-          `Bearer ${assertion.token}`,
+          assertion.authorization,
           correlation,
           {
             baseUrl: configured.value.orderBaseUrl,
@@ -186,7 +190,17 @@ export const PurchaseApprovalFinalBindingAuthorityLive = Layer.effect(
         const observed = DateTime.toEpochMillis(committed.observedAt);
         const until = DateTime.toEpochMillis(committed.validUntil);
         const now = yield* Clock.currentTimeMillis;
-        if (committedBindingConflicts({ committed, correlation, now, observed, request, scope, until })) {
+        if (
+          committedBindingConflicts({
+            committed,
+            correlation,
+            now,
+            observed,
+            request,
+            scope: { legalEntityId, tenantId: scope.tenantId },
+            until,
+          })
+        ) {
           return yield* conflict();
         }
         return {
@@ -202,7 +216,7 @@ export const PurchaseApprovalFinalBindingAuthorityLive = Layer.effect(
       }
       const verified = yield* executeVerifyOrderCommitmentBindingWithAuthorization(
         request,
-        `Bearer ${assertion.token}`,
+        assertion.authorization,
         correlation,
         { baseUrl: configured.value.orderBaseUrl, compositionRevision: active.composition.revision },
       ).pipe(Effect.mapError(unavailable));
@@ -246,7 +260,7 @@ export const PurchaseApprovalFinalBindingAuthorityLive = Layer.effect(
               requestRef: claimed.requestRef,
               revalidationRef: claimed.revalidationRef,
             },
-            { ...scope, legalEntityId: scope.legalEntityId },
+            scope,
           );
           if (
             verified.committedAt === null ||

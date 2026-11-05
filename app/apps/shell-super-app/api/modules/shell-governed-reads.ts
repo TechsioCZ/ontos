@@ -1,5 +1,4 @@
 import {
-  ContextAccess,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
@@ -8,6 +7,7 @@ import {
   defineRead,
   defineSystemModuleEntrypoint,
 } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type {
   ReadCoreError,
   ReadHandlerResult,
@@ -93,28 +93,28 @@ export class ShellGovernedReads extends Context.Service<ShellGovernedReads, Shel
 const emptyInput = Schema.Struct({});
 const compositionEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'core.shell.composition',
   moduleKey: 'core.shell',
   role: 'api',
 });
 const searchEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'core.shell.search',
   moduleKey: 'core.shell',
   role: 'search',
 });
 const moduleTargetEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'core.shell.module-target',
   moduleKey: 'core.shell',
   role: 'api',
 });
 const resourceDetailEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'core.shell.resource-detail-timeline',
   moduleKey: 'core.shell',
   role: 'api',
@@ -127,14 +127,14 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
     ShellScopedModuleStateFactory,
   ]
 ) {
-  const contextAccess = yield* ContextAccess;
+  const access = yield* AccessDecisionGate;
   const moduleStates = yield* TenantModuleStateService;
   const compositionFactory = yield* ShellCompositionFactory;
   const resourceServicesFactory = yield* ShellResourceServicesFactory;
   const dependencies = {
     ...assertionIssuer,
+    access,
     catalog: capturedShellCatalog,
-    contextAccess,
     moduleStates,
   };
   const serviceFactory = (transaction: Parameters<typeof makeTenantModuleStateService>[0]['executor']) => {
@@ -152,6 +152,14 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
   };
   const composition = defineRead(
     {
+      accessDeclaration: {
+        key: 'core.shell.composition.read',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'shell', level: 'basic' },
+        risk: 'routine',
+        selectors: [],
+      },
       accessKind: 'list',
       entrypoint: compositionEntrypoint,
       evidencePolicy: {
@@ -161,7 +169,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: emptyInput,
       legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'legal_entity',
       policies: [],
       readKey: 'core.shell.composition',
       resultSchema: ShellCompositionSchema,
@@ -183,10 +190,17 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
         ),
       ),
     serviceFactory,
-    () => ({ kind: 'legal_entity' }),
   );
   const search = defineRead(
     {
+      accessDeclaration: {
+        key: 'core.shell.resources.search',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'resources', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
       accessKind: 'search',
       entrypoint: searchEntrypoint,
       evidencePolicy: {
@@ -196,7 +210,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: ShellSearchPayloadSchema,
       legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'tenant',
       policies: [],
       readKey: 'core.shell.search',
       resultSchema: ShellSearchResponseSchema,
@@ -218,12 +231,17 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
         ),
       ),
     serviceFactory,
-    // Provider-specific Party tenant and Counterparty resource checks run inside the orchestrator.
-    () => ({ kind: 'tenant', permission: 'access' }),
-    () => [],
   );
   const moduleTarget = defineRead(
     {
+      accessDeclaration: {
+        key: 'core.shell.module-target.resolve',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'shell', level: 'basic' },
+        risk: 'routine',
+        selectors: [],
+      },
       accessKind: 'detail',
       entrypoint: moduleTargetEntrypoint,
       evidencePolicy: {
@@ -233,7 +251,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: GovernedResolveModuleTargetPayloadSchema,
       legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'legal_entity',
       policies: [],
       readKey: 'core.shell.module-target',
       resultSchema: GovernedResolvedModuleTargetSchema,
@@ -310,10 +327,17 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
         ),
       ),
     serviceFactory,
-    () => ({ kind: 'legal_entity' }),
   );
   const resourceDetail = defineRead(
     {
+      accessDeclaration: {
+        key: 'core.shell.resource-detail.read',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'resources', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
       accessKind: 'detail',
       entrypoint: resourceDetailEntrypoint,
       evidencePolicy: {
@@ -323,7 +347,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: ResourceRefSchema,
       legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'resource',
       policies: [],
       readKey: 'core.shell.resource-detail-timeline',
       resultSchema: ShellResourceResponseSchema,
@@ -386,7 +409,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       );
     },
     serviceFactory,
-    (ref) => ({ kind: 'resource', resource: ref }),
   );
   return { composition, moduleTarget, resourceDetail, search } as const;
 });

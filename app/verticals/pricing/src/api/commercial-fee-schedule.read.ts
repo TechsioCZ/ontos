@@ -18,7 +18,7 @@ const MODULE_KEY = 'commerce.pricing' as const;
 
 const commercialFeeScheduleEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'pricing.commercial_fee.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.commercial-fee-schedule',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -86,6 +86,15 @@ export const readCommercialFeeSchedule = Effect.fn('CommercialFeeScheduleRead.re
 
 export const commercialFeeScheduleRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.commercial-fee.read-schedule',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'commercial-fees', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+
     accessKind: 'detail',
     entrypoint: commercialFeeScheduleEntrypoint,
     evidencePolicy: {
@@ -95,7 +104,6 @@ export const commercialFeeScheduleRead = defineRead(
     inputSchema: CommercialFeeScheduleRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.commercial-fee-schedule',
     resultSchema: CommercialFeeScheduleResponseSchema,
@@ -120,5 +128,4 @@ export const commercialFeeScheduleRead = defineRead(
       })),
     ),
   (transaction, scope) => commercialFeePersistenceForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

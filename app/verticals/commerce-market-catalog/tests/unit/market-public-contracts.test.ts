@@ -2,7 +2,6 @@ import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
-import { getActionResourcePermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   EligibleMarketTuplesRequestSchema as PublishedEligibleMarketTuplesRequestSchema,
   PricingCurrentMarketEvidenceRequestSchema as PublishedPricingCurrentMarketEvidenceRequestSchema,
@@ -113,15 +112,6 @@ const eligibleTuple = {
   marketRef,
   sellingLegalEntityRef: sellerRef,
 } as const;
-const scope = {
-  authBindingId: '77777777-7777-4777-8777-777777777777',
-  authContextRef: 'better-auth-session:market-contract',
-  authMethod: 'session' as const,
-  correlationId: 'market-contract',
-  legalEntityId: sellerId,
-  principalId: '88888888-8888-4888-8888-888888888888',
-  tenantId,
-};
 
 describe('Commerce Market public contracts', () => {
   it('models one Tenant-scoped immutable Market definition revision', () => {
@@ -254,6 +244,16 @@ describe('Commerce Market public contracts', () => {
     ).toThrow();
     expect(eligibleMarketTuplesRead.descriptor.legalEntityScope).toBe('optional');
     expect(resolveCommerceMarketRead.descriptor.legalEntityScope).toBe('optional');
+    expect(eligibleMarketTuplesRead.descriptor.accessActor).toEqual({
+      callers: ['commerce-customer-context'],
+      reason: expect.any(String),
+      subject: 'identity',
+    });
+    expect(resolveCommerceMarketRead.descriptor.accessActor).toEqual({
+      callers: ['commerce-customer-context'],
+      reason: expect.any(String),
+      subject: 'rights',
+    });
   });
 
   it('separates requested applicability time from owner observation time', () => {
@@ -366,21 +366,21 @@ describe('Commerce Market public contracts', () => {
     expect(
       commerceMarketCatalogManifest.publicSurface.actions.map(({ descriptor }) => ({
         actionKey: descriptor.actionKey,
-        provisioning:
-          descriptor.entrypoint.authorization.kind === 'action_execution'
-            ? descriptor.entrypoint.authorization.provisioning
-            : null,
+        authorizationKind: descriptor.entrypoint.authorization.kind,
       })),
     ).toEqual([
-      { actionKey: 'commerce.market-catalog.activate-market', provisioning: 'explicit' },
-      { actionKey: 'commerce.market-catalog.associate-storefront', provisioning: 'explicit' },
-      { actionKey: 'commerce.market-catalog.create-market', provisioning: 'explicit' },
-      { actionKey: 'commerce.market-catalog.manage-market-retirement-admission', provisioning: 'explicit' },
-      { actionKey: 'commerce.market-catalog.remove-storefront-association', provisioning: 'explicit' },
-      { actionKey: 'commerce.market-catalog.retire-market', provisioning: 'explicit' },
-      { actionKey: 'commerce.market-catalog.revise-market-definition', provisioning: 'explicit' },
-      { actionKey: 'commerce.market-catalog.revise-storefront-association', provisioning: 'explicit' },
-      { actionKey: 'commerce.market-catalog.suspend-market', provisioning: 'explicit' },
+      { actionKey: 'commerce.market-catalog.activate-market', authorizationKind: 'protected' },
+      { actionKey: 'commerce.market-catalog.associate-storefront', authorizationKind: 'protected' },
+      { actionKey: 'commerce.market-catalog.create-market', authorizationKind: 'protected' },
+      {
+        actionKey: 'commerce.market-catalog.manage-market-retirement-admission',
+        authorizationKind: 'protected',
+      },
+      { actionKey: 'commerce.market-catalog.remove-storefront-association', authorizationKind: 'protected' },
+      { actionKey: 'commerce.market-catalog.retire-market', authorizationKind: 'protected' },
+      { actionKey: 'commerce.market-catalog.revise-market-definition', authorizationKind: 'protected' },
+      { actionKey: 'commerce.market-catalog.revise-storefront-association', authorizationKind: 'protected' },
+      { actionKey: 'commerce.market-catalog.suspend-market', authorizationKind: 'protected' },
     ]);
     const nativeEndpoints = Object.values(commerceMarketCatalogApi.groups).flatMap((group) =>
       Object.values(group.endpoints).map((endpoint) => ({
@@ -531,7 +531,7 @@ describe('Commerce Market public contracts', () => {
     ).toThrow();
   });
 
-  it('targets exact Market resources and uses no generic customer-subject administration permission', () => {
+  it('declares one Market capability per operation and uses no generic customer-subject administration permission', () => {
     const createPayload = Schema.decodeUnknownSync(CreateMarketPayloadSchema)({
       channels: ['B2C'],
       effectivePeriod,
@@ -570,48 +570,23 @@ describe('Commerce Market public contracts', () => {
       storefrontRef,
     });
 
-    expect(getActionResourcePermissionTargetResolver(createMarketAction)?.(createPayload, scope)).toEqual({
-      permission: 'write',
-      resource: {
-        moduleId: 'commerce.market-catalog',
-        resourceId: sellerId,
-        resourceType: 'commerce.market-catalog.market-catalog-root',
-      },
-    });
-    expect(() =>
-      getActionResourcePermissionTargetResolver(createMarketAction)?.(createPayload, {
-        ...scope,
-        legalEntityId: '99999999-9999-4999-8999-999999999999',
-      }),
-    ).toThrow();
-    expect(getActionResourcePermissionTargetResolver(reviseMarketDefinitionAction)?.(revisePayload, scope)).toEqual({
-      permission: 'write',
-      resource: marketRef,
-    });
-    expect(
-      getActionResourcePermissionTargetResolver(removeStorefrontAssociationAction)?.(removePayload, scope),
-    ).toEqual({
-      permission: 'write',
-      resource: associationRef,
-    });
-    expect(associateStorefrontAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
-    expect(retireMarketAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
-    expect([
-      getActionResourcePermissionTargetResolver(activateMarketAction),
-      getActionResourcePermissionTargetResolver(associateStorefrontAction),
-      getActionResourcePermissionTargetResolver(createMarketAction),
-      getActionResourcePermissionTargetResolver(removeStorefrontAssociationAction),
-      getActionResourcePermissionTargetResolver(retireMarketAction),
-      getActionResourcePermissionTargetResolver(reviseMarketDefinitionAction),
-      getActionResourcePermissionTargetResolver(reviseStorefrontAssociationAction),
-      getActionResourcePermissionTargetResolver(suspendMarketAction),
-    ]).not.toContain(undefined);
+    expect(Schema.is(CreateMarketPayloadSchema)(createPayload)).toBe(true);
+    expect(Schema.is(ReviseMarketDefinitionPayloadSchema)(revisePayload)).toBe(true);
+    expect(Schema.is(RemoveStorefrontAssociationPayloadSchema)(removePayload)).toBe(true);
+
+    for (const [action, key] of [
+      [activateMarketAction, 'commerce.market-catalog.market.activate'],
+      [associateStorefrontAction, 'commerce.market-catalog.storefront-association.create'],
+      [createMarketAction, 'commerce.market-catalog.market.create'],
+      [removeStorefrontAssociationAction, 'commerce.market-catalog.storefront-association.remove'],
+      [retireMarketAction, 'commerce.market-catalog.market.retire'],
+      [reviseMarketDefinitionAction, 'commerce.market-catalog.market-definition.revise'],
+      [reviseStorefrontAssociationAction, 'commerce.market-catalog.storefront-association.revise'],
+      [suspendMarketAction, 'commerce.market-catalog.market.suspend'],
+    ] as const) {
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(action.descriptor.accessDeclaration).toMatchObject({ key, kind: 'action', selectors: [] });
+    }
   });
 
   it('rejects cross-Tenant association results and change events', () => {

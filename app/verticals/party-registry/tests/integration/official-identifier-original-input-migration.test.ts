@@ -79,6 +79,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       yield* isolated.publishInitialComposition(snapshot);
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionKeys: [addPartyOfficialIdentifierAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,

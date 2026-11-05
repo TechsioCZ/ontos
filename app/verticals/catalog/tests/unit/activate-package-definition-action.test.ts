@@ -86,10 +86,7 @@ describe('Activate Package Definition Action', () => {
   );
 
   it('declares a governed tenant write, explicit authorization, and idempotency', () => {
-    expect(activatePackageDefinitionAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(activatePackageDefinitionAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(activatePackageDefinitionAction.descriptor.idempotency).toBe('required');
     expect(activatePackageDefinitionAction.descriptor.legalEntityScope).toBe('forbidden');
   });

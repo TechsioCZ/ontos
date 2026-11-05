@@ -575,17 +575,14 @@ it.effect('maps affected-use rejection and transport failure to typed retirement
 it.effect('requires a server-owned gateway credential for production affected-use calls', () =>
   Effect.gen(function* serverCredential() {
     let authorization = '';
-    const authority = yield* customerPaymentTermAffectedUseAuthorityFromEnvironment(
-      'retire-payment-term:correlation',
-      (request, credential) => {
-        authorization = Redacted.value(credential);
-        return Effect.succeed({
-          assessment: request.claimedAssessment,
-          disposition: request.claimedDisposition,
-          kind: 'VERIFIED' as const,
-        });
-      },
-    ).pipe(
+    const authority = yield* customerPaymentTermAffectedUseAuthorityFromEnvironment(scope, (request, credential) => {
+      authorization = Redacted.value(credential);
+      return Effect.succeed({
+        assessment: request.claimedAssessment,
+        disposition: request.claimedDisposition,
+        kind: 'VERIFIED' as const,
+      });
+    }).pipe(
       Effect.provide(
         Layer.succeed(CustomerContextGatewayCredentialService, {
           issue: () => Effect.succeed(Redacted.make('Bearer server-issued')),

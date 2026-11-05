@@ -58,6 +58,19 @@ const handleExecutePrivacyMeasure = Effect.fn('CommerceExecutePrivacyMeasureActi
 
 export const executePrivacyMeasureAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: 'The customer-context privacy worker executes a privacy measure for the subject it acts for',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.privacy-measure.execute',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'privacy', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.execute-privacy-measure.access.v1',
@@ -69,7 +82,7 @@ export const executePrivacyMeasureAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.execute-privacy-measure',
       moduleKey: OWNER,
       role: 'action',

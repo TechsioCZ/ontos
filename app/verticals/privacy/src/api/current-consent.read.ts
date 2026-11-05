@@ -19,7 +19,7 @@ const unavailable = (cause: unknown) => {
 
 const currentConsentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.consent.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.current-consent',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -27,6 +27,14 @@ const currentConsentEntrypoint = defineTenantModuleEntrypoint({
 
 export const currentConsentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.consent.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'consent', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: currentConsentEntrypoint,
     evidencePolicy: {
@@ -36,7 +44,6 @@ export const currentConsentRead = defineRead(
     inputSchema: CurrentConsentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.current-consent',
     resultSchema: CurrentConsentResponseSchema,
@@ -63,5 +70,4 @@ export const currentConsentRead = defineRead(
     }).pipe(Effect.mapError(unavailable));
   },
   (transaction, scope) => privacyOperationRepositoryForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

@@ -1,14 +1,14 @@
 import {
   GatewayContextApi,
   GatewayContextRequestSchema,
-  GatewayRelayRequestSchema,
+  GatewayDelegatedContextRequestSchema,
   shellGatewayContextContract,
 } from './gateway-context.ts';
 import type {
   GatewayContextClientError,
   GatewayContextRequest,
   GatewayContextResponse,
-  GatewayRelayRequest,
+  GatewayDelegatedContextRequest,
 } from './gateway-context.ts';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Context, Effect, Option, Redacted, Schema } from 'effect';
@@ -85,16 +85,19 @@ export const issueApiKeyGatewayContext = (
 
 export const defaultShellGatewayApiBaseUrl = shellGatewayContextContract.apiPrefix;
 
-/** Relay preserves the source assertion's actor; the API key authenticates only the source deployment. */
-export const issueRelayedGatewayContext = (
-  payload: GatewayRelayRequest,
+/**
+ * The module credential authenticates only the calling deployment. Shell takes the subject from the
+ * payload and derives the calling module (the actor) from that credential's binding.
+ */
+export const issueDelegatedGatewayContext = (
+  payload: GatewayDelegatedContextRequest,
   options: ApiKeyGatewayContextClientOptions,
 ): Effect.Effect<GatewayContextResponse, GatewayContextClientError> =>
-  Schema.decodeEffect(GatewayRelayRequestSchema)(payload).pipe(
+  Schema.decodeEffect(GatewayDelegatedContextRequestSchema)(payload).pipe(
     Effect.flatMap((decodedPayload) =>
       apiKeyGatewayContextClient.pipe(
         Effect.flatMap((client) =>
-          client.gatewayContext.issueRelayedGatewayContext({
+          client.gatewayContext.issueDelegatedGatewayContext({
             headers: { 'x-api-key': Redacted.value(options.apiKey) },
             payload: decodedPayload,
           }),

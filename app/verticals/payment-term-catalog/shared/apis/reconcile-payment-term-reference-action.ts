@@ -2,6 +2,7 @@
 // @ontos-action-http-owner payment.term-catalog
 // @ontos-action-http-slug reconcile-payment-term-reference
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/reconcile-payment-term-reference.ts';
 
 export { ReconcilePaymentTermReferencePayloadSchema } from '../actions/reconcile-payment-term-reference.ts';
-
 export const ReconcilePaymentTermReferenceActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReconcilePaymentTermReferenceActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const ReconcilePaymentTermReferenceActionForbiddenProblemSchema = makePro
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -135,7 +136,7 @@ export const ReconcilePaymentTermReferenceActionApi = HttpApi.make('ReconcilePay
       HttpApiEndpoint.post('execute', '/payment-term-catalog/actions/reconcile-payment-term-reference', {
         error: actionErrors,
         payload: Schema.toEncoded(ReconcilePaymentTermReferencePayloadSchema),
-        success: ReconcilePaymentTermReferenceResultSchema,
+        success: [ActionProposalAcceptedSchema, ReconcilePaymentTermReferenceResultSchema],
       }),
     )
     .middleware(ReconcilePaymentTermReferenceActionSchemaErrorMiddleware),

@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug create-brand
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateBrandPayloadSchema, CreateBrandResultSchema } from '../actions/create-brand.ts';
 
 export { CreateBrandPayloadSchema } from '../actions/create-brand.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CreateBrandActionInvalidProblemSchema = makeProblemDetailsSchema('CreateBrandActionInvalidProblem', 400);
 export const CreateBrandActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -18,6 +20,7 @@ export const CreateBrandActionForbiddenProblemSchema = makeProblemDetailsSchema(
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -118,7 +121,7 @@ export const CreateBrandActionApi = HttpApi.make('CreateBrandActionApi').add(
       HttpApiEndpoint.post('execute', '/catalog/actions/create-brand', {
         error: actionErrors,
         payload: Schema.toEncoded(CreateBrandPayloadSchema),
-        success: CreateBrandResultSchema,
+        success: [ActionProposalAcceptedSchema, CreateBrandResultSchema],
       }),
     )
     .middleware(CreateBrandActionSchemaErrorMiddleware),

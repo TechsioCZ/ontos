@@ -8,6 +8,7 @@ import {
   decodeTrustedPrincipalContext,
   isVerifiedGatewayPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
+  readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
   trustVerifiedGatewayPrincipalContext,
 } from '../../src/auth/system-principal-context-provenance.ts';
@@ -17,6 +18,7 @@ import {
 } from '../../src/auth/system-principal-context.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 import { makeOperationalScopeResolver } from '../../src/operations/context.ts';
+import { makeTestOperationalScopeAccess } from '../../src/testing/access-gate.ts';
 import {
   OperationAuthenticationRequired,
   OperationContextDenied,
@@ -44,12 +46,7 @@ const active = {
   principalTenantId: principal.tenantId,
   tenantStatus: 'active',
 };
-const access = (decision: 'allowed' | 'denied' | 'unavailable') => ({
-  legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-    Effect.succeed(legalEntityIds.map((key) => ({ decision, key }))),
-  modules: () => Effect.succeed([]),
-  resources: () => Effect.succeed([]),
-});
+const access = (decision: 'allowed' | 'denied' | 'unavailable') => makeTestOperationalScopeAccess({ decision });
 const InactiveContextError = Schema.Union([OperationAuthenticationRequired, OperationContextDenied]);
 
 it.layer(NodeCrypto.layer)('operation context', (suite) => {
@@ -211,6 +208,32 @@ it.layer(NodeCrypto.layer)('operation context', (suite) => {
       );
       expect(readVerifiedGatewayCompositionRevision({ ...resolved })).toBeUndefined();
       expect(Exit.isFailure(yield* Effect.exit(decodeTrustedPrincipalContext({ ...resolved })))).toBe(true);
+    }),
+  );
+
+  suite.effect('keeps the calling module of a delegated principal through operational scope resolution', () =>
+    Effect.gen(function* delegatedActorScope() {
+      const actor = {
+        appId: 'commerce-order',
+        buildMarker: 'commerce-order-build',
+        principalId: '00000000-0000-4000-8000-000000000009',
+      };
+      const delegated = trustVerifiedGatewayPrincipalContext(
+        principal,
+        'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        undefined,
+        actor,
+      );
+      const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, access('allowed'));
+
+      const resolved = yield* resolver.resolve({
+        correlationId: 'delegated-scope',
+        legalEntityScope: 'required',
+        principal: delegated,
+      });
+
+      expect(readVerifiedGatewayActor(resolved)).toEqual(actor);
+      expect(readVerifiedGatewayActor({ ...resolved })).toBeUndefined();
     }),
   );
 

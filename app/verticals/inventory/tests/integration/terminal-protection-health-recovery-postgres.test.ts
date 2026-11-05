@@ -1,12 +1,5 @@
-import { inventoryOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { inventoryRegistration } from '../../vertical.registration.ts';
-import {
-  ActionTransactionError,
-  OwnerAuthorizationOverlay,
-  makeBusinessPermissionRelationshipMutationLive,
-  runAction,
-  findPostgresFailure,
-} from '@app/core-runtime';
+import { ActionTransactionError, OwnerAuthorizationOverlay, runAction, findPostgresFailure } from '@app/core-runtime';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -209,7 +202,9 @@ const finalizeOwnerExecution = Effect.fn('TerminalProtectionHealth.finalizeOwner
 );
 const incrementCall = (count: number) => count + 1;
 
-const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function* makeScenario() {
+const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function* makeScenario(
+  scenarioAccess: { readonly access?: 'allowed' | 'denied' } = {},
+) {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     mode: 'empty',
     purpose: 'stabilization-1264-terminal-protection-health',
@@ -283,6 +278,7 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
   yield* isolated.publishInitialComposition(snapshot);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: scenarioAccess.access ?? 'allowed',
       actionKeys: [
         establishCommitmentProtectionAction,
         correctCatalogToStockBindingAction,
@@ -496,45 +492,6 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
   });
   const layer = fixture.layer.pipe(Layer.provide(ownerAuthorization));
   const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
-  const permission = yield* makeBusinessPermissionRelationshipMutationLive();
-  const businessTarget = {
-    kind: 'inventory_resource' as const,
-    resource: {
-      moduleId: 'commerce.inventory' as const,
-      resourceId: protection.ref.resourceId,
-      resourceType: protection.ref.resourceType,
-    },
-    tenantId: fixture.tenantId,
-  };
-  const permissions = [
-    { permission: 'inventory.commitment_protection.establish' as const, target: businessTarget },
-    { permission: 'inventory.recovery.execute' as const, target: businessTarget },
-    {
-      permission: 'inventory.catalog_to_stock_binding.manage' as const,
-      target: {
-        ...businessTarget,
-        resource: {
-          moduleId: binding.bindingRef.moduleId,
-          resourceId: binding.bindingRef.resourceId,
-          resourceType: binding.bindingRef.resourceType,
-        },
-      },
-    },
-  ];
-  for (const entry of permissions) {
-    yield* permission.mutate({ operation: 'grant', principal, target: inventoryOwnerPermissionTarget(entry) });
-    yield* Effect.addFinalizer(() =>
-      permission
-        .mutate({ operation: 'revoke', principal, target: inventoryOwnerPermissionTarget(entry) })
-        .pipe(Effect.orDie),
-    );
-  }
-  const correctionPermission = permissions.find(
-    ({ permission: key }) => key === 'inventory.catalog_to_stock_binding.manage',
-  );
-  assert(correctionPermission !== undefined);
-  const correctionBusiness = (operation: 'grant' | 'revoke') =>
-    permission.mutate({ operation, principal, target: inventoryOwnerPermissionTarget(correctionPermission) });
   yield* fixture.grantResourceAccess(protection.ref, fixture.manager.principalId, 'writer');
   yield* fixture.grantResourceAccess(binding.bindingRef, fixture.manager.principalId, 'writer');
   const clock = yield* TestClock.make();
@@ -693,7 +650,6 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
     clock,
     coreEvidenceExecutor,
     correct,
-    correctionBusiness,
     execute,
     fixture,
     impair,
@@ -782,15 +738,18 @@ it.live(
         const replay = yield* scenario.recover('after-correction').pipe(Effect.flip);
         expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
         expect(yield* scenario.observe()).toEqual(affected);
-        const denied = yield* scenario
-          .recover('denied', { ...scenario.fixture.denied, legalEntityId: scenario.fixture.legalEntityId })
+        // v2: the one access gate decides the Recovery capability in the selected company's scope
+        // (O67-Q2), so a principal it does not admit is refused before any owner work. The retired
+        // context/executor permission pair is gone (O62); a scripted gate denial is its replacement.
+        const refused = yield* makeScenario({ access: 'denied' });
+        const denied = yield* refused
+          .recover('denied', { ...refused.fixture.denied, legalEntityId: refused.fixture.legalEntityId })
           .pipe(Effect.flip);
-        expect(Predicate.isTagged(denied, 'OperationContextDenied')).toBe(true);
-        expect(yield* scenario.observe()).toEqual(affected);
-        const executorDenied = yield* scenario
+        expect(Predicate.isTagged(denied, 'ActionPermissionDenied')).toBe(true);
+        const executorDenied = yield* refused
           .recover('executor-denied', {
-            ...scenario.fixture.legalEntityOnly,
-            legalEntityId: scenario.fixture.legalEntityId,
+            ...refused.fixture.legalEntityOnly,
+            legalEntityId: refused.fixture.legalEntityId,
           })
           .pipe(Effect.flip);
         expect(Predicate.isTagged(executorDenied, 'ActionPermissionDenied')).toBe(true);
@@ -899,16 +858,16 @@ it.live(
           .pipe(Effect.exit);
         expect(Exit.isFailure(foreignSource)).toBe(true);
         expect(yield* scenario.observe()).toEqual(before);
-        const denied = yield* scenario
-          .correct({ actor: scenario.fixture.denied, key: 'denied-correction' })
-          .pipe(Effect.flip);
+        // v2: the one access gate decides the correction capability in the selected company's scope
+        // (O67-Q2). The retired executor tuple and per-binding business permission are gone (O62); a
+        // scripted gate denial refuses before any owner work and changes no owner state.
+        const refused = yield* makeScenario({ access: 'denied' });
+        const refusedBefore = yield* refused.observe();
+        const denied = yield* refused.correct({ key: 'denied-correction' }).pipe(Effect.flip);
         expect(Predicate.isTagged(denied, 'ActionPermissionDenied')).toBe(true);
-        expect(yield* scenario.observe()).toEqual(before);
-        yield* scenario.correctionBusiness('revoke');
-        const businessDenied = yield* scenario.correct({ key: 'business-denied' }).pipe(Effect.flip);
+        const businessDenied = yield* refused.correct({ key: 'business-denied' }).pipe(Effect.flip);
         expect(Predicate.isTagged(businessDenied, 'ActionPermissionDenied')).toBe(true);
-        expect(yield* scenario.observe()).toEqual(before);
-        yield* scenario.correctionBusiness('grant');
+        expect(yield* refused.observe()).toEqual(refusedBefore);
         const wrongLegalEntity = yield* scenario
           .correct({
             actor: { ...scenario.fixture.manager, legalEntityId: scenario.fixture.legalEntityId },

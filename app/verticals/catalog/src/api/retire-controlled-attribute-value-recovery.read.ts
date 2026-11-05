@@ -69,10 +69,7 @@ const recoverRetireControlledAttributeValue = Effect.fn('RetireControlledAttribu
 
 const retireControlledAttributeValueRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.retire-controlled-attribute-value-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.retire-controlled-attribute-value-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -80,6 +77,14 @@ const retireControlledAttributeValueRecoveryEntrypoint = defineTenantModuleEntry
 
 export const retireControlledAttributeValueRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.retire-controlled-attribute-value-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'controlled-attribute-value', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: retireControlledAttributeValueRecoveryEntrypoint,
     evidencePolicy: {
@@ -89,7 +94,6 @@ export const retireControlledAttributeValueRecoveryRead = defineRead(
     inputSchema: RetireControlledAttributeValueRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.retire-controlled-attribute-value-recovery',
     resultSchema: RetireControlledAttributeValueRecoveryResponseSchema,
@@ -101,5 +105,4 @@ export const retireControlledAttributeValueRecoveryRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

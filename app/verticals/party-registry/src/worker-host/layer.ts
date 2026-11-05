@@ -14,6 +14,7 @@ import type {
 } from '@app/core-runtime';
 import { makeDatabaseConfigLive, OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 import { Layer } from 'effect';
+import type { Crypto } from 'effect';
 
 import { PartySearchProjectionSourceLive } from '../services/party-search-projection-source.service.ts';
 import type { PartySearchProjectionSource } from '../services/party-search-projection-source.service.ts';
@@ -68,6 +69,7 @@ export const outboxWorkerLayer: Layer.Layer<
   OutboxRuntime | PartySearchProjector | PrivacyMeasureOwnerGateway,
   never,
   | Layer.Services<typeof OutboxWorkerInfrastructureLive>
+  | Crypto.Crypto
   | CoreSearchIngestion
   | CoreSearchProjectionStore
   | PartySearchProjectionSource

@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.order
 // @ontos-action-http-slug cancel-order-commitment
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/cancel-order-commitment.ts';
 
 export { CancelOrderCommitmentPayloadSchema } from '../actions/cancel-order-commitment.ts';
-
 export const CancelOrderCommitmentActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CancelOrderCommitmentActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const CancelOrderCommitmentActionForbiddenProblemSchema = makeProblemDeta
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -146,7 +147,7 @@ export const cancelOrderCommitmentActionGroupDefinition = HttpApiGroup.make('can
     HttpApiEndpoint.post('execute', '/commerce-order/actions/cancel-order-commitment', {
       error: actionErrors,
       payload: Schema.toEncoded(CancelOrderCommitmentPayloadSchema),
-      success: CancelOrderCommitmentResultSchema,
+      success: [ActionProposalAcceptedSchema, CancelOrderCommitmentResultSchema],
     }),
   )
   .middleware(CancelOrderCommitmentActionSchemaErrorMiddleware);

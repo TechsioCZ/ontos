@@ -30,6 +30,7 @@ import {
   makeIssue788CommercialTotal,
   makeIssue788MaterialEvidence,
 } from './support/issue-788-confirmation.fixture.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 
 const inputFixture = Effect.fn('test.currentPricingDecisionExternalOwnerEvidence.inputFixture')(
   function* inputFixtureProgram() {
@@ -215,10 +216,18 @@ describe('actual Catalog reader whole-candidate boundary #1225', () => {
             compositionRevision: 'test:1225',
             legalEntityId: decision.commercialScope.sellingLegalEntityId,
             requestCorrelation: 'test:1225',
+            scope: verifiedTestScope({
+              correlationId: 'test:1225',
+              legalEntityId: decision.commercialScope.sellingLegalEntityId,
+              principalId: '66666666-6666-4666-8666-666666666666',
+              tenantId: decision.tenantId,
+            }),
             tenantId: decision.tenantId,
           },
           {
             catalog: {
+              acquire: () =>
+                Effect.succeed({ baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make('TEST-only') }),
               execute: (payload) =>
                 Effect.sync(() => {
                   expect(Schema.is(PricingPurposeEquivalenceRequestSchema)(payload)).toBe(true);
@@ -231,13 +240,9 @@ describe('actual Catalog reader whole-candidate boundary #1225', () => {
                   };
                 }),
               executeCompatibility: () => Effect.die('Compatibility must not execute after owner unavailability'),
-              issuer: {
-                issue: () =>
-                  Effect.succeed({ baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make('TEST-only') }),
-              },
             },
-            customerContext: { execute: () => Effect.never, issuer: { issue: () => Effect.never } },
-            market: { execute: () => Effect.never, issuer: { issue: () => Effect.never } },
+            customerContext: { acquire: () => Effect.never, execute: () => Effect.never },
+            market: { acquire: () => Effect.never, execute: () => Effect.never },
             validation: makePricingExternalOwnerEvidenceValidationService(),
           },
         );
@@ -293,11 +298,22 @@ it.effect('actual Catalog reader acquires a fresh credential for compatibility a
         compositionRevision: 'test:1225',
         legalEntityId: input.request.decision.commercialScope.sellingLegalEntityId,
         requestCorrelation: 'test:1225',
+        scope: verifiedTestScope({
+          correlationId: 'test:1225',
+          legalEntityId: input.request.decision.commercialScope.sellingLegalEntityId,
+          principalId: '66666666-6666-4666-8666-666666666666',
+          tenantId: input.request.decision.tenantId,
+        }),
         tenantId: input.request.decision.tenantId,
       },
       {
         applicationComposition: { load: Effect.never },
         catalog: {
+          acquire: () =>
+            Effect.sync(() => {
+              issued += 1;
+              return { baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make(`TEST:${issued}`) };
+            }),
           execute: (request, credential) =>
             Effect.gen(function* confirmedSingleton() {
               observedCredentials.push(Redacted.value(credential));
@@ -355,16 +371,9 @@ it.effect('actual Catalog reader acquires a fresh credential for compatibility a
               observedCredentials.push(Redacted.value(credential));
               return yield* Effect.die('TEST stop after both actual owner-client attempt boundaries');
             }),
-          issuer: {
-            issue: () =>
-              Effect.sync(() => {
-                issued += 1;
-                return { baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make(`TEST:${issued}`) };
-              }),
-          },
         },
-        customerContext: { execute: () => Effect.never, issuer: { issue: () => Effect.never } },
-        market: { execute: () => Effect.never, issuer: { issue: () => Effect.never } },
+        customerContext: { acquire: () => Effect.never, execute: () => Effect.never },
+        market: { acquire: () => Effect.never, execute: () => Effect.never },
         validation: makePricingExternalOwnerEvidenceValidationService(),
       },
     );
@@ -416,11 +425,22 @@ it.effect('actual Catalog reader reaches compatibility with a later unchanged ow
         compositionRevision: 'test:1225',
         legalEntityId: input.request.decision.commercialScope.sellingLegalEntityId,
         requestCorrelation: 'test:1225',
+        scope: verifiedTestScope({
+          correlationId: 'test:1225',
+          legalEntityId: input.request.decision.commercialScope.sellingLegalEntityId,
+          principalId: '66666666-6666-4666-8666-666666666666',
+          tenantId: input.request.decision.tenantId,
+        }),
         tenantId: input.request.decision.tenantId,
       },
       {
         applicationComposition: { load: Effect.never },
         catalog: {
+          acquire: () =>
+            Effect.sync(() => {
+              issued += 1;
+              return { baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make(`TEST:${issued}`) };
+            }),
           execute: (request, credential) =>
             Effect.gen(function* confirmedSingleton() {
               observedCredentials.push(Redacted.value(credential));
@@ -483,16 +503,9 @@ it.effect('actual Catalog reader reaches compatibility with a later unchanged ow
               observedCredentials.push(Redacted.value(credential));
               return yield* Effect.die('TEST stop after both actual owner-client attempt boundaries');
             }),
-          issuer: {
-            issue: () =>
-              Effect.sync(() => {
-                issued += 1;
-                return { baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make(`TEST:${issued}`) };
-              }),
-          },
         },
-        customerContext: { execute: () => Effect.never, issuer: { issue: () => Effect.never } },
-        market: { execute: () => Effect.never, issuer: { issue: () => Effect.never } },
+        customerContext: { acquire: () => Effect.never, execute: () => Effect.never },
+        market: { acquire: () => Effect.never, execute: () => Effect.never },
         validation: makePricingExternalOwnerEvidenceValidationService(),
       },
     );

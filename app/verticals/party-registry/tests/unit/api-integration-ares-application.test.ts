@@ -188,7 +188,6 @@ const makeReads = (
   party: () =>
     Effect.succeed({
       currentFactAssertions: [],
-      factHistory: Option.none(),
       party: {
         archivedAt: Option.none(),
         createdAt: partyCreatedAt,

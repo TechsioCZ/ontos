@@ -125,6 +125,16 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
 
 export const changeTenantModuleStateAction = defineAction(
   {
+    // Tenant-wide module administration: enabling, quarantining or archiving a module is a destructive
+    // configuration change, so it gets its own capability instead of borrowing `manage_identity`.
+    accessDeclaration: {
+      key: 'core.modules.tenant-module.change-state',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'modules', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.modules.change-tenant-module-state.access.v1',
@@ -135,10 +145,7 @@ export const changeTenantModuleStateAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.modules.change-tenant-module-state',
       moduleKey: 'core.modules',
       role: 'action',
@@ -150,11 +157,6 @@ export const changeTenantModuleStateAction = defineAction(
     policies: [],
     resultSchema: ChangeTenantModuleStateResultSchema,
     schemaVersion: '1',
-    // Tenant module enable/disable is tenant configuration administration, not a member capability: without
-    // this gate every tenant member holds the membership-default executor grant and could quarantine or
-    // archive a module, or activate one the tenant never enabled. `manage_identity` is a stopgap until a
-    // dedicated `manage_modules` relation exists in the SpiceDB schema.
-    tenantPermission: () => 'manage_identity',
   },
   handleChangeTenantModuleState,
   (transaction) =>

@@ -3,14 +3,14 @@
 // @ontos-action-slug revise-attribute-definition
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema, Option } from 'effect';
 
 import {
   ReviseAttributeDefinitionPayloadSchema,
   ReviseAttributeDefinitionResultSchema,
 } from '../../shared/actions/revise-attribute-definition.ts';
 import type { ReviseAttributeDefinitionPayload } from '../../shared/actions/revise-attribute-definition.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import {
   AttributePersistenceConflict,
@@ -76,6 +76,14 @@ export const handleReviseAttributeDefinition = Effect.fn('ReviseAttributeDefinit
 
 export const reviseAttributeDefinitionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.attribute-definition.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'attribute-definition', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.revise-attribute-definition.access.v1',
@@ -91,7 +99,7 @@ export const reviseAttributeDefinitionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: CATALOG_MODULE_KEY,
       role: 'action',
@@ -107,7 +115,7 @@ export const reviseAttributeDefinitionAction = defineAction(
   handleReviseAttributeDefinition,
   Effect.fn('ReviseAttributeDefinitionAction.makeServices')(
     function* makeReviseAttributeDefinitionServices(transaction, scope) {
-      const openSelections = yield* cartOpenSelectionPopulationFromEnvironment;
+      const openSelections = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
       const services = yield* attributePersistenceForScope(
         transaction,
         scope,

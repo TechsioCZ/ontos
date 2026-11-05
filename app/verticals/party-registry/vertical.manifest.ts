@@ -31,6 +31,10 @@ export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModule
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
+  originatorActions: [
+    // The owner's outbox delivery of a privacy measure acts for the invocation that dispatched it.
+    'privacy.core.dispatch-privacy-measure',
+  ],
   publicSurface: {
     ...partyRegistryRuntimeManifest.publicSurface,
     components: {
@@ -64,14 +68,18 @@ export const partyRegistryManifest: OntosModuleManifestInput = defineOntosModule
       // <generated-module-manifest-search>
       {
         accessFiltering: 'resource_permission',
+        accessKey: 'party.registry.counterparty.search',
         key: 'party.registry.counterparties',
+        legalEntityScope: 'required',
         owningModuleId: 'party.registry',
         requestFilters: ['includeArchived', 'role'],
         resourceType: 'party.registry.counterparty',
       },
       {
         accessFiltering: 'tenant_scope',
+        accessKey: 'party.registry.party.search',
         key: 'party.registry.parties',
+        legalEntityScope: 'optional',
         owningModuleId: 'party.registry',
         requestFilters: ['includeArchived'],
         resourceType: 'party.registry.party',

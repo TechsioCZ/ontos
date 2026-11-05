@@ -18,6 +18,14 @@ import { engagementLifecycleRegistration } from './engagement-lifecycle-registra
 
 export const archivePersonEngagementAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.person-engagement.archive',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'engagements', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
     ...engagementLifecycleRegistration<PersonEngagementLifecyclePayload>('party.registry.archive-person-engagement'),
     payloadSchema: PersonEngagementLifecyclePayloadSchema,
     resultSchema: PersonEngagementProfileSchema,

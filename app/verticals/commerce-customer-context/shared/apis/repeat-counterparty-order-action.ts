@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug repeat-counterparty-order
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/repeat-counterparty-order.ts';
 
 export { RepeatCounterpartyOrderPayloadSchema } from '../actions/repeat-counterparty-order.ts';
-
 export const RepeatCounterpartyOrderActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RepeatCounterpartyOrderActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const RepeatCounterpartyOrderActionForbiddenProblemSchema = makeProblemDe
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const repeatCounterpartyOrderActionGroupDefinition = HttpApiGroup.make('r
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/repeat-counterparty-order', {
       error: actionErrors,
       payload: Schema.toEncoded(RepeatCounterpartyOrderPayloadSchema),
-      success: RepeatCounterpartyOrderResultSchema,
+      success: [ActionProposalAcceptedSchema, RepeatCounterpartyOrderResultSchema],
     }),
   )
   .middleware(RepeatCounterpartyOrderActionSchemaErrorMiddleware);

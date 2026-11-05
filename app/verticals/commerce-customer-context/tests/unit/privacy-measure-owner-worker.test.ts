@@ -45,6 +45,7 @@ const context: OutboxWorkerHandlerContext = {
   deliveryId: 'delivery:1',
   domainEventId: 'event:1',
   messageId: 'message:1',
+  originatorInvocationId: '30000000-0000-4000-8000-000000000003',
   producerModuleKey: 'privacy.core',
   tenantId,
   tenantSequenceNo: 1n,
@@ -125,6 +126,31 @@ it.effect('fails closed when the Commerce delivery context is not exact', () =>
       ),
     );
     expect(failure.code).toBe('WORKER_CONTEXT_INVALID');
+  }),
+);
+
+it.effect('fails closed without calling the owner when the delivery names no originating invocation', () =>
+  Effect.gen(function* missingOriginator() {
+    let executeCalls = 0;
+    // The delivery carried an originator; the worker must refuse it once that identity is absent.
+    const { originatorInvocationId, ...withoutOriginator } = context;
+    expect(originatorInvocationId).toBe(context.originatorInvocationId);
+    const failure = yield* Effect.flip(
+      run(
+        {
+          execute: () => {
+            executeCalls += 1;
+            return Effect.succeed(outcome);
+          },
+          load: () => Effect.succeedNone,
+          report: () => Effect.void,
+        },
+        payload,
+        withoutOriginator,
+      ),
+    );
+    expect(failure.code).toBe('WORKER_CONTEXT_INVALID');
+    expect(executeCalls).toBe(0);
   }),
 );
 /* jscpd:ignore-end */

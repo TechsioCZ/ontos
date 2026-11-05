@@ -8,7 +8,7 @@ import {
   assortmentConfigurationReadService,
   assortmentConfigurationReadSourceForScope,
 } from '../../src/services/governed-configuration-read.service.ts';
-import { configurationReadPermissionTarget, readConfiguration } from '../../src/api/configuration.read.ts';
+import { readConfiguration } from '../../src/api/configuration.read.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
@@ -192,33 +192,6 @@ it.effect('fails closed for wrong tenant, missing resource, legal-entity mismatc
       ).resolve(resource('commerce.assortment.rule-revision', 'revision-1'), scope),
     );
     expect(Schema.is(AssortmentPolicyPersistenceUnavailable)(dbFailure)).toStrictEqual(true);
-
-    const target = configurationReadPermissionTarget(
-      Schema.decodeUnknownSync(AssortmentConfigurationRequestSchema)({
-        resource: resource('commerce.assortment.rule-revision', 'revision-1'),
-      }),
-      scope,
-    );
-    expect(target.kind).toStrictEqual('owner_permission');
-    expect(target.ownerPermission.target).toMatchObject({
-      kind: 'assortment_configuration',
-      permission: 'assortment.configuration.read',
-      resource: {
-        moduleId: 'commerce.assortment',
-        resourceId: 'revision-1',
-        resourceType: 'commerce.assortment.rule-revision',
-      },
-    });
-    expect(target.ownerPermission.contract.targetResourceType).toBe('assortment_permission');
-    // Rule Revision configuration keeps its pre-extraction tenant identity even with an independently selected LE.
-    expect(target.ownerPermission.scope).toEqual({ kind: 'tenant', tenantId });
-    expect(target.ownerPermission.key).toBe(
-      '10000000-0000-4000-8000-000000000001:tenant:assortment.configuration.read:assortment_configuration:commerce.assortment:commerce.assortment.rule-revision:revision-1',
-    );
-    expect(target.ownerPermission.objectId).toBe(
-      'asp_af8f8ee7b9a8284c97e6cfeb6a49a9d55e9fb030e88cdbf3832e11fec11745af',
-    );
-    expect(target.ownerPermission.transportObjectId).toBe(target.ownerPermission.objectId);
 
     const handlerResult = yield* Effect.flip(
       readConfiguration(

@@ -20,7 +20,7 @@ interface TaxEvaluationServices {
 
 const taxEvaluationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'tax.governed.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.tax.api.tax-evaluation',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -55,6 +55,14 @@ export const readTaxEvaluation = (
 
 export const taxEvaluationRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.tax-evaluation.evaluate',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'order-tax', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: taxEvaluationEntrypoint,
     evidencePolicy: {
@@ -64,7 +72,6 @@ export const taxEvaluationRead = defineRead(
     inputSchema: TaxEvaluationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.tax.api.tax-evaluation',
     resultSchema: TaxEvaluationResponseSchema,
@@ -72,5 +79,4 @@ export const taxEvaluationRead = defineRead(
   },
   readTaxEvaluation,
   (transaction, scope) => Effect.succeed({ evaluations: taxEvaluationForScope(transaction, scope) }),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

@@ -1,3 +1,4 @@
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -215,6 +216,7 @@ const registryLive = (bindingStatus: 'active' | 'pending') =>
         Layer.succeed(CommercePortalAuthAccountCreationReconciliationService, {
           reissueVerificationEmail: unreachable('reissueVerificationEmail'),
         }),
+        nodeCryptoLayer,
       ),
     ),
   );

@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { PriceGroupCompatibilityDecisionSchema } from '@app/price-group-catalog-contracts/price-group';
 import type {
   PriceGroupCompatibilityDecision,
@@ -6,15 +7,12 @@ import type {
 import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { executeValidatePriceGroupCompatibilityWithAuthorization } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
-import { Effect, Option, Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema, Crypto } from 'effect';
 
-import {
-  PriceGroupCompatibilityGatewayCredentialService,
-  unavailablePriceGroupCompatibilityGatewayCredentialIssuer,
-} from '../../shared/domain/price-group-compatibility-gateway-credential.ts';
-import type { PriceGroupCompatibilityGatewayCredentialIssuer } from '../../shared/domain/price-group-compatibility-gateway-credential.ts';
 import { PriceGroupInterpretationDependencyFailure } from '../services/price-group-interpretation.service.ts';
 import type { PriceGroupCompatibilityPort } from '../services/price-group-interpretation.service.ts';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
 type CompatibilityClientEffect = ReturnType<typeof executeValidatePriceGroupCompatibilityWithAuthorization>;
 type CompatibilityClientFailure =
@@ -76,14 +74,15 @@ const responseBindsRequest = (
         response.evidence.requiredContract.version === request.requiredContract.version;
 };
 
-const makeCompatibilityPort = (dependencies: {
+export const makePriceGroupCompatibilityPort = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly context: {
     readonly compositionRevision: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
     readonly tenantId: string;
   };
   readonly execute: CompatibilityExecutor;
-  readonly issuer: PriceGroupCompatibilityGatewayCredentialIssuer;
 }): PriceGroupCompatibilityPort => ({
   validate: Effect.fn('PriceGroupCompatibilityPort.validate')(function* validate(request) {
     const payload = yield* Schema.decodeEffect(ValidatePriceGroupCompatibilityRequestSchema)(request).pipe(
@@ -92,11 +91,13 @@ const makeCompatibilityPort = (dependencies: {
     if (payload.priceGroupRef.tenantId !== dependencies.context.tenantId) {
       return yield* failure('UNVERIFIABLE', 'Price Group compatibility request is outside the trusted Tenant');
     }
-    const { baseUrl, credential } = yield* dependencies.issuer
-      .issue({
+    const { baseUrl, credential } = yield* dependencies
+      .acquire({
         audience: 'price-group-catalog',
         compositionRevision: dependencies.context.compositionRevision,
+        legalEntityScope: 'tenant',
         requestCorrelation: dependencies.context.requestCorrelation,
+        scope: dependencies.context.scope,
       })
       .pipe(
         Effect.mapError((cause) =>
@@ -125,18 +126,21 @@ const makeCompatibilityPort = (dependencies: {
   }),
 });
 
-export const priceGroupCompatibilityPortFromEnvironment = (
-  context: { readonly compositionRevision: string; readonly requestCorrelation: string; readonly tenantId: string },
-  execute: CompatibilityExecutor = executeAuthorizedCompatibility,
-): Effect.Effect<PriceGroupCompatibilityPort> =>
-  Effect.serviceOption(PriceGroupCompatibilityGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      makeCompatibilityPort({
-        context,
-        execute,
-        issuer: Option.isSome(issuerOption)
-          ? issuerOption.value
-          : unavailablePriceGroupCompatibilityGatewayCredentialIssuer,
-      }),
-    ),
-  );
+export const priceGroupCompatibilityPortFromEnvironment = Effect.fn('priceGroupCompatibilityPortFromEnvironment')(
+  function* priceGroupCompatibilityPortFromEnvironment(
+    context: {
+      readonly compositionRevision: string;
+      readonly requestCorrelation: string;
+      readonly scope: OperationalScope;
+      readonly tenantId: string;
+    },
+    execute: CompatibilityExecutor = executeAuthorizedCompatibility,
+  ): Effect.fn.Return<PriceGroupCompatibilityPort, never, Crypto.Crypto> {
+    const crypto = yield* Crypto.Crypto;
+    return makePriceGroupCompatibilityPort({
+      acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+      context,
+      execute,
+    });
+  },
+);

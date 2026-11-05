@@ -2,12 +2,7 @@
 // @ontos-action-owner commerce.market-catalog
 // @ontos-action-slug retire-market
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
-import {
-  OperationContextUnavailable,
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { Crypto } from 'effect';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import {
@@ -298,6 +293,14 @@ const handleRetireMarket = Effect.fn('RetireMarketAction.handle')(function* reti
 
 export const retireMarketAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'markets', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.market-catalog.retire-market.access.v1',
@@ -309,7 +312,7 @@ export const retireMarketAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.market-catalog.retire-market',
       moduleKey: 'commerce.market-catalog',
       role: 'action',
@@ -319,10 +322,6 @@ export const retireMarketAction = defineAction(
     owningModuleKey: 'commerce.market-catalog',
     payloadSchema: RetireMarketPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RetireMarketPayload>(({ marketRef }) => ({
-      permission: 'write',
-      resource: marketRef,
-    })),
     resultSchema: RetireMarketResultSchema,
     schemaVersion: '1',
   },

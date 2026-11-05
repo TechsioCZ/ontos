@@ -86,10 +86,7 @@ export const OrderServiceApprovalEvidenceResponseSchema = Schema.Union([
   }),
   Schema.Struct({
     ...candidateIdentity,
-    issuer: Schema.Union([
-      Schema.Struct({ buyerPrincipalId: identity.buyerPrincipalId, kind: Schema.Literal('BUYER') }),
-      Schema.Struct({ kind: Schema.Literal('ORDER_SERVICE'), serviceProofActorPrincipalId: identity.buyerPrincipalId }),
-    ]),
+    issuer: Schema.Struct({ buyerPrincipalId: identity.buyerPrincipalId, kind: Schema.Literal('BUYER') }),
     operation: Schema.Literal('VERIFY_PROOF'),
     proof: OrderCommitmentApprovalProofSchema,
     proposal: PurchaseProposalRevisionSchema,

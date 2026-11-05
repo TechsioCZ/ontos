@@ -17,6 +17,11 @@ export interface ReviseAttributeDefinitionActionClientOptions {
   readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
+  /**
+   * O80: ask for a parked proposal instead of an immediate write. Omitted means the ordinary run, so a
+   * refusal is never turned into a proposal on the caller's behalf.
+   */
+  readonly intent?: 'propose';
   readonly [traceIdOption]?: string;
 }
 
@@ -40,6 +45,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       credential,
       defaultApiPrefix: '/catalog-api',
       idempotencyKey: options.idempotencyKey,
+      intent: options.intent,
       requestCorrelation,
     },
     options,

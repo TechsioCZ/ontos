@@ -1,13 +1,9 @@
 import { PartyCommandNotFoundProblemSchema, PartyCommandUnavailableProblemSchema } from '@app/party-registry/api';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { RetailPortalBindingResult } from '../../shared/actions/bind-retail-portal-profile.ts';
 import type { EnsureRetailCustomerProfileResult } from '../../shared/actions/ensure-retail-customer-profile.ts';
-import {
-  RETAIL_PORTAL_SELF_SERVICE_BASELINE,
-  RetailPortalPermissionCodeSchema,
-} from '../../shared/domain/profile-contracts.ts';
 import {
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
@@ -27,6 +23,7 @@ import {
   PARTY_REGISTRY_OWNER_MODULE_KEY,
   RETAIL_CUSTOMER_PROFILE_ENSURED_OUTCOME_CODE,
   RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
+  RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
   retailPartyCandidateDigest,
   retailSelfEnrollmentRequestDigest,
   retailSelfEnrollmentStepPlan,
@@ -128,10 +125,22 @@ const candidate: RetailPartyCandidateOwnerInput['candidate'] = {
   validFrom: effectiveAt,
 };
 
+const ownerCrypto = Crypto.make({
+  digest: () => Effect.succeed(new Uint8Array()),
+  randomBytes: (size) => new Uint8Array(size).fill(1),
+});
+const originator = {
+  actionInvocationId,
+  compositionRevision: 'c'.repeat(64),
+  tenantId,
+};
+
 const partyOwnerInput: RetailPartyCandidateOwnerInput = {
   candidate,
   compositionRevision: 'c'.repeat(64),
+  crypto: ownerCrypto,
   legalEntityId: '50000000-0000-4000-8000-000000000001',
+  originator,
   requestCorrelation,
   tenantId,
 };
@@ -383,7 +392,9 @@ const ensureResult = (state: EnsureRetailCustomerProfileResult['state']): Ensure
 
 const profileOwnerInput: RetailCustomerProfileOwnerInput = {
   compositionRevision: 'a'.repeat(64),
+  crypto: ownerCrypto,
   effectiveAt,
+  originator: { ...originator, compositionRevision: 'a'.repeat(64) },
   partyRef,
   requestCorrelation,
   sellingLegalEntityRef,
@@ -473,31 +484,23 @@ it.effect('surfaces a failed commit resolution as an unavailable owner effect', 
   }),
 );
 
-const permissionMutation = (permission: string, index: number, staged: boolean) => ({
-  mutationId: `9000000${String(index)}-0000-4000-8000-000000000001`,
-  operation: 'grant' as const,
-  permission: Schema.decodeUnknownSync(RetailPortalPermissionCodeSchema)(permission),
-  staged,
-});
-
-const bindingResult = (staged: boolean, complete = true): RetailPortalBindingResult => {
-  const baseline = complete ? RETAIL_PORTAL_SELF_SERVICE_BASELINE : RETAIL_PORTAL_SELF_SERVICE_BASELINE.slice(1);
-  return {
-    authorizationOperation: 'grant',
-    authorizationState: 'PENDING_GRANT',
-    bindingRef,
-    effectiveAt: '2026-09-19T10:00:00.000Z',
-    outcome: 'BINDING_ACTIVATED',
-    permissionMutations: baseline.map((permission, index) => permissionMutation(permission, index, staged)),
-    revision: 1,
-    state: 'ACTIVE',
-  };
+const authorizedBinding: RetailPortalBindingResult = {
+  authorizationOperation: 'grant',
+  authorizationState: 'ACTIVE',
+  bindingRef,
+  effectiveAt: '2026-09-19T10:00:00.000Z',
+  outcome: 'BINDING_ACTIVATED',
+  revision: 1,
+  state: 'ACTIVE',
 };
+const { authorizationOperation: _operation, authorizationState: _state, ...unauthorizedBinding } = authorizedBinding;
 
 const bindingOwnerInput: RetailPortalBindingOwnerInput = {
   compositionRevision: 'a'.repeat(64),
+  crypto: ownerCrypto,
   effectiveAt,
   enrollmentEvidenceRef: 'enrollment-evidence-1',
+  originator: { ...originator, compositionRevision: 'a'.repeat(64) },
   principalRef,
   profileRef,
   reason: 'Retail self-enrollment',
@@ -508,41 +511,46 @@ const bindingOwnerInput: RetailPortalBindingOwnerInput = {
 const bindingExecutors = (
   overrides: Partial<RetailPortalBindingOwnerExecutors> = {},
 ): RetailPortalBindingOwnerExecutors => ({
-  bindProfile: () => Effect.succeed(bindingResult(true)),
-  commitResolution: () => Effect.succeed({ result: bindingResult(true), state: 'COMMITTED' }),
+  bindProfile: () => Effect.succeed(authorizedBinding),
+  commitResolution: () => Effect.succeed({ result: authorizedBinding, state: 'COMMITTED' }),
   ...overrides,
 });
 
-it.effect('keeps Retail enrollment reconciling while its complete baseline is only staged', () =>
+it.effect('binds Retail enrollment once the binding carries its ACTIVE grant and the baseline is Current', () =>
   Effect.gen(function* boundWithGrants() {
-    const outcome = yield* retailPortalBindingOwnerEffect(bindingOwnerInput, bindingExecutors()).dispatch(transition);
-    expect(outcome.status).toBe('FAILED');
-    expect(outcome.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
-    expect(outcome.nextState).toBe('RECONCILIATION_REQUIRED');
+    const outcome = yield* retailPortalBindingOwnerEffect(
+      bindingOwnerInput,
+      bindingExecutors({ confirmCurrentBinding: () => Effect.succeed(true) }),
+    ).dispatch(transition);
+    expect(outcome.status).toBe('SUCCEEDED');
+    expect(outcome.outcomeCode).toBe(RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE);
+    expect(retailPortalGrantsAreComplete(authorizedBinding)).toBe(true);
   }),
 );
 
-it.effect('treats a partially completed grant as a reconciliation halt, not portal access', () =>
-  Effect.gen(function* partialGrants() {
-    const partial = yield* retailPortalBindingOwnerEffect(
+it.effect('treats a binding without its ACTIVE grant as a reconciliation halt, not portal access', () =>
+  Effect.gen(function* missingGrants() {
+    const unauthorized = yield* retailPortalBindingOwnerEffect(
       bindingOwnerInput,
-      bindingExecutors({ bindProfile: () => Effect.succeed(bindingResult(true, false)) }),
+      bindingExecutors({
+        bindProfile: () => Effect.succeed(unauthorizedBinding),
+        confirmCurrentBinding: () => Effect.succeed(true),
+      }),
     ).dispatch(transition);
-    expect(partial.status).toBe('FAILED');
-    expect(partial.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
-    expect(partial.nextState).toBe('RECONCILIATION_REQUIRED');
+    expect(unauthorized.status).toBe('FAILED');
+    expect(unauthorized.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
+    expect(unauthorized.nextState).toBe('RECONCILIATION_REQUIRED');
 
-    const unstaged = yield* retailPortalBindingOwnerEffect(
+    const notCurrent = yield* retailPortalBindingOwnerEffect(
       bindingOwnerInput,
-      bindingExecutors({ bindProfile: () => Effect.succeed(bindingResult(false)) }),
+      bindingExecutors({ confirmCurrentBinding: () => Effect.succeed(false) }),
     ).dispatch(transition);
-    expect(unstaged.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
-    expect(retailPortalGrantsAreComplete(bindingResult(true))).toBe(false);
-    expect(retailPortalGrantsAreComplete(bindingResult(true, false))).toBe(false);
+    expect(notCurrent.outcomeCode).toBe(RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE);
+    expect(retailPortalGrantsAreComplete(unauthorizedBinding)).toBe(false);
   }),
 );
 
-it.effect('keeps a committed pending binding reconciling after its Action answer was lost', () =>
+it.effect('keeps a committed binding reconciling until its baseline is confirmed Current after a lost answer', () =>
   Effect.gen(function* reconcileBinding() {
     const resolution = yield* retailPortalBindingOwnerEffect(bindingOwnerInput, bindingExecutors()).reconcile(
       reconciliationInput,

@@ -1,20 +1,16 @@
 import { executeCurrentStorefrontApplicationWithAuthorization } from '@app/storefront-registry-contracts/current-storefront-application/client';
 import { CurrentStorefrontApplicationRequestSchema } from '@app/storefront-registry-contracts/current-storefront-application';
 import { executeEligibleMarketTuplesWithAuthorization } from '@app/commerce-market-catalog/api/client';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { PurchaseLimitEvaluationCurrentFactsSchema } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
 import { PurchaseLimitDependencyUnavailableSchema } from '../../shared/domain/purchase-limit-policy.ts';
 import type { PurchaseValue } from '../../shared/domain/purchase-limit.ts';
-import {
-  PrincipalIdSchema,
-  TenantIdSchema,
-  AuthenticationNamespaceIdSchema,
-} from '@app/core-runtime/auth/external-identity-contracts';
-import { ContextAccess, isVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import { isVerifiedGatewayPrincipalContext, readVerifiedGatewayActor } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Config, DateTime, Effect, Match, Option, Schema, Predicate } from 'effect';
+import { Crypto, DateTime, Effect, Match, Option, Schema, Predicate } from 'effect';
 import { Hex } from 'effect/encoding';
 import { OrderFinalizationPricingContextSchema } from '../../shared/domain/order-finalization-pricing-context.ts';
 import {
@@ -74,24 +70,6 @@ const invalid = () =>
     reason: 'The approved Order Pricing context does not match current owner facts',
   });
 
-const ownerGatewayConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
-  shellBaseUrl: Config.schema(
-    Schema.URLFromString.check(
-      Schema.makeFilter((url) =>
-        (url.protocol === 'http:' || url.protocol === 'https:') &&
-        url.username === '' &&
-        url.password === '' &&
-        url.search === '' &&
-        url.hash === ''
-          ? undefined
-          : 'Expected a trusted HTTP service URL',
-      ),
-    ),
-    'ONTOS_SHELL_GATEWAY_BASE_URL',
-  ),
-});
-
 const readOrderStorefrontCurrent = Effect.fn('OrderFinalizationPricingContext.readStorefrontCurrent')(
   function* readStorefront(
     scope: OperationalScope,
@@ -99,17 +77,22 @@ const readOrderStorefrontCurrent = Effect.fn('OrderFinalizationPricingContext.re
     operationTime: string,
     compositionRevision: string,
   ) {
-    const configured = yield* ownerGatewayConfiguration.pipe(Effect.mapError(unavailable));
     const { legalEntityId } = scope;
+    const crypto = yield* Crypto.Crypto;
     if (legalEntityId === undefined || approved.proposal.context.channelId !== 'B2B') {
       return yield* invalid();
     }
     const issue = Effect.fn('OrderFinalizationPricingContext.issueOwnerCredential')(function* issue(
       audience: 'storefront-registry' | 'commerce-market-catalog',
     ) {
-      const issued = yield* issueApiKeyGatewayContext(
-        { audience, compositionRevision, legalEntityId },
-        { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: scope.correlationId },
+      const issued = yield* acquireDelegatedGatewayContext(
+        {
+          audience,
+          legalEntityScope: 'subject',
+          requestCorrelation: scope.correlationId,
+          subject: { _tag: 'Assertion', scope },
+        },
+        crypto,
       ).pipe(Effect.mapError(unavailable));
       const now = yield* DateTime.now;
       if (
@@ -118,7 +101,7 @@ const readOrderStorefrontCurrent = Effect.fn('OrderFinalizationPricingContext.re
       ) {
         return yield* unavailable('The owner credential is not current');
       }
-      return { baseUrl: new URL(issued.apiBaseUrl, configured.shellBaseUrl), credential: `Bearer ${issued.token}` };
+      return { baseUrl: new URL(issued.apiBaseUrl), credential: issued.authorization };
     });
     const registryCredential = yield* issue('storefront-registry');
     const payload = yield* Schema.decodeUnknownEffect(CurrentStorefrontApplicationRequestSchema)({
@@ -327,9 +310,8 @@ export const resolvePurchasePricingContextObservation = Effect.fn('OrderFinaliza
           .resolveCurrent({ context: currencyRequest, observedAt: operationTime, subject })
           .pipe(Effect.mapError(unavailable)),
         pricingPort: purchaseCurrencyPricingPortFromEnvironment({
-          compositionRevision,
-          legalEntityId,
           requestCorrelation: scope.correlationId,
+          subject: { _tag: 'Assertion', scope },
         }),
       },
       { concurrency: 1 },
@@ -457,21 +439,6 @@ export const resolveOrderFinalizationPricingContext = Effect.fn('OrderFinalizati
   },
 );
 
-const pricingServiceGrants = Config.schema(
-  Schema.fromJsonString(
-    Schema.Array(
-      Schema.Struct({
-        authenticationNamespaceId: AuthenticationNamespaceIdSchema,
-        legalEntityId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId')),
-        principalId: PrincipalIdSchema,
-        role: Schema.Literal('PRICING_SERVICE'),
-        tenantId: TenantIdSchema,
-      }),
-    ).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
-  ),
-  'ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS',
-);
-
 type IssuerRequirements =
   ReturnType<typeof resolveOrderFinalizationPricingContext> extends Effect.Effect<unknown, unknown, infer Requirements>
     ? Requirements
@@ -487,34 +454,19 @@ export const makeOrderFinalizationPricingContextAuthority = Effect.fn('OrderFina
     const authority: PricingPurchaseContextOwnerAuthorityPort = {
       readCurrent: ({ callingPrincipalId, legalEntityId, request, trustedTenantId }) =>
         Effect.gen(function* readCurrent() {
-          const allowed = yield* pricingServiceGrants.pipe(Effect.mapError(unavailable));
+          // The Pricing module is the calling actor (DESIGN D6); the subject is the buyer the quotation prices for.
+          const actor = readVerifiedGatewayActor(scope);
           if (
-            scope.authMethod !== 'api_key' ||
+            actor?.appId !== 'pricing' ||
             !isVerifiedGatewayPrincipalContext(scope) ||
             scope.impersonatedByPrincipalId !== undefined ||
             scope.principalId !== callingPrincipalId ||
             scope.tenantId !== trustedTenantId ||
-            scope.legalEntityId !== legalEntityId ||
-            allowed.filter(
-              (grant) =>
-                grant.principalId === scope.principalId &&
-                grant.authenticationNamespaceId === scope.authenticationNamespaceId &&
-                grant.tenantId === scope.tenantId &&
-                grant.legalEntityId === scope.legalEntityId,
-            ).length !== 1
+            scope.legalEntityId !== legalEntityId
           ) {
             return yield* invalid();
           }
-          const access = yield* ContextAccess;
-          const modules = yield* access.modules({
-            legalEntityId,
-            moduleIds: [MODULE_ID],
-            principalId: scope.principalId,
-            tenantId: scope.tenantId,
-          });
-          if (modules.length !== 1 || modules[0]?.key !== MODULE_ID || modules[0].decision !== 'allowed') {
-            return yield* invalid();
-          }
+          // Installation is the module-state gate's fact, not a second permission check (O62).
           const requestId = request.purchasingContext.contextRef.slice(contextPrefix.length);
           if (
             !request.purchasingContext.contextRef.startsWith(contextPrefix) ||
@@ -540,7 +492,11 @@ export const makeOrderFinalizationPricingContextAuthority = Effect.fn('OrderFina
           const { request: approved } = yield* Schema.decodeUnknownEffect(
             Schema.Struct({ request: PurchaseApprovalRequestSchema }),
           )(row.result).pipe(Effect.mapError(unavailable));
-          if (approved.requestRef.resourceId !== requestId || approved.requestRef.tenantId !== scope.tenantId) {
+          if (
+            approved.requestRef.resourceId !== requestId ||
+            approved.requestRef.tenantId !== scope.tenantId ||
+            scope.principalId !== approved.proposal.identity.buyer.principalId
+          ) {
             return yield* invalid();
           }
           const observation = yield* resolveOrderFinalizationPricingContextObservation(

@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug update-customer-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   UpdateCustomerGroupPayloadSchema,
@@ -23,7 +23,7 @@ import {
   OutboxPayloadSchema as CustomerGroupUpdatedEventSchema,
   outboxProducerModuleKey as MODULE_KEY,
 } from '../../shared/outbox/commerce-customer-context-customer-group-updated-v1.ts';
-import { customerGroupServiceFactory, customerGroupWritePermission } from './customer-group-action-support.ts';
+import { customerGroupServiceFactory } from './customer-group-action-support.ts';
 import { executeCustomerGroupAction } from './customer-group-action-handler.ts';
 import { createUpdateCustomerGroupCommerceCustomerContextCustomerGroupUpdatedV1OutboxMessage as createCustomerGroupUpdatedOutboxMessage } from './update-customer-group.commerce-customer-context-customer-group-updated-v1.outbox-message.ts';
 
@@ -120,6 +120,14 @@ const handleUpdateCustomerGroup = Effect.fn('UpdateCustomerGroupAction.handle')(
 
 export const updateCustomerGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-groups', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.update-customer-group.access.v1',
@@ -131,7 +139,7 @@ export const updateCustomerGroupAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.update-customer-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -141,9 +149,6 @@ export const updateCustomerGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: UpdateCustomerGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<UpdateCustomerGroupPayload>(({ groupRef }) =>
-      customerGroupWritePermission(groupRef),
-    ),
     resultSchema: UpdateCustomerGroupResultSchema,
     schemaVersion: '1',
   },

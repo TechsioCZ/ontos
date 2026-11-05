@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug assert-size-equivalence
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/assert-size-equivalence.ts';
 
 export { AssertSizeEquivalencePayloadSchema } from '../actions/assert-size-equivalence.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const AssertSizeEquivalenceActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssertSizeEquivalenceActionInvalidProblem',
@@ -24,6 +26,7 @@ export const AssertSizeEquivalenceActionForbiddenProblemSchema = makeProblemDeta
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const AssertSizeEquivalenceActionApi = HttpApi.make('AssertSizeEquivalenc
       HttpApiEndpoint.post('execute', '/catalog/actions/assert-size-equivalence', {
         error: actionErrors,
         payload: Schema.toEncoded(AssertSizeEquivalencePayloadSchema),
-        success: AssertSizeEquivalenceResultSchema,
+        success: [ActionProposalAcceptedSchema, AssertSizeEquivalenceResultSchema],
       }),
     )
     .middleware(AssertSizeEquivalenceActionSchemaErrorMiddleware),

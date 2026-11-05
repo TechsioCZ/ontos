@@ -12,12 +12,9 @@ import {
   ProjectPrefixConflict,
 } from '../../shared/domain/project.ts';
 import type { Project } from '../../shared/domain/project.ts';
-import { ProjectOwnerEligibilityUnavailable } from './create-project.action.ts';
-import { projectOwnerEligibilityService } from '../services/project-owner-eligibility.service.ts';
 import { makeProjectPersistenceService } from '../services/project-persistence.service.ts';
 import { requireActiveProject } from '../services/project-lifecycle-guard.service.ts';
 import type {
-  EligibleProjectOwner,
   ProjectLookup,
   ProjectPersistenceError,
   UpdateProjectValues,
@@ -30,57 +27,26 @@ import type { UpdateProjectPayload } from '../../shared/actions/update-project.t
 
 const projectModuleKey = 'projects.core';
 
-export class ProjectOwnerIneligible extends Schema.TaggedError<ProjectOwnerIneligible>()('ProjectOwnerIneligible', {
-  code: Schema.Literal('project_owner_ineligible'),
-  reason: Schema.String,
-}) {}
-
 export const UpdateProjectErrorSchema = Schema.Union([
   ProjectHierarchyConflict,
   ProjectLifecycleConflict,
   ProjectNotFound,
-  ProjectOwnerIneligible,
-  ProjectOwnerEligibilityUnavailable,
   ProjectPersistenceUnavailable,
   ProjectPrefixConflict,
 ]);
 
 interface Services {
   readonly findForLifecycleGuard: (projectId: string) => Effect.Effect<ProjectLookup, ProjectPersistenceError>;
-  readonly ownerEligibility: (
-    prefix: string,
-    principalId: string,
-  ) => Effect.Effect<'allowed' | 'denied' | 'unavailable'>;
   readonly update: (values: UpdateProjectValues) => Effect.Effect<Project, ProjectPersistenceError>;
 }
 
 export const makeUpdateProjectHandler = (services: Services) =>
   Effect.fn('UpdateProject.handle')(function* updateProject(payload: UpdateProjectPayload) {
     const current = yield* requireActiveProject(services.findForLifecycleGuard, payload.projectId);
-
-    let owner: EligibleProjectOwner = {
-      eligibilityChecked: true,
-      principalId: current.ownerPrincipalId,
-    };
-    if (payload.ownerPrincipalId !== undefined) {
-      const decision = yield* services.ownerEligibility(current.prefix, payload.ownerPrincipalId);
-      if (decision === 'unavailable') {
-        return yield* new ProjectOwnerEligibilityUnavailable({
-          code: 'project_owner_eligibility_unavailable',
-          reason: 'Owner eligibility is temporarily unavailable',
-        });
-      }
-      if (decision !== 'allowed') {
-        return yield* new ProjectOwnerIneligible({
-          code: 'project_owner_ineligible',
-          reason: 'The selected Owner is not eligible for this Project',
-        });
-      }
-      owner = { eligibilityChecked: true, principalId: payload.ownerPrincipalId };
-    }
+    // An update edits the Project's own text. It never touches the owner: reassignment is its own
+    // sensitive capability (O10, R5c-1), so an `update` grant can never transfer a Project away.
     return yield* services.update({
       name: payload.name ?? current.name,
-      owner,
       projectId: current.projectId,
       shortText: Option.getOrNull(payload.shortText ?? current.shortText),
     });
@@ -106,17 +72,26 @@ const handleUpdateProject = (
 
 export const updateProjectAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'projects.core.project.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'projects', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all', 'assigned'],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'projects.core.update-project.access.v1',
     },
+    accessTarget: (payload) => ({ moduleKey: projectModuleKey, recordKey: payload.projectId }),
     actionKey: 'projects.core.update-project',
     auditProfile: 'standard',
     domainErrorSchema: UpdateProjectErrorSchema,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'projects.core.update-project',
       moduleKey: projectModuleKey,
       role: 'action',
@@ -130,19 +105,17 @@ export const updateProjectAction = defineAction(
     schemaVersion: '1',
   },
   handleUpdateProject,
-  Effect.fn('UpdateProject.services')(function* updateProjectServices(transaction, scope) {
-    const ownerEligibility = yield* projectOwnerEligibilityService(transaction, scope);
+  (transaction, scope) => {
     // SAFETY: ScopedTransactionExecutor exposes the same bound Drizzle CRUD methods used by this service; RLS scope is installed by Core before the factory runs.
     const persistence = makeProjectPersistenceService(transaction, {
       operationId: scope.correlationId,
       tenantId: scope.tenantId,
     });
-    return {
+    return Effect.succeed({
       findForLifecycleGuard: persistence.findForLifecycleGuard,
-      ownerEligibility: ownerEligibility.check,
       update: persistence.update,
-    };
-  }),
+    });
+  },
 );
 
 // <generated-outbox-message-exports>

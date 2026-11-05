@@ -595,6 +595,102 @@ describe('accepts the concrete Outbox fixture imports through the production con
   });
 });
 
+/** Writes each factory beside the shared data consumer and checks whether the proof admits it. */
+const expectDataFactoryProofs = (dataFactories: readonly string[], controls: readonly string[]): void => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    for (const declaration of dataFactories) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    for (const declaration of controls) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
+};
+
+const callersCodecFactory = (elements: string): string =>
+  `import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Struct({ callers: ${elements} })); export const makeData = (value: string) => decode({ callers: [value] });`;
+
+it('proves unique non-empty schema arrays without admitting unknown elements or executable annotations', () => {
+  expectDataFactoryProofs(
+    [callersCodecFactory('Schema.NonEmptyArray(Schema.String).check(Schema.isUnique())')],
+    [
+      callersCodecFactory('Schema.NonEmptyArray(Schema.Unknown).check(Schema.isUnique())'),
+      callersCodecFactory(
+        'Schema.NonEmptyArray(Schema.String).check(Schema.isUnique({ message: () => fetch("unique") }))',
+      ),
+    ],
+  );
+});
+
+it('proves Set membership, spreads and owned collection reads without admitting shared or unmodeled mutation', () => {
+  expectDataFactoryProofs(
+    [
+      'const names = new Set(["a", "b"]); export const makeData = (value: string) => ({ known: names.has(value), all: [...names, value] });',
+      'export const makeData = (values: readonly string[]) => { const seen = new Set<string>(); for (const value of values) { seen.add(value); } return { values: [...seen] }; };',
+      'export const makeData = (values: readonly string[]) => ({ longest: Math.max(0, ...values.map(({ length }) => length)), words: values.filter((value) => value.length > 0).map((value) => value.normalize("NFKC").toLowerCase()).join(" "), first: values.find((value) => value === "a"), all: values.every((value) => value.length > 0), copy: [...values, "z"] });',
+    ],
+    [
+      'const seen = new Set<string>(); export const makeData = (value: string) => { seen.add(value); return { size: seen.size }; };',
+      'export const makeData = (values: readonly string[]) => { const seen = new Set(values); return { removed: seen.delete("a") }; };',
+      'export const makeData = (value: string) => ({ characters: [...value] });',
+      'const pick = (first: string) => first; export const makeData = (values: readonly string[]) => ({ value: pick(...values) });',
+      'export const makeData = (values: readonly string[]) => values.map(({ constructor }) => constructor);',
+      'export const makeData = (values: readonly string[]) => ({ all: values.every((value) => () => value) });',
+    ],
+  );
+});
+
+const resultPipelineFactory = (errorClass: string, finalStep: string): string =>
+  [
+    'import { Result, Schema } from "effect";',
+    errorClass,
+    'const decodeFields = Schema.decodeUnknownResult(Schema.Struct({ name: Schema.String }));',
+    `const check = (value: unknown) => decodeFields(value).pipe(Result.mapError((issue) => new InvalidData({ reason: issue.message })), Result.map((fields) => ({ name: fields.name })), ${finalStep});`,
+    'export const makeData = (name: string) => { const checked = check({ name }); return Result.isFailure(checked) ? { issue: checked.failure.reason } : { name: checked.success.name }; };',
+  ].join(' ');
+
+it('proves Result pipelines and field-only tagged errors without admitting executable outcomes or error members', () => {
+  const taggedError =
+    'class InvalidData extends Schema.TaggedError<InvalidData>()("InvalidData", { reason: Schema.String }) {}';
+  const flatMap =
+    'Result.flatMap((fields) => (fields.name === "" ? Result.fail(new InvalidData({ reason: "empty" })) : Result.succeed(fields)))';
+  expectDataFactoryProofs(
+    [resultPipelineFactory(taggedError, flatMap)],
+    [
+      resultPipelineFactory(taggedError, 'Result.flatMap((fields) => fields)'),
+      resultPipelineFactory(taggedError, 'Result.mapError((error) => () => error)'),
+      resultPipelineFactory(taggedError.replace('{}', '{ get detail() { return fetch("detail"); } }'), flatMap),
+      resultPipelineFactory('class InvalidData extends Error {}', flatMap),
+    ],
+  );
+});
+
+it('proves mutable locals, loop returns, literal keys and absent fields without admitting stale or inherited values', () => {
+  expectDataFactoryProofs(
+    [
+      'export const makeData = (words: readonly string[]) => { let joined = ""; for (const word of words) { joined += word; if (joined.length > 8) { return { joined, truncated: true }; } } return { joined, truncated: false }; };',
+      'const pick = (value: string) => { if (value === "a") { return { kind: "a" }; } return { kind: "b" }; }; export const makeData = (value: string) => ({ kind: pick(value).kind });',
+      'const withKey = (base: { readonly id: string }, key: string, value: string | undefined) => (value === undefined ? base : { ...base, [key]: value }); export const makeData = (id: string) => withKey({ id }, "label", id);',
+      'const describe = (entry: { readonly id: string; readonly groups?: readonly string[] }) => ({ groups: [...(entry.groups ?? [])] }); export const makeData = (id: string) => describe({ id });',
+    ],
+    [
+      'export const makeData = (value: string) => { let current = value; current = () => fetch(value); return { current }; };',
+      'export const makeData = (value: string) => { value = "x"; return { value }; };',
+      'const has = (values: readonly string[]) => { for (const value of values) { return value.length > 0 || true; } return false; }; export const makeData = (values: readonly string[]) => (has(values) ? fetch("service") : { values });',
+      'export const makeData = (key: string, value: string) => ({ [key]: value });',
+      'export const makeData = (id: string) => ({ make: { id }.constructor });',
+      'export const makeData = (value: string) => ({ params: URL.parse(value).searchParams });',
+      'export const makeData = (value: string) => ({ params: (value === "" ? URL.parse(value) : { hostname: value }).searchParams });',
+      'export const makeData = (entry: { readonly id: string }) => ({ extra: entry.extra });',
+    ],
+  );
+});
+
 it('proves fresh invocation-local array accumulation without admitting caller or service state', () => {
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
@@ -636,6 +732,12 @@ describe('allows service constructor calls only within proven native service fac
     `${nativeImport} ${constructorImport} const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision) => makeCustomerSchema(revision);`,
     `${constructorImport} import { defineRead as nativeRead } from '@app/core-runtime'; nativeRead({}, (input) => input, (context, scope, revision) => makeCustomerSchema(revision), {});`,
     `${nativeImport} ${constructorImport} import { Effect as E } from 'effect'; const serviceFactory: NativeFactory<unknown, unknown> = E.fn('service')(function* (context, scope, revision) { return makeCustomerSchema(revision); });`,
+    // A read factory also receives the list-access predicate the runtime derives for a selector-bearing read.
+    `${constructorImport} import { defineRead as nativeRead } from '@app/core-runtime'; nativeRead({}, (input) => input, (context, scope, revision, listAccess) => makeCustomerSchema(revision), {});`,
+    `${constructorImport} import type { ReadServiceFactory } from '@app/core-runtime'; const serviceFactory: ReadServiceFactory<unknown, unknown> = (context, scope, revision, listAccess) => makeCustomerSchema(revision);`,
+    // A v2 read declares descriptor, handler and service factory only.
+    `${constructorImport} import { defineRead as nativeRead } from '@app/core-runtime'; nativeRead({}, (input) => input, (context, scope, revision) => makeCustomerSchema(revision));`,
+    `${constructorImport} import { defineRead as nativeRead } from '@app/core-runtime'; nativeRead({}, (input) => input, (context, scope, revision, listAccess) => makeCustomerSchema(revision),);`,
   ]) {
     write(consumer, declaration);
     accept(consumer, declaration);
@@ -647,6 +749,9 @@ describe('allows service constructor calls only within proven native service fac
     `${nativeImport} ${constructorImport} const outside = makeCustomerSchema('revision'); const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision) => outside;`,
     `${nativeImport} ${constructorImport} const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision) => makeCustomerSchema;`,
     `${nativeImport} ${constructorImport} const wrap = (callback: unknown) => callback; const serviceFactory: NativeFactory<unknown, unknown> = wrap((context, scope, revision) => makeCustomerSchema(revision));`,
+    // An Action factory never receives a fourth runtime argument, and a read factory never a fifth.
+    `${nativeImport} ${constructorImport} const serviceFactory: NativeFactory<unknown, unknown> = (context, scope, revision, extra) => makeCustomerSchema(revision);`,
+    `${constructorImport} import { defineRead as nativeRead } from '@app/core-runtime'; nativeRead({}, (input) => input, (context, scope, revision, listAccess, extra) => makeCustomerSchema(revision), {});`,
   ]) {
     write(consumer, declaration);
     reject(consumer, 1, declaration);
@@ -2211,10 +2316,6 @@ const injectedBffFactorySource = bffFactorySource
   .replace('const runtime = makeRuntime();', 'const runtime = makeRuntime(group);');
 
 describe('proves actual parameterized owner BFF composition without admitting constructors or foreign Layers', () => {
-  ruleTester.run(serviceRuleTitle, serviceRule, {
-    invalid: [],
-    valid: [repositoryCase('verticals/privacy/tests/support/dsr-legacy-owner.fixture.ts')],
-  });
   const cases: readonly BffCase[] = [
     { expected: 0, name: 'bff-injected-nested-layers', source: injectedBffFactorySource },
     {

@@ -80,6 +80,7 @@ import { ProductUnitRefSchema } from '../../shared/resources/product-unit.ts';
 import { VariantRefSchema } from '../../shared/resources/variant.ts';
 import { catalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 
 const readOnlyBootstrapType = 'bootstrap-read-only' as const;
 const configurationChoiceKey = 'fixture-finish';
@@ -116,10 +117,15 @@ export const wholeCandidateCatalogActionKeys = [
 
 const selectionsSchema = Schema.Tuple([CatalogSelectionSchema, CatalogSelectionSchema, CatalogSelectionSchema]);
 const unitsSchema = Schema.Tuple([ProductUnitRefSchema, ProductUnitRefSchema, ProductUnitRefSchema]);
+/** The scripted answer the receiver's gate gives; `unavailable` proves the runtime's 503 path. */
+const catalogAccessOutcomeSchema = Schema.Literals(['allowed', 'unavailable']);
 export const WholeCandidateCatalogBootstrapSchema = Schema.Struct({
+  accessOutcome: Schema.optionalKey(catalogAccessOutcomeSchema),
   actor: TrustedPrincipalContextSchema,
   composition: ActiveApplicationCompositionSnapshotSchema,
   databaseName: Schema.String.check(Schema.isPattern(/^ontos_test_[a-z0-9_]+$/u)),
+  /** The fixture's principal with no v2 assignment; the scripted gate refuses it (O62 fail-closed). */
+  deniedPrincipalId: TrustedPrincipalContextSchema.fields.principalId,
   issuer: Schema.String,
   jwks: Schema.String,
   legalEntityId: legalEntityIdSchema,
@@ -237,10 +243,27 @@ const wholeCandidateCatalogRuntime = (bootstrap: Omit<typeof WholeCandidateCatal
   const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
   const stateGate = ModuleStateGateLive.pipe(Layer.provide(states));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
-  const scopes = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
+  const access = makeTestAccessGateLayers({
+    deniedPrincipalIds: [bootstrap.deniedPrincipalId],
+    selectableLegalEntityIds: [bootstrap.legalEntityId],
+    spec: { defaultAnswer: { outcome: 'ALLOWED' } },
+    unavailable: bootstrap.accessOutcome === 'unavailable',
+  });
+  const scopes = OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
+  );
   const namespace = staffAuthenticationNamespaceRegistryLayer(['catalog']);
   const composition = makeActiveApplicationCompositionLayer(Effect.succeed(bootstrap.composition));
-  const common = Layer.mergeAll(persistence, ContextAccessLive, stateGate, gateway, scopes, namespace, composition);
+  const common = Layer.mergeAll(
+    persistence,
+    ContextAccessLive,
+    stateGate,
+    gateway,
+    scopes,
+    namespace,
+    composition,
+    access,
+  );
   const actions = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogRegistration).pipe(
     Layer.provide(Layer.mergeAll(common, ActionRepositoryLive, ActionPermissionLive)),
     Layer.provide(NodeCrypto.layer),

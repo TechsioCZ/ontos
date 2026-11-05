@@ -49,6 +49,14 @@ const handleRecordExternalObligation = Effect.fn('RecordExternalObligationAction
 
 export const recordExternalObligationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.external-obligation.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'privacy-measures', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-external-obligation.access.v1',
@@ -60,7 +68,7 @@ export const recordExternalObligationAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-external-obligation',
       moduleKey: 'privacy.core',
       role: 'action',

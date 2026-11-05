@@ -63,10 +63,7 @@ const recoverSetVariantLocalizedFacts = Effect.fn('SetVariantLocalizedFactsRecov
 
 const setVariantLocalizedFactsRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.set-variant-localized-facts-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.set-variant-localized-facts-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -74,6 +71,14 @@ const setVariantLocalizedFactsRecoveryEntrypoint = defineTenantModuleEntrypoint(
 
 export const setVariantLocalizedFactsRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.set-variant-localized-facts-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: setVariantLocalizedFactsRecoveryEntrypoint,
     evidencePolicy: {
@@ -83,7 +88,6 @@ export const setVariantLocalizedFactsRecoveryRead = defineRead(
     inputSchema: SetVariantLocalizedFactsRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.set-variant-localized-facts-recovery',
     resultSchema: SetVariantLocalizedFactsRecoveryResponseSchema,
@@ -95,5 +99,4 @@ export const setVariantLocalizedFactsRecoveryRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

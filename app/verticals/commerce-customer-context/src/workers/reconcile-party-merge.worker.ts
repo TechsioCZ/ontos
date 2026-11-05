@@ -3,10 +3,16 @@
 // @ontos-outbox-worker-owner commerce.customer-context
 // @ontos-outbox-worker-producer party.registry
 // @ontos-outbox-worker-topic party.registry.party-merged.v1
-import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
-import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { OutboxWorkerLegalEntityScopeError } from '@app/core-runtime/outbox/worker';
-import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
+import type {
+  OutboxWorkerHandlerContext,
+  OutboxWorkerLegalEntityScope,
+  OutboxWorkerLegalEntityScopeError,
+} from '@app/core-runtime';
+import {
+  defineOutboxWorker,
+  defineTenantModuleEntrypoint,
+  OutboxWorkerLegalEntityScopeFanout,
+} from '@app/core-runtime';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-party-merged-v1';
 import {
   OutboxPayloadSchema,

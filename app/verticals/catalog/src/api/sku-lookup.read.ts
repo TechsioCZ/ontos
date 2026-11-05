@@ -45,7 +45,7 @@ export const skuLookupResultPermissionTargets = (result: typeof SkuLookupRespons
 
 export const skuLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.sku-lookup' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.sku-lookup',
   moduleKey,
   role: 'api',
@@ -53,6 +53,14 @@ export const skuLookupEntrypoint = defineTenantModuleEntrypoint({
 
 export const skuLookupRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.sku-lookup.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: skuLookupEntrypoint,
     evidencePolicy: {
@@ -62,7 +70,6 @@ export const skuLookupRead = defineRead(
     inputSchema: SkuLookupRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.sku-lookup',
     resultSchema: SkuLookupResponseSchema,
@@ -76,6 +83,4 @@ export const skuLookupRead = defineRead(
     return yield* skuLookupResult(outcome);
   }),
   (transaction, scope) => Effect.succeed(skuPersistenceForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
-  skuLookupResultPermissionTargets,
 );

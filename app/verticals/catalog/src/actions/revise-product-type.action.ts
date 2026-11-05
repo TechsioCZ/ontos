@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.catalog
 // @ontos-action-slug revise-product-type
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Schema, Option } from 'effect';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import {
@@ -11,7 +11,7 @@ import {
 } from '../../shared/actions/revise-product-type.ts';
 import type { ReviseProductTypePayload } from '../../shared/actions/revise-product-type.ts';
 import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { OutboxPayloadSchema as SelectionSourceChangedEventSchema } from '../../shared/outbox/commerce-catalog-selection-source-changed-v1.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import type { CatalogPersistenceConflict } from '../persistence/errors.ts';
@@ -57,7 +57,7 @@ const reviseProductTypePersistenceServiceFactory = Effect.fn(
   scope: Parameters<typeof productTypeRevisePersistenceForScope>[1],
   population?: CartOpenSelectionPopulationPort,
 ) {
-  const configuredPopulation = population ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+  const configuredPopulation = population ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
   return yield* productTypeRevisePersistenceForScope(
     transaction,
     scope,
@@ -153,6 +153,14 @@ export const handleReviseProductType = Effect.fn('ReviseProductTypeAction.handle
 
 export const reviseProductTypeAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-type.revise',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-type', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.revise-product-type.access.v1',
@@ -167,7 +175,7 @@ export const reviseProductTypeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.revise-product-type',
       moduleKey: 'commerce.catalog',
       role: 'action',

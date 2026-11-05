@@ -12,6 +12,7 @@ import { requireModuleOperation } from '../../src/modules/module-operation-requi
 import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { makeInstalledCatalogFixture } from '../support/installed-catalog.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const revision = 'a'.repeat(64);
 const privateContextKey = '@app/core-runtime/modules/module-operation-execution/ModuleOperationExecution';
@@ -28,6 +29,7 @@ const entrypoint = (moduleKey: string) =>
 const registration = (moduleId: string, suffix = 'change') =>
   defineAction(
     {
+      accessDeclaration: fixtureActionAccess(moduleId),
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${moduleId}.reads.v1` },
       actionKey: `${moduleId}.${suffix}`,
       auditProfile: 'standard',

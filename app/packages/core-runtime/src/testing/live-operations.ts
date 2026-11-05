@@ -5,6 +5,7 @@ import {
   Context,
   Crypto,
   Data,
+  DateTime,
   Duration,
   Effect,
   Exit,
@@ -19,6 +20,13 @@ import {
 } from 'effect';
 
 import { ActionCommitIndeterminate, ActionTransactionError } from '../actions/errors.ts';
+import { AccessPortalProjection } from '../access/portal/portal-projection.ts';
+import { bootstrapScopesOf, writeBootstrapScopes } from '../access/bootstrap/persistence.ts';
+import { AccessWorkloadBindingIdSchema } from '../access/workloads/store.ts';
+import { makeAccessWorkloadBindingDrizzleStore } from '../access/workloads/binding-store.ts';
+import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
+import { stableUuid } from '../access/catalog/stable-id.ts';
+import { LegalEntityIdSchema, TenantIdSchema } from '../access/ids.ts';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
@@ -52,10 +60,6 @@ import {
   tenantModuleStates,
   tenants,
 } from '../db/schema.ts';
-import {
-  buildActionAuthorizationRelationships,
-  buildExplicitActionGrantRelationships,
-} from '../install/action-authorization-provisioning.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../modules/module-state-gate.ts';
 import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
@@ -74,13 +78,11 @@ import {
   toResourceAccessObjectId,
 } from '../permissions/context-access.ts';
 import type { ContextPermissionAccessTarget } from '../permissions/context-access.ts';
-import { makeActionPermissionLive, toSpiceDbActionObjectId } from '../permissions/service.ts';
+import { makeActionPermissionLive } from '../permissions/service.ts';
 import { fullyConsistent } from '../permissions/client.ts';
-import {
-  OwnerAuthorizationOverlay,
-  failClosedOwnerAuthorizationOverlay,
-} from '../permissions/owner-authorization-overlay.ts';
+import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
 import { newSpiceDbGrpcClient } from '../permissions/spicedb-grpc-rpc.ts';
+import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess, TEST_ACCESS_OUTCOMES } from './access-gate.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
 import type { ReadRuntimeOptions } from '../reads/runtime.ts';
 
@@ -117,7 +119,16 @@ const relationship = (
 
 const FixtureAuthenticationMethodSchema = Schema.Literals(['session', 'api_key']);
 const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
+const fixtureAccessOutcomeSchema = Schema.Literals(TEST_ACCESS_OUTCOMES);
 const fixtureConfigurationFields = {
+  /**
+   * The scripted answer the fixture's gate gives for every protected Action and Read, with the same
+   * semantics as the Action and Read harnesses (`src/testing/actions.ts`): one outcome for all, or one
+   * per capability key. The default is `denied`, so a suite that wants a path must name it.
+   */
+  access: Schema.optionalKey(
+    Schema.Union([fixtureAccessOutcomeSchema, Schema.Record(Schema.String, fixtureAccessOutcomeSchema)]),
+  ),
   actionExecutor: Schema.optionalKey(Schema.Literals([managerOnlyExecution, tenantMembershipExecution])),
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
   /**
@@ -129,21 +140,6 @@ const fixtureConfigurationFields = {
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
   authenticationSubjectTypes: Schema.optionalKey(Schema.Array(BindingSubjectTypeSchema).check(Schema.isMinLength(1))),
   compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
-  /** Read-only executor probes; these keys never participate in grant construction. */
-  executorProbeActionKeys: Schema.optionalKey(
-    Schema.Array(
-      ActionKeySchema.check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(200),
-        Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
-      ),
-    ).check(
-      Schema.isMaxLength(128),
-      Schema.makeFilter((keys) =>
-        new Set(keys).size === keys.length ? undefined : 'Executor probe keys must be unique',
-      ),
-    ),
-  ),
   managerAuthenticationMethod: Schema.optionalKey(FixtureAuthenticationMethodSchema),
   managerIdentityAdmin: Schema.optionalKey(Schema.Boolean),
   managerProviderSubjectId: Schema.optionalKey(ProviderSubjectIdSchema),
@@ -152,35 +148,27 @@ const fixtureConfigurationFields = {
   ),
   moduleAccess: Schema.optionalKey(Schema.Literal(configuredModuleAccess)),
   moduleKeys: Schema.optionalKey(Schema.Array(TargetModuleKeySchema).check(Schema.isMinLength(1))),
-  /** Exact additional reader executor grants; allowed only in manager-only fixture execution. */
-  readerActionKeys: Schema.optionalKey(
+  readerProviderSubjectId: Schema.optionalKey(ProviderSubjectIdSchema),
+  /**
+   * The registered workload identities a live suite binds for the fixture's principals (O73). The
+   * default is none, so a workload request is refused unless a suite names its key: a suite never
+   * inherits a binding it did not state.
+   */
+  workloads: Schema.optionalKey(
     Schema.Array(
-      ActionKeySchema.check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(200),
-        Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
-      ),
+      Schema.Struct({
+        principalId: PrincipalIdSchema,
+        workloadKey: WorkloadKeySchema,
+      }),
     ),
   ),
-  readerProviderSubjectId: Schema.optionalKey(ProviderSubjectIdSchema),
 } as const;
-const validReaderActionSelection = Schema.makeFilter(
-  (configuration: {
-    readonly actionExecutor?: string | undefined;
-    readonly actionKeys?: readonly string[] | undefined;
-    readonly readerActionKeys?: readonly string[] | undefined;
-  }) =>
-    configuration.readerActionKeys === undefined ||
-    (configuration.actionExecutor === managerOnlyExecution &&
-      new Set(configuration.readerActionKeys).size === configuration.readerActionKeys.length &&
-      configuration.readerActionKeys.every((key) => configuration.actionKeys?.includes(key) === true)),
-);
-const RuntimeFixtureConfigurationSchema = Schema.Struct(fixtureConfigurationFields).check(validReaderActionSelection);
+const RuntimeFixtureConfigurationSchema = Schema.Struct(fixtureConfigurationFields);
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   ...fixtureConfigurationFields,
   adminConnectionString: Schema.optional(Schema.Redacted(Schema.String)),
   runtimeConnectionString: Schema.Redacted(Schema.String),
-}).check(validReaderActionSelection);
+});
 
 /** In-process runtime references only. Never included in the serializable creator/attachment handoff. */
 interface LiveOperationFixtureRuntimeBindings {
@@ -460,7 +448,6 @@ const fixtureAuthorizationRelationships = (input: {
   readonly manager: FixtureActor;
   readonly moduleObject: string;
   readonly reader: FixtureActor;
-  readonly readerActionKeys: readonly string[];
   readonly tenantId: string;
 }) => [
   ...input.actors.map((principal) =>
@@ -480,16 +467,8 @@ const fixtureAuthorizationRelationships = (input: {
   ...[input.manager, input.legalEntityOnly].map((principal) =>
     relationship('module_access', input.moduleObject, 'accessor', 'principal', principal.principalId),
   ),
-  ...(input.actionExecutor === managerOnlyExecution
-    ? buildExplicitActionGrantRelationships(
-        input.actionKeys.map((actionKey) => ({ actionKey, principalIds: [input.manager.principalId] })),
-      )
-    : buildActionAuthorizationRelationships(input.actionKeys, [
-        { principalId: input.manager.principalId, tenantId: input.tenantId },
-      ])),
-  ...buildExplicitActionGrantRelationships(
-    input.readerActionKeys.map((actionKey) => ({ actionKey, principalIds: [input.reader.principalId] })),
-  ),
+  // Authorization v2 has no executor tuples: an Action is decided from the holder's role assignment and
+  // the release catalog, so this fixture writes none (the provisioning writer is gone, O62).
 ];
 
 const fixtureProvisioningNamespaces = (
@@ -567,11 +546,11 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly namespaceObjects: readonly string[];
     readonly namespaceRelationships: readonly ReturnType<typeof relationship>[];
     readonly reader: FixtureActor;
-    readonly readerActionKeys: readonly string[];
     readonly readerProviderSubjectId: string | undefined;
     readonly secondaryLegalEntityId: string | undefined;
     readonly spice: FixtureSpiceClient;
     readonly tenantId: string;
+    readonly workloads: readonly { readonly principalId: string; readonly workloadKey: string }[];
   }) {
     const configuredModuleRelations: ReturnType<typeof relationship>[] = [];
     if (input.moduleAccess === configuredModuleAccess) {
@@ -637,6 +616,44 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
         ),
       )
       .pipe(Effect.mapError((cause) => fixtureFailure('Unable to bind the live fixture principals', cause)));
+    // A live Action uses the real shared access fence. Seed the scope AND its Ready fence through
+    // Core's production bootstrap writer, not a fixture-only insert or a no-op transaction hook.
+    const accessTenantId = TenantIdSchema.make(input.tenantId);
+    const accessCompanies = [
+      input.legalEntityId,
+      ...(input.secondaryLegalEntityId === undefined ? [] : [input.secondaryLegalEntityId]),
+    ].map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId));
+    yield* writeBootstrapScopes(
+      { executor: input.executor },
+      { ...input.manager, correlationId: 'live-fixture-access-bootstrap' },
+      { scopes: bootstrapScopesOf(accessTenantId, accessCompanies), tenantId: accessTenantId },
+    ).pipe(Effect.mapError((cause) => fixtureFailure('Unable to seed the live fixture access fences', cause)));
+    if (input.workloads.length > 0) {
+      // The fixture registers each named workload through the production store, so a live suite binds
+      // exactly the keys it stated and a request for any other workload is refused (O73).
+      const workloadStore = makeAccessWorkloadBindingDrizzleStore({ executor: input.executor });
+      yield* workloadStore
+        .registerBindings(
+          { ...input.manager, correlationId: 'live-fixture-workload-bindings' },
+          {
+            bindings: input.workloads.map(({ principalId, workloadKey }) => ({
+              bindingId: AccessWorkloadBindingIdSchema.make(
+                stableUuid(['ontos.live-fixture.workload-binding', input.tenantId, principalId, workloadKey].join(':')),
+              ),
+              createdAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-03T09:35:47Z')),
+              incarnation: AccessWorkloadBindingIdSchema.make(
+                stableUuid(
+                  ['ontos.live-fixture.workload-incarnation', input.tenantId, principalId, workloadKey].join(':'),
+                ),
+              ),
+              principalId: PrincipalIdSchema.make(principalId),
+              tenantId: accessTenantId,
+              workloadKey: WorkloadKeySchema.make(workloadKey),
+            })),
+          },
+        )
+        .pipe(Effect.mapError((cause) => fixtureFailure('Unable to seed the live fixture workload bindings', cause)));
+    }
     const entityObject = toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId);
     const moduleObject = toModuleAccessObjectId(input.tenantId, input.legalEntityId, fixturePartyModule);
     if (entityObject === undefined || moduleObject === undefined) {
@@ -651,7 +668,6 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       manager: input.manager,
       moduleObject,
       reader: input.reader,
-      readerActionKeys: input.readerActionKeys,
       tenantId: input.tenantId,
     });
     relations.push(...configuredModuleRelations, ...input.namespaceRelationships);
@@ -1099,40 +1115,25 @@ const grantExistingFixtureService = Effect.fn('LiveOperations.grantExistingServi
               relationship('module_access', objectId, 'accessor', 'principal', grant.principalId),
             ],
       ),
-      ...buildExplicitActionGrantRelationships(
-        grant.actionKeys.map((actionKey) => ({ actionKey, principalIds: [grant.principalId] })),
-      ),
+      // No executor tuples: v2 Actions are decided from the holder's assignment (O62).
     ];
     const permissionCheck = (resourceType: string, resourceId: string, permission: string, allowed: boolean) =>
       verifyFixturePermission(spice, grant.principalId, resourceType, resourceId, permission, allowed);
     // A reused service must not already hold extra fixture permissions. No old grant is revoked.
-    const unrequestedActions = [...fixture.actionKeys].filter(
-      (key) => !grant.actionKeys.some((requestedKey) => requestedKey === key),
-    );
     const unrequestedModules = [...fixture.moduleKeys].filter(
       (key) => !grant.moduleKeys.some((requestedKey) => requestedKey === key),
     );
     const verifyExcludedPermissions = () =>
-      Effect.all(
-        [
-          Effect.forEach(
-            unrequestedActions,
-            (key) => permissionCheck('action', toSpiceDbActionObjectId(key), 'execute', false),
-            { concurrency: 8 },
+      Effect.forEach(
+        unrequestedModules,
+        (key) =>
+          permissionCheck(
+            'module_access',
+            toModuleAccessObjectId(fixture.tenantId, fixture.legalEntityId, key) ?? '',
+            'access',
+            false,
           ),
-          Effect.forEach(
-            unrequestedModules,
-            (key) =>
-              permissionCheck(
-                'module_access',
-                toModuleAccessObjectId(fixture.tenantId, fixture.legalEntityId, key) ?? '',
-                'access',
-                false,
-              ),
-            { concurrency: 8 },
-          ),
-        ],
-        { concurrency: 2 },
+        { concurrency: 8 },
       );
     yield* verifyExcludedPermissions();
     const request = v1.WriteRelationshipsRequest.create({
@@ -1149,11 +1150,7 @@ const grantExistingFixtureService = Effect.fn('LiveOperations.grantExistingServi
     yield* Effect.forEach(moduleObjects, (key) => permissionCheck('module_access', key ?? '', 'access', true), {
       concurrency: 8,
     });
-    yield* Effect.forEach(
-      grant.actionKeys,
-      (key) => permissionCheck('action', toSpiceDbActionObjectId(key), 'execute', true),
-      { concurrency: 8 },
-    );
+    // Action admission is the access gate's decision (the fixture `access` option), never a tuple (O62).
     // Membership can activate preexisting inherited grants that were denied before the write.
     return yield* verifyExcludedPermissions();
   },
@@ -1173,16 +1170,6 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   const { configuration, denied, legalEntityId, legalEntityOnly, manager, reader, secondaryLegalEntityId, tenantId } =
     runtimeHandoff;
   const crypto = yield* Crypto.Crypto;
-  const executorProbeActors = new Set([
-    manager.principalId,
-    reader.principalId,
-    denied.principalId,
-    legalEntityOnly.principalId,
-  ]);
-  const executorProbeKeys = new Set<string>([
-    ...(configuration.actionKeys ?? []),
-    ...(configuration.executorProbeActionKeys ?? []),
-  ]);
   const setConfiguredModuleState: FixtureConfiguredModuleStateSetter =
     input.setConfiguredModuleState ??
     (() => Effect.fail(fixtureFailure('Configured module state mutation requires the fixture creator')));
@@ -1234,8 +1221,16 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
     if (role === undefined || role.superuser || role.bypassRls) {
       return yield* fixtureFailure('Owner fixtures require a runtime role without RLS bypass');
     }
-    const contextAccess = yield* makeContextAccessLive(undefined, () => Effect.succeed(spiceDb));
-    const resolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(actionDatabase), contextAccess);
+    const { resolver } = yield* Effect.all(
+      {
+        // The fixture's owner producers read their own state; the scope's company question is the gate's.
+        resolver: makeOperationalScopeResolver(
+          makeOperationalScopeRepository(actionDatabase),
+          makeTestOperationalScopeAccess(),
+        ),
+      },
+      { concurrency: 1 },
+    );
     const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(
       legalEntityScope === 'required' ? { ...manager, legalEntityId } : manager,
     );
@@ -1251,6 +1246,9 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
       }),
     );
   });
+  // The gate answers only what the suite scripted: a fixture that names no outcome denies every
+  // entrypoint, so a live suite never inherits an allow it did not state (fail closed).
+  const liveAccessGate = makeScriptedBoundAccessGate(configuration.access ?? 'denied');
   const layer = Layer.effectContext(
     Effect.gen(function* makeLiveOperationRuntimeContext() {
       const ownerAuthorization = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
@@ -1263,23 +1261,30 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
       );
       const actionModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(actionDatabase));
       const actionModuleEntrypointGateway = makeModuleEntrypointGateway(actionModuleStateGate);
-      const actionScopeResolver = yield* makeOperationalScopeResolver(
-        makeOperationalScopeRepository(actionDatabase),
-        contextAccess,
-      );
       const readModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(readDatabase));
       const readModuleEntrypointGateway = makeModuleEntrypointGateway(readModuleStateGate);
-      const readScopeResolver = yield* makeOperationalScopeResolver(
-        makeOperationalScopeRepository(readDatabase),
-        contextAccess,
+      const { actionScopeResolver, readScopeResolver } = yield* Effect.all(
+        {
+          actionScopeResolver: makeOperationalScopeResolver(
+            makeOperationalScopeRepository(actionDatabase),
+            makeTestOperationalScopeAccess(),
+          ),
+          readScopeResolver: makeOperationalScopeResolver(
+            makeOperationalScopeRepository(readDatabase),
+            makeTestOperationalScopeAccess(),
+          ),
+        },
+        { concurrency: 2 },
       );
       let actionOptions: ActionRuntimeOptions = {
+        accessDecision: liveAccessGate.bound,
         contextAccess,
         moduleEntrypointGateway: actionModuleEntrypointGateway,
         moduleStateGate: actionModuleStateGate,
         ownerAuthorizationOverlay: Option.getOrElse(ownerAuthorization, () => failClosedOwnerAuthorizationOverlay),
       };
       let readOptions: ReadRuntimeOptions = {
+        accessDecision: liveAccessGate.bound,
         ownerAuthorizationOverlay: Option.getOrElse(ownerAuthorization, () => failClosedOwnerAuthorizationOverlay),
       };
       const { applicationComposition, expectedDeployment, ownerRegistration } = input.runtimeBindings;
@@ -1292,7 +1297,8 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
         actionOptions = { ...actionOptions, applicationComposition, expectedDeployment };
         readOptions = { ...readOptions, applicationComposition, expectedDeployment };
       } else {
-        // Preserve the existing controlled authorization/commit-fault boundary for local fixture mode.
+        // This fixture owns authorization and commit-fault acceptance. Release publication is
+        // exercised separately against its own disposable composition authority.
         actionOptions = {
           ...actionOptions,
           lockCompositionAuthority: () => Effect.succeed([]),
@@ -1342,6 +1348,8 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
       );
       return Context.empty().pipe(
         Context.add(ActionRuntime, actionRuntime),
+        // The scripted gate reads no projection, so what an owner Action committed has nothing to reconcile.
+        Context.add(AccessPortalProjection, { project: () => Effect.void }),
         Context.add(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
         Context.add(CoreDatabase, readDatabase),
         Context.add(ReadRuntime, readRuntime),
@@ -1366,24 +1374,11 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   }
   return {
     runtimeHandoff,
-    /** Read-only normal fully-consistent executor check for this fixture's known actors and declared probe keys. */
-    verifyActionExecutor: Effect.fn('LiveOperations.verifyActionExecutor')(function* verifyActionExecutor(probe: {
-      readonly actionKey: string;
-      readonly expected: 'allowed' | 'denied';
-      readonly principalId: string;
-    }) {
-      if (!executorProbeActors.has(probe.principalId) || !executorProbeKeys.has(probe.actionKey)) {
-        return yield* fixtureFailure('Executor verification requires a fixture-owned actor and declared action key');
-      }
-      return yield* verifyFixturePermission(
-        spice,
-        probe.principalId,
-        'action',
-        toSpiceDbActionObjectId(probe.actionKey),
-        'execute',
-        probe.expected === 'allowed',
-      );
-    }),
+    /**
+     * The fixture's own scripted gate, so a suite can prove the answer it scripted without running a
+     * protected path (the runner suites ask `bound.decide` directly).
+     */
+    scriptedAccess: liveAccessGate,
     // Mutate only the accessor tuple this fixture seeded for its exact primary-LE manager.
     changeManagerModuleAccess: Effect.fn('LiveOperations.changeManagerModuleAccess')(
       function* changeManagerModuleAccess(moduleKey: string, operation: 'grant' | 'revoke') {
@@ -1564,11 +1559,11 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           namespaceObjects,
           namespaceRelationships,
           reader,
-          readerActionKeys: configuration.readerActionKeys ?? [],
           readerProviderSubjectId: configuration.readerProviderSubjectId,
           secondaryLegalEntityId,
           spice,
           tenantId,
+          workloads: configuration.workloads ?? [],
         });
       }),
     ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? closeResources : Effect.void)));

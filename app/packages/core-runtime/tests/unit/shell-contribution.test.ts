@@ -34,9 +34,33 @@ const references = {
   searchKeys: new Set([`${moduleId}.unit-search`]),
 };
 
+/**
+ * O62: a protected Shell carrier must declare its access; an unprotected one carries none.
+ * The negative controls below strip or mutate exactly one carrier at a time.
+ */
+const readDeclaration = (resource = 'unit') => ({
+  key: `${moduleId}.${resource}.read`,
+  kind: 'read' as const,
+  modes: ['run'] as const,
+  placement: { group: 'units', level: 'basic' as const },
+  risk: 'routine' as const,
+  selectors: [] as const,
+});
+
+/** A media attachment is a write carrier, so it declares an action instead of a read. */
+const writeDeclaration = (resource = 'media') => ({
+  key: `${moduleId}.${resource}.write`,
+  kind: 'action' as const,
+  modes: ['run'] as const,
+  placement: { group: 'units', level: 'manage' as const },
+  risk: 'routine' as const,
+  selectors: [] as const,
+});
+
 const full = () => ({
   mediaAttachments: [
     {
+      accessDeclaration: writeDeclaration(),
       actionKey: `${moduleId}.attach-media`,
       apiKey: `${moduleId}.resource-api`,
       contributionKey: `${moduleId}.media.unit`,
@@ -46,6 +70,7 @@ const full = () => ({
   ],
   navigation: [
     {
+      accessDeclaration: readDeclaration('navigation'),
       contributionKey: `${moduleId}.navigation.dashboard`,
       entrypoint: entrypoint('page'),
       groupKey: 'shell.navigation.primary',
@@ -55,6 +80,7 @@ const full = () => ({
   ],
   pages: [
     {
+      accessDeclaration: readDeclaration('page'),
       componentKey: `${moduleId}.dashboard`,
       contributionKey: `${moduleId}.page.dashboard`,
       entrypoint: entrypoint('page'),
@@ -64,6 +90,7 @@ const full = () => ({
   ],
   publicComponents: [
     {
+      accessDeclaration: readDeclaration('component'),
       componentKey: `${moduleId}.dashboard`,
       contributionKey: `${moduleId}.component.dashboard`,
       entrypoint: entrypoint('public_component'),
@@ -72,6 +99,7 @@ const full = () => ({
   ],
   reports: [
     {
+      accessDeclaration: readDeclaration('report'),
       contributionKey: `${moduleId}.report.inventory`,
       entrypoint: entrypoint('report'),
       reportKey: `${moduleId}.inventory`,
@@ -79,6 +107,7 @@ const full = () => ({
   ],
   resourceDetails: [
     {
+      accessDeclaration: readDeclaration('resource'),
       apiKey: `${moduleId}.resource-api`,
       contributionKey: `${moduleId}.resource.unit`,
       entrypoint: entrypoint('api'),
@@ -87,6 +116,7 @@ const full = () => ({
   ],
   search: [
     {
+      accessDeclaration: readDeclaration('search'),
       contributionKey: `${moduleId}.search.unit`,
       entrypoint: entrypoint('search'),
       searchKey: `${moduleId}.unit-search`,
@@ -94,6 +124,7 @@ const full = () => ({
   ],
   timelines: [
     {
+      accessDeclaration: readDeclaration('timeline'),
       apiKey: `${moduleId}.resource-api`,
       contributionKey: `${moduleId}.timeline.unit`,
       entrypoint: entrypoint('api'),
@@ -194,7 +225,8 @@ it('rejects extra keys, duplicates, cross-owner entrypoints, and missing referen
       moduleKey: 'billing.core',
     },
   };
-  expect(() => validateShellContributions(crossOwner, references)).toThrow(/owner/u);
+  // The declaration still names the old module, so the cross-owner entrypoint is refused there first.
+  expect(() => validateShellContributions(crossOwner, references)).toThrow(/must be billing\.core/u);
   expect(() =>
     validateShellContributions(full(), {
       ...references,
@@ -291,3 +323,92 @@ for (const routePath of [
     expect(() => validateShellContributions(candidate, references)).toThrow();
   });
 }
+
+it('keeps the declaration of a protected Shell carrier through validation', () => {
+  const validated = validateShellContributions(full(), references);
+  expect(first(validated.navigation).accessDeclaration?.key).toBe(`${moduleId}.navigation.read`);
+  expect(first(validated.pages).accessDeclaration?.key).toBe(`${moduleId}.page.read`);
+});
+
+/** Removes the carrier a fixture declares, so a negative control can prove it is required. */
+const withoutDeclaration = <Value extends { readonly accessDeclaration?: unknown }>(contribution: Value) => {
+  const { accessDeclaration, ...rest } = contribution;
+  expect(accessDeclaration === undefined).toBe(false);
+  return rest;
+};
+
+it('requires an access declaration on every protected Shell carrier (O62)', () => {
+  const baseline = full();
+  const candidates = [
+    { ...baseline, mediaAttachments: [withoutDeclaration(first(baseline.mediaAttachments))] },
+    { ...baseline, navigation: [withoutDeclaration(first(baseline.navigation))] },
+    { ...baseline, pages: [withoutDeclaration(first(baseline.pages))] },
+    { ...baseline, publicComponents: [withoutDeclaration(first(baseline.publicComponents))] },
+    { ...baseline, reports: [withoutDeclaration(first(baseline.reports))] },
+    { ...baseline, resourceDetails: [withoutDeclaration(first(baseline.resourceDetails))] },
+    { ...baseline, search: [withoutDeclaration(first(baseline.search))] },
+    { ...baseline, timelines: [withoutDeclaration(first(baseline.timelines))] },
+  ];
+  for (const candidate of candidates) {
+    expect(() => validateShellContributions(candidate, references)).toThrow(/must declare accessDeclaration/u);
+  }
+  // Negative control: an unprotected carrier is never asked for a declaration.
+  const protectedEntrypoint = first(baseline.pages).entrypoint;
+  const unprotected = validateShellContributions(
+    {
+      ...baseline,
+      publicComponents: [
+        {
+          ...withoutDeclaration(first(baseline.publicComponents)),
+          entrypoint: {
+            ...protectedEntrypoint,
+            authorization: { kind: 'authenticated_principal' as const },
+            entrypointKey: `${moduleId}.public-component.primary`,
+            role: 'public_component' as const,
+          },
+        },
+      ],
+    },
+    references,
+  );
+  expect('accessDeclaration' in first(unprotected.publicComponents)).toBe(false);
+});
+
+it('applies the same carrier rules to the v2 protected page classification (CUTOVER-PLAN §4.2)', () => {
+  const baseline = full();
+  const protectedPage = first(baseline.pages);
+  const v2 = {
+    ...baseline,
+    pages: [
+      {
+        ...protectedPage,
+        entrypoint: { ...protectedPage.entrypoint, authorization: { kind: 'protected' as const } },
+      },
+    ],
+  };
+  const validated = validateShellContributions(v2, references);
+  expect(first(validated.pages).entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(first(validated.pages).accessDeclaration?.key).toBe(`${moduleId}.page.read`);
+
+  // Negative control: `protected` replaces both legacy kinds, so the declaration stays mandatory.
+  const withoutCarrier = {
+    ...v2,
+    pages: [withoutDeclaration(first(v2.pages))],
+  };
+  expect(() => validateShellContributions(withoutCarrier, references)).toThrow(/must declare accessDeclaration/u);
+});
+
+it('rejects an access declaration on an unprotected or read-incompatible Shell contribution', () => {
+  for (const contribution of [
+    {
+      ...first(full().navigation),
+      accessDeclaration: readDeclaration('navigation'),
+      entrypoint: { ...entrypoint('page'), authorization: { kind: 'authenticated_principal' as const } },
+    },
+    { ...first(full().navigation), accessDeclaration: { ...readDeclaration(), kind: 'action' as const } },
+    { ...first(full().navigation), accessDeclaration: { ...readDeclaration(), key: 'other.module.unit.read' } },
+    { ...first(full().navigation), accessDeclaration: { ...readDeclaration(), agentPolicy: 'run' } },
+  ]) {
+    expect(() => validateShellContributions({ ...full(), navigation: [contribution] }, references)).toThrow();
+  }
+});

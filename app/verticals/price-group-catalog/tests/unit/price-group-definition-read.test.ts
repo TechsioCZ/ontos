@@ -1,7 +1,7 @@
-import type { OwnerPermissionAccessTarget } from '@app/core-runtime';
 import { ReadHandlerNotFound } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import { getReadPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import {
   PriceGroupDefinitionRequestSchema,
@@ -14,17 +14,8 @@ import {
   PriceGroupPersistenceUnavailable,
 } from '../../shared/domain/price-group-errors.ts';
 import { pricingPriceGroupReadPermission } from '../../shared/permissions/pricing-price-group-read.ts';
-import {
-  priceGroupDefinitionPermissionTarget,
-  priceGroupDefinitionRead,
-  readPriceGroupDefinition,
-} from '../../src/api/price-group-definition.read.ts';
+import { priceGroupDefinitionRead, readPriceGroupDefinition } from '../../src/api/price-group-definition.read.ts';
 import type { PriceGroupCatalogPersistence } from '../../src/persistence/price-group-catalog-persistence.ts';
-
-const permissionRequest = (target: OwnerPermissionAccessTarget) => ({
-  businessPermission: { permission: target.definition.key, target: target.target },
-  kind: 'business_permission',
-});
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const otherTenantId = '22222222-2222-4222-8222-222222222222';
@@ -491,31 +482,18 @@ describe('Price Group Definition governed Read', () => {
     }),
   );
 
-  it('declares forbidden legal-entity scope and the exact Price Group permission target', () => {
-    expect(priceGroupDefinitionRead.descriptor.legalEntityScope).toBe('forbidden');
-    expect(priceGroupDefinitionRead.descriptor.permissionTarget).toBe('owner_permission');
-    expect(pricingPriceGroupReadPermission.allowedScopeKinds).toEqual(['pricing_catalog', 'price_group']);
-    expect(
-      permissionRequest(
-        priceGroupDefinitionPermissionTarget(request, {
-          authContextRef: 'job:price-group-read:run-1',
-          authMethod: 'system',
-          correlationId: 'price-group-definition-read',
-          principalId: '88888888-8888-4888-8888-888888888888',
-          tenantId,
-        }),
-      ),
-    ).toEqual({
-      businessPermission: {
-        permission: 'pricing.price_group.read',
-        target: {
-          kind: 'price_group',
-          priceGroupId,
-          pricingCatalogId: tenantId,
-          tenantId,
-        },
-      },
-      kind: 'business_permission',
+  it('declares forbidden legal-entity scope and decides the read through its v2 declaration alone', () => {
+    const { descriptor } = priceGroupDefinitionRead;
+    expect(descriptor.legalEntityScope).toBe('forbidden');
+    // The read's record comes from the access gate, not from a legacy permission target (O62):
+    // the descriptor carries its own scope-wide declaration and no positional target resolver.
+    expect(descriptor.accessDeclaration).toMatchObject({
+      key: 'pricing.price-group-catalog.price-group.read.definition',
+      kind: 'read',
+      selectors: [],
     });
+    expect(Object.keys(descriptor)).not.toContain('permissionTarget');
+    expect(getReadPermissionTargetResolver(priceGroupDefinitionRead)).toBeUndefined();
+    expect(pricingPriceGroupReadPermission.allowedScopeKinds).toEqual(['pricing_catalog', 'price_group']);
   });
 });

@@ -1,4 +1,3 @@
-import type { OperationalScope } from '@app/core-runtime';
 import type { PriceGroupCompatibilityDecision } from '@app/price-group-catalog-contracts';
 import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
@@ -7,7 +6,9 @@ import {
   executeValidatePriceGroupCompatibilityWithAuthorization,
 } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
 import type { ValidatePriceGroupCompatibilityClientOptions } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
-import { Effect, Match, Option, Redacted, Schema } from 'effect';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
+import { Crypto, Effect, Match, Redacted, Schema } from 'effect';
 
 import type {
   PriceGroupCatalogOutcome,
@@ -18,13 +19,6 @@ import type {
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import type { PriceGroupCatalogPort } from '../../shared/domain/price-group-ports.ts';
-import {
-  PriceGroupCatalogGatewayCredentialService,
-  unavailablePriceGroupCatalogGatewayCredentialIssuer,
-} from '../../shared/domain/price-group-catalog-gateway-credential.ts';
-import type { PriceGroupCatalogGatewayCredentialIssuer } from '../../shared/domain/price-group-catalog-gateway-credential.ts';
-
-export { PriceGroupCatalogGatewayCredentialService } from '../../shared/domain/price-group-catalog-gateway-credential.ts';
 
 const compatibilityContractVersion = 1 as const;
 type CompatibilityClientError =
@@ -194,43 +188,39 @@ export const priceGroupCatalogPort = (
     ),
 });
 
+type DelegatedGatewayAcquisition = typeof acquireDelegatedGatewayContext;
+
 const authorizedExecutor =
   (
-    issuer: PriceGroupCatalogGatewayCredentialIssuer,
-    context: { readonly compositionRevision: string; readonly scope: OperationalScope },
+    subject: GatewayDelegationSubject,
+    crypto: Crypto.Crypto,
     execute: AuthorizedPriceGroupCompatibilityExecutor,
+    acquire: DelegatedGatewayAcquisition,
   ): PriceGroupCompatibilityExecutor =>
   (payload, correlation) =>
-    issuer
-      .issue({
-        audience: 'price-group-catalog',
-        compositionRevision: context.compositionRevision,
-        requestCorrelation: correlation,
-        scope: context.scope,
-      })
-      .pipe(
-        Effect.flatMap(({ baseUrl, credential }) =>
-          execute(payload, credential, correlation, { baseUrl, compositionRevision: context.compositionRevision }),
-        ),
-      );
-
-export const priceGroupCatalogPortFromEnvironment = (
-  context: {
-    readonly compositionRevision: string;
-    readonly requestCorrelation: string;
-    readonly scope: OperationalScope;
-  },
-  execute: AuthorizedPriceGroupCompatibilityExecutor = executeAuthorizedCompatibility,
-): Effect.Effect<PriceGroupCatalogPort> =>
-  Effect.serviceOption(PriceGroupCatalogGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      priceGroupCatalogPort(
-        context.requestCorrelation,
-        authorizedExecutor(
-          Option.isSome(issuerOption) ? issuerOption.value : unavailablePriceGroupCatalogGatewayCredentialIssuer,
-          context,
-          execute,
-        ),
+    acquire(
+      { audience: 'price-group-catalog', legalEntityScope: 'tenant', requestCorrelation: correlation, subject },
+      crypto,
+    ).pipe(
+      Effect.mapError(unavailable),
+      Effect.flatMap((issued) =>
+        execute(payload, Redacted.make(issued.authorization), correlation, {
+          baseUrl: new URL(issued.apiBaseUrl),
+          compositionRevision: issued.compositionRevision,
+        }),
       ),
-    ),
-  );
+    );
+
+export const priceGroupCatalogPortFromEnvironment = Effect.fn('PriceGroupCatalog.portFromEnvironment')(
+  function* priceGroupCatalogPortFromEnvironment(
+    context: { readonly requestCorrelation: string; readonly subject: GatewayDelegationSubject },
+    execute: AuthorizedPriceGroupCompatibilityExecutor = executeAuthorizedCompatibility,
+    acquire: DelegatedGatewayAcquisition = acquireDelegatedGatewayContext,
+  ) {
+    const crypto = yield* Crypto.Crypto;
+    return priceGroupCatalogPort(
+      context.requestCorrelation,
+      authorizedExecutor(context.subject, crypto, execute, acquire),
+    );
+  },
+);

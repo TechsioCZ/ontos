@@ -25,7 +25,7 @@ const MODULE_KEY = 'commerce.customer-context';
 
 const pricingPurchaseContextVerificationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.pricing-purchase-context-verification',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -33,6 +33,19 @@ const pricingPurchaseContextVerificationEntrypoint = defineTenantModuleEntrypoin
 
 export const pricingPurchaseContextVerificationRead = defineRead(
   {
+    accessActor: {
+      callers: ['pricing'],
+      reason: 'Pricing calls this read to verify the purchase context of a quotation for the buyer it prices',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.purchase-context.verify',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'purchasing-approval', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: pricingPurchaseContextVerificationEntrypoint,
     evidencePolicy: {
@@ -42,7 +55,6 @@ export const pricingPurchaseContextVerificationRead = defineRead(
     inputSchema: PricingPurchaseContextVerificationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.pricing-purchase-context-verification',
     resultSchema: PricingPurchaseContextVerificationResponseSchema,
@@ -238,5 +250,4 @@ export const pricingPurchaseContextVerificationRead = defineRead(
       } satisfies PricingPurchaseContextVerificationServices;
     },
   ),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

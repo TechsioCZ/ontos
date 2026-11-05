@@ -17,7 +17,7 @@ import type { CurrencySupportPersistence, StoredCurrencySupport } from '../persi
 const MODULE_KEY = 'commerce.pricing';
 const currentSupportedCurrenciesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'pricing.currency_support.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.current-supported-currencies',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -164,6 +164,19 @@ const currentSupportedCurrenciesPersistenceForScope: typeof currencySupportPersi
 
 export const currentSupportedCurrenciesRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: "Customer Context reads supported currencies to admit a buyer's purchase currency.",
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.pricing.currency-support.read-current',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'currency-support', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: currentSupportedCurrenciesEntrypoint,
     evidencePolicy: {
@@ -173,7 +186,6 @@ export const currentSupportedCurrenciesRead = defineRead(
     inputSchema: CurrentSupportedCurrenciesRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.current-supported-currencies',
     resultSchema: CurrentSupportedCurrenciesResponseSchema,
@@ -181,5 +193,4 @@ export const currentSupportedCurrenciesRead = defineRead(
   },
   handleCurrentSupportedCurrencies,
   currentSupportedCurrenciesPersistenceForScope,
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

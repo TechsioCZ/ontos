@@ -4,7 +4,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
-import { defineTaxRuleActionPermissions } from '../permissions/authorization.ts';
 
 import {
   EndTaxRuleRevisionPayloadSchema,
@@ -57,6 +56,14 @@ export const handleEndTaxRuleRevision = Effect.fn('EndTaxRuleRevisionAction.hand
 
 export const endTaxRuleRevisionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.tax-rule-revision.end',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'tax-rules', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.tax.end-tax-rule-revision.access.v1',
@@ -68,14 +75,13 @@ export const endTaxRuleRevisionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.tax.end-tax-rule-revision',
       moduleKey: 'commerce.tax',
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    ownerPermissions: defineTaxRuleActionPermissions<EndTaxRuleRevisionPayload>(),
     owningModuleKey: 'commerce.tax',
     payloadSchema: EndTaxRuleRevisionPayloadSchema,
     policies: [],

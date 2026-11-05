@@ -2,9 +2,7 @@ import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
-import type { OwnerPermissionAccessTarget } from '@app/core-runtime';
-
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { mapCreatePriceGroupDefinitionRevisionActionProblem } from '../../api/create-price-group-definition-revision-action-problems.ts';
 import { CreatePriceGroupDefinitionRevisionPayloadSchema } from '../../shared/actions/create-price-group-definition-revision.ts';
 import {
@@ -18,11 +16,6 @@ import {
   handleCreatePriceGroupDefinitionRevision,
 } from '../../src/actions/create-price-group-definition-revision.action.ts';
 import type { PriceGroupCatalogPersistence } from '../../src/persistence/price-group-catalog-persistence.ts';
-
-const permissionRequest = (targets: readonly OwnerPermissionAccessTarget[] | undefined) => {
-  const first = targets?.[0];
-  return first === undefined ? undefined : { permission: first.definition.key, target: first.target };
-};
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const compositionRevision = 'b'.repeat(64);
@@ -104,39 +97,19 @@ const services = (
   validateCompatibility: unused,
 });
 
-it('requires the exact revision permission on the payload Price Group and forbids Legal Entity scope', () => {
+it('declares the revision capability as scope-wide and forbids Legal Entity scope', () => {
   expect(createPriceGroupDefinitionRevisionAction.descriptor.legalEntityScope).toBe('forbidden');
-  expect(
-    permissionRequest(
-      getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(payload, scope),
-    ),
-  ).toEqual({
-    permission: 'pricing.price_group.revision.create',
-    target: {
-      kind: 'price_group',
-      priceGroupId: priceGroupRef.resourceId,
-      pricingCatalogId: tenantId,
-      tenantId,
-    },
+  expect(createPriceGroupDefinitionRevisionAction.descriptor.entrypoint.authorization).toEqual({
+    kind: 'protected',
   });
-
-  const crossTenantPayload = {
-    ...payload,
-    expectedCurrent: {
-      ...payload.expectedCurrent,
-      priceGroupRef: { ...priceGroupRef, tenantId: '77777777-7777-4777-8777-777777777777' },
-    },
-  };
-  expect(
-    permissionRequest(
-      getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)?.(crossTenantPayload, scope),
-    ),
-  ).toMatchObject({
-    target: {
-      pricingCatalogId: '77777777-7777-4777-8777-777777777777',
-      tenantId: '77777777-7777-4777-8777-777777777777',
-    },
+  expect(createPriceGroupDefinitionRevisionAction.descriptor.accessDeclaration).toMatchObject({
+    key: 'pricing.price-group-catalog.price-group-definition-revision.create',
+    kind: 'action',
+    selectors: [],
   });
+  // O67-Q2: the retired per-Price-Group target is gone; the gate decides the capability, and the
+  // owner service still refuses a payload whose current definition belongs to another Tenant.
+  expect(getActionOwnerPermissionTargetResolver(createPriceGroupDefinitionRevisionAction)).toBeUndefined();
 });
 
 it.effect('persists expected-current evidence and emits the revision event with its attached outbox message', () =>

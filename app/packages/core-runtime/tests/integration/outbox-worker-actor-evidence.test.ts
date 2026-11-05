@@ -194,6 +194,56 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker actor e
       );
       expect(claimed.actorPrincipalId).toBe(principalId);
       expect(claimed.correlationId).toBe('merge-correlation-1');
+      // The event's own invocation is the originator of the asynchronous work (D7).
+      expect(claimed.originatorInvocationId).toBe(invocation.actionInvocationId);
+
+      // An event without an action invocation carries no originator, so no call can act for anyone.
+      const bareEvent = Option.getOrThrow(
+        Option.fromNullishOr(
+          (yield* executor
+            .insert(domainEvents)
+            .values({
+              eventType: 'PartyMerged',
+              legalEntityId,
+              payloadJson: { mergeId: 'merge-2' },
+              producerModuleKey: 'party.registry',
+              subjectModuleKey: 'party.registry',
+              subjectResourceId: 'merge-2',
+              subjectResourceType: 'party-merge',
+              tenantId,
+            })
+            .returning({ domainEventId: domainEvents.domainEventId }))[0],
+        ),
+      );
+      const bareMessage = Option.getOrThrow(
+        Option.fromNullishOr(
+          (yield* executor
+            .insert(outboxMessages)
+            .values({
+              domainEventId: bareEvent.domainEventId,
+              matchedAt: now,
+              payloadJson: { mergeId: 'merge-2' },
+              producerModuleKey: 'party.registry',
+              tenantId,
+              topic: 'party.registry.party-merged.v1',
+            })
+            .returning({ messageId: outboxMessages.outboxMessageId }))[0],
+        ),
+      );
+      yield* executor.insert(outboxDeliveries).values({
+        availableAt: now,
+        consumerModuleKey: registration.descriptor.consumerModuleKey,
+        outboxMessageId: bareMessage.messageId,
+        workerKey: registration.descriptor.workerKey,
+      });
+      const bare = Option.getOrThrow(
+        yield* claimFixture.bind(
+          [registration],
+          repository.claimNext([registration], 'worker-actor-evidence', claimAt, compositionRevision),
+        ),
+      );
+      expect(bare.domainEventId).toBe(bareEvent.domainEventId);
+      expect(bare.originatorInvocationId).toBeUndefined();
       return yield* Effect.void;
     }),
   );

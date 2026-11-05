@@ -123,7 +123,7 @@ describe('manufacturer Action contracts', () => {
         set: () => Effect.succeed(applied),
       };
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(setProductManufacturerAction, services),

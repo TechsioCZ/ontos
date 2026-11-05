@@ -9,11 +9,12 @@ import {
 } from '../../shared/apis/party-contact-points.ts';
 import type { PartyContactPointsRequest, PartyContactPointsResponse } from '../../shared/apis/party-contact-points.ts';
 import type { PartyContactPointPersistenceUnavailable } from '../../shared/domain/contact-point-errors.ts';
+import { rowsVisibleToListAccess } from '../access/list-access-rows.ts';
 import { listPartyContactPointRecords } from '../services/party-contact-point-persistence.service.ts';
 
 const partyContactPointsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'party.registry.api.party-contact-points',
   moduleKey: 'party.registry',
   role: 'api',
@@ -37,6 +38,26 @@ const contactPointsUnavailable = (cause: unknown) =>
 
 export const partyContactPointsRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'party.registry.contact-point.list',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'contact-data', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['items.value'],
+        key: 'party.registry.contact-point-value.list',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'list',
     entrypoint: partyContactPointsEntrypoint,
     evidencePolicy: {
@@ -46,7 +67,6 @@ export const partyContactPointsRead = defineRead(
     inputSchema: PartyContactPointsRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-contact-points',
     resultSchema: PartyContactPointsResponseSchema,
@@ -55,10 +75,18 @@ export const partyContactPointsRead = defineRead(
   (input, context: ReadHandlerContext<Services>) =>
     context.services.list(input).pipe(
       Effect.mapError(contactPointsUnavailable),
-      Effect.map((items) => ({
-        evidence: { resultCount: items.length },
-        result: { items },
-      })),
+      // The gate's row filter bounds the Contact Points this caller may see (D16, O25).
+      Effect.map((listed) => {
+        const items = rowsVisibleToListAccess({
+          filter: context.listAccess,
+          row: ({ contactPointRef }) => ({ recordKey: contactPointRef.resourceId }),
+          rows: listed,
+        });
+        return {
+          evidence: { resultCount: items.length },
+          result: { items },
+        };
+      }),
     ),
   (transaction, scope) =>
     Effect.succeed({
@@ -78,5 +106,4 @@ export const partyContactPointsRead = defineRead(
               },
         ),
     }),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

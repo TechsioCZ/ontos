@@ -632,6 +632,9 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
     if (!sameParty(party.partyRef, partyRef) || detail.resolution.kind === 'ALIAS') {
       return yield* invalidSelection('Choose the canonical Party explicitly before applying ARES evidence');
     }
+    if (party.displayName === undefined) {
+      return yield* invalidSelection('Reading the Party name is required before applying ARES evidence');
+    }
     const [identifiers, contactPoints] = yield* Effect.all(
       [
         gateway.invoke(
@@ -656,17 +659,27 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
       ],
       { concurrency: 2 },
     );
-    const activeIdentifiers = identifiers.items.filter(
+    const currentIdentifiers = identifiers.items.filter(
       (identifier) =>
         identifier.state === 'ACTIVE' &&
         identifier.validFrom <= decidedAt &&
         (identifier.validTo === null || identifier.validTo > decidedAt),
     );
-    const registeredAddresses = contactPoints.items.flatMap((point) =>
-      point.current &&
-      point.value.type === 'ADDRESS' &&
-      point.value.purposes.some((purpose) => purpose.current && purpose.purpose === 'REGISTERED')
-        ? [structuredAddress(point.value.address)]
+    // A redacted identifier carries no value, so the identity comparison below cannot be complete.
+    const activeIdentifiers = currentIdentifiers.flatMap(({ normalizedValue, ...identifier }) =>
+      normalizedValue === undefined ? [] : [{ ...identifier, normalizedValue }],
+    );
+    if (activeIdentifiers.length !== currentIdentifiers.length) {
+      return yield* invalidSelection(
+        'Reading the official identifier values is required before applying ARES evidence',
+      );
+    }
+    // A redacted contact point carries no value, so it names no registered address.
+    const registeredAddresses = contactPoints.items.flatMap(({ current, value }) =>
+      current &&
+      value?.type === 'ADDRESS' &&
+      value.purposes.some((purpose) => purpose.current && purpose.purpose === 'REGISTERED')
+        ? [structuredAddress(value.address)]
         : [],
     );
     const canonical: AresCanonicalSnapshot = {
@@ -674,6 +687,7 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
       businessName: Option.getOrNull(party.businessName),
       factEvidence: [
         ...detail.currentFactAssertions.flatMap((assertion) =>
+          assertion.value !== undefined &&
           assertion.isCurrent &&
           assertion.state === 'ACTIVE' &&
           assertion.factKind === 'BUSINESS_NAME' &&

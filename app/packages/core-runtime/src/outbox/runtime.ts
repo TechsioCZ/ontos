@@ -174,11 +174,17 @@ const handlerContext = (
   attestOutboxWorkerHandlerContext(
     withOptionalProperty(
       withOptionalProperty(
-        {
-          attemptNumber: claim.attemptNumber,
-          claimId: claim.claimId,
-          compositionRevision,
-        },
+        withOptionalProperty(
+          {
+            attemptNumber: claim.attemptNumber,
+            claimId: claim.claimId,
+            compositionRevision,
+          },
+          claim.originatorInvocationId !== undefined,
+          'originatorInvocationId',
+          claim.originatorInvocationId,
+          {},
+        ),
         claim.actorPrincipalId !== undefined,
         'actorPrincipalId',
         claim.actorPrincipalId,

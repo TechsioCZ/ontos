@@ -691,6 +691,7 @@ const nativeRetainedFloorConfirmation = Effect.fn('test.nativeRetainedFloorConfi
     const phaseOne = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
       candidateRef: original.composition.candidateRef,
       compositionRevision: 'native-1277:retained-witness',
+      scope,
       sources: [
         {
           currencyCode: query.currencyCode,
@@ -724,6 +725,7 @@ const nativeRetainedFloorConfirmation = Effect.fn('test.nativeRetainedFloorConfi
       candidateRef: original.composition.candidateRef,
       compositionRevision: 'native-1277:retained-witness',
       observations: phaseOne.observations,
+      scope,
       through,
       typedSources: [source],
       verificationContext,
@@ -897,13 +899,21 @@ it.live(
 
 const floorReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'pricing.zero_floor.native_test.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.test.zero-floor-native-predicate',
   moduleKey: 'commerce.pricing',
   role: 'api',
 });
 const floorRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.fixture.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: floorReadEntrypoint,
     evidencePolicy: {
@@ -913,7 +923,6 @@ const floorRead = defineRead(
     inputSchema: Schema.Struct({ composition: PricingRawCompositionReadySchema, invalidPredicate: Schema.Boolean }),
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.pricing',
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.test.zero-floor-native-predicate',
     resultSchema: Schema.Struct({ outcome: Schema.String }),
@@ -944,7 +953,6 @@ const floorRead = defineRead(
       ),
     ),
   zeroFloorAuthorizationPersistenceForScope,
-  () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
 );
 
 // This owner registers the exact local native test Read; it claims no production Pricing API.
@@ -968,6 +976,7 @@ it.live(
     Effect.scoped(
       Effect.gen(function* governedNativeFloor() {
         const fixture = yield* makeNativeReadTestContext({
+          access: 'allowed',
           contextPermissions: ['pricing.zero_floor.native_test.read'],
           moduleId: 'commerce.pricing',
           ownerFixtureRetention: 'retain-complete-context',

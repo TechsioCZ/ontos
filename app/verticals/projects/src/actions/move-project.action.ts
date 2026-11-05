@@ -11,6 +11,7 @@ import {
   ProjectPersistenceUnavailable,
 } from '../../shared/domain/project.ts';
 import type { Project } from '../../shared/domain/project.ts';
+import { projectDestinationParentFacts } from '../access/project-destination-facts.ts';
 import { makeProjectPersistenceService } from '../services/project-persistence.service.ts';
 import { MoveProjectPayloadSchema, MoveProjectResultSchema } from '../../shared/actions/move-project.ts';
 import type { MoveProjectPayload } from '../../shared/actions/move-project.ts';
@@ -58,17 +59,27 @@ export const handleMoveProject = (
 
 export const moveProjectAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'projects.core.project.move',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'projects', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all', 'assigned'],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'projects.core.move-project.access.v1',
     },
+    accessOwnerFacts: (payload) => projectDestinationParentFacts(Option.getOrNull(payload.parentProjectId)),
+    accessTarget: (payload) => ({ moduleKey: projectModuleKey, recordKey: payload.projectId }),
     actionKey: 'projects.core.move-project',
     auditProfile: 'standard',
     domainErrorSchema: MoveProjectErrorSchema,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'projects.core.move-project',
       moduleKey: projectModuleKey,
       role: 'action',

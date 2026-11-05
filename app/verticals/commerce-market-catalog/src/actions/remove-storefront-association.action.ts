@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.market-catalog
 // @ontos-action-slug remove-storefront-association
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import {
   MarketCommandRejected,
@@ -106,6 +106,14 @@ const handleRemoveStorefrontAssociation = Effect.fn('RemoveStorefrontAssociation
 
 export const removeStorefrontAssociationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.storefront-association.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'storefront-associations', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.market-catalog.remove-storefront-association.access.v1',
@@ -117,7 +125,7 @@ export const removeStorefrontAssociationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.market-catalog.remove-storefront-association',
       moduleKey: 'commerce.market-catalog',
       role: 'action',
@@ -127,10 +135,6 @@ export const removeStorefrontAssociationAction = defineAction(
     owningModuleKey: 'commerce.market-catalog',
     payloadSchema: RemoveStorefrontAssociationPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RemoveStorefrontAssociationPayload>(({ associationRef }) => ({
-      permission: 'write',
-      resource: associationRef,
-    })),
     resultSchema: RemoveStorefrontAssociationResultSchema,
     schemaVersion: '1',
   },

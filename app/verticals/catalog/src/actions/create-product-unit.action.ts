@@ -49,6 +49,14 @@ const ACTION_KEY = 'commerce.catalog.create-product-unit' as const;
 
 export const createProductUnitAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-unit.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-unit', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.create-product-unit.access.v1',
@@ -60,7 +68,7 @@ export const createProductUnitAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

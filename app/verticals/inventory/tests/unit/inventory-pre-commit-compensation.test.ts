@@ -2,8 +2,7 @@ import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
 import {
   CompensateInventoryPreCommitPayloadSchema,
@@ -37,8 +36,6 @@ import {
   reservationCreateLedgerIntent,
 } from '../../src/services/inventory-effect-ledger.service.ts';
 import { makeInMemoryInventoryEffectLedger } from '../support/inventory-effect-ledger.ts';
-
-const compositionRevision = 'a'.repeat(64);
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -297,36 +294,16 @@ const makeHarness = (
   });
 
 describe('Inventory pre-commit compensation', () => {
-  it('requires Inventory Recovery permission for the exact Reservation target', () => {
-    const scope = trustVerifiedGatewayPrincipalContext(
-      {
-        authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3',
-        authContextRef: 'test:inventory-pre-commit-compensation',
-        authMethod: 'api_key',
-        correlationId: 'inventory-pre-commit-compensation',
-        legalEntityId,
-        principalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
-        tenantId,
-      },
-      compositionRevision,
-    );
-
-    expect(
-      getActionOwnerPermissionTargetResolver(compensateInventoryPreCommitAction)?.(payload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.recovery.execute',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: request.reservation.ref.moduleId,
-          resourceId: request.reservation.ref.resourceId,
-          resourceType: request.reservation.ref.resourceType,
-        },
-        tenantId,
-      },
+  it('declares the scope-wide recovery capability instead of a per-Reservation target', () => {
+    // O67-Q2: recovery is the Action's own capability; the retired exact-Reservation business target
+    // is gone, so the one gate decides in the selected access scope.
+    expect(compensateInventoryPreCommitAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(compensateInventoryPreCommitAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.inventory.inventory-reservation.compensate',
+      kind: 'action',
+      selectors: [],
     });
+    expect(getActionOwnerPermissionTargetResolver(compensateInventoryPreCommitAction)).toBeUndefined();
   });
 
   it.effect('rejects a mismatched authorization target before release or cleanup', () =>

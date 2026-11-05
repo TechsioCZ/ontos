@@ -2,7 +2,6 @@
 // @ontos-action-owner commerce.inventory
 // @ontos-action-slug recover-inventory-effect
 /* oxlint-disable effect-native/no-dependency-parameters -- The generated Action factory constructs and binds owner-local transaction services once; expires: 2027-03-31. */
-import { defineInventoryActionPermissions } from '../permissions/authorization.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
@@ -233,6 +232,14 @@ export const recoverInventoryEffectAction: ActionRegistration<
   RecoverInventoryEffectServices
 > = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.inventory.inventory-effect.recover',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'recovery', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: `${ACTION_KEY}.access.v1`,
@@ -243,25 +250,13 @@ export const recoverInventoryEffectAction: ActionRegistration<
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: MODULE_KEY,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    ownerPermissions: defineInventoryActionPermissions<RecoverInventoryEffectPayload>((payload, scope) => ({
-      permission: 'inventory.recovery.execute',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: payload.targetRef.moduleId,
-          resourceId: payload.targetRef.resourceId,
-          resourceType: payload.targetRef.resourceType,
-        },
-        tenantId: payload.targetRef.tenantId === scope.tenantId ? scope.tenantId : '',
-      },
-    })),
     owningModuleKey: MODULE_KEY,
     payloadSchema: RecoverInventoryEffectPayloadSchema,
     policies: [],

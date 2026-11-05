@@ -1,4 +1,5 @@
-import type { OrderFinalizationContext } from '../../shared/domain/order-finalization-evidence.ts';
+import type { OrderFinalizationCall } from './order-module-call.ts';
+import { delegationSubject } from './order-module-call.ts';
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
@@ -14,6 +15,7 @@ import type {
 import { executeOrderServiceApprovalEvidenceWithAuthorization } from '@app/commerce-customer-context/api/order-service-approval-evidence/client';
 import {
   RevalidateOrderPurchaseApprovalPayloadSchema,
+  RevalidateOrderPurchaseApprovalResultSchema,
   RevalidateOrderPurchaseApprovalActionConflictProblemSchema,
 } from '@app/commerce-customer-context/api/revalidate-order-purchase-approval-action';
 import { executeRevalidateOrderPurchaseApprovalWithAuthorization } from '@app/commerce-customer-context/api/revalidate-order-purchase-approval-action/client';
@@ -23,19 +25,17 @@ import {
   ConsumeOrderPurchaseApprovalActionConflictProblemSchema,
 } from '@app/commerce-customer-context/api/consume-order-purchase-approval-action';
 import { executeConsumeOrderPurchaseApprovalWithAuthorization } from '@app/commerce-customer-context/api/consume-order-purchase-approval-action/client';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Clock, Config, Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import { Clock, Config, Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
 import type { OrderCommitmentState, PrepareOrderCommitmentInput } from '../../shared/domain/order-commitment.ts';
 
-type ConsumePurchaseApprovalResult = Effect.Success<
-  ReturnType<typeof executeConsumeOrderPurchaseApprovalWithAuthorization>
->;
-type RevalidationResult = Effect.Success<ReturnType<typeof executeRevalidateOrderPurchaseApprovalWithAuthorization>>;
+type ConsumePurchaseApprovalResult = typeof ConsumeOrderPurchaseApprovalResultSchema.Type;
+type RevalidationResult = typeof RevalidateOrderPurchaseApprovalResultSchema.Type;
 export type RevalidationRecoveryOutcome =
   | { readonly kind: 'VALID'; readonly result: RevalidationResult }
   | { readonly kind: 'TERMINAL'; readonly witness: OrderServiceApprovalTerminalWitness };
-type ApprovalGatewayScope = OrderFinalizationContext;
+type ApprovalGatewayScope = OrderFinalizationCall;
 type ProposalEvidence = Extract<OrderServiceApprovalEvidenceResponse, { readonly operation: 'LOAD_PROPOSAL' }>;
 type ProofEvidence = Extract<OrderServiceApprovalEvidenceResponse, { readonly operation: 'VERIFY_PROOF' }>;
 interface ProofLookup {
@@ -267,15 +267,14 @@ const httpUrl = Schema.URLFromString.check(
   ),
 );
 const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY'),
   ownerBaseUrl: Config.schema(httpUrl, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL'),
-  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
 export const ApprovalOwnerGatewayLive = Layer.effect(
   ApprovalOwnerGateway,
   Effect.gen(function* approvalOwnerGatewayLayer() {
     const composition = yield* ActiveApplicationCompositionService;
+    const crypto = yield* Crypto.Crypto;
     const configured = yield* configuration.pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
     const credential = Effect.fn('ApprovalOwnerGateway.credential')(function* credential(scope: ApprovalGatewayScope) {
       if (Option.isNone(configured)) {
@@ -285,17 +284,17 @@ export const ApprovalOwnerGatewayLive = Layer.effect(
         Effect.flatMap(validateActiveApplicationCompositionSnapshot),
         Effect.mapError(unavailable),
       );
-      const assertion = yield* issueApiKeyGatewayContext(
+      const assertion = yield* acquireDelegatedGatewayContext(
         {
           audience: 'commerce-customer-context',
-          compositionRevision: active.composition.revision,
-          legalEntityId: scope.legalEntityId,
-        },
-        {
-          apiKey: configured.value.apiKey,
-          baseUrl: configured.value.shellBaseUrl,
+          legalEntityScope: 'subject',
           requestCorrelation: scope.correlationId,
+          subject: delegationSubject(scope.caller, {
+            compositionRevision: active.composition.revision,
+            tenantId: scope.tenantId,
+          }),
         },
+        crypto,
       ).pipe(Effect.mapError(unavailable));
       if (
         assertion.compositionRevision !== active.composition.revision ||
@@ -304,7 +303,7 @@ export const ApprovalOwnerGatewayLive = Layer.effect(
         return yield* unavailable('Shell returned an expired or mismatched gateway credential');
       }
       return {
-        authorization: `Bearer ${assertion.token}`,
+        authorization: assertion.authorization,
         baseUrl: configured.value.ownerBaseUrl,
         compositionRevision: active.composition.revision,
       };
@@ -428,6 +427,7 @@ export const ApprovalOwnerGatewayLive = Layer.effect(
           scope.correlationId,
           { ...auth, idempotencyKey },
         ).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(RevalidateOrderPurchaseApprovalResultSchema))),
           Effect.catch((error) =>
             recoverAfterOwnerFailure(recoveryFailure(error), recoverRevalidation(state, idempotencyKey, scope)),
           ),
@@ -491,6 +491,7 @@ export const ApprovalOwnerGatewayLive = Layer.effect(
           scope.correlationId,
           { ...auth, idempotencyKey: order.consumptionIntent },
         ).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(ConsumeOrderPurchaseApprovalResultSchema))),
           Effect.catch((error) => recoverAfterOwnerFailure(recoveryFailure(error), recoverConsumption(state, scope))),
         );
       }),
@@ -630,10 +631,8 @@ export const ApprovalOwnerGatewayLive = Layer.effect(
           response.proposal.identity.buyer.principalId !== state.bundle.buyerPrincipalId ||
           response.proposal.context.sellingLegalEntityId !== scope.legalEntityId ||
           response.proposal.context.tenantId !== scope.tenantId ||
-          (response.issuer.kind === 'BUYER'
-            ? response.issuer.buyerPrincipalId !== state.bundle.buyerPrincipalId ||
-              response.proof.evidence.actorPrincipalId !== response.issuer.buyerPrincipalId
-            : response.proof.evidence.actorPrincipalId !== response.issuer.serviceProofActorPrincipalId)
+          response.issuer.buyerPrincipalId !== state.bundle.buyerPrincipalId ||
+          response.proof.evidence.actorPrincipalId !== response.issuer.buyerPrincipalId
         ) {
           return yield* conflict();
         }

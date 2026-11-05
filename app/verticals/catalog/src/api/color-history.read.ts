@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
@@ -27,7 +26,7 @@ const unavailable = (cause: unknown) => {
 
 const colorHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.color-history' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.color-history',
   moduleKey,
   role: 'api',
@@ -35,6 +34,14 @@ const colorHistoryEntrypoint = defineTenantModuleEntrypoint({
 
 export const colorHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.color-history.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'controlled-attribute-value', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: colorHistoryEntrypoint,
     evidencePolicy: {
@@ -44,13 +51,8 @@ export const colorHistoryRead = defineRead(
     inputSchema: ColorHistoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.color-history',
-    resourcePermission: defineReadResourcePermission<ColorHistoryRequest>(({ valueRef }) => ({
-      permission: 'read',
-      resource: valueRef,
-    })),
     resultSchema: ColorHistoryResponseSchema,
     schemaVersion: '1',
   },
@@ -91,5 +93,4 @@ export const colorHistoryRead = defineRead(
     return { evidence: { resultCount: revisions.length }, result: { revisions } };
   }),
   (transaction, scope) => Effect.succeed(colorReadsForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

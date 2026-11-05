@@ -82,6 +82,14 @@ export const handleRemoveProductManufacturer = Effect.fn('RemoveProductManufactu
 
 export const removeProductManufacturerAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-manufacturer.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.remove-product-manufacturer.access.v1',
@@ -97,7 +105,7 @@ export const removeProductManufacturerAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: CATALOG_MODULE_KEY,
       role: 'action',

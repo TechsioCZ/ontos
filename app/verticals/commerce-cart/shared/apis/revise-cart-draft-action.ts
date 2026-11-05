@@ -2,12 +2,12 @@
 // @ontos-action-http-owner commerce.cart
 // @ontos-action-http-slug revise-cart-draft
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ReviseCartDraftPayloadSchema, ReviseCartDraftResultSchema } from '../actions/revise-cart-draft.ts';
 
 export { ReviseCartDraftPayloadSchema } from '../actions/revise-cart-draft.ts';
-
 export const ReviseCartDraftActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseCartDraftActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const ReviseCartDraftActionForbiddenProblemSchema = makeProblemDetailsSch
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -144,7 +145,7 @@ export const reviseCartDraftActionGroupDefinition = HttpApiGroup.make('reviseCar
     HttpApiEndpoint.post('execute', '/commerce-cart/actions/revise-cart-draft', {
       error: actionErrors,
       payload: Schema.toEncoded(ReviseCartDraftPayloadSchema),
-      success: ReviseCartDraftResultSchema,
+      success: [ActionProposalAcceptedSchema, ReviseCartDraftResultSchema],
     }),
   )
   .middleware(ReviseCartDraftActionSchemaErrorMiddleware);
