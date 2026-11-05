@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { commerceCustomerContextApi } from "@app/commerce-customer-context/api";
 import { makeEffectBffClientOptions } from "@app/shared-contracts/client-runtime";
 import { makeEffectHttpApiClient } from "@modern-js/bff-effect/effect-client";
-import { Effect, Match, Redacted, Schema } from "effect";
+import { Effect, Match, Redacted, Schema, Struct } from "effect";
 import { Cookies, HttpClient, HttpClientRequest } from "effect/http";
 import { HttpApi } from "effect/http-api";
 import type { StorefrontConfiguration } from "./config";
@@ -68,10 +68,14 @@ const freshContext = (config: StorefrontConfiguration) =>
       yield* Effect.logWarning("N1 Portal request refused").pipe(
         Effect.annotateLogs({ operation: "gateway-context", reason: "forbidden" }),
       );
+      return yield* new PortalFailure({
+        diagnostic: "gateway-context-forbidden",
+        reason: "refused",
+      });
     }
     if (response.status < 200 || response.status >= 300) {
       return yield* new PortalFailure({
-        reason: response.status === 403 ? "refused" : "unavailable",
+        reason: "unavailable",
       });
     }
     return yield* response.json.pipe(
@@ -229,6 +233,16 @@ export const readPortalOwnProfile = (
     ),
   );
 type PortalOwnerClient = Effect.Success<ReturnType<typeof makeOwnerClient>>;
+/** The native owner derives the address-book subject from the live Portal session. */
+export const readPortalOwnAddressBook = (
+  config: StorefrontConfiguration,
+  request: PortalRequestContext,
+) =>
+  makeOwnerClient(config, request).pipe(
+    Effect.flatMap((client) =>
+      client.portalAuthSession.getCustomerAddressBook().pipe(Effect.timeout(readDeadline)),
+    ),
+  );
 type PortalEnrollmentCallFailure = Effect.Error<
   | ReturnType<PortalOwnerClient["portalAuthEnrollment"]["startEnrollment"]>
   | ReturnType<PortalOwnerClient["portalAuthEnrollment"]["resumeCurrentEnrollment"]>
@@ -360,9 +374,18 @@ export const portalFailureOutcome = (error: PortalOwnerFailure): PortalOutcome =
   Match.value(error).pipe(
     Match.tags({
       CommercePortalAuthEnrollmentAuthenticationProblem: () => ({ state: "credentials" as const }),
-      CommercePortalAuthEnrollmentForbiddenProblem: () => ({ state: "refused" as const }),
+      CommercePortalAuthEnrollmentForbiddenProblem: (problem) => ({
+        diagnostic:
+          problem.code === "origin_not_trusted"
+            ? ("owner-origin-not-trusted" as const)
+            : ("owner-enrollment-rejected" as const),
+        state: "refused" as const,
+      }),
       CommercePortalAuthEnrollmentInvalidProblem: () => ({ state: "invalid" as const }),
-      CommercePortalAuthEnrollmentJourneyUnavailableProblem: () => ({ state: "refused" as const }),
+      CommercePortalAuthEnrollmentJourneyUnavailableProblem: () => ({
+        diagnostic: "owner-journey-unavailable" as const,
+        state: "refused" as const,
+      }),
       CommercePortalAuthEnrollmentRateLimitedProblem: (problem) => ({
         retryAfterSeconds: problem.retryAfterSeconds,
         state: "rate-limited" as const,
@@ -379,7 +402,10 @@ export const portalFailureOutcome = (error: PortalOwnerFailure): PortalOutcome =
         retryAfterSeconds: problem.retryAfterSeconds,
         state: "rate-limited" as const,
       }),
-      PortalFailure: (failure) => ({ state: failure.reason }),
+      PortalFailure: (failure) =>
+        failure.reason === "refused"
+          ? { ...Struct.pick(failure, ["diagnostic"]), state: "refused" as const }
+          : { state: failure.reason },
     }),
     Match.orElse(() => ({ state: "unconfirmed" as const })),
   );

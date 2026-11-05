@@ -26,6 +26,41 @@ const noNetwork = () => {
   return { context: Context.make(FetchHttpClient.Fetch, fetch), count: () => calls };
 };
 
+for (const suffix of ["?profileId=foreign", "?tenantId=foreign"]) {
+  it.effect(`refuses address subject selection ${suffix} before contacting the native owner`, () =>
+    Effect.gen(function* rejectedAddressSubject() {
+      const owner = noNetwork();
+      const response = yield* Effect.promise(() =>
+        customerProfileWeb.handler(
+          new Request(`${origin}/api/customer-addresses${suffix}`, {
+            headers: { host: "n1.example" },
+          }),
+          owner.context,
+        ),
+      );
+      expect(response.status).toBe(400);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(owner.count()).toBe(0);
+    }),
+  );
+}
+
+it.effect("refuses cross-origin address reads before contacting the native owner", () =>
+  Effect.gen(function* rejectedAddressOrigin() {
+    const owner = noNetwork();
+    const response = yield* Effect.promise(() =>
+      customerProfileWeb.handler(
+        new Request(`${origin}/api/customer-addresses`, {
+          headers: { host: "n1.example", origin: "https://foreign.example" },
+        }),
+        owner.context,
+      ),
+    );
+    expect(response.status).toBe(403);
+    expect(owner.count()).toBe(0);
+  }),
+);
+
 describe("own profile HTTP contract", () => {
   for (const field of [
     "partyId",

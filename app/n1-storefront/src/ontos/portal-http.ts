@@ -1,5 +1,5 @@
 import "server-only";
-import { Effect, Layer, ManagedRuntime, Match, Schema } from "effect";
+import { Effect, Layer, ManagedRuntime, Match, Schema, Struct } from "effect";
 import {
   Cookies,
   FetchHttpClient,
@@ -65,9 +65,14 @@ const responseForOutcome = (outcome: PortalOutcome) =>
         { contentType: problemContentType, status: 401 },
       ),
     ),
-    Match.when({ state: "refused" }, () =>
+    Match.when({ state: "refused" }, (value) =>
       HttpServerResponse.schemaJson(PortalRefusedProblem)(
-        PortalRefusedProblem.make({ ...details, state: "refused", status: 403 }),
+        PortalRefusedProblem.make({
+          ...details,
+          ...Struct.pick(value, ["diagnostic"]),
+          state: "refused",
+          status: 403,
+        }),
         { contentType: problemContentType, status: 403 },
       ),
     ),
@@ -117,7 +122,7 @@ const channel = (
     );
     const result =
       request.method !== "GET" && !isPortalOrigin(request.headers.origin, request.originalUrl)
-        ? { state: "refused" as const }
+        ? { diagnostic: "bff-origin-refused" as const, state: "refused" as const }
         : yield* program(context).pipe(
             Effect.match({
               onFailure: portalFailureOutcome,
@@ -167,7 +172,10 @@ export const portalWeb = HttpRouter.toWebHandler(application, {
         request.method !== "GET" &&
         !isPortalOrigin(request.headers.origin, request.originalUrl)
       ) {
-        return yield* responseForOutcome({ state: "refused" }).pipe(Effect.orDie);
+        return yield* responseForOutcome({
+          diagnostic: "bff-origin-refused",
+          state: "refused",
+        }).pipe(Effect.orDie);
       }
       const url = new URL(request.originalUrl);
       if (

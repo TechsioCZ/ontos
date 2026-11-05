@@ -42,6 +42,13 @@ const PortalEnrollmentPhaseSchema = Schema.Literals([
   "FAILED",
 ]);
 export type PortalEnrollmentPhase = typeof PortalEnrollmentPhaseSchema.Type;
+export const PortalRefusalDiagnosticSchema = Schema.Literals([
+  "bff-origin-refused",
+  "gateway-context-forbidden",
+  "owner-origin-not-trusted",
+  "owner-enrollment-rejected",
+  "owner-journey-unavailable",
+]);
 export const PortalOutcomeSchema = Schema.Union([
   Schema.Struct({ email: Schema.String, name: Schema.String, state: Schema.Literal("admitted") }),
   Schema.Struct({
@@ -57,10 +64,13 @@ export const PortalOutcomeSchema = Schema.Union([
     state: Schema.Literal("rate-limited"),
   }),
   Schema.Struct({
+    diagnostic: Schema.optionalKey(PortalRefusalDiagnosticSchema),
+    state: Schema.Literal("refused"),
+  }),
+  Schema.Struct({
     state: Schema.Literals([
       "invalid",
       "credentials",
-      "refused",
       "unavailable",
       "unconfirmed",
       "verification-required",
@@ -77,6 +87,7 @@ export const PortalCredentialsProblem = makeProblemDetailsSchema("PortalCredenti
   state: Schema.Literal("credentials"),
 });
 export const PortalRefusedProblem = makeProblemDetailsSchema("PortalRefusedProblem", 403, {
+  diagnostic: Schema.optionalKey(PortalRefusalDiagnosticSchema),
   state: Schema.Literal("refused"),
 });
 export const PortalRateLimitedProblem = makeProblemDetailsSchema("PortalRateLimitedProblem", 429, {

@@ -1,7 +1,9 @@
 import { Effect, Redacted, Schema, flow } from "effect";
 import type { PortalEnrollmentPhase, PortalOutcome, PortalRegistration } from "./portal";
+import { PortalRefusalDiagnosticSchema } from "./portal";
 
 export class PortalFailure extends Schema.TaggedError<PortalFailure>()("PortalFailure", {
+  diagnostic: Schema.optionalKey(PortalRefusalDiagnosticSchema),
   reason: Schema.Literals(["invalid", "credentials", "refused", "unavailable", "unconfirmed"]),
 }) {}
 

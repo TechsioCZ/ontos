@@ -486,3 +486,6 @@ export const commerceCustomerContextApiContract = {
   ownerId: 'commerce-customer-context',
   readinessPath: '/commerce-customer-context-api/commerce-customer-context/readiness',
 } as const;
+
+export { CustomerOwnAddressBookSchema } from './portal-auth/session-api.ts';
+export type { CustomerOwnAddressBook } from './portal-auth/session-api.ts';

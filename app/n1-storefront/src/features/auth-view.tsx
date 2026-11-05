@@ -29,6 +29,7 @@ import {
   resumePortalEnrollment,
 } from "@/ontos/portal-client";
 import { canResumePortalEnrollment, portalVerificationOutcome } from "@/ontos/portal-model";
+import { subscribePortalSessionRefresh } from "./portal-session-events";
 
 type AuthMode = "login" | "register";
 const fieldNames = [
@@ -305,11 +306,17 @@ const usePortalSession = (enabled = true) => {
   const [pending, setPending] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const active = useRef<Fiber.Fiber<PortalOutcome> | null>(null);
-  const run = (program: Effect.Effect<PortalOutcome, never, HttpClient.HttpClient>) => {
+  const activeIsRefresh = useRef(false);
+  const refreshAfterRead = useRef(false);
+  const start = (
+    program: Effect.Effect<PortalOutcome, never, HttpClient.HttpClient>,
+    isRefresh: boolean,
+  ) => {
     if (active.current !== null) {
       return;
     }
     setPending(true);
+    activeIsRefresh.current = isRefresh;
     const fiber = portalRuntime.runFork(program);
     active.current = fiber;
     fiber.addObserver((exit) => {
@@ -317,19 +324,41 @@ const usePortalSession = (enabled = true) => {
         return;
       }
       active.current = null;
+      activeIsRefresh.current = false;
+      // A focus event during an older read invalidates that read's result. Re-read serially;
+      // never publish its admitted viewer even for one frame. Explicit writes retain their outcome.
+      if (isRefresh && refreshAfterRead.current) {
+        refreshAfterRead.current = false;
+        start(readPortalCurrent(), true);
+        return;
+      }
       setPending(false);
       setLoaded(true);
       setOutcome(Exit.isSuccess(exit) ? exit.value : { state: "unconfirmed" });
     });
   };
-  const restoreSession = useEffectEvent(() => run(readPortalCurrent()));
+  const run = (program: Effect.Effect<PortalOutcome, never, HttpClient.HttpClient>) =>
+    start(program, false);
+  const restoreSession = useEffectEvent(() => {
+    if (active.current !== null) {
+      if (activeIsRefresh.current) {
+        refreshAfterRead.current = true;
+      }
+      return;
+    }
+    start(readPortalCurrent(), true);
+  });
   useEffect(() => {
     if (enabled) {
       restoreSession();
     }
+    const unsubscribe = enabled ? subscribePortalSessionRefresh(() => restoreSession()) : null;
     return () => {
+      unsubscribe?.();
       const fiber = active.current;
       active.current = null;
+      activeIsRefresh.current = false;
+      refreshAfterRead.current = false;
       if (fiber !== null) {
         portalRuntime.runFork(Fiber.interrupt(fiber));
       }

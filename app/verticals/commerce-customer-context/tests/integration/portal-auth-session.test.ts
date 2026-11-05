@@ -175,6 +175,7 @@ it('publishes only the explicitly reviewed provider routes', () => {
   expect(COMMERCE_PORTAL_AUTH_SESSION_PUBLIC_ROUTE_ALLOWLIST).toEqual([
     '/get-session',
     '/customer-account',
+    '/customer-address-book',
     '/refresh',
     '/sign-in/email',
     '/sign-out',

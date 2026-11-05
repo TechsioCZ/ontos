@@ -9,6 +9,14 @@ import {
 } from '../../api/portal-auth/session/contracts.ts';
 import { EnrollmentResourceIdSchema, EnrollmentTenantIdSchema } from '../enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID, CommerceSessionReferenceSchema } from '../portal-auth-contracts.ts';
+import { ActiveSavedAddressSchema, SavedAddressDefaultsSchema } from '../domain/address-book.ts';
+
+/** Subject selection stays inside the owner; callers provide no profile or account identifier. */
+export const CustomerOwnAddressBookSchema = Schema.Struct({
+  addresses: Schema.Array(ActiveSavedAddressSchema),
+  defaults: SavedAddressDefaultsSchema,
+});
+export type CustomerOwnAddressBook = typeof CustomerOwnAddressBookSchema.Type;
 
 /**
  * The declared endpoint paths mirror the owner route allowlist
@@ -190,6 +198,12 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
           state: Schema.Literal('authenticated'),
         }),
       ]),
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get('getCustomerAddressBook', '/api/portal-auth/customer-address-book', {
+      error: getSessionErrors,
+      success: CustomerOwnAddressBookSchema,
     }),
   )
   .middleware(CommercePortalAuthSessionSchemaErrorMiddleware);

@@ -2,11 +2,13 @@ import { APIError } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Context, DateTime, Duration, Effect, Option, Redacted, Result, Schema } from 'effect';
+import { Context, DateTime, Duration, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
+import type { ReadCoreError } from '@app/core-runtime';
 import type { HttpServerRequest } from 'effect/http';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/http/Cookies';
 
 import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
+import { readCustomerOwnAddressBook } from './customer-address-book.ts';
 import { EnrollmentTenantIdSchema } from '../../../shared/enrollment-contracts.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { CommerceSessionReferenceSchema } from '../../../shared/portal-auth-contracts.ts';
@@ -693,6 +695,51 @@ const getCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.getCustomerA
   },
 );
 
+const addressBookReadProblem = (error: ReadCoreError) =>
+  Match.value(error).pipe(
+    Match.tags({
+      ModuleStateCheckUnavailableError: unavailableProblem,
+      ModuleStateDeniedError: () => forbiddenProblem('account_disabled'),
+      OperationAuthenticationRequired: () => authenticationProblem('authentication_failed'),
+      OperationContextDenied: () => forbiddenProblem('account_disabled'),
+      OperationContextInvalid: () => forbiddenProblem('account_disabled'),
+      OperationContextUnavailable: unavailableProblem,
+      ReadEvidencePersistenceError: unavailableProblem,
+      ReadEvidenceValidationError: unavailableProblem,
+      ReadHandlerExecutionError: unavailableProblem,
+      ReadHandlerNotFound: unavailableProblem,
+      ReadHandlerUnavailable: unavailableProblem,
+      ReadInputValidationError: unavailableProblem,
+      ReadPermissionDenied: () => forbiddenProblem('account_disabled'),
+      ReadPermissionUnavailable: unavailableProblem,
+      ReadPolicyDenied: () => forbiddenProblem('account_disabled'),
+      ReadPolicyEvaluationError: unavailableProblem,
+      ReadResultValidationError: unavailableProblem,
+    }),
+    Match.exhaustive,
+  );
+
+const getCustomerAddressBook = Effect.fn('CommercePortalAuthSessionHttp.getCustomerAddressBook')(
+  function* getCustomerAddressBookEffect(request: HttpServerRequest.HttpServerRequest) {
+    yield* noStoreHeaders;
+    const current = yield* admitCustomerAccount(request, 'retail.address_book.use');
+    if (current.state !== 'authenticated') {
+      return yield* Effect.fail(authenticationProblem('authentication_failed'));
+    }
+    const { legalEntityId } = current.workloadPrincipal;
+    if (legalEntityId === undefined) {
+      return yield* Effect.fail(unavailableProblem());
+    }
+    return yield* readCustomerOwnAddressBook({
+      authority: current.customerAuthority,
+      legalEntityId,
+      sessionRef: current.session.sessionRef,
+      tenantId: current.account.tenantId,
+      workloadPrincipal: current.workloadPrincipal,
+    }).pipe(Effect.mapError(addressBookReadProblem));
+  },
+);
+
 const portalAuthSessionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CommercePortalAuthSessionSchemaErrorMiddleware,
   () => Effect.fail(invalidProblem()),
@@ -708,7 +755,8 @@ export const portalAuthSessionApiLive = HttpApiBuilder.group(
       .handle('signOut', ({ request }) => signOut(request))
       .handle('refresh', ({ request }) => refresh(request))
       .handle('getSession', ({ request }) => getSession(request))
-      .handle('getCustomerAccount', ({ request }) => getCustomerAccount(request)),
+      .handle('getCustomerAccount', ({ request }) => getCustomerAccount(request))
+      .handle('getCustomerAddressBook', ({ request }) => getCustomerAddressBook(request)),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
 /**
@@ -732,7 +780,8 @@ export const portalAuthSessionStandaloneApiLive = HttpApiBuilder.group(
       .handle('signOut', ({ request }) => signOut(request))
       .handle('refresh', ({ request }) => refresh(request))
       .handle('getSession', ({ request }) => getSession(request))
-      .handle('getCustomerAccount', () => Effect.fail(unavailableProblem())),
+      .handle('getCustomerAccount', () => Effect.fail(unavailableProblem()))
+      .handle('getCustomerAddressBook', () => Effect.fail(unavailableProblem())),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
 /** The constructed realm stays a visible requirement; the composition root supplies it once. */

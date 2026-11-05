@@ -12,6 +12,7 @@ import { logoutPortal } from "@/ontos/portal-client";
 import { usePortalAuth } from "./auth-view";
 import { CustomerProfileForm } from "./customer-profile-form";
 import { CustomerOrdersPanel } from "./customer-orders-panel";
+import { CustomerAddressesPanel } from "./customer-addresses-panel";
 
 const subscribeDesktop = (listener: () => void) => {
   const media = window.matchMedia("(min-width: 48rem)");
@@ -111,10 +112,10 @@ export const AccountView = ({
               </div>
             </Tabs.Content>
             <Tabs.Content value="addresses">
-              <h2 className="mb-2 text-lg leading-normal font-semibold">
-                {d.accountPage.addresses}
-              </h2>
-              <p>{d.accountPage.addressUnavailable}</p>
+              {tab === "addresses" && auth.pending && <output>{d.accountPage.loading}</output>}
+              {tab === "addresses" && !auth.pending && auth.outcome.state === "admitted" && (
+                <CustomerAddressesPanel dictionary={d} identity={auth.outcome} />
+              )}
             </Tabs.Content>
             <Tabs.Content value="orders">
               {tab === "orders" && (

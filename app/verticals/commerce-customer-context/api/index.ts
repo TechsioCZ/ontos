@@ -1091,7 +1091,10 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthRuntimeLive,
   );
   const apiHandlerGroupsLive = Layer.mergeAll(
-    portalAuthSessionApiLive.pipe(GovernedReadLayer.provide(portalOwnerServicesLive)),
+    portalAuthSessionApiLive.pipe(
+      GovernedReadLayer.provide(portalOwnerServicesLive),
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+    ),
     portalAuthMfaApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthRecoveryApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthStepUpApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),

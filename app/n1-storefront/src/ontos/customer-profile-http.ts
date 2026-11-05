@@ -3,6 +3,7 @@ import { ByteSize, Effect, Layer, ManagedRuntime, Match } from "effect";
 import {
   Cookies,
   FetchHttpClient,
+  HttpEffect,
   HttpRouter,
   HttpServer,
   HttpServerError,
@@ -28,6 +29,8 @@ import { portalRequestContext } from "./portal-server";
 import type { PortalRequestContext } from "./portal-server";
 import { isPortalOrigin } from "./portal-model";
 import { normalizePublicRequest } from "./request-origin";
+import { readCustomerAddresses } from "./customer-addresses-server";
+import { CustomerAddressesReadSchema } from "./customer-addresses";
 
 const maxBodyBytes = 16_384;
 const problemContentType = "application/problem+json";
@@ -90,35 +93,61 @@ const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(
 );
 type ProfileProgram =
   | ReturnType<typeof readCustomerProfile>
+  | ReturnType<typeof readCustomerAddresses>
   | ReturnType<typeof updateCustomerProfile>;
 const channel = (
   request: HttpServerRequest.HttpServerRequest,
   program: (
     context: PortalRequestContext,
-  ) => Effect.Effect<CustomerProfileRead, CustomerProfileFailure, Effect.Services<ProfileProgram>>,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    CustomerProfileFailure,
+    Effect.Services<ProfileProgram>
+  >,
 ) =>
   Effect.gen(function* customerProfileChannel() {
     const context = portalRequestContext(
       new URL(request.originalUrl).origin,
       request.headers.cookie,
     );
-    const response = yield* program(context).pipe(
-      Effect.matchEffect({
-        onFailure: (error) => responseForFailure(error.state),
-        onSuccess: (value) =>
-          HttpServerResponse.schemaJson(CustomerProfileReadSchema)(value).pipe(Effect.orDie),
-      }),
+    yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+      Effect.succeed(
+        response.pipe(
+          noStore,
+          HttpServerResponse.replaceCookies(Cookies.fromSetCookie(context.setCookies)),
+        ),
+      ),
     );
-    return response.pipe(
-      noStore,
-      HttpServerResponse.replaceCookies(Cookies.fromSetCookie(context.setCookies)),
-    );
+    return yield* program(context).pipe(Effect.catch((error) => responseForFailure(error.state)));
   });
+
+const profileChannel = (
+  request: HttpServerRequest.HttpServerRequest,
+  program: (
+    context: PortalRequestContext,
+  ) => Effect.Effect<CustomerProfileRead, CustomerProfileFailure, Effect.Services<ProfileProgram>>,
+) =>
+  channel(request, (context) =>
+    program(context).pipe(
+      Effect.flatMap((value) =>
+        HttpServerResponse.schemaJson(CustomerProfileReadSchema)(value).pipe(Effect.orDie),
+      ),
+    ),
+  );
 const handlers = HttpApiBuilder.group(CustomerProfileApi, "customerProfile", (group) =>
   group
-    .handle("read", ({ request }) => channel(request, readCustomerProfile))
+    .handle("read", ({ request }) => profileChannel(request, readCustomerProfile))
+    .handle("readAddresses", ({ request }) =>
+      channel(request, (context) =>
+        readCustomerAddresses(context).pipe(
+          Effect.flatMap((value) =>
+            HttpServerResponse.schemaJson(CustomerAddressesReadSchema)(value).pipe(Effect.orDie),
+          ),
+        ),
+      ),
+    )
     .handle("update", ({ payload, request }) =>
-      channel(request, (context) => updateCustomerProfile(payload, context)),
+      profileChannel(request, (context) => updateCustomerProfile(payload, context)),
     ),
 ).pipe(Layer.provide(schemaErrors));
 const responsePolicy = HttpRouter.middleware(
@@ -135,6 +164,16 @@ const responsePolicy = HttpRouter.middleware(
       Effect.flatMap((response) =>
         response.status === 413 ? responseForFailure("invalid") : Effect.succeed(response),
       ),
+      // Deadline responses pass through native sending, so request-owned Portal cookie hooks survive interruption.
+      Effect.timeoutOrElse({
+        duration: "55 seconds",
+        orElse: () =>
+          HttpServerRequest.HttpServerRequest.pipe(
+            Effect.flatMap((request) =>
+              responseForFailure(request.method === "GET" ? "unavailable" : "unconfirmed"),
+            ),
+          ),
+      }),
       Effect.map(noStore),
     ),
   { global: true },
@@ -169,13 +208,7 @@ export const customerProfileWeb = HttpRouter.toWebHandler(application, {
       ) {
         return yield* responseForFailure("invalid");
       }
-      return yield* effect.pipe(
-        Effect.timeoutOrElse({
-          duration: "55 seconds",
-          orElse: () =>
-            responseForFailure(request.method === "GET" ? "unavailable" : "unconfirmed"),
-        }),
-      );
+      return yield* effect;
     }).pipe(Effect.map(noStore)),
 });
 const edgeRuntime = ManagedRuntime.make(Layer.empty);

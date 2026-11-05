@@ -109,6 +109,10 @@ describe("finite server-only Portal diagnostics", () => {
         expect(
           Result.isFailure(result) ? portalFailureOutcome(result.failure) : result.success,
         ).toEqual({
+          diagnostic:
+            code === "origin_not_trusted"
+              ? "owner-origin-not-trusted"
+              : "owner-enrollment-rejected",
           state: "refused",
         });
         expect(service.paths.filter((path) => path.endsWith("/enrollment/start"))).toHaveLength(1);
@@ -136,6 +140,7 @@ describe("finite server-only Portal diagnostics", () => {
       expect(
         Result.isFailure(result) ? portalFailureOutcome(result.failure) : result.success,
       ).toEqual({
+        diagnostic: "gateway-context-forbidden",
         state: "refused",
       });
       expect(service.paths).toHaveLength(1);
@@ -162,6 +167,7 @@ describe("finite server-only Portal diagnostics", () => {
       expect(
         Result.isFailure(result) ? portalFailureOutcome(result.failure) : result.success,
       ).toEqual({
+        diagnostic: "owner-enrollment-rejected",
         state: "refused",
       });
       expect(

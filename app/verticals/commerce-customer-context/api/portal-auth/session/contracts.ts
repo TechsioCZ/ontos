@@ -21,6 +21,7 @@ export const COMMERCE_PORTAL_AUTH_SESSION_MAX_ACTIVE_SESSIONS =
 export const COMMERCE_PORTAL_AUTH_SESSION_PUBLIC_ROUTE_ALLOWLIST = Object.freeze([
   '/get-session',
   '/customer-account',
+  '/customer-address-book',
   '/refresh',
   '/sign-in/email',
   '/sign-out',
