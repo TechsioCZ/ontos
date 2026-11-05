@@ -173,6 +173,9 @@ export const accessApprovalsExecutionDisabledProblem = (): AccessAdminProblem =>
  * revision or a lost compare-and-set is a 409 the caller repairs by re-reading. An unusable request
  * is 422. An unreachable port is the retryable 503 — never a denial (O48).
  */
+/** The inbox reason for a record proposal no release can approve yet (D30). */
+const RECORD_APPROVAL_UNPUBLISHED = 'approval_record_read_unpublished';
+
 export const accessApprovalsFailureProblem = (failure: {
   readonly code: string;
   readonly reason: string;
@@ -255,6 +258,19 @@ const withDisplayName = <Base extends object>(
 
 const allowed = (): ApprovalEligibility => ({ allowed: true });
 const notAllowed = (reason: string): ApprovalEligibility => ({ allowed: false, reason });
+
+/**
+ * Whether the inbox may offer approval. A proposal that changes one record is approved only with
+ * the approver's read of that record (D30), and no published release names that read yet, so Core
+ * refuses every such approval: the inbox says so instead of offering a button that always fails.
+ * Rejection and withdrawal need no read and stay available.
+ */
+const approvalEligibility = (record: ApprovalRecord, approver: boolean): ApprovalEligibility => {
+  if (record.target !== undefined) {
+    return notAllowed(RECORD_APPROVAL_UNPUBLISHED);
+  }
+  return approver ? allowed() : notAllowed('approve_authority_missing');
+};
 
 const commandFailureProblem = (failure: ApprovalCommandFailure): AccessAdminProblem =>
   Predicate.isTagged(failure, 'ApprovalPortUnavailable')
@@ -528,7 +544,7 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
     const approver = decision.outcome === 'ALLOWED';
     const decider = approver || administrator;
     return {
-      approval: approver ? allowed() : notAllowed('approve_authority_missing'),
+      approval: approvalEligibility(record, approver),
       rejection: decider ? allowed() : notAllowed('rejection_not_permitted'),
       withdrawal: decider ? allowed() : notAllowed('withdrawal_not_permitted'),
     };
@@ -698,6 +714,14 @@ export const makeAccessApprovalsBff = (context: AccessApprovalsContext): AccessA
           accessApprovalsFailureProblem({
             code: 'access_approvals_self_approval_forbidden',
             reason: 'a proposal is confirmed by another person, never by its requester',
+          }),
+        );
+      }
+      if (record.target !== undefined) {
+        return yield* Effect.fail(
+          accessApprovalsFailureProblem({
+            code: 'access_approvals_record_read_unpublished',
+            reason: 'a proposal that changes one record needs the read of that record, which no release names yet',
           }),
         );
       }
