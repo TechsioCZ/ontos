@@ -62,6 +62,27 @@ export const isActiveAssignment = (assignment: Assignment, at: Date): boolean =>
   assignment.validFrom <= at &&
   (assignment.validUntil === undefined || at < assignment.validUntil);
 
+/**
+ * The live holders of each role a plan edits, as a delegated envelope checked them. A plan carries
+ * them so the store can refuse the edit, under the role's lock, if the role gained a holder since.
+ */
+export const CheckedHoldersSchema = Schema.Array(
+  Schema.Struct({ incarnationIds: Schema.Array(AssignmentIncarnationIdSchema), roleId: RoleIdSchema }),
+);
+export type CheckedHolders = typeof CheckedHoldersSchema.Type;
+
+export const checkedHoldersOf = (
+  assignments: readonly Assignment[],
+  roleIds: readonly RoleId[],
+  at: Date,
+): CheckedHolders =>
+  [...new Set(roleIds)].map((roleId) => ({
+    incarnationIds: assignments.flatMap((assignment) =>
+      assignment.roleId === roleId && isActiveAssignment(assignment, at) ? [assignment.incarnationId] : [],
+    ),
+    roleId,
+  }));
+
 export const isAgentHolder = (holder: Holder): boolean =>
   Match.value(holder).pipe(Match.tags({ Agent: () => true, Principal: () => false }), Match.exhaustive);
 

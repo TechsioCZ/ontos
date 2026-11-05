@@ -320,7 +320,14 @@ it('bounds a delegated adoption by what the grantor holds now, mode by mode', ()
       }),
     );
   // A grantor who runs notes on every record lets the delegate adopt running them ...
-  expect(succeeded(adoptWith([cell(NOTE)])).items[0]?.status).toBe('adopted');
+  const adopted = succeeded(adoptWith([cell(NOTE)]));
+  expect(adopted.items[0]?.status).toBe('adopted');
+  // ... and the plan names the holders the envelope checked, for the store to re-check under its lock.
+  expect(adopted.checkedHolders).toEqual([{ incarnationIds: [activePerson().incarnationId], roleId: ROLE_ID }]);
+  // An owner's plan reaches anyone, so it names no holders to re-check.
+  expect(
+    succeeded(planAdoption(adoptionRequest({ selections: [selection(note.id, [adoptionTarget({})])] }))).checkedHolders,
+  ).toBeUndefined();
   // ... one who only proposes them, or reaches only their own assigned records, does not.
   expect(failureOf(adoptWith([cell(NOTE, 'propose')])).code).toBe('access_changes_delegation_out_of_envelope');
   expect(failureOf(adoptWith([cell(NOTE, 'run', 'assigned')])).code).toBe('access_changes_delegation_out_of_envelope');
