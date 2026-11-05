@@ -15,6 +15,7 @@ import {
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { parse as parseYaml } from 'yaml';
+import { workspaceConsumerClosure } from './workspace-consumer-closure.mts';
 
 import { ApplicationMigrationPlanSchema } from './application-migration-plan.mts';
 import type { ApplicationMigrationPlan } from './application-migration-plan.mts';
@@ -821,22 +822,14 @@ const readSharedPackageConsumers = (
     }
     const consumersByOwner = new Map<string, readonly string[]>();
     for (const owner of owners) {
-      const affected = new Set([requireString(owner.package, `workspace owner ${String(owner.id)}.package`)]);
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const [name, required] of dependencies) {
-          const producer = contractProducers.get(name);
-          if (affected.has(name) && producer !== undefined && !affected.has(producer)) {
-            affected.add(producer);
-            changed = true;
-          }
-          if (!affected.has(name) && required.some((dependency) => affected.has(dependency))) {
-            affected.add(name);
-            changed = true;
-          }
-        }
-      }
+      const affected = workspaceConsumerClosure(
+        [...dependencies].map(([name, required]) => ({
+          contractProducer: contractProducers.get(name),
+          dependencies: required,
+          name,
+        })),
+        [requireString(owner.package, `workspace owner ${String(owner.id)}.package`)],
+      );
       consumersByOwner.set(
         requireString(owner.id, 'workspace owner.id'),
         units.filter((unit) => affected.has(unit.packageName)).map((unit) => unit.id),
@@ -1059,6 +1052,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   // The planner decides what every other input impacts: after a repair to one of its rules, the
   // units the old rule skipped must deploy too.
   'scripts/plan-deployment-impact.mts',
+  'scripts/workspace-consumer-closure.mts',
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',
   'scripts/generate-outbox-worker-deployment.mjs',

@@ -10,8 +10,7 @@ on:
       - CONTEXT-MAP.md
       - README.md
       - AGENTS.md
-  # The main ruleset requires the Workspace gates check and the merge queue, so every pull request and
-  # merge group reports it, documentation-only ones included: a filtered run would never report it.
+  # Always report Workspace gates. The ci-plan job, not workflow path filtering, selects required work.
   pull_request:
     branches:
       - main
@@ -19,8 +18,14 @@ on:
   merge_group:
     types:
       - checks_requested
+  schedule:
+    - cron: '30 2 * * *'
   workflow_dispatch:
     inputs:
+      force-ci-full:
+        description: Run every CI gate even if the merge queue already proved this commit.
+        type: boolean
+        default: false
       full:
         description: Deploy the whole topology instead of the diff since the environment's last successful deployment (seeding or rewritten history).
         type: boolean
@@ -50,7 +55,7 @@ jobs:
   # the gates and deploys. Any other commit (pushed before the queue, or by a ruleset bypass) runs them.
   queue-proof:
     name: Find the merge queue proof of this commit
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && inputs.force-ci-full != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -73,6 +78,57 @@ jobs:
             echo "No merge group run proved $GITHUB_SHA; the gates run before the deploy."
             echo 'proven=false' >>"$GITHUB_OUTPUT"
           fi
+
+  ci-plan:
+    name: Select required checks from changed inputs
+    needs: [queue-proof]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.selection.outputs.mode || steps.changes.outputs.mode }}
+      expected: ${{ steps.selection.outputs.expected || steps.changes.outputs.expected }}
+      source: ${{ steps.selection.outputs.source || steps.changes.outputs.source }}
+      unit: ${{ steps.selection.outputs.unit || steps.changes.outputs.unit }}
+      integration: ${{ steps.selection.outputs.integration || steps.changes.outputs.integration }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - name: Checkout the exact comparison history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify the complete diff without app dependencies
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          QUEUE_PROVEN: ${{ needs.queue-proof.outputs.proven }}
+          FORCE_FULL: ${{ inputs.force-ci-full }}
+        run: bash app/scripts/plan-ci-changes.sh "$RUNNER_TEMP/ci-changed-paths"
+      - name: Record the documentation or exact-commit no-op
+        if: steps.changes.outputs.mode == 'docs' || steps.changes.outputs.mode == 'proven'
+        env:
+          REASON: ${{ steps.changes.outputs.reason }}
+        run: printf '## CI selection\n\n%s\n\nNo app dependencies, builds or services are needed.\n' "$REASON" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install the app workspace for code impact analysis
+        if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
+        uses: ./.github/actions/install-app
+      - name: Resolve affected packages and required matrices
+        id: selection
+        if: steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'
+        working-directory: app
+        env:
+          BOOTSTRAP_MODE: ${{ steps.changes.outputs.mode }}
+          APPLY_AFFECTED: ${{ vars.CI_AFFECTED_ENABLED }}
+        run: |
+          args=(--paths-file "$RUNNER_TEMP/ci-changed-paths")
+          [[ "$BOOTSTRAP_MODE" != full ]] || args+=(--full)
+          [[ "$APPLY_AFFECTED" != true ]] || args+=(--apply-affected)
+          mise exec -- node scripts/plan-ci-checks.mts "${args[@]}"
 
   # The only job that saves the caches the gates restore, on main, where every pull request and merge
   # group can read them: the pnpm store, the TS-Go typecheck build, the Playwright Chromium build, and
@@ -163,49 +219,68 @@ jobs:
           path: ~/.cache/playwright-apt-debs
           key: ${{ steps.chromium-debs.outputs.key }}
 
-  # Each entry runs its commands one after another and reports every one that fails. Entries group a few
-  # minutes of checks each, so each runner pays one install for them: the org runs at most 20 jobs at
-  # once, and every gate job of the first wave must start at once to finish in time.
+  # Source checks start immediately after planning; they do not wait for Node artifacts.
   workspace-gate:
     name: ${{ matrix.name }}
-    needs: [queue-proof, node-artifact-build]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-gate'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: Typecheck, Effect Rule Implementation, and OntOS API Boundary Rules
-            typescript-build: true
-            commands: |
-              pnpm typecheck
-              pnpm typecheck:lint-rules
-              pnpm test:lint-rules
-              pnpm lint:repository-policy
-              pnpm api:check:ontos
-          # `pnpm test:deployment-impact` runs the module entrypoint boundary check first.
-          - name: Repository Tooling, Module Entrypoint, Deployment Impact Planner, and Codesmith Generation Tests
-            commands: |
-              pnpm test:scripts
-              pnpm test:deployment-impact
-              pnpm test:generation
-          # The root `pnpm test:unit` (every package's test:unit, then every package's test:component) in
-          # shards of packages balanced by measured test time. The last shard runs every package the others
-          # do not name, so a new package is always tested; Repository Tooling Tests check the split.
-          - name: Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)
-            node-artifacts: true
-            commands: |
-              pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
-              pnpm -r --no-sort --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
-          - name: Unit and Component Tests (every other package)
-            node-artifacts: true
-            # Pricing's issue #890 traceability test compares immutable historical revisions and the
-            # branch's latest main integration merge. Keep that bounded history in this shard only.
-            fetch_depth: 512
-            commands: |
-              pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit
-              pnpm -r --no-sort --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component
+        include: ${{ fromJSON(needs.ci-plan.outputs.source) }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ matrix.fetch_depth || 1 }}
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+        with:
+          restore-typescript-build: ${{ matrix.typescript-build == true }}
+
+      - name: Run ${{ matrix.name }}
+        working-directory: app
+        env:
+          COMMANDS: ${{ matrix.commands }}
+          # Leave room for the runner and Effect diagnostics while checking the complete workspace.
+          GOMEMLIMIT: ${{ matrix.typescript-build && '4GiB' || '' }}
+          ULTRAMODERN_TSGO_BUILDERS: ${{ matrix.typescript-build && '1' || '' }}
+          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          failed=()
+          while IFS= read -r command; do
+            [[ -n "$command" ]] || continue
+            echo "::group::$command"
+            if ! mise exec -- bash -c "$command"; then
+              failed+=("$command")
+            fi
+            echo '::endgroup::'
+          done <<<"$COMMANDS"
+          for command in "${failed[@]}"; do
+            echo "::error title=Gate command failed::$command"
+          done
+          [[ ${#failed[@]} -eq 0 ]]
+
+  workspace-unit:
+    name: ${{ matrix.name }}
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['workspace-unit'] == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.ci-plan.outputs.unit) }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -261,8 +336,8 @@ jobs:
 
   static-contracts:
     name: Static Contracts
-    needs: [queue-proof]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['static-contracts'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -397,8 +472,8 @@ jobs:
   # they cover every file once, and the hook's own globs still choose what each tool checks.
   format-and-lint:
     name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/2)
-    needs: [queue-proof]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    needs: [ci-plan]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['format-and-lint'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -451,82 +526,14 @@ jobs:
   # are even (its heaviest is 3.7 minutes of a 14.6-minute job), so two shards halve it outright.
   service-integration:
     name: ${{ matrix.name }}
-    needs: [queue-proof, node-artifact-build]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    needs: [ci-plan, node-artifact-build]
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - suite: integration
-            name: Database, Migration, RLS, Authorization, and Outbox Integration
-            native-composition: true
-            root-suite: true
-            package-filters: >-
-              --filter !. --filter !./verticals/catalog --filter !./verticals/pricing
-              --filter !./verticals/inventory --filter !./verticals/commerce-customer-context
-              --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order
-              --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog
-              --filter !./verticals/storefront-registry --filter !./verticals/privacy
-              --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects
-          - suite: integration
-            name: Catalog Integration
-            package-filters: --filter ./verticals/catalog
-          - suite: integration
-            name: Pricing and Inventory Integration
-            native-composition: true
-            package-filters: --filter ./verticals/pricing --filter ./verticals/inventory
-          - suite: integration
-            name: Commerce Customer Context Integration (1/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 1/6
-          - suite: integration
-            name: Commerce Customer Context Integration (2/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 2/6
-          - suite: integration
-            name: Commerce Customer Context Integration (3/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 3/6
-          - suite: integration
-            name: Commerce Customer Context Integration (4/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 4/6
-          - suite: integration
-            name: Commerce Customer Context Integration (5/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 5/6
-          - suite: integration
-            name: Commerce Customer Context Integration (6/6)
-            package-filters: --filter ./verticals/commerce-customer-context
-            rstest-shard: 6/6
-          - suite: integration
-            name: Market, Order, Payment Term, Price Group, and Storefront Integration
-            native-preproposal: true
-            package-filters: >-
-              --filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order
-              --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog
-              --filter ./verticals/storefront-registry
-          - suite: integration
-            name: Privacy Integration (1/2)
-            package-filters: --filter ./verticals/privacy
-            rstest-shard: 1/2
-          - suite: integration
-            name: Privacy Integration (2/2)
-            package-filters: --filter ./verticals/privacy
-            rstest-shard: 2/2
-          - suite: integration
-            name: Party Registry Integration
-            package-filters: --filter ./verticals/party-registry
-          - suite: integration
-            name: Tax Integration
-            package-filters: --filter ./verticals/tax
-          - suite: integration
-            name: Projects Integration
-            package-filters: --filter ./verticals/projects
-          - suite: browser
-            name: Authenticated Browser Tests
+        include: ${{ fromJSON(needs.ci-plan.outputs.integration) }}
     env:
       BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
@@ -728,8 +735,10 @@ jobs:
           if [[ "$ROOT_SUITE" == true ]]; then
             mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1
           fi
-          # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
-          mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
+          if [[ -n "$PACKAGE_FILTERS" ]]; then
+            # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.
+            mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1 ${RSTEST_SHARD:+--shard "$RSTEST_SHARD"}
+          fi
 
       - name: Prove native preproposal basis and genuine approval through registered owners
         if: matrix.native-preproposal == true
@@ -792,12 +801,12 @@ jobs:
   # independent Worker proofs side by side (the outputs and their SSR, and the topology on real services).
   node-artifact-build:
     name: Build node artifacts (${{ matrix.shard }}/5)
-    needs: [queue-proof]
+    needs: [ci-plan]
     # The proving shard reads its siblings' job results.
     permissions:
       actions: read
       contents: read
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.ci-plan.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['node-artifact-build'] == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -936,7 +945,7 @@ jobs:
 
   cloudflare-artifact-build:
     name: Build cloudflare artifacts (${{ matrix.shard }}/5)
-    needs: [queue-proof]
+    needs: [ci-plan]
     # The proving shard reads its siblings' job results.
     permissions:
       actions: read
@@ -1165,44 +1174,25 @@ jobs:
         working-directory: app
         run: docker compose down --volumes --remove-orphans
 
-  # The one required status check of the main ruleset, so new gate jobs join it here, not the ruleset.
-  # It passes when every gate passed, or when the merge queue already proved this commit and the gates were skipped.
+  # Keep one required check. Selected jobs must succeed and every skipped job must be explicitly planned.
   workspace-gates:
     name: Workspace gates
     if: ${{ always() }}
     needs:
-      [
-        queue-proof,
-        workspace-gate,
-        static-contracts,
-        format-and-lint,
-        service-integration,
-        node-artifact-build,
-      ]
+      [queue-proof, ci-plan, workspace-gate, workspace-unit, static-contracts, format-and-lint, service-integration, node-artifact-build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
     steps:
-      - name: Require every gate, or the merge queue proof of this commit
+      - name: Checkout the gate verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require selected gates and reject unplanned skips
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          proof="$(jq -r '.["queue-proof"].result' <<<"$NEEDS_JSON")"
-          if [[ "$proof" != success && "$proof" != skipped ]]; then
-            echo "::error title=Merge queue proof not checked::The queue-proof job ended $proof."
-            exit 1
-          fi
-          proven="$(jq -r '.["queue-proof"].outputs.proven // ""' <<<"$NEEDS_JSON")"
-          expected=success
-          if [[ "$proven" == true ]]; then
-            expected=skipped
-          fi
-          failed="$(jq -r --arg expected "$expected" 'to_entries[] | select(.key != "queue-proof" and .value.result != $expected) | "\(.key) \(.value.result)"' <<<"$NEEDS_JSON")"
-          if [[ -n "$failed" ]]; then
-            echo "::error title=Workspace gates failed::Expected every gate $expected, got: ${failed//$'\n'/, }"
-            exit 1
-          fi
-          echo "Every gate is $expected."
+        run: bash app/scripts/check-ci-gates.sh
 
   # Each GitHub deployment environment deploys to Zerops when DEPLOY_TARGET is `zerops` or unset.
   # Reject the retired Cloudflare target rather than reporting success without deploying anything.
@@ -1218,7 +1208,7 @@ jobs:
   # and token deploys nothing and records nothing.
   deploy-target:
     name: Resolve the deploy target of the deployment environment
-    if: vars.MAIN_DEPLOY_ENABLED == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    if: vars.MAIN_DEPLOY_ENABLED == 'true' && inputs.force-ci-full != true && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
