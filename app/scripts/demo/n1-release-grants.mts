@@ -9,6 +9,7 @@ import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } fr
 import { Command } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 
+import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
@@ -22,6 +23,13 @@ import { decodeN1Access, n1GrantRelationships, N1StageGrantError } from './n1-st
 import { reconcileServiceGrants } from './reconcile-stage-service-grants.mts';
 
 export const N1_RELEASE_ACCESS_FILE = 'scripts/demo/n1-stage-access.json';
+// The owners the reviewed N1 plan builds from; with the core Actions they are the whole N1 action universe.
+const n1OwnerModules = new Set([
+  'demo.merchandise',
+  'commerce.market-catalog',
+  'commerce.storefront-registry',
+  'work.tasks',
+]);
 
 const fail = (reason: string) => new N1StageGrantError({ reason });
 
@@ -34,7 +42,12 @@ export const releaseN1Grants = Effect.gen(function* releaseN1GrantsProgram() {
   );
   // The active composition is the same local source the demo grants read: no public HTTP while the app is starting.
   const source = yield* ActiveApplicationCompositionService;
-  const actions = yield* discoverCurrentActions(yield* source.load);
+  // Only the N1 owners and the core Actions: the same universe the reviewed plan builds from. Other owners' Actions
+  // would widen the desired set beyond the plan.
+  const coreKeys = new Set(coreActionCatalog.map(({ actionKey }) => actionKey));
+  const actions = (yield* discoverCurrentActions(yield* source.load)).filter(
+    ({ actionKey, owningModuleKey }) => coreKeys.has(actionKey) || n1OwnerModules.has(owningModuleKey),
+  );
   const relationships = yield* n1GrantRelationships(access, actions);
   const environment = yield* Config.all({
     SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
