@@ -924,6 +924,42 @@ it.effect('the last tenant owner leaves only by naming a successor in the same p
   }),
 );
 
+it.effect('ending the last owner’s member row needs a transfer, and giving up ownership keeps business access', () =>
+  Effect.gen(function* operationalPathCarriesAdministration() {
+    yield* TestClock.setTime(AT.getTime());
+    const administration = makeAdministration({ tenantOwners: [ownerRecord({ principalId: MANAGER })] });
+    const owner = membership({ holder: MANAGER, id: 31, kind: 'owner' });
+    const member = membership({ holder: MANAGER, id: 2 });
+    const held = makeAssignment({ holder: holderOf(MANAGER) });
+    const fixture = {
+      administration,
+      assignments: [held],
+      memberships: [owner, memberOf(MEMBER), member],
+      nextStatus: 'revoked' as const,
+    };
+    // Ownership stands on the owner's tenant membership, so ending that row is the owner leaving.
+    const leaving = yield* Effect.flip(
+      planMembershipEnd(membershipEndRequest({ ...fixture, membershipId: member.id })),
+    );
+    expect(leaving.code).toBe('ownership_transfer_required');
+    expect(leaving.scopeIds).toEqual([tenantScope]);
+
+    // With another owner, ending the member row ends the business assignment standing on it ...
+    const shared = makeAdministration({
+      tenantOwners: [ownerRecord({ principalId: MANAGER }), ownerRecord({ principalId: OTHER })],
+    });
+    const departed = yield* planMembershipEnd(
+      membershipEndRequest({ ...fixture, administration: shared, membershipId: member.id }),
+    );
+    expect(writeTags(departed)).toEqual(['EndMembership', 'EndAssignment']);
+    // ... while giving up only the owner row keeps it: that assignment rests on the member row.
+    const resigned = yield* planMembershipEnd(
+      membershipEndRequest({ ...fixture, administration: shared, membershipId: owner.id }),
+    );
+    expect(writeTags(resigned)).toEqual(['EndMembership']);
+  }),
+);
+
 it.effect('a company administrator who alone administers the company transfers it too (O65)', () =>
   Effect.gen(function* companyAdministrationTransfers() {
     yield* TestClock.setTime(AT.getTime());

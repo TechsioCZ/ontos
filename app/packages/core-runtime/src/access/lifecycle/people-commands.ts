@@ -475,18 +475,53 @@ const successorIssue = (request: {
 };
 
 /** The scopes whose administration a membership carries; a plain member carries none. */
+/**
+ * Whether ending this row ends the person's operational membership of its scope: it is a `member`
+ * row and they hold no other live one there. Only that path carries their business assignments and
+ * team places, and every administration a decision rests on (O28).
+ */
+const endsOperationalPath = (ending: AccessMembership, memberships: readonly AccessMembership[], at: Date) =>
+  ending.kind === 'member' &&
+  !memberships.some(
+    (other) =>
+      other.id !== ending.id &&
+      other.scopeId === ending.scopeId &&
+      other.kind === 'member' &&
+      personOf(other.holder) === personOf(ending.holder) &&
+      membershipIsLive(other, at),
+  );
+
+/**
+ * The scopes whose administration ending this row removes from the leaver. An owner or access-admin
+ * row ends its own administration. A member row that ends the operational path ends every
+ * administration standing on it: the tenant's ownership and every company administration for the
+ * tenant's path, and that company's administration for a company's path.
+ */
 const managementScopesOf = (request: {
   readonly administration: ScopeAdministration;
+  readonly endsPath: boolean;
   readonly kind: MembershipKind;
+  readonly leaver: PrincipalId;
   readonly scopeId: AccessScopeId;
 }): readonly AccessScopeId[] => {
+  const { administration, leaver } = request;
   if (request.kind === 'owner') {
-    return [request.administration.tenantScopeId];
+    return [administration.tenantScopeId];
   }
   if (request.kind === 'access_admin') {
     return [request.scopeId];
   }
-  return [];
+  if (!request.endsPath) {
+    return [];
+  }
+  const tenantPath = request.scopeId === administration.tenantScopeId;
+  const owns = tenantPath && administration.tenantOwners.some((owner) => owner.principalId === leaver);
+  const administers = administration.scopeAdministrators.flatMap((row) =>
+    (tenantPath || row.scopeId === request.scopeId) && row.administrators.some((admin) => admin.principalId === leaver)
+      ? [row.scopeId]
+      : [],
+  );
+  return [...(owns ? [administration.tenantScopeId] : []), ...administers];
 };
 
 /**
@@ -529,11 +564,25 @@ export const planMembershipEnd = (
       ),
     );
   }
+  const endsPath = endsOperationalPath(ending, request.memberships, request.at);
   const managementScopeIds = managementScopesOf({
     administration: request.administration,
+    endsPath,
     kind: ending.kind,
+    leaver,
     scopeId: ending.scopeId,
   });
+  // A member row can stand under several administrations, and one command mints one successor
+  // membership, so the leaver transfers that administration first and then leaves (O53).
+  if (ending.kind === 'member' && request.successor !== undefined) {
+    return Effect.fail(
+      peopleRefusal(
+        'ownership_transfer_not_required',
+        `Membership ${ending.id} is a member row; transfer the administration it carries before ending it`,
+        [ending.scopeId],
+      ),
+    );
+  }
   const issue = {
     administration: request.administration,
     at: request.at,
@@ -557,18 +606,19 @@ export const planMembershipEnd = (
         : Effect.succeed(ownershipTransferScopeIds),
     ),
     Effect.map((ownershipTransferScopeIds) => {
-      const assignments = liveAssignmentsOf({
-        assignments: request.assignments,
-        at: request.at,
-        holder: leaver,
-        scopeId: ending.scopeId,
-      });
-      const places = teamPlacesOf({
-        holder: leaver,
-        members: request.teamMembers,
-        scopeId: ending.scopeId,
-        teams: request.teams,
-      });
+      // Only the end of the operational path ends the business authority standing on it; giving up
+      // an owner or access-admin row keeps the person's assignments and team places.
+      const assignments = endsPath
+        ? liveAssignmentsOf({
+            assignments: request.assignments,
+            at: request.at,
+            holder: leaver,
+            scopeId: ending.scopeId,
+          })
+        : [];
+      const places = endsPath
+        ? teamPlacesOf({ holder: leaver, members: request.teamMembers, scopeId: ending.scopeId, teams: request.teams })
+        : [];
       // The successor gains the management membership of the scope this row ends, in this plan, so
       // one committed transaction always leaves the scope administered (O53).
       const transfer: readonly PeopleIntentWrite[] =
