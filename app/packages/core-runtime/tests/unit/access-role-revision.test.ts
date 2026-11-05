@@ -746,6 +746,16 @@ it.effect('replays a save whose reconcile failed after commit: the retry reconci
 
 const otherRole = roleState({ cells: [cell(READ)], revisionId: fixedId(42), roleId: OTHER_ROLE });
 
+/** The grantor's own role: running the note capability on every record, which the delegate hands on. */
+const grantorRole = roleState({ cells: [cell(NOTE)], revisionId: fixedId(45), roleId: fixedId(46) });
+const grantorHolds = (grantor: RoleWithRevision = grantorRole) =>
+  assignment({
+    holder: principalHolder(PERSON),
+    incarnationId: fixedId(51),
+    roleId: grantor.role.id,
+    roleRevisionId: grantor.revision.id,
+  });
+
 /** A tenant-context delegation over `ROLE` and the note capability, for `OTHER_PERSON` only. */
 const managerBasis = () =>
   delegatedBasis(delegation({ capabilityKeys: [NOTE], people: [OTHER_PERSON], roleIds: [ROLE] }));
@@ -755,6 +765,7 @@ const authorisedWrite = (input: {
   readonly assignments: readonly Assignment[];
   readonly bases: readonly AccessConfigureBasis[];
   readonly cells: readonly Cell[];
+  readonly grantor?: RoleWithRevision;
   readonly role?: RoleWithRevision;
 }) =>
   Effect.gen(function* authorisedWriteEffect() {
@@ -775,7 +786,7 @@ const authorisedWrite = (input: {
               Effect.sync(() => {
                 recorded.push(request.edit.roleId);
               }),
-            [headRole([cell(READ)]), otherRole],
+            [headRole([cell(READ)]), otherRole, input.grantor ?? grantorRole],
           ),
         ),
         Effect.provideService(
@@ -805,12 +816,38 @@ it.effect('lets a delegated manager edit a role of their envelope with a capabil
   Effect.gen(function* delegateWithinEnvelope() {
     const { outcome, recorded } = yield* authorisedWrite({
       actor: MANAGER,
-      assignments: [assignment({ holder: principalHolder(OTHER_PERSON) })],
+      assignments: [assignment({ holder: principalHolder(OTHER_PERSON) }), grantorHolds()],
       bases: [managerBasis()],
       cells: [cell(READ), cell(NOTE)],
     });
     expect(succeeded(outcome).roleRevisionId).toBe(targetRevisionId);
     expect(recorded).toEqual([ROLE]);
+  }),
+);
+
+it.effect('refuses a delegated manager a cell that reaches more than the grantor holds now', () =>
+  Effect.gen(function* delegateBeyondGrantor() {
+    // The grantor only proposes notes, so the delegate never adds running them ...
+    const proposing = roleState({ cells: [cell(NOTE, 'propose')], revisionId: fixedId(45), roleId: fixedId(46) });
+    const { outcome, recorded } = yield* authorisedWrite({
+      actor: MANAGER,
+      assignments: [assignment({ holder: principalHolder(OTHER_PERSON) }), grantorHolds(proposing)],
+      bases: [managerBasis()],
+      cells: [cell(READ), cell(NOTE)],
+      grantor: proposing,
+    });
+    expect(failureOf(outcome).code).toBe('access_changes_delegation_out_of_envelope');
+    expect(failureOf(outcome).reason).toContain('reaches more than grantor');
+    expect(recorded).toEqual([]);
+    // ... and a grantor who holds nothing in the scope leaves the delegate nothing to add.
+    const empty = yield* authorisedWrite({
+      actor: MANAGER,
+      assignments: [assignment({ holder: principalHolder(OTHER_PERSON) })],
+      bases: [managerBasis()],
+      cells: [cell(READ), cell(NOTE)],
+    });
+    expect(failureOf(empty.outcome).code).toBe('access_changes_delegation_out_of_envelope');
+    expect(empty.recorded).toEqual([]);
   }),
 );
 
