@@ -34,13 +34,17 @@ _Avoid_: automatic Catalog Discount, two voucher slots distinguished by effect k
 A Voucher explicitly chosen for a merchandise-cart monetary Promotion. It participates in the same cart-promotion selection as eligible automatic monetary Promotions rather than granting an additional cart-benefit slot.
 _Avoid_: cart voucher always outranks automatic offers, second cart monetary application.
 
+**Free-shipping Voucher**:
+A Voucher that explicitly activates an eligible free-shipping Promotion for its declared Shipping target. It uses the existing Voucher Code identity, normalization, lifecycle and B2C reuse rules; it occupies neither a product-voucher slot nor the merchandise-cart monetary slot.
+_Avoid_: free-shipping code as second cart monetary discount, a new consumption or credit model.
+
 **Automatic Promotion**:
-A named Promotion activated by its declared eligibility without an entered Voucher Code. Its accepted monetary target is the merchandise cart, not a separately discounted product or category.
+A named Promotion activated by its declared eligibility without an entered Voucher Code. Its accepted monetary target is the merchandise cart, not a separately discounted product or category. A free-shipping Promotion can also have automatic activation for a distinct Shipping target.
 _Avoid_: automatic product discount as Promotion, generic targeting engine.
 
 **Free-shipping Promotion**:
-A Promotion whose benefit makes an eligible explicit Shipping target free of charge. Promotion owns eligibility and benefit meaning; Delivery/Shipping owns the customer-charged shipping monetary component.
-_Avoid_: merchandise-cart monetary discount, Promotion-owned shipping price, missing shipping amount as free shipping, carrier cost as customer charge.
+A Promotion whose benefit entitles an eligible explicit Shipping target to free shipping. The merchant configures an automatic or Voucher-triggered activation, optional minimum purchase checked on merchandise value after product and the selected cart monetary discounts, supported Delivery/Shipping methods, and an Effective Period. Its immutable published meaning includes these eligibility settings. Promotion owns entitlement; Delivery/Shipping owns the actual customer-charged Shipping amount and its evidence.
+_Avoid_: merchandise-cart monetary discount, threshold on the pre-discount basket, Shipping charge as a Promotion-owned price, missing Shipping amount as zero, carrier cost as customer charge.
 
 ### Eligibility, selection and application order
 
@@ -56,8 +60,16 @@ _Avoid_: eligible means applied, permission to administer means eligibility to r
 The explicit merchant-managed ranking used to select at most one eligible merchandise-cart monetary Promotion, including Cart Vouchers. It is distinct from benefit size and from the order of calculating product and cart benefits.
 _Avoid_: best-price winner, database order as priority, eligibility as a conflict by itself, fixed-first as a second arithmetic layer.
 
+**Free-shipping Priority**:
+The separate merchant-managed ranking of eligible free-shipping Promotions, whether automatic or Voucher-triggered, for one explicit Shipping target. At most one offer is selected per target; ambiguous required ranking is a configuration conflict rather than a best-price or DB-order fallback. This ranking is not the merchandise-cart monetary priority.
+_Avoid_: free-shipping offers sharing the monetary cart slot, multiple selected shipping offers for the same target, arbitrary winner.
+
+**Free-shipping Minimum**:
+An optional merchant-configured merchandise purchase threshold for a free-shipping Promotion. When present, the threshold is evaluated from the eligible merchandise value after Product Voucher applications and the one selected cart monetary Promotion; it excludes the Shipping charge. The precise publication/rounding boundary for small values and B2B gross/net thresholds must align with the accepted monetary owner contract.
+_Avoid_: pre-discount basket threshold, including Shipping in the threshold, inventing a second Tax or Pricing rounding rule.
+
 **Promotion Application Order**:
-The fixed product-before-cart sequence: Product Vouchers apply to their occurrences before the selected merchandise-cart monetary Promotion. Fixed-amount and percentage effect kinds do not reverse these layers.
+The fixed product-before-cart sequence: Product Vouchers apply to their occurrences before the selected merchandise-cart monetary Promotion. Free-shipping eligibility with an optional purchase minimum follows the completed merchandise discounts. Fixed-amount and percentage effect kinds do not reverse the monetary layers.
 _Avoid_: fixed-first or percentage-first arithmetic overriding product-before-cart, selection priority as calculation order.
 
 **Product–Cart Discount Combination**:
@@ -111,7 +123,7 @@ A descriptive alias for the existing Commerce Purchase Demand Occurrence used as
 _Avoid_: Product ID, SKU, display-row position or price equality as occurrence identity; merging equal-valued occurrences.
 
 **Promotion Administration**:
-Management of offers, vouchers and cart priority by an acting Principal with the required Current permission in the trusted business scope. Tenant isolation, Customer Configuration, Selling Legal Entity and Storefront Application retain their existing separate Commerce/OntOS meanings.
+Management of offers, vouchers, cart monetary ranking and a distinct free-shipping ranking by an acting Principal with the required Current permission in the trusted business scope. Tenant isolation, Customer Configuration, Selling Legal Entity and Storefront Application retain their existing separate Commerce/OntOS meanings.
 _Avoid_: shop owner title as a permission grant, storefront hostname as monetary authority, Tenant as seller identity, copying Payment's configuration key into a new Promotion scope.
 
 **Promotion Consumer Boundary**:
