@@ -1191,6 +1191,24 @@ it.effect('a tenant departure transfers every sole administration it ends, all o
     const granted = transfer.writes.flatMap((write) => Option.toArray(membershipIn(write)));
     expect(granted.map((recorded) => recorded.kind)).toEqual(['owner', 'access_admin']);
 
+    // A successor's expired owner row is history: the transfer retires it before granting the new one.
+    const lapsedOwner = membership({ holder: MEMBER, id: 70, kind: 'owner', validUntil: dateAt(Date.UTC(2026, 0, 1)) });
+    const afterLapse = yield* planOwnershipTransfer({
+      actor: facts.actor,
+      administration,
+      assignments: [],
+      at: facts.at,
+      from: MANAGER,
+      membershipIds: [membershipId(65), membershipId(66)],
+      memberships: [...memberships, lapsedOwner],
+      scopeId: facts.scopeId,
+      scopeIds: [tenantScope, companyScope],
+      successor: MEMBER,
+      tenantId: facts.tenantId,
+    });
+    expect(Option.getOrThrow(endedMembershipIn(afterLapse.writes[0]))).toBe(lapsedOwner.id);
+    expect(writeTags(afterLapse).slice(0, 3)).toEqual(['EndMembership', 'RecordMembership', 'RecordMembership']);
+
     const named = {
       actor: facts.actor,
       administration,
