@@ -4,7 +4,14 @@ import { LegalEntityIdSchema } from '../ids.ts';
 import { earliestDeadline } from '../decision/contract.ts';
 import type { TenantProjectionIntent } from '../compiler/intent.ts';
 import type { AccessMembership } from '../intent/memberships.ts';
-import type { AccessScopeId, CapabilityKey, LegalEntityId, PrincipalId, RoleId } from '../ids.ts';
+import type {
+  AccessScopeId,
+  AssignmentIncarnationId,
+  CapabilityKey,
+  LegalEntityId,
+  PrincipalId,
+  RoleId,
+} from '../ids.ts';
 import { ceilingCovers, delegationCellIssue, selectorCovers } from '../lifecycle/delegation.ts';
 import type { DelegatedCellRequest } from '../lifecycle/delegation.ts';
 import type {
@@ -432,17 +439,13 @@ const grantorIsMember = (membership: GrantorMembership, scope: AccessScope, gran
  * under. Authority the grantor holds only through a delegation of their own never counts, and nothing
  * counts once the grantor's own membership has ended, so the check fails closed.
  */
-export const beyondGrantorCell = (
-  intent: GrantorIntent,
-  grantedCells: readonly GrantedCell[],
-  delegation: Delegation,
-  scope: AccessScope,
-  at: Date,
-): Cell | undefined => {
+/** The grantor's live, direct assignments in the delegation's scope, with the cells each one grants. */
+const grantorGrantsOf = (intent: GrantorIntent, delegation: Delegation, scope: AccessScope, at: Date) => {
   const revisions = new Map(intent.revisions.map((revision) => [revision.id, revision] as const));
-  const member = grantorIsMember(intent.membership, scope, delegation.grantedBy, at);
-  const held = intent.assignments.flatMap((assignment) =>
-    member &&
+  if (!grantorIsMember(intent.membership, scope, delegation.grantedBy, at)) {
+    return [];
+  }
+  return intent.assignments.flatMap((assignment) =>
     assignment.scopeId === delegation.scopeId &&
     assignment.delegated === undefined &&
     assignment.status === 'active' &&
@@ -450,21 +453,46 @@ export const beyondGrantorCell = (
     (assignment.validUntil === undefined || at < assignment.validUntil) &&
     Predicate.isTagged(assignment.holder, 'Principal') &&
     assignment.holder.principalId === delegation.grantedBy
-      ? (revisions.get(assignment.roleRevisionId)?.cells ?? [])
+      ? [{ cells: revisions.get(assignment.roleRevisionId)?.cells ?? [], incarnationId: assignment.incarnationId }]
       : [],
   );
-  return grantedCells.find(
-    ({ cell, entry }) =>
-      !held.some(
-        (grant) =>
-          grant.capabilityKey === cell.capabilityKey &&
-          grant.mode === cell.mode &&
-          selectorCovers(grant.selector, cell.selector) &&
-          (entry.amountInput === undefined ||
-            ceilingCovers(grant.amountCeiling, cell.amountCeiling ?? delegation.amountCeiling)),
-      ),
-  )?.cell;
 };
+
+const grantCovers = (grant: Cell, { cell, entry }: GrantedCell, delegation: Delegation): boolean =>
+  grant.capabilityKey === cell.capabilityKey &&
+  grant.mode === cell.mode &&
+  selectorCovers(grant.selector, cell.selector) &&
+  (entry.amountInput === undefined ||
+    ceilingCovers(grant.amountCeiling, cell.amountCeiling ?? delegation.amountCeiling));
+
+export const beyondGrantorCell = (
+  intent: GrantorIntent,
+  grantedCells: readonly GrantedCell[],
+  delegation: Delegation,
+  scope: AccessScope,
+  at: Date,
+): Cell | undefined => {
+  const held = grantorGrantsOf(intent, delegation, scope, at).flatMap(({ cells }) => cells);
+  return grantedCells.find((granted) => !held.some((grant) => grantCovers(grant, granted, delegation)))?.cell;
+};
+
+/**
+ * The grantor assignments that cover at least one granted cell. A writer locks them while it commits a
+ * delegated change, so the grantor cannot lose the authority the change was checked against before it
+ * lands (a removal either waits for the commit or makes it refuse).
+ */
+export const coveringGrantorAssignments = (
+  intent: GrantorIntent,
+  grantedCells: readonly GrantedCell[],
+  delegation: Delegation,
+  scope: AccessScope,
+  at: Date,
+): readonly AssignmentIncarnationId[] =>
+  grantorGrantsOf(intent, delegation, scope, at).flatMap(({ cells, incarnationId }) =>
+    grantedCells.some((granted) => cells.some((grant) => grantCovers(grant, granted, delegation)))
+      ? [incarnationId]
+      : [],
+  );
 
 /**
  * Configuration authority for one decision: every edited role must be inside the decider's scope,

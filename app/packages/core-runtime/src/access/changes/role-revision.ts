@@ -45,7 +45,7 @@ import {
   namesRoleTemplate,
 } from '../model.ts';
 import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
-import { configureAuthorityIssue, configureBasisCoversRole } from './authority.ts';
+import { configureAuthorityIssue, configureBasisCoversRole, coveringGrantorAssignments } from './authority.ts';
 import { cellsWith, cellsWithout, toSortedCells } from './cells.ts';
 import { compareText } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
@@ -745,6 +745,25 @@ export const writeRoleRevision = Effect.fn('RoleRevision.writeRoleRevision')(fun
     edit: request.edit,
     scope: request.scope,
   };
+  // The grantor assignments that cover the added cells are locked as the edit commits, so the
+  // grantor cannot lose the authority the edit was checked against before it lands.
+  const catalogEntries = new Map(
+    (Option.getOrUndefined(release)?.entries ?? []).map((entry) => [entry.key, entry] as const),
+  );
+  const added: readonly GrantedCell[] = request.edit.addedCells.flatMap((cell) => {
+    const entry = catalogEntries.get(cell.capabilityKey);
+    return entry === undefined ? [] : [{ cell, entry, roleId: request.edit.roleId }];
+  });
+  const grantorIntent = {
+    assignments,
+    membership: intent,
+    revisions: changes.roles.map(({ revision }) => revision),
+  };
+  const grantorIncarnationIds = bases.flatMap((basis) =>
+    Predicate.isTagged(basis, 'DelegatedManager')
+      ? coveringGrantorAssignments(grantorIntent, added, basis.delegation, basis.scope.scope, request.decidedAt)
+      : [],
+  );
   yield* store.recordRoleRevision(
     delegatedOnly
       ? {
@@ -754,6 +773,7 @@ export const writeRoleRevision = Effect.fn('RoleRevision.writeRoleRevision')(fun
               ? [assignment.incarnationId]
               : [],
           ),
+          grantorIncarnationIds,
         }
       : recordInput,
   );

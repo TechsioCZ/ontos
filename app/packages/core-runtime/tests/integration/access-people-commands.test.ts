@@ -690,4 +690,45 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
       }),
     ),
   );
+  suite.effect('refuses a delegated assignment once the grantor assignment that covered it has ended', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* grantorLostCover() {
+        const companyScope = legalEntityScopeId(tenant.tenantId, company);
+        const role = yield* tenant.createRole(NOTE_READ);
+        const cover = yield* tenant.newIncarnationId;
+        yield* tenant.people
+          .assignRole(tenant.owner, {
+            incarnationId: cover,
+            principalId: colleague,
+            roleId: role.roleId,
+            roleRevisionId: role.roleRevisionId,
+            scopeId: companyScope,
+          })
+          .pipe(Effect.orDie);
+        yield* tenant.peopleStore
+          .applyPeopleChange(tenant.owner, { writes: [{ _tag: 'EndAssignment', incarnationId: cover }] })
+          .pipe(Effect.orDie);
+        const now = yield* DateTime.nowAsDate;
+        const assignment = AssignmentSchema.make({
+          assignedAt: now,
+          assignedBy: owner,
+          holder: { _tag: 'Principal', principalId: teammate },
+          incarnationId: yield* tenant.newIncarnationId,
+          roleId: role.roleId,
+          roleRevisionId: role.roleRevisionId,
+          scopeId: companyScope,
+          status: 'active',
+          tenantId: tenant.tenantId,
+          validFrom: now,
+        });
+        // The grantor's cover ended before this commit, so the delegated assignment never lands.
+        const refused = yield* Effect.flip(
+          tenant.peopleStore.applyPeopleChange(tenant.owner, {
+            writes: [{ _tag: 'RecordAssignment', assignment, grantorIncarnationIds: [cover] }],
+          }),
+        );
+        expect(refused.code).toBe('access_intent_record_conflict');
+      }),
+    ),
+  );
 });

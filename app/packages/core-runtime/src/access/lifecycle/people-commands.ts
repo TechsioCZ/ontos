@@ -158,7 +158,11 @@ export const PeopleIntentWriteSchema = Schema.Union([
     membershipId: AccessMembershipIdSchema,
     status: Schema.Literals(['revoked', 'suspended']),
   }),
-  Schema.TaggedStruct('RecordAssignment', { assignment: AssignmentSchema }),
+  Schema.TaggedStruct('RecordAssignment', {
+    assignment: AssignmentSchema,
+    /** A delegated assignment's covering grantor assignments, locked and re-checked as it commits. */
+    grantorIncarnationIds: Schema.optionalKey(Schema.Array(AssignmentIncarnationIdSchema)),
+  }),
   /** An assignment only ends; the row keeps every frozen delegated limit it was written with. */
   Schema.TaggedStruct('EndAssignment', { incarnationId: AssignmentIncarnationIdSchema }),
   Schema.TaggedStruct('RecordDelegation', { delegation: DelegationSchema }),
