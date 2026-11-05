@@ -1,5 +1,32 @@
 # Kontrola převodu N1 storefrontu
 
+## C30: responzivní výběr velikostí bez duplicit — 2026-11-05
+
+Čerstvá Figma219:2778 má desktop sm/secondary/outlined pro všechny velikosti;
+39:2461 má mobil md a vybranou primary/solid se suffixem. Po upstream opravě
+duplicitních odkazů používá N1 stejné keyed LinkButton a mění pouze jejich
+veřejné scalar props přes useSyncExternalStore/matchMedia768px, podle stávajícího
+AccountView patternu. Jeden inline label odstraňuje nechtěný knihovní flex gap
+mezi velikostí a suffixem. Žádné appearance CSS ani přepis theme.
+
+Browser skutečně ověřil32↔44px při768→767→768, stejné UID70_17/20/22 a focus
+na M, následný Tab právě na S. Desktop selected není žlutý, mobil selected je
+canonical primary. Finální mobilní label je jediný textový celek;390 nepřetéká.
+Automatické testy ověřují přesný media query, změny stavu, cleanup a nezávislé
+subscribery; existující SSR/selection testy potvrzují jediný odkaz na velikost.
+490/490testů, cílený finální rerun, lint/TSRS a produkční build PASS.
+
+Omezení: SSR/první hydration snapshot má mobilní fallback; správné desktopové
+props nastoupí po hydrataci. Není tvrzen zero-flash SSR. Přesné šířky zůstávají
+komponentovou odchylkou: vydaný sm kit má font14/padding-x16 a šířky46.3/41.6/50.3,
+Figma40/34/42. Mobilní selected po opravě labelu122.8 vs Figma128. Tyto rozdíly
+nejsou maskované instance CSS a celá PDP není prohlášená za1:1 PASS. Důkazy
+n1-c30-picker-desktop a n1-c30-picker-mobile-checked jsou v.local.
+
+Nezávislé nativní ověření Stage OBJ-2026-0002 již dokončené: uložená NEW/STOREFRONT
+objednávka, právě jeden ORDER−1 a zásoba45→44; scope/trh/částky správné. Jiný
+záznam OBJ-2026-0001 je starší zrušená objednávka jiného produktu, nikoli duplicita.
+
 ## C27–C29: karty a skutečné právní články — 2026-11-05
 
 Čerstvá Figma home31:636/637 a featured33:877/34:1027 potvrzuje jednu mobilní

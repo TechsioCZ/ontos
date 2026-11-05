@@ -18,6 +18,7 @@ import { categoryTrail } from "@/ontos/catalog-navigation";
 import { priceProps } from "./price-props";
 import { ProductPurchase } from "./product-purchase";
 import { selectProductDetail } from "./product-selection";
+import { useDesktopProduct } from "./product-viewport";
 
 type Parameter = ProductDetailModel["parameters"][number];
 const emptyCategories: CatalogModel["categories"] = [];
@@ -70,6 +71,7 @@ export const ProductView = ({
   variantId?: string;
 }) => {
   const selection = selectProductDetail(product, variantId);
+  const desktop = useDesktopProduct();
   const { current, images, parameters, selectionRequired, variant } = selection;
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
@@ -170,12 +172,16 @@ export const ProductView = ({
                         as={NextLink}
                         href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
                         prefetch={false}
-                        size="md"
-                        theme={selected ? "solid" : "outlined"}
-                        variant={selected ? "primary" : "secondary"}
+                        size={desktop ? "sm" : "md"}
+                        theme={!desktop && selected ? "solid" : "outlined"}
+                        variant={!desktop && selected ? "primary" : "secondary"}
                       >
-                        {item.name}
-                        {selected && <span className="md:hidden">{` · ${d.selectedOption}`}</span>}
+                        <span>
+                          {item.name}
+                          {selected && (
+                            <span className="md:hidden">{` · ${d.selectedOption}`}</span>
+                          )}
+                        </span>
                       </LinkButton>
                     </div>
                   );
