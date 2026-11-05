@@ -1588,10 +1588,7 @@ const ROOT_GATE_JOBS = [
   'service-integration',
   NODE_ARTIFACT_BUILD_JOB,
 ] as const;
-/**
- * Every gate job; each target's artifact proofs run inside its own build shards. OntOS runs on Zerops
- * only, so the Cloudflare artifact build still runs beside the gates but no longer gates a merge.
- */
+/** Every gate job; each target's artifact proofs run inside its own build shards. */
 const GATE_JOBS = ROOT_GATE_JOBS;
 const GatedJobsSchema = Schema.Struct({
   jobs: Schema.Record(
@@ -1651,7 +1648,7 @@ it('skips the gates on main only for a commit the merge queue already proved', (
   expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
   expect(lookup).toContain('actions/runs/$GITHUB_RUN_ID');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-  for (const gate of [...ROOT_GATE_JOBS, CLOUDFLARE_ARTIFACT_BUILD_JOB]) {
+  for (const gate of ROOT_GATE_JOBS) {
     expect(jobs[gate]?.needs).toEqual(
       gate === 'service-integration' || gate === WORKSPACE_GATE_JOB
         ? [QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB]
