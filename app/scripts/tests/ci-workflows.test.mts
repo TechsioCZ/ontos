@@ -929,7 +929,7 @@ const CONFIGURED = { ZEROPS_PROJECT_ID: 'project', ZEROPS_TOKEN: 'token' } as co
 const DEDICATED = { OUTBOX_WORKER_MODE: 'dedicated' } as const;
 const HOST = { OUTBOX_WORKER_MODE: 'host' } as const;
 
-it('selects each environment deploy target from its DEPLOY_TARGET variable, Zerops when unset', () => {
+it('accepts only Zerops deployment and rejects the retired Cloudflare target in every environment', () => {
   const workflow = readTargetWorkflow();
   const { 'deploy-target': target } = workflow.jobs;
   // Stage deploys from demo/sales-crm, so main deploys nothing unless MAIN_DEPLOY_ENABLED turns it back on.
@@ -960,12 +960,6 @@ it('selects each environment deploy target from its DEPLOY_TARGET variable, Zero
     outbox_worker_mode: 'dedicated',
     target: 'zerops',
   });
-  expect(resolve({ ...CONFIGURED, ...HOST, DEPLOY_ENVIRONMENT: 'stage', DEPLOY_TARGET: 'cloudflare' })).toEqual({
-    configured: 'true',
-    environment: 'stage',
-    outbox_worker_mode: 'host',
-    target: 'cloudflare',
-  });
   expect(resolve({ ...CONFIGURED, ...DEDICATED, DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET: 'zerops' })).toEqual({
     configured: 'true',
     environment: 'production',
@@ -979,20 +973,22 @@ it('selects each environment deploy target from its DEPLOY_TARGET variable, Zero
     outbox_worker_mode: '',
     target: 'zerops',
   });
-  // Only stage has an edge deploy history and build environment; unknown targets fail closed.
-  expect(resolve({ ...CONFIGURED, ...DEDICATED, DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET: 'cloudflare' })).toBe(
-    'failed',
-  );
+  // A stale target must fail before credential checks, not finish green without a deployment.
+  for (const DEPLOY_ENVIRONMENT of ['stage', 'production']) {
+    for (const credentials of [CONFIGURED, {}]) {
+      expect(resolve({ ...credentials, ...HOST, DEPLOY_ENVIRONMENT, DEPLOY_TARGET: 'cloudflare' })).toBe('failed');
+    }
+  }
   expect(resolve({ ...CONFIGURED, ...HOST, DEPLOY_ENVIRONMENT: 'stage', DEPLOY_TARGET: 'workers' })).toBe('failed');
 });
 
 it('requires each configured environment to choose its Outbox Worker mode, independent of the deploy target', () => {
   const step = readTargetWorkflow().jobs['deploy-target'].steps.find(({ id }) => id === 'target');
   const resolve = (environment: Readonly<Record<string, string>>) => runStep(step?.run ?? 'exit 1', environment);
-  // Every mode runs beside every target: a cheap host on a Zerops preview, dedicated workers beside the Workers.
+  // Both supported Outbox Worker modes remain available on Zerops.
   for (const [DEPLOY_TARGET, OUTBOX_WORKER_MODE] of [
     ['zerops', 'host'],
-    ['cloudflare', 'dedicated'],
+    ['zerops', 'dedicated'],
   ] as const) {
     expect(resolve({ ...CONFIGURED, DEPLOY_ENVIRONMENT: 'stage', DEPLOY_TARGET, OUTBOX_WORKER_MODE })).toEqual({
       configured: 'true',

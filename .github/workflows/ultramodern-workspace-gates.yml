@@ -26,7 +26,7 @@ on:
         type: boolean
         default: false
       environment:
-        description: GitHub deployment environment to deploy. Its DEPLOY_TARGET variable selects Zerops or Cloudflare. Main deploys only while the MAIN_DEPLOY_ENABLED repository variable is 'true'.
+        description: GitHub deployment environment to deploy to Zerops. The retired Cloudflare target is rejected. Main deploys only while the MAIN_DEPLOY_ENABLED repository variable is 'true'.
         type: choice
         options:
           - stage
@@ -1204,10 +1204,9 @@ jobs:
           fi
           echo "Every gate is $expected."
 
-  # Each GitHub deployment environment chooses where its delivery units run with its DEPLOY_TARGET
-  # variable: `zerops` (also when unset) deploys the whole topology to Zerops; `cloudflare` keeps only
-  # the migrator, SpiceDB and the outbox workers on Zerops and ships the placed units as Workers in
-  # deploy-cloudflare. Its OUTBOX_WORKER_MODE variable, required and independent of the target, chooses
+  # Each GitHub deployment environment deploys to Zerops when DEPLOY_TARGET is `zerops` or unset.
+  # Reject the retired Cloudflare target rather than reporting success without deploying anything.
+  # Its OUTBOX_WORKER_MODE variable, required and independent of the target, chooses
   # how the Outbox Workers run on Zerops: `dedicated` (one service per owner, highly available) or `host`
   # (every owner in the one outbox-worker-host process, cheap). There is no default, so an environment
   # never inherits another's mode. Stage is deployed from the demo/sales-crm branch by stage-demo-deploy.yml,
@@ -1242,18 +1241,12 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
           target="${DEPLOY_TARGET:-zerops}"
-          if [[ "$target" != zerops && "$target" != cloudflare ]]; then
-            echo "::error title=Invalid deploy target::$DEPLOY_ENVIRONMENT DEPLOY_TARGET must be zerops or cloudflare, not '$target'."
+          if [[ "$target" != zerops ]]; then
+            echo "::error title=Invalid deploy target::$DEPLOY_ENVIRONMENT DEPLOY_TARGET must be zerops, not '$target'; Cloudflare Workers deployment is retired."
             exit 1
           fi
           if [[ -n "$OUTBOX_WORKER_MODE" && "$OUTBOX_WORKER_MODE" != dedicated && "$OUTBOX_WORKER_MODE" != host ]]; then
             echo "::error title=Invalid Outbox Worker mode::$DEPLOY_ENVIRONMENT OUTBOX_WORKER_MODE must be dedicated or host, not '$OUTBOX_WORKER_MODE'."
-            exit 1
-          fi
-          # The edge deploy keeps its history in stage-edge and builds from the stage build
-          # environment in topology/cloudflare-placement.json, so only stage can target Cloudflare.
-          if [[ "$target" == cloudflare && "$DEPLOY_ENVIRONMENT" != stage ]]; then
-            echo "::error title=Invalid deploy target::Only stage can target Cloudflare; set $DEPLOY_ENVIRONMENT DEPLOY_TARGET to zerops."
             exit 1
           fi
           {
@@ -1553,10 +1546,31 @@ jobs:
             echo "shell=$shell"
           } >>"$GITHUB_OUTPUT"
 
+  # Node releases still use the existing public-asset gateway. Read its origin independently
+  # of the retired Workers readiness job, including stage variables stored only in stage-edge.
+  node-asset-config:
+    name: Read the Node public-asset origin configuration
+    if: needs.deploy-target.outputs.configured == 'true' && needs.deploy-target.outputs.target == 'zerops'
+    needs: [deploy-target]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: ${{ needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
+      deployment: false
+    permissions: {}
+    outputs:
+      workers_dev_subdomain: ${{ steps.configuration.outputs.workers_dev_subdomain }}
+    steps:
+      - name: Read the retained public-asset subdomain
+        id: configuration
+        env:
+          CLOUDFLARE_WORKERS_DEV_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN }}
+        run: printf 'workers_dev_subdomain=%s\n' "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN" >> "$GITHUB_OUTPUT"
+
   node-release-plan:
     name: Plan the selected Node releases with registered provider origins
-    if: ${{ !cancelled() && needs.deploy-target.outputs.target == 'zerops' && needs.deploy-plan.result == 'success' }}
-    needs: [deploy-target, deploy-plan, edge-deploy-readiness]
+    if: ${{ !cancelled() && needs.deploy-target.outputs.target == 'zerops' && needs.deploy-plan.result == 'success' && needs.node-asset-config.result == 'success' }}
+    needs: [deploy-target, deploy-plan, node-asset-config]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -1618,7 +1632,7 @@ jobs:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-          WORKERS_DEV_SUBDOMAIN: ${{ needs.deploy-target.outputs.environment == 'stage' && needs.edge-deploy-readiness.outputs.workers_dev_subdomain || vars.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN }}
+          WORKERS_DEV_SUBDOMAIN: ${{ needs.node-asset-config.outputs.workers_dev_subdomain || vars.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN }}
         run: |
           mkdir -p "$RUNNER_TEMP/node-release-plans"
           cp "$RUNNER_TEMP/application-selection/application-release-selection.json" "$RUNNER_TEMP/node-release-plans/selection.json"
