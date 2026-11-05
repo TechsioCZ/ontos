@@ -2,19 +2,37 @@ import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 
 import { createUltramodernReleaseBuildMarker } from '@modern-js/app-tools-extensions/release-identity';
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Cause, ConfigProvider, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 
-import { generateOutboxWorkerDeployment } from '../generate-outbox-worker-deployment.mjs';
+import { generateOutboxWorkerDeployment, readOutboxWorkerHostRelease } from '../generate-outbox-worker-deployment.mjs';
 import { materializeOutboxWorker } from '../materialize-outbox-worker.mjs';
 import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
 import { DEVELOPMENT_OVERLAY_PATH } from '../topology-development-ports.mjs';
+import { defineTenantModuleEntrypoint } from '../../packages/core-runtime/src/modules/module-entrypoint.ts';
+import {
+  defineOutboxWorker,
+  extractOutboxWorkerSubscriptions,
+} from '../../packages/core-runtime/src/outbox/definition.ts';
+import {
+  combineOutboxWorkerHealth,
+  createOutboxWorkerHealth,
+  serveOutboxWorkerHealth,
+} from '../../packages/core-runtime/src/outbox/health.ts';
+import { defineOutboxWorkerEntry } from '../../packages/core-runtime/src/outbox/process.ts';
+import { OutboxRuntime } from '../../packages/core-runtime/src/outbox/runtime.ts';
+import {
+  makeOutboxWorkerComposition,
+  outboxWorkerCompositionLayer,
+} from '../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
 
 const LEDGER_PACKAGE = '@app/ledger';
 const LEDGER_PATH = 'verticals/ledger';
@@ -24,6 +42,14 @@ const WORKER_HOST_ENTRY = 'src/worker-host/main.ts';
 const WORKER_ENTRY = 'src/worker-host/entry.ts';
 const WORKER_BUNDLE = 'worker.mjs';
 const WORKER_ARTIFACT = 'worker-artifact.json';
+const WORKER_RUNTIME_ROOT = '.zerops/runtime';
+const REVIEWED_HOST_OWNER_IDS = [
+  'party-registry',
+  'commerce-customer-context',
+  'price-group-catalog',
+  'inventory',
+  'privacy',
+];
 const OWNER_MARKER_SOURCE = 'shared/ultramodern-build.ts';
 const ENV_COMMAND = '/usr/bin/env';
 const PACKAGE_MANIFEST = 'package.json';
@@ -96,6 +122,8 @@ const readWorkerOutput = (child: { readonly stdout: Readable }) =>
     return String(output);
   });
 
+const RELEASE_INTENT_PATH = 'topology/application-release-intent.json';
+
 const makeFixture = () =>
   Effect.gen(function* testEffect1() {
     const root = yield* Effect.acquireRelease(
@@ -108,6 +136,9 @@ const makeFixture = () =>
       }),
     );
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology'), { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(path.join(root, RELEASE_INTENT_PATH), JSON.stringify({ modules: [{ appId: 'ledger' }] })),
+    );
     // Runtime installs pin transitive versions to the workspace lockfile, so the fixture workspace has one.
     yield* Effect.tryPromise(() =>
       writeFile(path.join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n"),
@@ -274,7 +305,7 @@ it.live('refuses to materialize an Outbox Worker host whose entry drifted from i
           appId: OUTBOX_WORKER_HOST.id,
           packageDir: '.',
           packageName: 'app',
-          runtimeDir: path.join(root, '.zerops/runtime', OUTBOX_WORKER_HOST.id),
+          runtimeDir: path.join(root, WORKER_RUNTIME_ROOT, OUTBOX_WORKER_HOST.id),
           workspaceRoot: root,
         }),
       ),
@@ -283,7 +314,106 @@ it.live('refuses to materialize an Outbox Worker host whose entry drifted from i
   }),
 );
 
-it.live('bundles every hosted owner entry into the real Outbox Worker host artifact', () =>
+const readinessWorker = (identity: { readonly appId: string; readonly buildMarker: string }) => {
+  const moduleId = `proof.${identity.appId.replaceAll('-', '.')}`;
+  const registration = defineOutboxWorker(
+    {
+      consumerModuleKey: moduleId,
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        authorization: { kind: 'owner_local_background' },
+        entrypointKey: `${moduleId}.projector`,
+        moduleKey: moduleId,
+        role: 'worker',
+      }),
+      leaseDurationMs: 1000,
+      payloadSchema: Schema.Struct({}),
+      producerModuleKey: moduleId,
+      retryPolicy: { initialBackoffMs: 0, maxAttempts: 1, maxBackoffMs: 0, multiplier: 1 },
+      topic: `${moduleId}.changed`,
+      workerKey: `${moduleId}.projector`,
+    },
+    () => Effect.void,
+  );
+  return { ...identity, moduleId, registration, subscriptions: extractOutboxWorkerSubscriptions([registration]) };
+};
+
+const startReadinessWorker = (
+  owner: ReturnType<typeof readinessWorker>,
+  composition: ReturnType<typeof makeOutboxWorkerComposition>,
+  cycles: Ref.Ref<ReadonlySet<string>>,
+) =>
+  Effect.gen(function* startOwnerLoop() {
+    const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
+    const admitted = yield* Deferred.make<boolean>();
+    const entry = defineOutboxWorkerEntry({
+      claimOwnerPrefix: owner.appId,
+      expectedDeployment: { appId: owner.appId, buildMarker: owner.buildMarker },
+      layer: Layer.succeed(OutboxRuntime, {
+        matchMessages: () => Effect.succeed({ deliveriesCreated: 0, messagesMatched: 0 }),
+        runCycle: () =>
+          Ref.update(cycles, (current) => new Set([...current, owner.appId])).pipe(
+            Effect.as({
+              claimed: 0,
+              dead: 0,
+              deliveriesCreated: 0,
+              failed: 0,
+              messagesMatched: 0,
+              retried: 0,
+              succeeded: 0,
+            }),
+          ),
+      }).pipe(Layer.merge(outboxWorkerCompositionLayer(composition))),
+      registrations: [owner.registration],
+      subscriptions: owner.subscriptions,
+    });
+    const running = yield* entry
+      .runLoop({
+        config: { claimOwner: `${owner.appId}:proof`, maxDeliveries: 1, pollIntervalMs: 10 },
+        health: {
+          cycleFailed: health.cycleFailed.pipe(Effect.andThen(Deferred.succeed(admitted, false)), Effect.asVoid),
+          cycleSucceeded: health.cycleSucceeded.pipe(Effect.andThen(Deferred.succeed(admitted, true)), Effect.asVoid),
+        },
+      })
+      .pipe(Effect.forkChild);
+    return { admitted, health, running };
+  });
+
+/** Real Core admission and HTTP health, with controlled owner cycles instead of a database install. */
+const proveCompiledHostReadiness = (identities: readonly { readonly appId: string; readonly buildMarker: string }[]) =>
+  Effect.gen(function* compiledHostAdmissionAndReadiness() {
+    const owners = identities.map((identity) => readinessWorker(identity));
+    const composition = makeOutboxWorkerComposition(owners);
+    const cycles = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const loops = yield* Effect.all(owners.map((owner) => startReadinessWorker(owner, composition, cycles)));
+    for (const loop of loops) {
+      expect(yield* Deferred.await(loop.admitted).pipe(Effect.timeout('5 seconds'))).toBe(true);
+    }
+    const client = yield* HttpClient.HttpClient;
+    const healthy = yield* serveOutboxWorkerHealth(combineOutboxWorkerHealth(loops.map(({ health }) => health)), {
+      port: 0,
+    });
+    expect((yield* client.get(`http://${healthy.hostname}:${healthy.port}/ready`)).status).toBe(200);
+    expect(yield* Ref.get(cycles)).toEqual(new Set(identities.map(({ appId }) => appId)));
+
+    const excluded = yield* startReadinessWorker(
+      readinessWorker({ appId: 'commerce-order', buildMarker: 'unapproved-owner-build' }),
+      composition,
+      cycles,
+    );
+    expect(yield* Deferred.await(excluded.admitted).pipe(Effect.timeout('5 seconds'))).toBe(false);
+    expect((yield* Ref.get(cycles)).has('commerce-order')).toBe(false);
+    const refused = yield* serveOutboxWorkerHealth(
+      combineOutboxWorkerHealth([...loops.map(({ health }) => health), excluded.health]),
+      { port: 0 },
+    );
+    expect((yield* client.get(`http://${refused.hostname}:${refused.port}/ready`)).status).toBe(503);
+    for (const loop of [...loops, excluded]) {
+      yield* Fiber.interrupt(loop.running);
+    }
+  });
+
+it.live('bundles only reviewed hosted owners and admits their compiled markers to real readiness', () =>
   Effect.gen(function* bundlesHost() {
     const runtimeDir = yield* Effect.acquireRelease(
       Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-outbox-worker-host-bundle-'))),
@@ -303,12 +433,16 @@ it.live('bundles every hosted owner entry into the real Outbox Worker host artif
     );
     expect(artifact.serviceId).toBe(OUTBOX_WORKER_HOST.id);
     expect(runtimePackage.name).toBe('outbox-worker-host-runtime');
-    for (const owner of ['party-registry', 'commerce-customer-context', 'price-group-catalog']) {
+    for (const owner of REVIEWED_HOST_OWNER_IDS) {
       expect(artifact.sourceInputs).toContain(`verticals/${owner}/src/worker-host/entry.ts`);
       expect(artifact.sourceInputs).not.toContain(`verticals/${owner}/src/worker-host/main.ts`);
     }
+    expect(artifact.ownerBuildIdentities.map(({ appId }) => appId)).toEqual(REVIEWED_HOST_OWNER_IDS);
+    expect(artifact.sourceInputs.some((source) => source.startsWith('verticals/commerce-order/'))).toBe(false);
+    expect(artifact.sourceInputs).toContain(RELEASE_INTENT_PATH);
     expect(artifact.sourceInputs).toContain(OUTBOX_WORKER_HOST.entry);
-  }),
+    yield* proveCompiledHostReadiness(artifact.ownerBuildIdentities);
+  }).pipe(Effect.provide(FetchHttpClient.layer), Effect.provide(NodeServices.layer)),
 );
 
 const RELEASE_FIXTURE_OWNERS = [
@@ -433,12 +567,24 @@ const makeReleaseMarkerFixture = (sourceRevision = 'workspace') =>
     const generated = yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, deployments));
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'scripts'), { recursive: true }));
     yield* Effect.tryPromise(() => writeFile(path.join(root, OUTBOX_WORKER_HOST.entry), generated.hostEntry ?? ''));
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, RELEASE_INTENT_PATH),
+        JSON.stringify({ modules: RELEASE_FIXTURE_OWNERS.map(({ id }) => ({ appId: id })) }),
+      ),
+    );
     return root;
   });
 
-const compileReleaseFixture = (root: string, appId: string, sourceRevision: string, injectSourceRevision = true) =>
+const compileReleaseFixture = (
+  root: string,
+  appId: string,
+  sourceRevision: string,
+  injectSourceRevision = true,
+  intentFile = RELEASE_INTENT_PATH,
+) =>
   Effect.gen(function* compileReleaseFixtureEffect() {
-    const runtimeDir = path.join(root, '.zerops/runtime', sourceRevision, appId);
+    const runtimeDir = path.join(root, WORKER_RUNTIME_ROOT, sourceRevision, appId);
     const options = {
       appId,
       packageDir: appId === OUTBOX_WORKER_HOST.id ? '.' : `verticals/${appId}`,
@@ -454,6 +600,7 @@ const compileReleaseFixture = (root: string, appId: string, sourceRevision: stri
         [
           ...(injectSourceRevision ? [] : ['-u', 'ULTRAMODERN_SOURCE_REVISION']),
           'ULTRAMODERN_BUILD_MARKER=untrusted-build-environment-marker',
+          `COMPOSITION_INTENT_FILE=${intentFile}`,
           ...(injectSourceRevision ? [`ULTRAMODERN_SOURCE_REVISION=${sourceRevision}`] : []),
           process.execPath,
           '--input-type=module',
@@ -537,6 +684,56 @@ it.live('retains the compiled owner revision in an exported-source artifact with
     const root = yield* makeReleaseMarkerFixture(sourceRevision);
     const identities = yield* compileReleaseFixture(root, OUTBOX_WORKER_HOST.id, sourceRevision, false);
     expect(identities.map((identity) => identity.sourceRevision)).toEqual([sourceRevision, sourceRevision]);
+  }),
+);
+
+it.live('compiles a custom reviewed intent without changing the generated host inventory or dedicated workers', () =>
+  Effect.gen(function* customHostMembership() {
+    const root = yield* makeReleaseMarkerFixture();
+    const generated = yield* Effect.tryPromise(() => readFile(path.join(root, OUTBOX_WORKER_HOST.entry), 'utf-8'));
+    const customIntent = 'topology/custom-release.json';
+    yield* Effect.tryPromise(() =>
+      writeFile(path.join(root, customIntent), JSON.stringify({ modules: [{ appId: 'balance' }] })),
+    );
+    const revision = 'b'.repeat(40);
+    const combined = yield* compileReleaseFixture(root, OUTBOX_WORKER_HOST.id, revision, true, customIntent);
+    expect(combined.map(({ unitId }) => unitId)).toEqual(['app/balance']);
+    const artifact = decodeWorkerArtifact(
+      yield* Effect.tryPromise(() =>
+        readFile(path.join(root, WORKER_RUNTIME_ROOT, revision, OUTBOX_WORKER_HOST.id, WORKER_ARTIFACT), 'utf-8'),
+      ),
+    );
+    expect(artifact.sourceInputs).toContain(customIntent);
+    expect(artifact.sourceInputs.some((source) => source.startsWith(`${LEDGER_PATH}/`))).toBe(false);
+    expect(yield* Effect.tryPromise(() => readFile(path.join(root, OUTBOX_WORKER_HOST.entry), 'utf-8'))).toBe(
+      generated,
+    );
+    const dedicated = yield* compileReleaseFixture(root, 'ledger', revision, true, customIntent);
+    expect(dedicated.map(({ unitId }) => unitId)).toEqual(['app/ledger']);
+  }),
+);
+
+it.live('rejects invalid reviewed host membership and intent paths instead of falling back to inventory', () =>
+  Effect.gen(function* invalidHostMembership() {
+    const root = yield* makeReleaseMarkerFixture();
+    const readRelease = (intentFile: string) =>
+      readOutboxWorkerHostRelease(root).pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ COMPOSITION_INTENT_FILE: intentFile }))),
+        Effect.provide(NodeServices.layer),
+      );
+    for (const modules of [
+      [{ appId: 'ledger' }, { appId: 'ledger' }],
+      [{ appId: 'unknown' }],
+      [{ appId: 'shell-super-app' }],
+    ]) {
+      yield* Effect.tryPromise(() => writeFile(path.join(root, RELEASE_INTENT_PATH), JSON.stringify({ modules })));
+      expect(String(yield* readRelease(RELEASE_INTENT_PATH).pipe(Effect.flip))).toContain('duplicate or unknown');
+    }
+    const linkedIntent = 'topology/linked-intent.json';
+    yield* Effect.tryPromise(() => symlink(path.join(root, RELEASE_INTENT_PATH), path.join(root, linkedIntent)));
+    for (const intentFile of ['../outside.json', path.join(root, RELEASE_INTENT_PATH), linkedIntent, 'missing.json']) {
+      expect(Exit.isFailure(yield* readRelease(intentFile).pipe(Effect.exit))).toBe(true);
+    }
   }),
 );
 

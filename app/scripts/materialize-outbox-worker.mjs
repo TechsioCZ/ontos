@@ -5,11 +5,15 @@ import {
   resolveUltramodernReleaseIdentity,
   resolveUltramodernSourceRevision,
 } from '@modern-js/app-tools-extensions/release-identity';
-import { Effect, FileSystem, ManagedRuntime, Option, Path, Schema } from 'effect';
+import { Array as EffectArray, Effect, FileSystem, ManagedRuntime, Option, Order, Path, Schema } from 'effect';
 import { build, transform } from 'esbuild';
 import { parseSync } from 'oxc-parser';
 
-import { readOutboxWorkerHost, renderOutboxWorkerHostEntry } from './generate-outbox-worker-deployment.mjs';
+import {
+  readOutboxWorkerHost,
+  readOutboxWorkerHostRelease,
+  renderOutboxWorkerHostEntry,
+} from './generate-outbox-worker-deployment.mjs';
 import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
@@ -46,6 +50,14 @@ const PackageManifestSchema = Schema.fromJsonString(
 const MetafileInputsSchema = Schema.Struct({
   inputs: Schema.Record(Schema.String, Schema.Unknown),
 });
+
+/**
+ * @param {Record<string, unknown>} inputs Compiler inputs.
+ * @param {string | null} intentPath Reviewed host projection input, absent for dedicated workers.
+ * @returns {string[]} Exact compiler and projection input paths.
+ */
+const workerSourceInputs = (inputs, intentPath) =>
+  EffectArray.sort([...new Set([...Object.keys(inputs), ...(intentPath === null ? [] : [intentPath])])], Order.String);
 
 const WORKER_ENTRY = OUTBOX_WORKER_BUNDLE;
 const CORE_WORKER_ENTRYPOINT = 'packages/core-runtime/src/outbox/worker-entrypoint.ts';
@@ -189,6 +201,24 @@ const makeOwnerBuildIdentityPlugin = ({ compiledMarkers, markers, path }) => ({
 });
 
 /**
+ * Compile only the reviewed host entries without rewriting the source-owned delivery inventory.
+ * @param {{ entryPoint: string, hostEntrySource: string | null }} delivery Resolved worker.
+ * @param {string} workspaceRoot Workspace root.
+ * @param {import('effect/Path').Path} path Platform paths.
+ * @returns {import('esbuild').Plugin} Reviewed membership projection.
+ */
+const makeHostReleaseEntryPlugin = (delivery, workspaceRoot, path) => ({
+  name: 'worker-host-reviewed-membership',
+  setup(builder) {
+    builder.onLoad({ filter: esbuildFilter(/[/\\]outbox-worker-host\.generated\.mts$/u) }, (args) =>
+      delivery.hostEntrySource === null || args.path !== path.resolve(workspaceRoot, delivery.entryPoint)
+        ? null
+        : { contents: delivery.hostEntrySource, loader: 'ts', resolveDir: workspaceRoot },
+    );
+  },
+});
+
+/**
  * @param {{
  *   packages: Map<string, { manifest: Schema.Schema.Type<typeof PackageManifestSchema> }>,
  *   path: import('effect/Path').Path,
@@ -318,7 +348,17 @@ const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRo
           failure('Outbox Worker host entry drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
         );
       }
-      return { entryPoint: host.entry, owners: host.owners, serviceId: host.id };
+      const release = yield* readOutboxWorkerHostRelease(workspaceRoot);
+      if (release.host === undefined || release.host.owners.length === 0) {
+        return yield* Effect.fail(failure('The reviewed release has no Outbox Worker host owners'));
+      }
+      return {
+        entryPoint: host.entry,
+        hostEntrySource: renderOutboxWorkerHostEntry(release.host),
+        intentPath: release.intentPath,
+        owners: release.host.owners,
+        serviceId: host.id,
+      };
     }
     const topologySource = yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
@@ -332,7 +372,13 @@ const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRo
     if (delivery === undefined) {
       return yield* Effect.fail(failure(`${appId} has no generated Outbox Worker host`));
     }
-    return { entryPoint: path.join(packageDir, delivery.entry), owners: [delivery], serviceId: delivery.id };
+    return {
+      entryPoint: path.join(packageDir, delivery.entry),
+      hostEntrySource: null,
+      intentPath: null,
+      owners: [delivery],
+      serviceId: delivery.id,
+    };
   });
 
 /**
@@ -443,6 +489,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
             outfile: path.join(runtimeDir, WORKER_ENTRY),
             platform: 'node',
             plugins: [
+              makeHostReleaseEntryPlugin(delivery, workspaceRoot, path),
               makeOwnerBuildIdentityPlugin({ compiledMarkers, markers, path }),
               makeProductionDependenciesPlugin({
                 packages,
@@ -494,14 +541,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     const artifactAppId = yield* Schema.decodeUnknownEffect(AppIdSchema)(appId);
     const artifactServiceId = yield* Schema.decodeUnknownEffect(ServiceIdSchema)(delivery.serviceId);
     const { inputs: sourceInputMetadata } = yield* Schema.decodeUnknownEffect(MetafileInputsSchema)(metafile);
-    /** @type {string[]} */
-    const sourceInputs = [];
-    for (const sourceInput in sourceInputMetadata) {
-      if (Object.hasOwn(sourceInputMetadata, sourceInput)) {
-        sourceInputs.push(sourceInput);
-      }
-    }
-    sourceInputs.sort();
+    const sourceInputs = workerSourceInputs(sourceInputMetadata, delivery.intentPath);
     const artifactSource = yield* Schema.encodeEffect(WorkerArtifactSchema)({
       appId: artifactAppId,
       entry: WORKER_ENTRY,

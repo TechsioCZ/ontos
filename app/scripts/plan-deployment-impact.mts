@@ -28,6 +28,7 @@ import type {
   AuthorizationReadinessEvidence,
 } from './check-authorization-readiness.mts';
 import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
+import { readOutboxWorkerReleaseMembership } from './generate-outbox-worker-deployment.mjs';
 import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
@@ -1511,6 +1512,31 @@ const validateWorkerStageSetups = (
 };
 
 /**
+ * The combined host recompiles every owner at this source revision. Their provider artifacts must
+ * be fresh too, or complete release selection would retain markers the host no longer runs.
+ * Both Node and Cloudflare selection consume this build impact, not only the worker phase list.
+ */
+const expandHostedWorkerBuildImpact = (
+  workers: readonly { readonly ownerId: string }[],
+  impacted: Set<string>,
+  mode: OutboxWorkerMode,
+  reconcileWorkers: boolean,
+): void => {
+  if (mode === 'host' && (reconcileWorkers || workers.some((worker) => impacted.has(worker.ownerId)))) {
+    for (const worker of workers) {
+      impacted.add(worker.ownerId);
+    }
+  }
+};
+
+const reconcileWorkerBuildInput = (
+  reconcileWorkers: boolean,
+  mode: OutboxWorkerMode,
+  changedPaths: readonly string[],
+  releaseIntentFile: string,
+): boolean => reconcileWorkers || (mode === 'host' && changedPaths.includes(normalizeChangedPath(releaseIntentFile)));
+
+/**
  * Each impacted owner's dedicated worker in the `dedicated` mode; in the `host` mode, the one host once any
  * owner is impacted. Reconciling a mode switch deploys every worker of the mode, since the other mode's
  * runs left them stopped or on stale artifacts.
@@ -1637,9 +1663,19 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         ? migrationTrigger
         : migrationPlan.owners.some((owner) => owner.verify || (owner.migrate && owner.pendingMigrations.length > 0));
 
-    const selectedUnits = orderedUnits.filter((unit) => impacted.has(unit.id));
     const outboxWorkerMode = options.outboxWorkerMode ?? 'dedicated';
-    const workerPhases = planWorkerPhases(workers, impacted, outboxWorkerMode, options.reconcileWorkers ?? false);
+    const release = yield* readOutboxWorkerReleaseMembership(rootDirectory);
+    const members = new Set(release.moduleAppIds);
+    const releaseWorkers = workers.filter(({ ownerId }) => members.has(ownerId));
+    const reconcileWorkers = reconcileWorkerBuildInput(
+      options.reconcileWorkers ?? false,
+      outboxWorkerMode,
+      changedPaths,
+      release.intentPath,
+    );
+    expandHostedWorkerBuildImpact(workers, impacted, outboxWorkerMode, reconcileWorkers);
+    const selectedUnits = orderedUnits.filter((unit) => impacted.has(unit.id));
+    const workerPhases = planWorkerPhases(releaseWorkers, impacted, outboxWorkerMode, reconcileWorkers);
     const phases: DeploymentPhase[] = [];
     if (migrator) {
       phases.push(INFRASTRUCTURE_PHASES.migrator);

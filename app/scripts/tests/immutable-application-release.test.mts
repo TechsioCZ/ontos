@@ -12,6 +12,7 @@ import {
 } from '@modern-js/app-tools-extensions/release-envelope';
 import type { ReleaseEnvelopeKind } from '@modern-js/app-tools-extensions/release-envelope';
 import { MICROVERTICAL_RELEASE_ENVELOPE_PATH } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
+import { createUltramodernReleaseBuildMarker } from '@modern-js/app-tools-extensions/release-identity';
 import {
   Array as EffectArray,
   ConfigProvider,
@@ -34,6 +35,7 @@ import {
   ImmutableApplicationReleaseError,
   ImmutableApplicationReleaseReceiptSchema,
   ImmutableNodeReleasePlanSchema,
+  ImmutableNodeReleaseReceiptSchema,
   deriveImmutableNodeReleasePlan,
   immutableNodeBuildEnvironment,
   makeImmutableNodeReleasePublicationCandidate,
@@ -53,9 +55,9 @@ import {
   validateImmutableApplicationReleaseArtifacts,
 } from '../immutable-application-release.mts';
 import type {
-  ImmutableApplicationReleaseReceipt,
   ImmutableNodeAssetReceipt,
   ImmutableNodeReleasePlan,
+  ImmutableNodeReleaseReceipt,
   ReleaseFile,
 } from '../immutable-application-release.mts';
 import {
@@ -91,8 +93,11 @@ import { OpsShell, OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
 import { releaseUiFor } from './release-envelope-ui.fixture.mts';
+import { planDeploymentImpact } from '../plan-deployment-impact.mts';
+import { outboxWorkerHostDelivery } from '../outbox-worker-delivery.mjs';
 
 const SHELL_RUNTIME_FILE = '.well-known/ontos-shell-runtime.json';
+const NODE_BUILD_MARKER_FILE = 'ultramodern-build.json';
 const PACKAGE_FILE = 'package.json';
 const WORKERS_SUBDOMAIN_PATH = '/workers/subdomain';
 const WRANGLER_VERSION_COMMAND = 'exec wrangler --version';
@@ -103,6 +108,7 @@ const PUBLIC_ACCESS_EVENT = 'public-access';
 const FEDERATION_ARTIFACT_RUNTIME = 'module-federation-manifest';
 const APP_ID = 'party-registry';
 const SHELL_APP_ID = 'shell-super-app';
+const UNSELECTED_HOST_OWNER = 'commerce-order';
 const GIT_COMMAND = 'git';
 const TRUSTED_GIT_DIRECTORY = '/trusted/repository';
 const WORKERS_SUBDOMAIN = 'ontos-test';
@@ -364,50 +370,6 @@ const selectionFor = (
     baseline,
   );
 
-const baselineFor = (receipts: readonly ImmutableApplicationReleaseReceipt[]) =>
-  Effect.gen(function* receiptBaseline() {
-    const plan = yield* planFor(SHELL_APP_ID);
-    const modules = [];
-    for (const receipt of receipts) {
-      const { assets } = receiptInventory(receipt.plan);
-      const contract = assets.find(({ path }) => path === CONTRACT_PATH);
-      const federationManifest = assets.find(({ path }) => path === FEDERATION_MANIFEST_PATH);
-      if (contract === undefined || federationManifest === undefined) {
-        return yield* Effect.die('Expected actual fixture artifact bytes');
-      }
-      modules.push({
-        appId: receipt.plan.appId,
-        backend: receipt.backend,
-        contract: { bytes: contract.bytes, url: receipt.artifacts.contract.url },
-        federationManifest: { bytes: federationManifest.bytes, url: receipt.artifacts.federationManifest?.url ?? '' },
-      });
-    }
-    return yield* deriveActiveApplicationCompositionSnapshot({
-      environment: 'stage',
-      modules,
-      observedAt: yield* DateTime.now,
-      shell: {
-        federationManifest: {
-          bytes: json({
-            exposes: [],
-            name: 'shellSuperApp',
-            shared: governedSharedSingletonPackages.map((name) => ({
-              name,
-              requiredVersion: '1.0.0',
-              singleton: true,
-            })),
-          }),
-          url: `${plan.assetsOrigin}mf-manifest.json`,
-        },
-        runtimeContract: {
-          bytes: json(createShellRuntimeContract(plan.buildMarker)),
-          url: `${plan.assetsOrigin}.well-known/ontos-shell-runtime.json`,
-        },
-      },
-      validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
-    });
-  });
-
 const shellPublicFiles = (plan: Pick<ImmutableNodeReleasePlan, 'assetsOrigin' | 'buildMarker'>) => [
   file(SHELL_RUNTIME_FILE, json(createShellRuntimeContract(plan.buildMarker))),
   file(
@@ -432,6 +394,57 @@ const shellPublicFiles = (plan: Pick<ImmutableNodeReleasePlan, 'assetsOrigin' | 
   file(PAGE_JS_PATH),
   file(PAGE_CSS_PATH),
 ];
+
+const baselineFor = (
+  receipts: readonly {
+    readonly artifacts: {
+      readonly contract?: { readonly url: string };
+      readonly federationManifest?: { readonly url: string };
+    };
+    readonly backend: typeof ApplicationCompositionBackendSchema.Type;
+    readonly plan: Parameters<typeof receiptInventory>[0];
+  }[],
+) =>
+  Effect.gen(function* receiptBaseline() {
+    const plan = yield* planFor(SHELL_APP_ID);
+    const shellAssets = shellPublicFiles(plan);
+    const shellManifest = shellAssets.find(({ path }) => path === FEDERATION_MANIFEST_PATH);
+    const shellRuntime = shellAssets.find(({ path }) => path === SHELL_RUNTIME_FILE);
+    if (shellManifest === undefined || shellRuntime === undefined) {
+      return yield* Effect.die('Expected actual fixture Shell artifact bytes');
+    }
+    const modules = [];
+    for (const receipt of receipts) {
+      const { assets } = receiptInventory(receipt.plan);
+      const contract = assets.find(({ path }) => path === CONTRACT_PATH);
+      const federationManifest = assets.find(({ path }) => path === FEDERATION_MANIFEST_PATH);
+      if (contract === undefined || federationManifest === undefined || receipt.artifacts.contract === undefined) {
+        return yield* Effect.die('Expected actual fixture artifact bytes');
+      }
+      modules.push({
+        appId: receipt.plan.appId,
+        backend: receipt.backend,
+        contract: { bytes: contract.bytes, url: receipt.artifacts.contract.url },
+        federationManifest: { bytes: federationManifest.bytes, url: receipt.artifacts.federationManifest?.url ?? '' },
+      });
+    }
+    return yield* deriveActiveApplicationCompositionSnapshot({
+      environment: 'stage',
+      modules,
+      observedAt: yield* DateTime.now,
+      shell: {
+        federationManifest: {
+          bytes: shellManifest.bytes,
+          url: `${plan.assetsOrigin}mf-manifest.json`,
+        },
+        runtimeContract: {
+          bytes: shellRuntime.bytes,
+          url: `${plan.assetsOrigin}.well-known/ontos-shell-runtime.json`,
+        },
+      },
+      validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
+    });
+  });
 
 const shellReceiptFor = (identity: { readonly buildMarker: string; readonly sourceRevision: string }) =>
   Effect.gen(function* freshShellReceipt() {
@@ -2770,9 +2783,9 @@ it.effect('requires one backend provider version serving every request before is
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-const nodePlanFor = (id = APP_ID) =>
+const nodePlanFor = (id = APP_ID, identity: { readonly buildMarker?: string; readonly sourceRevision?: string } = {}) =>
   Effect.gen(function* controlledNodePlan() {
-    const placement = yield* planFor(id);
+    const placement = yield* planFor(id, identity);
     return yield* Schema.decodeUnknownEffect(ImmutableNodeReleasePlanSchema)({
       appId: placement.appId,
       assetsOrigin: placement.assetsOrigin,
@@ -2789,7 +2802,7 @@ const nodePlanFor = (id = APP_ID) =>
 
 const nodeAssetsFor = (plan: ImmutableNodeReleasePlan) => {
   const build = file(
-    'ultramodern-build.json',
+    NODE_BUILD_MARKER_FILE,
     json({
       deliveryUnit: {
         appId: plan.appId,
@@ -2801,6 +2814,229 @@ const nodeAssetsFor = (plan: ImmutableNodeReleasePlan) => {
   );
   return [...receiptInventory(plan).assets, build];
 };
+
+const zeropsReleaseInputs = Effect.gen(function* currentZeropsReleaseInputs() {
+  const fs = yield* FileSystem.FileSystem;
+  const rootDirectory = nodePath.resolve(import.meta.dirname, '../..');
+  const unitSchema = Schema.Struct({
+    cloudflare: Schema.Struct({ workerName: Schema.String }),
+    deliveryUnit: Schema.Struct({
+      buildMarker: Schema.String,
+      unitId: Schema.String.pipe(Schema.brand('UnitId')),
+    }),
+    id: Schema.String,
+    package: Schema.String,
+    path: Schema.String,
+  });
+  const topology = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Schema.Struct({ shell: unitSchema, verticals: Schema.Array(unitSchema) })),
+  )(yield* fs.readFileString(nodePath.join(rootDirectory, 'topology/reference-topology.json')));
+  const intent = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ApplicationReleaseIntentSchema))(
+    yield* fs.readFileString(nodePath.join(rootDirectory, 'topology/application-release-intent.json')),
+  );
+  const units = [topology.shell, ...topology.verticals];
+  const available = units.map((entry) => ({
+    id: entry.id,
+    packageName: entry.package,
+    path: entry.path,
+    workerName: entry.cloudflare.workerName,
+  }));
+  const host = yield* outboxWorkerHostDelivery(rootDirectory, topology.verticals);
+  const assetsFor = (id: string, revision: string) =>
+    Effect.gen(function* sourceBoundNodeAssets() {
+      const owner = units.find((entry) => entry.id === id);
+      if (owner === undefined) {
+        return yield* Effect.die('Missing topology owner in release test');
+      }
+      const plan = yield* nodePlanFor(id, {
+        buildMarker: createUltramodernReleaseBuildMarker({
+          generationBuildMarker: owner.deliveryUnit.buildMarker,
+          sourceRevision: revision,
+          unitId: owner.deliveryUnit.unitId,
+        }),
+        sourceRevision: revision,
+      });
+      const artifacts = yield* validateImmutableNodePublicArtifacts(
+        plan,
+        id === SHELL_APP_ID ? shellPublicFiles(plan) : nodeAssetsFor(plan),
+      );
+      const receipt: ImmutableNodeAssetReceipt = {
+        artifacts,
+        assetsVersionId: ASSETS_VERSION_ID,
+        plan,
+        stage: PUBLIC_ASSET_STAGE,
+      };
+      return receipt;
+    });
+  return {
+    assetsFor,
+    available,
+    hostedOwnerIds: host?.owners.map(({ ownerId }) => ownerId) ?? [],
+    intent,
+    rootDirectory,
+  };
+});
+
+// Scripted receipt evidence exercises candidate identity checks, not a live provider deployment.
+const scriptedNodeReceipt = (assets: ImmutableNodeAssetReceipt) =>
+  Schema.decodeUnknownEffect(ImmutableNodeReleaseReceiptSchema)({
+    ...assets,
+    backendMarker: {
+      sha256: 'e'.repeat(64),
+      url: new URL(NODE_BUILD_MARKER_FILE, assets.plan.backend.baseUrl).href,
+    },
+    nativeVersion: {
+      id: 'V'.repeat(22),
+      projectId: assets.plan.projectId,
+      sequence: 1,
+      serviceStackId: assets.plan.serviceId,
+      source: 'CLI',
+      status: 'ACTIVE',
+    },
+    sourceEvidence: { kind: 'witnessed-clean-git-push', sourceRevision: assets.plan.sourceRevision },
+    stage: 'node-backend-deployed',
+  });
+
+for (const outboxWorkerMode of ['host', 'dedicated'] as const) {
+  it.effect(
+    `builds the first full Zerops ${outboxWorkerMode} selection and complete candidate from current topology`,
+    () =>
+      Effect.gen(function* firstCompleteZeropsRelease() {
+        const { assetsFor, available, hostedOwnerIds, intent, rootDirectory } = yield* zeropsReleaseInputs;
+        const plan = yield* planDeploymentImpact({ headRevision: SOURCE_REVISION, outboxWorkerMode, rootDirectory });
+        expect(plan.comparison.mode).toBe('full');
+        const selection = yield* selectApplicationReleaseUnits(
+          intent,
+          available,
+          plan.phases.filter(({ kind }) => kind === 'provider' || kind === 'shell').map(({ id }) => ({ id })),
+          undefined,
+          'zerops',
+        );
+        expect(selection.complete.map(({ id }) => id)).toEqual(intent.modules.map(({ appId }) => appId));
+        expect(selection.fresh).toEqual(selection.complete);
+        expect(selection.retained).toEqual([]);
+        expect(selection.removed).toEqual([]);
+        expect(selection.shell.mode).toBe('fresh');
+        expect(hostedOwnerIds).toContain(UNSELECTED_HOST_OWNER);
+        expect(plan.phases.some(({ id }) => id === UNSELECTED_HOST_OWNER)).toBe(true);
+        const reviewedHostedOwners = hostedOwnerIds.filter((id) => intent.modules.some(({ appId }) => appId === id));
+        expect(plan.units.workers).toEqual(
+          outboxWorkerMode === 'host' ? ['outbox-worker-host'] : reviewedHostedOwners.map((id) => `${id}-worker`),
+        );
+        expect(plan.units.providers).not.toContain(`${UNSELECTED_HOST_OWNER}-worker`);
+        expect(plan.phases.some(({ id }) => id === `${UNSELECTED_HOST_OWNER}-worker`)).toBe(false);
+        for (const parked of [UNSELECTED_HOST_OWNER, 'commerce-cart', 'availability']) {
+          expect(selection.complete.some(({ id }) => id === parked)).toBe(false);
+          expect(selection.fresh.some(({ id }) => id === parked)).toBe(false);
+          expect(selection.retained.some(({ id }) => id === parked)).toBe(false);
+        }
+        const freshAssets = yield* Effect.all(selection.fresh.map(({ id }) => assetsFor(id, SOURCE_REVISION)));
+        const shell = yield* assetsFor(SHELL_APP_ID, SOURCE_REVISION);
+        const input = { currentSourceRevision: SOURCE_REVISION, intent, selection };
+        const preflight = yield* makeImmutableNodeReleasePublicationCandidate({
+          ...input,
+          freshAssets,
+          phase: 'preflight',
+          receipts: [],
+          shell,
+        });
+        const candidate = yield* makeImmutableNodeReleasePublicationCandidate({
+          ...input,
+          freshAssets: [],
+          phase: 'deployed',
+          receipts: yield* Effect.all(freshAssets.map((assets) => scriptedNodeReceipt(assets))),
+          shell: yield* scriptedNodeReceipt(shell),
+        });
+        expect(candidate).toEqual(preflight);
+        expect(candidate.modules.map(({ appId }) => appId)).toEqual(selection.complete.map(({ id }) => id));
+        expect(candidate.modules.some(({ appId }) => appId === UNSELECTED_HOST_OWNER)).toBe(false);
+        expect(candidate.modules.map(({ deployment }) => deployment.buildMarker)).toEqual(
+          freshAssets.map(({ plan: entry }) => entry.buildMarker),
+        );
+        expect(candidate.baseline).toEqual({ retainedModuleAppIds: [], revision: null, shellMode: 'fresh' });
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(`keeps Zerops ${outboxWorkerMode} candidate markers coherent when only hosted owner A changed`, () =>
+    Effect.gen(function* selectiveHostedOwnerCandidate() {
+      const { assetsFor, available, hostedOwnerIds, intent, rootDirectory } = yield* zeropsReleaseInputs;
+      const ids = intent.modules.map(({ appId }) => appId);
+      const oldAssets = yield* Effect.all(ids.map((id) => assetsFor(id, SOURCE_REVISION)));
+      const oldReceipts = yield* Effect.all(oldAssets.map((assets) => scriptedNodeReceipt(assets)));
+      const approvedBaseline = yield* baselineFor(
+        oldReceipts.map((receipt) => ({ ...receipt, backend: receipt.plan.backend })),
+      );
+      const revision = 'b'.repeat(40);
+      const plan = yield* planDeploymentImpact({
+        changedPaths: ['verticals/inventory/src/workers/execute-inventory-reservation-release.worker.ts'],
+        headRevision: revision,
+        outboxWorkerMode,
+        rootDirectory,
+      });
+      const selection = yield* selectApplicationReleaseUnits(
+        intent,
+        available,
+        plan.phases.filter(({ kind }) => kind === 'provider' || kind === 'shell').map(({ id }) => ({ id })),
+        approvedBaseline,
+        'zerops',
+      );
+      const freshIds = outboxWorkerMode === 'host' ? ids.filter((id) => hostedOwnerIds.includes(id)) : ['inventory'];
+      expect(selection.complete.map(({ id }) => id)).toEqual(ids);
+      expect(selection.fresh.map(({ id }) => id)).toEqual(freshIds);
+      expect(selection.retained.map(({ id }) => id)).toEqual(ids.filter((id) => !freshIds.includes(id)));
+      expect(selection.shell.mode).toBe('retained');
+      expect(selection.complete.some(({ id }) => id === UNSELECTED_HOST_OWNER)).toBe(false);
+      const receipts: ImmutableNodeReleaseReceipt[] = [];
+      for (const old of oldReceipts) {
+        receipts.push(
+          freshIds.includes(old.plan.appId)
+            ? yield* scriptedNodeReceipt(yield* assetsFor(old.plan.appId, revision))
+            : old,
+        );
+      }
+      const shellPlan = yield* nodePlanFor(SHELL_APP_ID);
+      const shell = yield* scriptedNodeReceipt({
+        artifacts: yield* validateImmutableNodePublicArtifacts(shellPlan, shellPublicFiles(shellPlan)),
+        assetsVersionId: ASSETS_VERSION_ID,
+        plan: shellPlan,
+        stage: PUBLIC_ASSET_STAGE,
+      });
+      const input = {
+        approvedBaseline,
+        currentSourceRevision: revision,
+        freshAssets: [],
+        intent,
+        phase: 'deployed' as const,
+        receipts,
+        selection,
+        shell,
+      };
+      const candidate = yield* makeImmutableNodeReleasePublicationCandidate(input);
+      expect(candidate.modules.map(({ deployment }) => deployment.buildMarker)).toEqual(
+        receipts.map(({ plan: entry }) => entry.buildMarker),
+      );
+      expect(candidate.baseline.retainedModuleAppIds).toEqual(selection.retained.map(({ id }) => id));
+      for (const [index, receipt] of receipts.entries()) {
+        expect(receipt.plan.sourceRevision).toBe(freshIds.includes(receipt.plan.appId) ? revision : SOURCE_REVISION);
+        expect(receipt.plan.buildMarker === oldReceipts[index]?.plan.buildMarker).toBe(
+          !freshIds.includes(receipt.plan.appId),
+        );
+      }
+      if (outboxWorkerMode === 'host') {
+        const oldB = oldReceipts.find(({ plan: entry }) => entry.appId === APP_ID);
+        if (oldB === undefined) {
+          return yield* Effect.die('Expected the original hosted owner B receipt');
+        }
+        const staleB = yield* makeImmutableNodeReleasePublicationCandidate({
+          ...input,
+          receipts: receipts.map((receipt) => (receipt.plan.appId === APP_ID ? oldB : receipt)),
+        }).pipe(Effect.flip);
+        expect(staleB.message).toBe('fresh Node slot has the wrong original source or evidence stage');
+      }
+      return yield* Effect.void;
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
 
 const writeNodeEnvelope = Effect.fn('test.writeNodeEnvelope')(function* writeNodeEnvelopeEffect(
   output: string,
@@ -3073,7 +3309,7 @@ it.effect('verifies Node Shell output using the actual SDK Shell envelope kind a
       setup: SHELL_APP_ID,
       workersDevSubdomain: WORKERS_SUBDOMAIN,
     }).pipe(Effect.provide(shell));
-    const marker = nodeAssetsFor(plan).find(({ path }) => path === 'ultramodern-build.json');
+    const marker = nodeAssetsFor(plan).find(({ path }) => path === NODE_BUILD_MARKER_FILE);
     if (marker === undefined) {
       return yield* Effect.die('Controlled Shell marker is required');
     }
