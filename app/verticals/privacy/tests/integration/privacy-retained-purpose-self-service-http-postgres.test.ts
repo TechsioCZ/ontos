@@ -1557,8 +1557,8 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   });
   const partyPayload = yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)({
     candidate: {
-      displayName: `Retained Consent ${suffix}`,
       evidenceRefs: [],
+      firstName: `Retained Consent ${suffix}`,
       officialIdentifiers: [],
       partyType: 'PERSON',
       provenance: { method: 'DIRECT_ENTRY', source: 'stabilization-1261-native-account' },
@@ -1610,7 +1610,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     expect(detail.candidateParties).toHaveLength(0);
     expect(detail.candidate.subjectEvidence).toEqual(partyPayload.candidate.subjectEvidence);
     expect(detail.candidate.partyType).toBe('PERSON');
-    expect(detail.candidate.displayName).toEqual(partyPayload.candidate.displayName);
+    expect(detail.candidate.firstName).toEqual(partyPayload.candidate.firstName);
     const reviewCredential = yield* issueManagerSessionGateway({
       audience: 'party-registry',
       compositionRevision: admitted.composition.revision,

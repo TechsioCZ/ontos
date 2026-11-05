@@ -1,5 +1,6 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the narrow Drizzle Effect boundary exercised by the owner-local matching service. expires: 2026-12-31. */
 import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { DateTime, Effect, Layer, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -28,7 +29,9 @@ import {
   caseEvaluationFingerprint,
   candidateFingerprint,
   createOrMatchParty,
+  findDuplicateCandidateCase,
   matchParty,
+  previewPartyMatch,
   resolveDuplicateCandidateCreate,
   resolveDuplicateCandidateMatch,
 } from '../../src/services/party-matching-persistence.service.ts';
@@ -69,7 +72,9 @@ const caseRow = () => ({
   candidateFingerprint: 'a'.repeat(64),
   candidateSnapshot: {
     evidenceArtifactRefs: candidate().evidenceRefs,
-    names: [],
+    firstName: null,
+    lastName: null,
+    businessName: null,
     officialIdentifiers: [
       {
         identifierTypeKey: 'ICO',
@@ -100,6 +105,11 @@ type HarnessTable =
   | typeof partyMatchDecisions
   | typeof partyOfficialIdentifiers;
 type RecordedValues = Row | readonly Row[] | undefined;
+interface MatchingRead {
+  table: unknown;
+  locked: boolean;
+  predicate?: SQL;
+}
 const recordedRow = (values: RecordedValues): Row => {
   expect(values !== undefined && !Array.isArray(values)).toBe(true);
   // SAFETY: the recorded insert was checked to be a present single row rather than a batch.
@@ -112,13 +122,13 @@ const recordedRows = (values: RecordedValues): readonly Row[] => {
 };
 const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
   const results = new Map([...queues].map(([table, rows]) => [table, [...rows]]));
-  const reads: { table: unknown; locked: boolean }[] = [];
+  const reads: MatchingRead[] = [];
   const inserts: { table: unknown; values: Row | readonly Row[] }[] = [];
   const updates: { table: unknown; values: Row }[] = [];
   const select = () => {
     let selected: unknown;
     let rows: Rows | undefined;
-    const read = { locked: false, table: selected };
+    const read: MatchingRead = { locked: false, table: selected };
     const resolve = () => (rows ??= results.get(selected)?.shift() ?? []);
     const chain = Object.assign(
       Effect.sync(() => resolve()),
@@ -135,7 +145,12 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
         },
         limit: () => chain,
         orderBy: () => chain,
-        where: () => chain,
+        where: (predicate: SQL | undefined) => {
+          if (predicate !== undefined) {
+            read.predicate = predicate;
+          }
+          return chain;
+        },
       },
     );
     return chain;
@@ -212,6 +227,15 @@ const ambiguousHarness = (existingCase: boolean) =>
     ]),
   );
 
+it('source-name structure remains distinct when rendered names are equal', () => {
+  const personal = candidate({ partyType: 'UNRESOLVED', firstName: 'Ada', lastName: 'Lovelace' });
+  const business = candidate({ partyType: 'UNRESOLVED', businessName: 'Ada Lovelace' });
+  expect(candidateFingerprint(personal)).not.toBe(candidateFingerprint(business));
+  expect(candidateFingerprint(candidate({ firstName: 'Ada' }))).not.toBe(
+    candidateFingerprint(candidate({ firstName: 'Grace' })),
+  );
+});
+
 it.layer(
   Layer.effectDiscard(TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-01T00:00:00.000Z')))),
 )('matching-persistence', (testIt) => {
@@ -222,7 +246,7 @@ it.layer(
         const subject = ambiguousHarness(false);
         const result = yield* matchParty(subject.transaction, {
           actionInvocationId,
-          candidate: candidate(),
+          candidate: candidate({ firstName: 'Ada', lastName: 'Lovelace', businessName: 'Analytical Engines' }),
           tenantId,
         });
         expect(result.outcome).toBe('AMBIGUOUS');
@@ -236,7 +260,10 @@ it.layer(
         const caseValues = recordedRow(subject.inserts[0]?.values);
         // SAFETY: this fixture records the concrete candidateSnapshot inserted by the matching service.
         const snapshot = caseValues['candidateSnapshot'] as Row;
-        expect(snapshot['names']).toEqual([]);
+        expect(snapshot['firstName']).toBe('Ada');
+        expect(snapshot['lastName']).toBe('Lovelace');
+        expect(snapshot['businessName']).toBe('Analytical Engines');
+        expect(snapshot['names']).toBe(undefined);
         expect(snapshot['provenance']).toEqual(candidate().provenance);
         expect(snapshot['validFrom']).toBe(instant);
         const linked = recordedRows(subject.inserts[1]?.values);
@@ -1084,7 +1111,7 @@ it.layer(
         const result = yield* createOrMatchParty(subject.transaction, {
           actionInvocationId,
           candidate: candidate({
-            displayName: 'Northwind Workshop',
+            businessName: 'Northwind Workshop',
             evidenceRefs: ['business-record:contract:42'],
             officialIdentifiers: [],
             partyType: 'UNRESOLVED',
@@ -1099,6 +1126,94 @@ it.layer(
         expect(links.map((row) => row['partyId'])).toEqual([partyA]);
         expect(subject.inserts.some(({ table }) => table === parties)).toBe(false);
       }),
+  );
+
+  testIt.effect('weak names compare only the exact complete projection and never establish a strong match', () =>
+    Effect.gen(function* wholeDerivedNameSignal() {
+      const subject = harness(
+        new Map<unknown, readonly Rows[]>([
+          [parties, [[{ partyId: partyA }], [{ partyId: partyA }]]],
+          [partyAliases, [[]]],
+        ]),
+      );
+      const result = yield* previewPartyMatch(
+        subject.transaction,
+        tenantId,
+        candidate({
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          businessName: 'Ignored Company',
+          officialIdentifiers: [],
+          partyType: 'PERSON',
+        }),
+      );
+      expect(result.outcome).toBe('AMBIGUOUS');
+      const nameRead = subject.reads.find((read) => read.table === parties);
+      expect(nameRead?.predicate).toBeDefined();
+      if (nameRead?.predicate === undefined) {
+        throw new Error('The exact name query was not executed');
+      }
+      const query = new PgDialect().sqlToQuery(nameRead.predicate);
+      expect(query.params).toEqual([tenantId, 'Ada Lovelace']);
+      expect(query.sql).toContain('"current_display_name" = $2');
+      expect(query.sql).not.toMatch(/\bor\b|\blike\b|first_name|last_name|business_name/iu);
+    }),
+  );
+
+  testIt.effect('a null derived display produces no name query even when unused source fields exist', () =>
+    Effect.gen(function* absentDerivedNameSignal() {
+      for (const value of [
+        candidate({ partyType: 'PERSON', businessName: 'Not a personal name', officialIdentifiers: [] }),
+        candidate({ partyType: 'ORGANIZATION', firstName: 'Ada', officialIdentifiers: [] }),
+        candidate({ partyType: 'UNRESOLVED', officialIdentifiers: [] }),
+      ]) {
+        const subject = harness();
+        const result = yield* previewPartyMatch(subject.transaction, tenantId, value);
+        expect(result.outcome).toBe('NO_MATCH');
+        expect(subject.reads.some((read) => read.table === parties)).toBe(false);
+      }
+    }),
+  );
+
+  testIt.effect('duplicate-case detail restores all source names including non-rendered fields and omits nulls', () =>
+    Effect.gen(function* structuredCandidateDetailRoundtrip() {
+      for (const names of [
+        { firstName: 'Ada', lastName: 'Lovelace', businessName: 'Analytical Engines' },
+        { firstName: null, lastName: 'Lovelace', businessName: null },
+      ]) {
+        const subject = harness(
+          new Map<unknown, readonly Rows[]>([
+            [
+              duplicateCandidateCases,
+              [
+                [
+                  {
+                    ...caseRow(),
+                    candidateSnapshot: { ...caseRow().candidateSnapshot, ...names },
+                    evaluatedEvidence: [],
+                    priorCandidateCaseId: null,
+                    resolvedAt: null,
+                  },
+                ],
+              ],
+            ],
+            [duplicateCandidateCaseParties, [[]]],
+          ]),
+        );
+        const detail = yield* findDuplicateCandidateCase(subject.transaction, tenantId, candidateCaseId);
+        if (!('value' in detail)) {
+          throw new Error('The retained duplicate case was not found');
+        }
+        expect(detail.value.candidate.firstName ?? null).toBe(names.firstName);
+        expect(detail.value.candidate.lastName ?? null).toBe(names.lastName);
+        expect(detail.value.candidate.businessName ?? null).toBe(names.businessName);
+        if (names.firstName === null) {
+          expect(Object.hasOwn(detail.value.candidate, 'firstName')).toBe(false);
+          expect(Object.hasOwn(detail.value.candidate, 'businessName')).toBe(false);
+        }
+        expect(Object.hasOwn(detail.value.candidate, 'displayName')).toBe(false);
+      }
+    }),
   );
 
   testIt.effect('a new material evaluation creates a linked successor without rewriting the prior case', () =>
@@ -1177,11 +1292,11 @@ it.layer(
 
   it('equivalent Candidate property and evidence ordering has one deterministic fingerprint', () => {
     const original = candidate({
-      displayName: 'Northwind',
+      businessName: 'Northwind',
       evidenceRefs: ['evidence:b', 'evidence:a'],
     });
     const reordered: PartyCandidate = {
-      displayName: 'Northwind',
+      businessName: 'Northwind',
       evidenceRefs: original.evidenceRefs.toReversed(),
       officialIdentifiers: original.officialIdentifiers.toReversed(),
       partyType: original.partyType,

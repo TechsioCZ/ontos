@@ -147,7 +147,9 @@ export interface PartyCandidateSnapshot {
   readonly contactSignals?: readonly string[];
   readonly evidenceArtifactRefs?: readonly string[];
   readonly intent?: string;
-  readonly names: readonly string[];
+  readonly firstName: string | null;
+  readonly lastName: string | null;
+  readonly businessName: string | null;
   readonly officialIdentifiers?: readonly PartyCandidateIdentifierSnapshot[];
   readonly partyType?: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED';
   readonly policyVersion?: string;
@@ -204,6 +206,9 @@ export const parties = enableGovernedRls(
       tenantId: uuid('tenant_id').notNull(),
       currentType: text('current_type').notNull(),
       currentDisplayName: text('current_display_name'),
+      firstName: text('first_name'),
+      lastName: text('last_name'),
+      businessName: text('business_name'),
       revision: integer('revision').default(1).notNull(),
       createdAt: createdAt(),
       updatedAt: updatedAt(),
@@ -218,6 +223,18 @@ export const parties = enableGovernedRls(
       check(
         'party_parties_display_name_ck',
         sql`${table.currentDisplayName} is null or (${table.currentDisplayName} = btrim(${table.currentDisplayName}) and length(${table.currentDisplayName}) > 0)`,
+      ),
+      check(
+        'party_parties_first_name_ck',
+        sql`${table.firstName} is null or (${table.firstName} = btrim(${table.firstName}) and length(${table.firstName}) > 0)`,
+      ),
+      check(
+        'party_parties_last_name_ck',
+        sql`${table.lastName} is null or (${table.lastName} = btrim(${table.lastName}) and length(${table.lastName}) > 0)`,
+      ),
+      check(
+        'party_parties_business_name_ck',
+        sql`${table.businessName} is null or (${table.businessName} = btrim(${table.businessName}) and length(${table.businessName}) > 0)`,
       ),
       check('party_parties_revision_ck', sql`${table.revision} > 0`),
       ...gatewayScopedTenantRlsPolicies('party_parties_tenant', table.tenantId, PARTY_REGISTRY_REQUEST_IDENTITY.role),
@@ -262,7 +279,10 @@ export const partyFactAssertions = enableGovernedRls(
       index('party_fact_assertions_current_idx')
         .on(table.tenantId, table.partyId, table.factKind)
         .where(sql`${table.state} = 'ACTIVE' and ${table.isCurrent}`),
-      check('party_fact_assertions_kind_ck', sql`${table.factKind} in ('PARTY_TYPE', 'DISPLAY_NAME')`),
+      check(
+        'party_fact_assertions_kind_ck',
+        sql`${table.factKind} in ('PARTY_TYPE', 'FIRST_NAME', 'LAST_NAME', 'BUSINESS_NAME')`,
+      ),
       check(
         'party_fact_assertions_value_ck',
         sql`${table.normalizedValue} = btrim(${table.normalizedValue}) and length(${table.normalizedValue}) > 0`,
@@ -930,7 +950,7 @@ export const duplicateCandidateCases = enableGovernedRls(
       check('party_duplicate_cases_fingerprint_ck', sql`${table.candidateFingerprint} ~ '^[0-9a-f]{64}$'`),
       check(
         'party_duplicate_cases_snapshot_ck',
-        sql`coalesce(jsonb_typeof(${table.candidateSnapshot}), '') = 'object' and coalesce(jsonb_typeof(${table.candidateSnapshot}->'names'), '') = 'array' and jsonb_array_length(${table.candidateSnapshot}->'names') <= 32 and coalesce(jsonb_typeof(${table.candidateSnapshot}->'provenance'), '') = 'object' and coalesce(length(btrim(${table.candidateSnapshot}->'provenance'->>'source')), 0) between 1 and 500 and coalesce(length(btrim(${table.candidateSnapshot}->'provenance'->>'method')), 0) between 1 and 500 and coalesce(${table.candidateSnapshot}->>'validFrom', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{3})?Z$'`,
+        sql`coalesce(jsonb_typeof(${table.candidateSnapshot}), '') = 'object' and coalesce(jsonb_typeof(${table.candidateSnapshot}->'firstName'), '') in ('string', 'null') and (${table.candidateSnapshot}->'firstName' = 'null'::jsonb or ((${table.candidateSnapshot}->>'firstName') = btrim(${table.candidateSnapshot}->>'firstName') and length(${table.candidateSnapshot}->>'firstName') > 0)) and coalesce(jsonb_typeof(${table.candidateSnapshot}->'lastName'), '') in ('string', 'null') and (${table.candidateSnapshot}->'lastName' = 'null'::jsonb or ((${table.candidateSnapshot}->>'lastName') = btrim(${table.candidateSnapshot}->>'lastName') and length(${table.candidateSnapshot}->>'lastName') > 0)) and coalesce(jsonb_typeof(${table.candidateSnapshot}->'businessName'), '') in ('string', 'null') and (${table.candidateSnapshot}->'businessName' = 'null'::jsonb or ((${table.candidateSnapshot}->>'businessName') = btrim(${table.candidateSnapshot}->>'businessName') and length(${table.candidateSnapshot}->>'businessName') > 0)) and coalesce(jsonb_typeof(${table.candidateSnapshot}->'provenance'), '') = 'object' and coalesce(length(btrim(${table.candidateSnapshot}->'provenance'->>'source')), 0) between 1 and 500 and coalesce(length(btrim(${table.candidateSnapshot}->'provenance'->>'method')), 0) between 1 and 500 and coalesce(${table.candidateSnapshot}->>'validFrom', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{3})?Z$'`,
       ),
       check('party_duplicate_cases_revision_ck', sql`${table.revision} > 0`),
       check(

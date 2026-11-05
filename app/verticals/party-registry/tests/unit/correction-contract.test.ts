@@ -55,8 +55,8 @@ const relationshipCommandEncoded = {
   replacementValidTo: '2026-02-01T00:00:00.000Z',
 } as const;
 const relationshipCommand = Schema.decodeSync(SupersedeRelationshipCorrectionCommandSchema)(relationshipCommandEncoded);
-it('correction is closed to Party type, display name, and official identifier assertions', () => {
-  for (const factKind of ['PARTY_TYPE', 'DISPLAY_NAME', 'OFFICIAL_IDENTIFIER']) {
+it('correction is closed to Party type, structured names, and official identifier assertions', () => {
+  for (const factKind of ['PARTY_TYPE', 'FIRST_NAME', 'LAST_NAME', 'BUSINESS_NAME', 'OFFICIAL_IDENTIFIER']) {
     expect(() =>
       decode(PartyCorrectionCommandSchema)({
         ...evidence,
@@ -81,7 +81,9 @@ it('correction is closed to Party type, display name, and official identifier as
 });
 it('correction follow-up is typed and duplicate confirmation remains readiness-only', () => {
   expect(classifyCorrectionRoute('PARTY_TYPE')).toBe('LIFECYCLE_REVIEW');
-  expect(classifyCorrectionRoute('DISPLAY_NAME')).toBe('ENRICHMENT_REVIEW');
+  for (const factKind of ['FIRST_NAME', 'LAST_NAME', 'BUSINESS_NAME'] as const) {
+    expect(classifyCorrectionRoute(factKind)).toBe('ENRICHMENT_REVIEW');
+  }
   expect(classifyCorrectionRoute('OFFICIAL_IDENTIFIER')).toBe('CLAIM_REASSIGNMENT_REVIEW');
   expect(classifyCorrectionRoute('RELATIONSHIP')).toBe('RELATIONSHIP_REVIEW');
   expect(confirmDuplicatePartiesAction.descriptor.actionKey).toBe('party.registry.confirm-duplicate-parties');

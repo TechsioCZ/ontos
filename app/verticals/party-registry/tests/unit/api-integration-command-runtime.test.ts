@@ -105,7 +105,10 @@ const archivePayload = {
 const archivedParty = Schema.decodeSync(PartySchema)({
   archivedAt: '2026-09-01T00:00:00.000Z',
   createdAt: '2026-09-01T00:00:00.000Z',
+  businessName: 'Example organization',
   displayName: 'Example organization',
+  firstName: null,
+  lastName: null,
   partyRef,
   partyType: 'ORGANIZATION' as const,
   revision: 1,
@@ -114,7 +117,7 @@ const archivedParty = Schema.decodeSync(PartySchema)({
 
 const createPayload = {
   candidate: {
-    displayName: 'Example organization',
+    businessName: 'Example organization',
     evidenceRefs: ['document:verified'],
     officialIdentifiers: [],
     partyType: 'ORGANIZATION',
@@ -138,8 +141,8 @@ type CommandTestPayload =
   | typeof createPayload
   | typeof relationshipPayload
   | Readonly<{
-      candidate: Omit<(typeof createPayload)['candidate'], 'displayName'> & {
-        readonly displayName: string;
+      candidate: Omit<(typeof createPayload)['candidate'], 'businessName'> & {
+        readonly businessName: string;
       };
     }>;
 
@@ -1614,7 +1617,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           {
             candidate: {
               ...createPayload.candidate,
-              displayName: 'Different organization',
+              businessName: 'Different organization',
             },
           },
           assertion.token,

@@ -19,7 +19,7 @@ export const PartyFactAssertionSchema = Schema.Struct({
   externalEvidence: Schema.OptionFromOptionalNullOr(AresAppliedEvidenceSchema, {
     onNoneEncoding: 'omit',
   }),
-  factKind: Schema.Literals(['PARTY_TYPE', 'DISPLAY_NAME']),
+  factKind: Schema.Literals(['PARTY_TYPE', 'FIRST_NAME', 'LAST_NAME', 'BUSINESS_NAME']),
   isCurrent: Schema.Boolean,
   partyRef: PartyRefSchema,
   recordedAt: IsoTimestampSchema,

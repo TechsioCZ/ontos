@@ -16,6 +16,7 @@ import {
   PartyPersistenceUnavailable,
   PartySchema,
   isPartyTypeEnrichment,
+  derivePartyDisplayName,
 } from '../../shared/domain/identity-contracts.ts';
 import { DuplicateCandidateCaseRefSchema } from '../../shared/resources/duplicate-candidate-case.ts';
 import { PartyMatchDecisionRefSchema } from '../../shared/resources/party-match-decision.ts';
@@ -70,6 +71,11 @@ export type PartyLifecycle = typeof PartyLifecycleSchema.Type;
 type PartyUnarchiveLifecycle = typeof PartyUnarchiveLifecycleSchema.Type;
 
 const MATCH_RULE_VERSION = 'party-exact-claims.v1';
+const partyNameFacts = [
+  { key: 'firstName', factKind: 'FIRST_NAME' },
+  { key: 'lastName', factKind: 'LAST_NAME' },
+  { key: 'businessName', factKind: 'BUSINESS_NAME' },
+] as const;
 export const findOpenDuplicateCandidateCase = (
   transaction: Pick<PartyTransaction, 'select'>,
   tenantId: string,
@@ -134,6 +140,9 @@ export const partyDto = (row: PartyRecord): Party => ({
   archivedAt: Option.fromNullOr(row.archivedAt).pipe(Option.map(DateTime.makeUnsafe)),
   createdAt: DateTime.makeUnsafe(row.createdAt),
   displayName: Option.fromNullOr(row.currentDisplayName),
+  firstName: Option.fromNullOr(row.firstName),
+  lastName: Option.fromNullOr(row.lastName),
+  businessName: Option.fromNullOr(row.businessName),
   partyRef: PartyRefSchema.make({
     moduleId: 'party.registry',
     resourceId: row.partyId,
@@ -180,7 +189,10 @@ export const insertPartyRecord = Effect.fn('PartyIdentityPersistenceService.inse
   const [party] = yield* transaction
     .insert(parties)
     .values({
-      currentDisplayName: candidate.displayName ?? null,
+      currentDisplayName: derivePartyDisplayName(candidate),
+      firstName: candidate.firstName ?? null,
+      lastName: candidate.lastName ?? null,
+      businessName: candidate.businessName ?? null,
       currentType: candidate.partyType,
       tenantId,
     })
@@ -206,23 +218,26 @@ export const insertPartyRecord = Effect.fn('PartyIdentityPersistenceService.inse
         tenantId,
         validFrom: instantAsDate(candidate.validFrom),
       },
-      ...(candidate.displayName === undefined
-        ? []
-        : [
-            {
-              acceptedByActionInvocationId: acceptance.actionInvocationId,
-              acceptedByPrincipalId: acceptance.principalId,
-              externalEvidence,
-              factKind: 'DISPLAY_NAME',
-              normalizedValue: candidate.displayName,
-              partyId: party.partyId,
-              policyVersion: acceptance.policyVersion,
-              provenanceMethod: candidate.provenance.method,
-              provenanceSource: candidate.provenance.source,
-              tenantId,
-              validFrom: instantAsDate(candidate.validFrom),
-            },
-          ]),
+      ...partyNameFacts.flatMap(({ key, factKind }) => {
+        const value = candidate[key];
+        return value === undefined
+          ? []
+          : [
+              {
+                acceptedByActionInvocationId: acceptance.actionInvocationId,
+                acceptedByPrincipalId: acceptance.principalId,
+                externalEvidence,
+                factKind,
+                normalizedValue: value,
+                partyId: party.partyId,
+                policyVersion: acceptance.policyVersion,
+                provenanceMethod: candidate.provenance.method,
+                provenanceSource: candidate.provenance.source,
+                tenantId,
+                validFrom: instantAsDate(candidate.validFrom),
+              },
+            ];
+      }),
     ])
     .pipe(Effect.mapError(unavailable));
   return partyDto(party);
@@ -345,7 +360,9 @@ export const reconcilePartyIdentifierClaims = Effect.fn(
 
 interface UpdatePartyIdentityInput {
   readonly actionInvocationId: string;
-  readonly displayName?: string | undefined;
+  readonly firstName?: string | undefined;
+  readonly lastName?: string | undefined;
+  readonly businessName?: string | undefined;
   readonly expectedRevision: number;
   readonly externalEvidence?: AresAppliedEvidence | undefined;
   readonly partyId: string;
@@ -376,7 +393,7 @@ const identityUpdateConflicts = (current: PartyRecord, input: UpdatePartyIdentit
     !isPartyTypeEnrichment(current.currentType as PartyType, input.partyType));
 
 const changedIdentityFactKinds = (current: PartyRecord, input: UpdatePartyIdentityInput) => [
-  ...(input.displayName === undefined ? [] : ['DISPLAY_NAME' as const]),
+  ...partyNameFacts.flatMap(({ key, factKind }) => (input[key] === undefined ? [] : [factKind])),
   ...(input.partyType === undefined || input.partyType === current.currentType ? [] : ['PARTY_TYPE' as const]),
 ];
 
@@ -390,9 +407,18 @@ const identityRecordChanges = (current: PartyRecord, input: UpdatePartyIdentityI
     revision: current.revision + 1,
     updatedAt: now,
   };
-  if (input.displayName !== undefined) {
-    changes.currentDisplayName = input.displayName;
+  for (const { key } of partyNameFacts) {
+    if (input[key] !== undefined) {
+      changes[key] = input[key];
+    }
   }
+  changes.currentDisplayName = derivePartyDisplayName({
+    // SAFETY: The owner-local Party type CHECK restricts the stored type.
+    partyType: input.partyType ?? (current.currentType as PartyType),
+    firstName: input.firstName ?? current.firstName,
+    lastName: input.lastName ?? current.lastName,
+    businessName: input.businessName ?? current.businessName,
+  });
   if (input.partyType !== undefined) {
     changes.currentType = input.partyType;
   }
@@ -407,20 +433,23 @@ const identityUpdateAssertions = (
   evaluation: (typeof partyFactAssertions.$inferInsert)['evidenceEvaluation'],
 ) => {
   const assertions: (typeof partyFactAssertions.$inferInsert)[] = [];
-  if (input.displayName !== undefined) {
-    assertions.push({
-      acceptedByActionInvocationId: input.actionInvocationId,
-      acceptedByPrincipalId: input.principalId,
-      externalEvidence,
-      factKind: 'DISPLAY_NAME',
-      normalizedValue: input.displayName,
-      partyId: input.partyId,
-      policyVersion: 'party-identity.v1',
-      provenanceMethod: input.provenanceMethod,
-      provenanceSource: input.provenanceSource,
-      tenantId,
-      validFrom: instantAsDate(input.validFrom),
-    });
+  for (const { key, factKind } of partyNameFacts) {
+    const value = input[key];
+    if (value !== undefined) {
+      assertions.push({
+        acceptedByActionInvocationId: input.actionInvocationId,
+        acceptedByPrincipalId: input.principalId,
+        externalEvidence,
+        factKind,
+        normalizedValue: value,
+        partyId: input.partyId,
+        policyVersion: 'party-identity.v1',
+        provenanceMethod: input.provenanceMethod,
+        provenanceSource: input.provenanceSource,
+        tenantId,
+        validFrom: instantAsDate(input.validFrom),
+      });
+    }
   }
   if (input.partyType !== undefined && input.partyType !== current.currentType) {
     assertions.push({
@@ -763,10 +792,9 @@ const createUnarchiveReviewCase = Effect.fn('PartyIdentityPersistenceService.cre
       .pipe(Effect.mapError(unavailable));
     const snapshot: PartyCandidateSnapshot = {
       intent: 'UNARCHIVE',
-      names: Option.match(party.displayName, {
-        onNone: () => [],
-        onSome: (name) => [name],
-      }),
+      firstName: Option.getOrNull(party.firstName),
+      lastName: Option.getOrNull(party.lastName),
+      businessName: Option.getOrNull(party.businessName),
       officialIdentifiers: identifiers.map((identifier) => ({
         // SAFETY: Owner-local CHECK constraints restrict identifier and verification types.
         identifierTypeKey: identifier.identifierTypeKey as 'ICO' | 'CZ_DIC',

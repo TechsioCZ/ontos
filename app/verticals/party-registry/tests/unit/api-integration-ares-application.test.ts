@@ -14,6 +14,7 @@ import type { AresAppliedEvidence } from '../../shared/domain/ares-application.t
 import { AresSubjectEvidenceSchema } from '../../shared/domain/ares-evidence.ts';
 import { AssertionIdSchema, TargetAssertionIdSchema } from '../../shared/domain/correction-contracts.ts';
 import { PartyIdSchema } from '../../shared/domain/identity-contracts.ts';
+import type { PartyType } from '../../shared/domain/identity-contracts.ts';
 import {
   AresApplySelectionInvalid,
   applyAresObservationWithActions as applyAresObservation,
@@ -101,7 +102,7 @@ const request: AresApplyRequest = {
       fact: 'BUSINESS_NAME',
       idempotencyKey: 'ares-name-1',
       payload: {
-        displayName: 'Example s.r.o.',
+        businessName: 'Example s.r.o.',
         expectedRevision: 1,
         partyRef,
         provenanceMethod: 'ARES_USER_CONFIRMED',
@@ -160,6 +161,9 @@ const makeInvoker = (calls: string[], failAction?: string): PartyRegistryStandar
       return complete(`update-party|${authorization}`, {
         archivedAt: Option.none(),
         createdAt: partyCreatedAt,
+        businessName: Option.some('Example s.r.o.'),
+        firstName: Option.none(),
+        lastName: Option.none(),
         displayName: Option.some('Example s.r.o.'),
         partyRef,
         partyType: 'ORGANIZATION' as const,
@@ -173,7 +177,11 @@ const gateway = makeOperationGateway(({ compositionRevision: requestedRevision }
   expect(requestedRevision).toBe(compositionRevision);
   return Effect.succeed({ apiBaseUrl, compositionRevision, expiresAt: 1_788_430_000, token: 'signed-gateway-token' });
 });
-const makeReads = (displayName: string | null = null): AresApplyReads => ({
+const makeReads = (
+  businessName: string | null = null,
+  displayName: string | null = businessName,
+  partyType: PartyType = 'ORGANIZATION',
+): AresApplyReads => ({
   contactPoints: () => Effect.succeed({ items: [] }),
   identifiers: () => Effect.succeed({ items: [] }),
   observation: () => Effect.succeed(decodedObservation),
@@ -184,9 +192,12 @@ const makeReads = (displayName: string | null = null): AresApplyReads => ({
       party: {
         archivedAt: Option.none(),
         createdAt: partyCreatedAt,
-        displayName: displayName === null ? Option.none() : Option.some(displayName),
+        businessName: Option.fromNullOr(businessName),
+        firstName: partyType === 'PERSON' ? Option.fromNullOr(displayName) : Option.none(),
+        lastName: Option.none(),
+        displayName: Option.fromNullOr(displayName),
         partyRef,
-        partyType: 'ORGANIZATION',
+        partyType,
         revision: 1,
         updatedAt: partyUpdatedAt,
       },
@@ -202,7 +213,7 @@ const historicalEvidence = (fact: 'BUSINESS_NAME' | 'ICO'): AresAppliedEvidence 
   const result = deriveAresEvidenceApplication({
     canonical: {
       archived: false,
-      displayName: null,
+      businessName: null,
       icoValues: [],
       identityAmbiguous: false,
       partyType: 'ORGANIZATION',
@@ -224,6 +235,56 @@ it.layer(
     Layer.effectDiscard(pinDocumentCompositionRevision(compositionRevision)),
   ),
 )('ARES application', (aresIt) => {
+  aresIt.effect('business-name decisions use the source fact rather than a PERSON display projection', () =>
+    Effect.gen(function* canonicalSourceNameAdmission() {
+      const selection = request.selections.find((item) => item.route === 'PARTY_UPDATE');
+      if (selection === undefined) {
+        throw new Error('The name selection is required by this fixture');
+      }
+      const calls: string[] = [];
+      const outcome = yield* applyAresObservation({ ...request, selections: [selection] }, makeInvoker(calls), {
+        gateway,
+        reads: makeReads('Example s.r.o.', 'Ada Lovelace', 'PERSON'),
+      });
+      expect(
+        Match.value(outcome).pipe(
+          Match.tag('AresApplyCompleted', (completed) => completed.application.outcome),
+          Match.orElse(() => 'unexpected-write'),
+        ),
+      ).toBe('NO_CHANGE');
+      expect(calls).toEqual([]);
+    }),
+  );
+
+  aresIt.effect('a BUSINESS_NAME selection cannot carry personal-name or Party Type writes', () =>
+    Effect.gen(function* rejectUnobservedNameFacts() {
+      const selection = request.selections.find((item) => item.route === 'PARTY_UPDATE');
+      if (selection === undefined) {
+        throw new Error('The name selection is required by this fixture');
+      }
+      for (const extra of [
+        { firstName: 'Injected first' },
+        { lastName: 'Injected last' },
+        { partyType: 'PERSON' as const },
+      ]) {
+        const calls: string[] = [];
+        const result = yield* applyAresObservation(
+          {
+            ...request,
+            selections: [{ ...selection, payload: { ...selection.payload, ...extra } }],
+          },
+          makeInvoker(calls),
+          { gateway, reads: makeReads() },
+        ).pipe(Effect.result);
+        expect('failure' in result).toBe(true);
+        if ('failure' in result) {
+          expect(Schema.is(AresApplySelectionInvalid)(result.failure)).toBe(true);
+        }
+        expect(calls).toEqual([]);
+      }
+    }),
+  );
+
   aresIt.effect('runs only explicitly selected standard Actions and preserves every result', () =>
     Effect.gen(function* runsOnlyExplicitlySelectedStandard() {
       const calls: string[] = [];
@@ -402,7 +463,7 @@ it.layer(
               fact: 'BUSINESS_NAME',
               idempotencyKey: 'ares-invalid-name-1',
               payload: {
-                displayName: 'Injected name',
+                businessName: 'Injected name',
                 expectedRevision: 1,
                 partyRef,
                 provenanceMethod: 'ARES_USER_CONFIRMED',
@@ -494,7 +555,7 @@ it.layer(
     payload: {
       evidenceRefs: ['review:ares'],
       evidenceSource: 'MANUAL_REVIEW',
-      factKind: 'DISPLAY_NAME',
+      factKind: 'BUSINESS_NAME',
       partyId: Result.getOrThrow(Schema.decodeResult(PartyIdSchema)(partyRef.resourceId)),
       policyVersion: 'party-correction.v1',
       provenance: { method: 'REVIEW', source: 'ARES' },
@@ -527,7 +588,7 @@ it.layer(
                     {
                       assertionId: currentAssertionId,
                       externalEvidence: Option.some(historicalEvidence('BUSINESS_NAME')),
-                      factKind: 'DISPLAY_NAME' as const,
+                      factKind: 'BUSINESS_NAME' as const,
                       isCurrent: true,
                       partyRef,
                       recordedAt: confirmedInstant,

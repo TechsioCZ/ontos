@@ -445,10 +445,10 @@ const produceCanonicalController = Effect.fn('ControllerOwnerTest.produceCanonic
     const result = yield* createPartyWithAuthorization(
       yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)({
         candidate: {
-          displayName: `Controller ${partyType}`,
           evidenceRefs: ['review/controller-arrangement'],
           officialIdentifiers: [],
           partyType,
+          [partyType === 'PERSON' ? 'firstName' : 'businessName']: `Controller ${partyType}`,
           provenance: { method: 'DOCUMENT', source: 'controller-native-test' },
           subjectEvidence: [
             {

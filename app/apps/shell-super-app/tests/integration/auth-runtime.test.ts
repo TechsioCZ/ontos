@@ -3046,7 +3046,7 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
       '/party-registry/actions/create-party',
       JSON.stringify({
         candidate: {
-          displayName: 'Public tenant gateway proof',
+          businessName: 'Public tenant gateway proof',
           evidenceRefs: ['review/public-party-gateway'],
           officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
           partyType: 'ORGANIZATION',

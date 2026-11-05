@@ -45,8 +45,8 @@ const initialRef = reference('party-match-decision', '33333333-3333-4333-8333-33
 const reviewedRef = reference('party-match-decision', '44444444-4444-4444-8444-444444444444');
 const partyRef = reference('party', '55555555-5555-4555-8555-555555555555');
 const candidate = {
-  displayName: 'Unit-only reviewed human customer',
   evidenceRefs: ['unit-attestation'],
+  firstName: 'Unit-only reviewed human customer',
   officialIdentifiers: [],
   partyType: 'PERSON',
   provenance: { method: 'DIRECT_INTERACTION', source: 'unit-only' },
@@ -235,7 +235,7 @@ it.effect('refuses MATCHED_EXISTING with the actual typed outcome and reason', (
 it.effect('refuses a different case candidate before review', () =>
   Effect.gen(function* wrongCandidate() {
     rs.mocked(executeDuplicateCandidateDetailWithAuthorization).mockReturnValue(
-      Effect.succeed({ ...detail, candidate: { ...detail.candidate, displayName: 'Another subject' } }),
+      Effect.succeed({ ...detail, candidate: { ...detail.candidate, firstName: 'Another subject' } }),
     );
     const failure = yield* setup().pipe(
       Effect.flip,

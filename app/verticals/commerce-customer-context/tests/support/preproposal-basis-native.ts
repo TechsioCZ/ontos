@@ -1929,8 +1929,8 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     const principalRef = { principalId: core.manager.principalId, tenantId: core.tenantId };
     const partyPayload = yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)({
       candidate: {
-        displayName: `Native preproposal buyer ${randomUUID()}`,
         evidenceRefs: [`${intent}:subject-attestation`],
+        firstName: `Native preproposal buyer ${randomUUID()}`,
         officialIdentifiers: [],
         partyType: 'PERSON',
         provenance: { method: 'DIRECT_INTERACTION', source: 'NATIVE_REGISTERED_OWNER_PROOF' },

@@ -143,7 +143,7 @@ export interface AresCanonicalSnapshot {
   readonly factEvidence?: readonly AresCanonicalFactEvidence[];
   readonly partyType?: 'PERSON' | 'ORGANIZATION' | 'UNRESOLVED';
   readonly archived: boolean;
-  readonly displayName: string | null;
+  readonly businessName: string | null;
   readonly icoValues: readonly string[];
   readonly identityAmbiguous: boolean;
   readonly registeredAddresses: readonly StructuredAddress[];
@@ -225,7 +225,7 @@ export const prefillPartyCandidateFromAres = (input: typeof AresSubjectEvidenceS
   };
   const businessName = Option.getOrUndefined(evidence.subject.businessName);
   if (businessName !== undefined && isSupportedBusinessName(businessName)) {
-    return { ...candidate, displayName: businessName };
+    return { ...candidate, businessName };
   }
   return candidate;
 };
@@ -279,7 +279,7 @@ const historicalConflict = (
     (assertion) =>
       assertion.fact === fact &&
       (fact === 'BUSINESS_NAME'
-        ? normalizeText(assertion.value) === normalizeText(canonical.displayName)
+        ? normalizeText(assertion.value) === normalizeText(canonical.businessName)
         : canonical.icoValues.includes(assertion.value)) &&
       normalizeText(assertion.value) !== normalizeText(observedValue) &&
       acceptedEvidenceConflicts(assertion, evidence, fact),
@@ -309,10 +309,10 @@ const businessNameDecision = (
   if (businessName === null || !isSupportedBusinessName(businessName)) {
     return blocked(fact, 'NO_CHANGE', 'provider_fact_absent_or_unsupported');
   }
-  if (normalizeText(canonical.displayName) === normalizeText(businessName)) {
+  if (normalizeText(canonical.businessName) === normalizeText(businessName)) {
     return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
   }
-  if (canonical.displayName !== null) {
+  if (canonical.businessName !== null) {
     return blocked(fact, 'NEEDS_CONFIRMATION', 'canonical_fact_conflict');
   }
   return undefined;

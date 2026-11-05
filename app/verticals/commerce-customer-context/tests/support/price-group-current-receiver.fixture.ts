@@ -1061,9 +1061,9 @@ const createParty = Effect.fn('PriceGroupTemporal.createParty')(function* create
   requestId: string,
 ) {
   const subjects = {
-    counterparty: { displayName: 'Temporal Counterparty owner', ico: '45274649' },
-    retail: { displayName: 'Temporal Retail owner', ico: '27074358' },
-    'second-counterparty': { displayName: 'Temporal second Counterparty owner', ico: '12345679' },
+    counterparty: { businessName: 'Temporal Counterparty owner', ico: '45274649' },
+    retail: { businessName: 'Temporal Retail owner', ico: '27074358' },
+    'second-counterparty': { businessName: 'Temporal second Counterparty owner', ico: '12345679' },
   };
   const subject = subjects[purpose];
   const subjectKey = Brand.nominal<
@@ -1073,7 +1073,7 @@ const createParty = Effect.fn('PriceGroupTemporal.createParty')(function* create
   >()(yield* nextId);
   const payload: Parameters<typeof createPartyWithAuthorization>[0] = {
     candidate: {
-      displayName: subject.displayName,
+      businessName: subject.businessName,
       evidenceRefs: [`test:1248:reviewed-${requestId}`],
       officialIdentifiers: [{ identifierType: 'ICO', value: subject.ico, verification: 'VERIFIED' }],
       partyType: 'ORGANIZATION',

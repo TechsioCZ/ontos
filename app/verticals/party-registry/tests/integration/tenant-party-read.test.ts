@@ -138,7 +138,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           payload: {
             candidate: {
               partyType: 'ORGANIZATION',
-              displayName: 'Tenant Party proof',
+              businessName: 'Tenant Party proof',
               officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
               subjectEvidence: [
                 {

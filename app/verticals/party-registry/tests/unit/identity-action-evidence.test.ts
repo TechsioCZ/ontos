@@ -34,7 +34,10 @@ const harnessPrincipal = trustResolvedSystemPrincipalContext({
 const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
   createdAt: '2026-01-01T00:00:00.000Z',
+  businessName: 'Example organization',
   displayName: 'Example organization',
+  firstName: null,
+  lastName: null,
   partyRef: makePartyRef(tenantId, partyId),
   partyType: 'ORGANIZATION',
   revision: 2,
@@ -62,7 +65,7 @@ it.effect('Update Party records metadata-only invariant evidence with its event 
     );
     yield* getActionHandler(updatePartyAction)(
       {
-        displayName: 'Example organization',
+        businessName: 'Example organization',
         expectedRevision: 1,
         partyRef: party.partyRef,
         provenanceMethod: 'MANUAL',

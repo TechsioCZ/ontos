@@ -19,7 +19,7 @@ const partyRef = {
 } as const;
 const wireFact = {
   assertionId,
-  factKind: 'DISPLAY_NAME',
+  factKind: 'BUSINESS_NAME',
   isCurrent: true,
   partyRef,
   recordedAt: '2026-09-03T10:00:00.000Z',
@@ -66,7 +66,7 @@ it.effect(
         [
           previousId,
           null,
-          'DISPLAY_NAME',
+          'BUSINESS_NAME',
           false,
           '2026-09-01T10:00:00.000Z',
           null,
@@ -79,7 +79,7 @@ it.effect(
         [
           assertionId,
           null,
-          'DISPLAY_NAME',
+          'BUSINESS_NAME',
           true,
           '2026-09-03T10:00:00.000Z',
           null,
@@ -132,7 +132,10 @@ it.effect(
               value: Schema.decodeSync(PartySchema)({
                 archivedAt: null,
                 createdAt: '2026-09-01T10:00:00.000Z',
+                businessName: 'Corrected name',
                 displayName: 'Corrected name',
+                firstName: null,
+                lastName: null,
                 partyRef,
                 partyType: 'ORGANIZATION' as const,
                 revision: 2,

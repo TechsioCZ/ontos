@@ -57,6 +57,9 @@ const partyRow = (overrides: Partial<PartyRecord> = {}) => ({
   archivedAt: instantAsDate('2026-01-01T00:00:00.000Z'),
   createdAt: instantAsDate('2025-01-01T00:00:00.000Z'),
   currentDisplayName: 'Archived organization',
+  firstName: null,
+  lastName: null,
+  businessName: 'Archived organization',
   currentType: 'ORGANIZATION',
   partyId,
   revision: 4,
@@ -226,18 +229,89 @@ it.layer(
     }),
   );
 
+  testIt.effect('a surname-only update preserves other facts and derives the full personal display name', () =>
+    Effect.gen(function* verifyPartialNameUpdate() {
+      const current = partyRow({
+        archivedAt: null,
+        currentType: 'PERSON',
+        firstName: 'Ada',
+        lastName: 'Byron',
+        businessName: 'Analytical Engines',
+        currentDisplayName: 'Ada Byron',
+      });
+      const harness = transactionHarness(
+        [[current], [], [{ partyId }]],
+        [[{ ...current, lastName: 'Lovelace', currentDisplayName: 'Ada Lovelace', revision: 5 }], []],
+      );
+      const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
+        actionInvocationId: '66666666-6666-4666-8666-666666666666',
+        lastName: 'Lovelace',
+        expectedRevision: 4,
+        partyId,
+        principalId: '77777777-7777-4777-8777-777777777777',
+        provenanceMethod: 'MANUAL',
+        provenanceSource: 'test',
+        validFrom: '2026-01-01T00:00:00.000Z',
+      });
+      expect(Predicate.isTagged(result, 'found')).toBe(true);
+      expect(harness.updateSets[0]).toEqual({
+        lastName: 'Lovelace',
+        currentDisplayName: 'Ada Lovelace',
+        revision: 5,
+        updatedAt: expect.any(Date),
+      });
+      expect(harness.insertedValues[0]).toEqual([
+        expect.objectContaining({ factKind: 'LAST_NAME', normalizedValue: 'Lovelace' }),
+      ]);
+      if (Predicate.isTagged(result, 'found')) {
+        expect(Option.getOrNull(result.value.firstName)).toBe('Ada');
+        expect(Option.getOrNull(result.value.lastName)).toBe('Lovelace');
+        expect(Option.getOrNull(result.value.businessName)).toBe('Analytical Engines');
+      }
+    }),
+  );
+
+  testIt.effect('changing a non-rendered source name still records its assertion and revision', () =>
+    Effect.gen(function* verifyNonRenderedNameUpdate() {
+      const current = partyRow({ archivedAt: null });
+      const harness = transactionHarness(
+        [[current], [], [{ partyId }]],
+        [[{ ...current, firstName: 'Ada', revision: 5 }], []],
+      );
+      yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
+        actionInvocationId: '66666666-6666-4666-8666-666666666666',
+        firstName: 'Ada',
+        expectedRevision: 4,
+        partyId,
+        principalId: '77777777-7777-4777-8777-777777777777',
+        provenanceMethod: 'MANUAL',
+        provenanceSource: 'test',
+        validFrom: '2026-01-01T00:00:00.000Z',
+      });
+      expect(harness.updateSets[0]).toEqual({
+        firstName: 'Ada',
+        currentDisplayName: 'Archived organization',
+        revision: 5,
+        updatedAt: expect.any(Date),
+      });
+      expect(harness.insertedValues[0]).toEqual([
+        expect.objectContaining({ factKind: 'FIRST_NAME', normalizedValue: 'Ada' }),
+      ]);
+    }),
+  );
+
   testIt.effect('identity updates close the preceding assertion before accepting its replacement', () =>
     Effect.gen(function* verifyIdentityPersistence() {
       const current = partyRow({ archivedAt: null });
       const harness = transactionHarness(
         [[current], [], [{ partyId }]],
-        [[{ ...current, currentDisplayName: 'New name', revision: 5 }], []],
+        [[{ ...current, currentDisplayName: 'New name', businessName: 'New name', revision: 5 }], []],
       );
       const encodedAppliedEvidence = yield* Schema.encodeEffect(AresAppliedEvidenceSchema)(appliedEvidence);
 
       const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
         actionInvocationId: '66666666-6666-4666-8666-666666666666',
-        displayName: 'New name',
+        businessName: 'New name',
         expectedRevision: 4,
         externalEvidence: appliedEvidence,
         partyId,
@@ -285,7 +359,7 @@ it.layer(
       const harness = transactionHarness([[partyRow({ archivedAt: null })], [], [{ partyId }]]);
       const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
         actionInvocationId: '66666666-6666-4666-8666-666666666666',
-        displayName: 'Future name',
+        businessName: 'Future name',
         expectedRevision: 4,
         partyId,
         principalId: '77777777-7777-4777-8777-777777777777',
@@ -379,7 +453,7 @@ it.layer(
         // SAFETY: The third insert is the durable Action-linked match decision.
         const decision = harness.insertedValues[2] as typeof partyMatchDecisions.$inferInsert;
         expect(persistedCase.candidateSnapshot.intent).toBe('UNARCHIVE');
-        expect(persistedCase.candidateSnapshot.names).toEqual(['Archived organization']);
+        expect(persistedCase.candidateSnapshot.businessName).toBe('Archived organization');
         expect(persistedCase.candidateSnapshot.officialIdentifiers?.[0]?.normalizedValue).toBe('27074358');
         expect(persistedCase.evaluationFingerprint).toMatch(/^[0-9a-f]{64}$/u);
         expect(members.map((member) => member.partyId)).toEqual([partyId, firstOwnerId]);
@@ -444,7 +518,7 @@ it.layer(
       );
       // SAFETY: The first captured insert is the immutable candidate case.
       const persistedCase = harness.insertedValues[0] as typeof duplicateCandidateCases.$inferInsert;
-      expect(persistedCase.candidateSnapshot.names).toEqual([]);
+      expect(persistedCase.candidateSnapshot.firstName).toBe(null);
       expect(persistedCase.candidateSnapshot.officialIdentifiers).toEqual([]);
       expect(harness.updateSets).toEqual([]);
       expect(blocked.reasonCode).toBe('UNRESOLVED_IDENTITY');
@@ -720,7 +794,7 @@ it.layer(
       ]);
       const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
         actionInvocationId: '66666666-6666-4666-8666-666666666666',
-        displayName: 'Historical name',
+        businessName: 'Historical name',
         expectedRevision: 4,
         partyId,
         principalId: '77777777-7777-4777-8777-777777777777',

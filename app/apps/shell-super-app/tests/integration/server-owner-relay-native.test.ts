@@ -3933,7 +3933,7 @@ it.live(
             const createdParty = yield* createPartyWithAuthorization(
               {
                 candidate: {
-                  displayName: 'Native manufacturer organization',
+                  businessName: 'Native manufacturer organization',
                   evidenceRefs: ['native/manufacturer'],
                   officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
                   partyType: 'ORGANIZATION',
@@ -5055,7 +5055,7 @@ it.live('completes the real CCC Guest attribution through Party with the origina
           const createdParty = yield* createPartyWithAuthorization(
             {
               candidate: {
-                displayName: 'Native Guest organization',
+                businessName: 'Native Guest organization',
                 evidenceRefs: [guestEvidenceRef],
                 officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
                 partyType: 'ORGANIZATION',
@@ -5867,7 +5867,7 @@ it.live(
             const createdParty = yield* createPartyWithAuthorization(
               {
                 candidate: {
-                  displayName: 'Native Retail organization',
+                  businessName: 'Native Retail organization',
                   evidenceRefs: [retailEvidenceRef],
                   officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
                   partyType: 'ORGANIZATION',

@@ -269,7 +269,7 @@ const validateSelection = (selection: AresApplySelection, partyRef: PartyRef | n
   if (partyRef === null) {
     return Effect.fail(invalidSelection('Enrichment requires one explicit existing Party'));
   } else if (selection.route === 'PARTY_CORRECTION') {
-    const expectedFactKind = selection.fact === 'BUSINESS_NAME' ? 'DISPLAY_NAME' : 'OFFICIAL_IDENTIFIER';
+    const expectedFactKind = selection.fact === 'BUSINESS_NAME' ? 'BUSINESS_NAME' : 'OFFICIAL_IDENTIFIER';
     if (selection.payload.factKind !== expectedFactKind) {
       return Effect.fail(invalidSelection('Correction review must nominate the selected supported fact'));
     }
@@ -310,7 +310,9 @@ const matchesObservation = (selection: ExecutableSelection, observation: AresSub
       { route: 'PARTY_UPDATE' },
       (selected) =>
         businessName !== null &&
-        selected.payload.displayName === businessName &&
+        selected.payload.businessName === businessName &&
+        selected.payload.firstName === undefined &&
+        selected.payload.lastName === undefined &&
         selected.payload.partyType === undefined,
     ),
     Match.when(
@@ -669,12 +671,12 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
     );
     const canonical: AresCanonicalSnapshot = {
       archived: Option.isSome(party.archivedAt),
-      displayName: Option.getOrNull(party.displayName),
+      businessName: Option.getOrNull(party.businessName),
       factEvidence: [
         ...detail.currentFactAssertions.flatMap((assertion) =>
           assertion.isCurrent &&
           assertion.state === 'ACTIVE' &&
-          assertion.factKind === 'DISPLAY_NAME' &&
+          assertion.factKind === 'BUSINESS_NAME' &&
           sameParty(assertion.partyRef, partyRef) &&
           DateTime.toEpochMillis(assertion.validFrom) <= decisionEpochMillis &&
           (Option.isNone(assertion.validTo) || DateTime.toEpochMillis(assertion.validTo.value) > decisionEpochMillis)

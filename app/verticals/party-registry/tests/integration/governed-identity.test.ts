@@ -19,7 +19,7 @@ import {
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
+import { Crypto, Effect, Exit, Layer, Option, Redacted, Predicate, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
@@ -37,9 +37,11 @@ import { counterpartyRoleAddAction } from '../../src/actions/counterparty-role-a
 import { counterpartyRoleEndAction } from '../../src/actions/counterparty-role-end.action.ts';
 import { createPartyRelationshipAction } from '../../src/actions/create-party-relationship.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
+import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
 import { endPartyRelationshipAction } from '../../src/actions/end-party-relationship.action.ts';
 import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { unarchivePartyAction } from '../../src/actions/unarchive-party.action.ts';
+import { updatePartyAction } from '../../src/actions/update-party.action.ts';
 import { updatePartyRelationshipAction } from '../../src/actions/update-party-relationship.action.ts';
 import { counterpartyReadRead } from '../../src/api/counterparty-read.read.ts';
 import { partyDetailRead } from '../../src/api/party-detail.read.ts';
@@ -84,12 +86,12 @@ const transport = (idempotencyKey: string) => ({
 });
 const freshTransport = nextUuid.pipe(Effect.map((idempotencyKey) => transport(idempotencyKey)));
 const freshReadTransport = nextUuid.pipe(Effect.map((correlationId) => ({ correlationId })));
-const readPartyDetail = (partyRef: PartyRef, principal: TrustedPrincipalContext) =>
+const readPartyDetail = (partyRef: PartyRef, principal: TrustedPrincipalContext, includeFactHistory = false) =>
   Effect.all([ReadRuntime, freshReadTransport]).pipe(
     Effect.flatMap(([runtime, readTransport]) =>
       runtime.runRead({
         registration: partyDetailRead,
-        input: { partyRef },
+        input: { partyRef, includeFactHistory },
         principal,
         transport: readTransport,
       }),
@@ -123,6 +125,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             endPartyRelationshipAction,
             archivePartyAction,
             unarchivePartyAction,
+            updatePartyAction,
+            correctPartyFactAction,
           ].map(({ descriptor }) => descriptor.actionKey);
           const fixture = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
@@ -292,9 +296,26 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           expect(state.core.events.length).toBe(2);
           expect(state.core.outbox.length).toBe(2);
 
-          const second = yield* run(create(candidate('26168685')));
+          const second = yield* run(
+            create(
+              candidate('26168685', {
+                firstName: 'Source',
+                lastName: 'Person',
+                businessName: 'Source company',
+              }),
+            ),
+          );
           expect(second.outcome).toBe('CREATED');
+          assert.isOk(second.outcome === 'CREATED');
+          const createdNames = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
+          expect(Option.getOrNull(createdNames.party.firstName)).toBe('Source');
+          expect(Option.getOrNull(createdNames.party.lastName)).toBe('Person');
+          expect(Option.getOrNull(createdNames.party.businessName)).toBe('Source company');
+          expect(Option.getOrNull(createdNames.party.displayName)).toBe('Source company');
           const split = candidate('26168685', {
+            firstName: 'Candidate',
+            lastName: 'Person',
+            businessName: 'Ambiguous source company',
             officialIdentifiers: [
               {
                 identifierType: 'ICO',
@@ -579,7 +600,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               candidate('00006947', {
                 partyType: 'PERSON',
                 officialIdentifiers: [],
-                displayName: 'Live contact',
+                firstName: 'Live contact',
                 subjectEvidence: [
                   {
                     kind: 'ACTOR_ATTESTATION',
@@ -608,6 +629,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             }),
           );
           assert.isOk(reviewedPerson.partyRef);
+          const restoredNames = yield* run(readPartyDetail(reviewedPerson.partyRef, managerReadPrincipal));
+          expect(Option.getOrNull(restoredNames.party.firstName)).toBe('Live contact');
+          expect(Option.getOrNull(restoredNames.party.lastName)).toBe(null);
+          expect(Option.getOrNull(restoredNames.party.businessName)).toBe(null);
+          expect(Option.getOrNull(restoredNames.party.displayName)).toBe('Live contact');
 
           const relationship = yield* run(
             runAction({
@@ -751,6 +777,154 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           expect(unarchive.outcome).toBe('BLOCKED');
           assert.isOk(unarchive.outcome === 'BLOCKED' && unarchive.reasonCode === 'OPEN_DUPLICATE_CASE');
+
+          // Structured sources round-trip through the existing public write/read lifecycles.
+          assert.isOk(second.outcome === 'CREATED');
+          const beforeNames = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
+          const named = yield* run(
+            runAction({
+              registration: updatePartyAction,
+              payload: {
+                partyRef: second.partyRef,
+                expectedRevision: beforeNames.party.revision,
+                firstName: 'Ada',
+                lastName: 'Byron',
+                businessName: 'Analytical Engines',
+                provenanceMethod: 'DOCUMENT',
+                provenanceSource: 'live-acceptance',
+                validFrom: '2021-01-01T00:00:00.000Z',
+              },
+              principal: managerPrincipal,
+              transport: yield* freshTransport,
+            }),
+          );
+          expect(Option.getOrNull(named.firstName)).toBe('Ada');
+          expect(Option.getOrNull(named.lastName)).toBe('Byron');
+          expect(Option.getOrNull(named.businessName)).toBe('Analytical Engines');
+          expect(Option.getOrNull(named.displayName)).toBe('Analytical Engines');
+          const surnameUpdated = yield* run(
+            runAction({
+              registration: updatePartyAction,
+              payload: {
+                partyRef: second.partyRef,
+                expectedRevision: named.revision,
+                lastName: 'Lovelace',
+                provenanceMethod: 'DOCUMENT',
+                provenanceSource: 'live-acceptance',
+                validFrom: '2022-01-01T00:00:00.000Z',
+              },
+              principal: managerPrincipal,
+              transport: yield* freshTransport,
+            }),
+          );
+          expect(surnameUpdated.revision).toBe(named.revision + 1);
+          const afterNames = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
+          expect(Option.getOrNull(afterNames.party.firstName)).toBe('Ada');
+          expect(Option.getOrNull(afterNames.party.lastName)).toBe('Lovelace');
+          expect(Option.getOrNull(afterNames.party.businessName)).toBe('Analytical Engines');
+          expect(Option.getOrNull(afterNames.party.displayName)).toBe('Analytical Engines');
+          expect(
+            afterNames.currentFactAssertions.some((fact) => fact.factKind === 'LAST_NAME' && fact.value === 'Lovelace'),
+          ).toBe(true);
+
+          const corrections = [
+            { factKind: 'FIRST_NAME', replacementValue: 'Augusta' },
+            { factKind: 'LAST_NAME', replacementValue: 'King' },
+            { factKind: 'BUSINESS_NAME', replacementValue: 'Corrected Engines' },
+          ] as const;
+          yield* Effect.forEach(
+            corrections,
+            Effect.fn('GovernedIdentityTest.correctStructuredName')(function* correctStructuredName(change) {
+              const before = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
+              const target = before.currentFactAssertions.find((fact) => fact.factKind === change.factKind);
+              assert.isOk(target);
+              const payload = {
+                ...change,
+                partyId: second.partyRef.resourceId,
+                targetAssertionId: target.assertionId,
+                policyVersion: 'party-correction.v1' as const,
+                evidenceRefs: ['review/structured-names'],
+                evidenceSource: 'MANUAL_REVIEW' as const,
+                reasonCode: 'WRONG_IDENTITY_VALUE' as const,
+                provenance: { method: 'REVIEW', source: 'live-acceptance' },
+              };
+              const corrected = yield* run(
+                runAction({
+                  registration: correctPartyFactAction,
+                  payload,
+                  principal: managerPrincipal,
+                  transport: yield* freshTransport,
+                }),
+              );
+              expect(corrected.retractedAssertionId).toBe(target.assertionId);
+              const replacementId = Option.getOrNull(corrected.replacementAssertionId);
+              expect(replacementId).not.toBe(null);
+              expect(replacementId).not.toBe(target.assertionId);
+              const after = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal, true));
+              expect(after.party.revision).toBe(before.party.revision + 1);
+              const replacement = after.currentFactAssertions.find((fact) => fact.factKind === change.factKind);
+              expect(replacement?.assertionId).toBe(replacementId);
+              expect(replacement?.value).toBe(change.replacementValue);
+              expect(
+                Option.getOrElse(after.factHistory, () => []).some(
+                  (fact) => fact.assertionId === target.assertionId && !fact.isCurrent,
+                ),
+              ).toBe(true);
+              assert.isOk(
+                Predicate.isTagged(
+                  yield* run(
+                    runAction({
+                      registration: correctPartyFactAction,
+                      payload,
+                      principal: managerPrincipal,
+                      transport: yield* freshTransport,
+                    }).pipe(Effect.flip),
+                  ),
+                  'PartyCorrectionConflict',
+                ),
+              );
+              const afterStale = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
+              expect(afterStale.party.revision).toBe(after.party.revision);
+            }),
+            { concurrency: 1, discard: true },
+          );
+          const beforeTypeCorrection = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
+          const typeTarget = beforeTypeCorrection.currentFactAssertions.find((fact) => fact.factKind === 'PARTY_TYPE');
+          assert.isOk(typeTarget);
+          yield* run(
+            runAction({
+              registration: correctPartyFactAction,
+              payload: {
+                factKind: 'PARTY_TYPE',
+                partyId: second.partyRef.resourceId,
+                targetAssertionId: typeTarget.assertionId,
+                replacementValue: 'PERSON',
+                policyVersion: 'party-correction.v1',
+                evidenceRefs: ['review/structured-type'],
+                evidenceSource: 'MANUAL_REVIEW',
+                reasonCode: 'WRONG_PARTY_TYPE',
+                provenance: { method: 'REVIEW', source: 'live-acceptance' },
+                subjectEvidence: [
+                  {
+                    kind: 'ACTOR_ATTESTATION',
+                    basis: 'REVIEWED_DOCUMENT',
+                    evidenceRef: 'review/structured-type',
+                    observedSubject: 'PERSON',
+                    subjectKey: 'subject',
+                    statement: 'Reviewed the concrete external person in this fixture',
+                  },
+                ],
+              },
+              principal: managerPrincipal,
+              transport: yield* freshTransport,
+            }),
+          );
+          const afterTypeCorrection = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
+          expect(afterTypeCorrection.party.partyType).toBe('PERSON');
+          expect(Option.getOrNull(afterTypeCorrection.party.firstName)).toBe('Augusta');
+          expect(Option.getOrNull(afterTypeCorrection.party.lastName)).toBe('King');
+          expect(Option.getOrNull(afterTypeCorrection.party.businessName)).toBe('Corrected Engines');
+          expect(Option.getOrNull(afterTypeCorrection.party.displayName)).toBe('Augusta King');
         }),
       ),
   );
