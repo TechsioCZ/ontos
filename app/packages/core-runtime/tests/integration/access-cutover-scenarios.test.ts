@@ -28,7 +28,6 @@ import {
   makeAccessProjectionCompiler,
   makeAccessProjectionTransport,
 } from '../../src/access/compiler/spice-db-compiler.ts';
-import { recordObjectId, scopeObjectId } from '../../src/access/compiler/object-id.ts';
 import {
   AccessChangeItemIdSchema,
   AccessScopeIdSchema,
@@ -40,7 +39,6 @@ import {
   ModuleKeySchema,
   PrincipalIdSchema,
   ProposalIdSchema,
-  RecordKeySchema,
   TenantIdSchema,
 } from '../../src/access/ids.ts';
 import type { TenantId } from '../../src/access/ids.ts';
@@ -98,7 +96,7 @@ import {
   scopeOf,
   tenantScopeIdOf,
 } from '../support/access-scenarios/scenario.ts';
-import type { AccessScenario, RecordProjection } from '../support/access-scenarios/scenario.ts';
+import type { AccessScenario } from '../support/access-scenarios/scenario.ts';
 import {
   AMOUNT_ACTION,
   FIELD_ACTION,
@@ -333,43 +331,6 @@ const buildRuntime = (input: {
     };
   });
 
-/** One SpiceDB relationship update of the record projection: a relation to one subject. */
-const recordTouch = (record: v1.ObjectReference, relation: string, subject: v1.ObjectReference) =>
-  v1.RelationshipUpdate.create({
-    operation: v1.RelationshipUpdate_Operation.TOUCH,
-    relationship: v1.Relationship.create({
-      relation,
-      resource: record,
-      subject: v1.SubjectReference.create({ object: subject }),
-    }),
-  });
-
-/**
- * The record projection a scenario writes directly: the owner's `assigned`/`scope` edges (O10, D32).
- * The engine names the record exactly as the compiler's projection does, so a target check can only
- * ever prove the record inside the scope the decision was resolved in (guarantee 3).
- */
-const projectRecord = (client: v1.ZedClientInterface, tenantId: string, projection: RecordProjection) =>
-  Effect.tryPromise(() => {
-    const record = v1.ObjectReference.create({
-      objectId: recordObjectId(tenantId, projection.scopeId, projection.moduleKey, projection.recordKey),
-      objectType: 'access_record',
-    });
-    const human = v1.ObjectReference.create({
-      objectId: projection.principalId,
-      objectType: 'access_human',
-    });
-    const scope = v1.ObjectReference.create({
-      objectId: scopeObjectId(tenantId, projection.scopeId),
-      objectType: 'access_scope',
-    });
-    return client.promises.writeRelationships(
-      v1.WriteRelationshipsRequest.create({
-        updates: [recordTouch(record, 'assigned', human), recordTouch(record, 'scope', scope)],
-      }),
-    );
-  }).pipe(Effect.orDie);
-
 /**
  * The real bootstrap of one scenario tenant (O67-Q6): the suite resolves the graph, then hands the
  * tenant's own identity rows to `bootstrapTenantAccess` through the one Core writer.
@@ -464,10 +425,6 @@ const withAccessScenario = <Value, Failure>(run: (scenario: AccessScenario) => E
         ownerOverlayFacts: yield* Ref.make<readonly (OwnerAccessFacts | undefined)[]>([]),
         unavailable: true,
       });
-      const client = yield* Effect.acquireRelease(
-        Effect.sync(() => newSpiceDbGrpcClient(configuration)),
-        (opened) => Effect.sync(() => opened.close()),
-      );
       const crypto = yield* Crypto.Crypto;
       const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
       return yield* run(
@@ -484,7 +441,6 @@ const withAccessScenario = <Value, Failure>(run: (scenario: AccessScenario) => E
           tenantId,
           unavailableGate: dead.boundGate,
           writer: live.writer,
-          writeRecordProjection: (projection) => projectRecord(client, tenantId, projection),
         }),
       );
     }),
@@ -1306,7 +1262,7 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
     ),
   );
 
-  suite.effect('a record-scoped list hides unassigned rows and a record-scoped detail is refused', () =>
+  suite.effect('a record-scoped list hides unassigned rows and a single-record read is decided scope-wide', () =>
     withAccessScenario((scenario) =>
       Effect.gen(function* listPerRow() {
         yield* scenario.seedTenant({
@@ -1333,46 +1289,17 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
         // The owner's own row is visible; the colleague's and the unassigned one are not (O25).
         expect(visible).toEqual(['record-owner']);
 
-        const scopeRow = yield* scenario.admin
-          .unsafe<{ readonly scope_id: string }>(
-            `select scope_id from core.access_scopes
-             where tenant_id = '${scenario.tenantId}' and tenant_context_id is not null`,
-          )
-          .pipe(Effect.orDie);
-        const tenantScope = scopeRow[0]?.scope_id ?? '';
-        // The record projection is the owner's own data; without it no record-scoped detail reaches.
-        const refused = yield* readFailure(
-          scenario.runRead({
-            input: { recordKey: 'record-owner' },
+        // A single-record read offers no holder-relative selector, so it is decided scope-wide: the
+        // owner's scope-wide grant reaches each record, with no record projection to consult (R5a-7).
+        for (const recordKey of ['record-owner', 'record-colleague']) {
+          const detail = yield* scenario.runRead({
+            input: { recordKey },
             principal: ownerScope,
             registration: recordDetailRegistration,
-            transport: transport('record-detail-before'),
-          }),
-        );
-        expect(Schema.is(ReadPermissionDenied)(refused)).toBe(true);
-        yield* scenario.writeRecordProjection({
-          moduleKey: moduleKey(SCENARIO_MODULE),
-          principalId: principalId(owner),
-          recordKey: RecordKeySchema.make('record-owner'),
-          scopeId: scopeId(tenantScope),
-        });
-        // The negative control: the record the owner is assigned to now reaches; another does not.
-        const detail = yield* scenario.runRead({
-          input: { recordKey: 'record-owner' },
-          principal: ownerScope,
-          registration: recordDetailRegistration,
-          transport: transport('record-detail-after'),
-        });
-        expect(detail).toEqual({ recordKey: 'record-owner' });
-        const otherRefused = yield* readFailure(
-          scenario.runRead({
-            input: { recordKey: 'record-colleague' },
-            principal: ownerScope,
-            registration: recordDetailRegistration,
-            transport: transport('record-detail-other'),
-          }),
-        );
-        expect(Schema.is(ReadPermissionDenied)(otherRefused)).toBe(true);
+            transport: transport(`record-detail-${recordKey}`),
+          });
+          expect(detail).toEqual({ recordKey });
+        }
       }),
     ),
   );
@@ -1753,18 +1680,6 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
           });
           expect(recordWithoutRecord.outcome).toBe('DENIED');
           expect(recordWithoutRecord.reasons.map(({ code }) => code)).toContain('deny.target_required');
-          yield* scenario.writeRecordProjection({
-            moduleKey: moduleKey(SCENARIO_MODULE),
-            principalId: principalId(fieldReader),
-            recordKey: RecordKeySchema.make('record-field'),
-            scopeId: scopeId(tenantScope),
-          });
-          yield* scenario.writeRecordProjection({
-            moduleKey: moduleKey(SCENARIO_MODULE),
-            principalId: principalId(readOnly),
-            recordKey: RecordKeySchema.make('record-field-plain'),
-            scopeId: scopeId(tenantScope),
-          });
           const recordReached = yield* scenario.runRead({
             input: { recordKey: 'record-field' },
             principal: fieldReaderScope,

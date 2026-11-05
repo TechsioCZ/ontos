@@ -50,14 +50,6 @@ export interface SeedTenantInput {
   readonly tenantId: string;
 }
 
-/** The record projection a scenario writes directly: the owner's `assigned`/`scope` edges (O10, D32). */
-export interface RecordProjection {
-  readonly moduleKey: string;
-  readonly principalId: string;
-  readonly recordKey: string;
-  readonly scopeId: string;
-}
-
 /** One role a scenario needs for its own scope: a run/all cell per named capability (O51). */
 export interface SeededRoleInput {
   /** The one ceiling every cell of this role carries; omitted means an uncapped cell (O18). */
@@ -89,7 +81,6 @@ export interface ScenarioServices {
   readonly tenantId: TenantId;
   readonly unavailableGate: BoundAccessGate;
   readonly writer: AccessProjectionWriterService;
-  readonly writeRecordProjection: (projection: RecordProjection) => Effect.Effect<void>;
 }
 
 export interface AccessScenario extends Omit<ScenarioServices, 'gate'> {

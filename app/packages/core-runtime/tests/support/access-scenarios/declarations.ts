@@ -204,7 +204,7 @@ export const recordDetailDeclaration = declaration({
   kind: 'read',
   modes: ['run'],
   risk: 'routine',
-  selectors: ['assigned'],
+  selectors: ['all'],
 });
 export const dualReadDeclaration = declaration({
   key: DUAL_READ,
@@ -265,7 +265,7 @@ export const recordFieldReadDeclaration = declaration({
   kind: 'read',
   modes: ['run'],
   risk: 'routine',
-  selectors: ['assigned'],
+  selectors: ['all'],
 });
 export const fieldActionDeclaration = declaration({
   key: FIELD_ACTION,
