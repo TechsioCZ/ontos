@@ -3927,6 +3927,7 @@ it.live(
               authBindingId: personalKey.authBindingId,
               authContextRef: personalAuthContextRef,
               buildMarker: party.compiled.buildMarker,
+              legalEntityId: fixture.core.legalEntityId,
               origin: fixture.origin,
               principalId: fixture.core.manager.principalId,
               publicKey: signingKeyPair.publicKey,
