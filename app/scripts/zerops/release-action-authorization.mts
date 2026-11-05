@@ -7,12 +7,14 @@
  * not only the operator file's Tenants. That covers companies created outside the demo builders too. Administrators
  * hold Actions through `company_scope->write_all`, so a missing scope edge locks out everyone, administrators included.
  *
- * It writes `tenant_scope`/`company_scope`, the `grant` link to each Action's `action_grant`, and the intrinsic
- * `self_credentials` edge of the two own-key Actions (every signed-in person manages their own credentials, which act
- * only with that person's rights). Only the missing ones, as TOUCH. It never deletes. It writes no role policy
- * (`action_grant` role edges): that stays with the operator accounts file and the per-tenant scripts. Revoking stays
- * with the event-driven runtime reconciler, which uses the same derivation. The provisioner's apply is not used: it
- * needs the operator accounts file and a reviewed fingerprint, and it deletes edges in its scopes.
+ * The step owns every `action` edge: `tenant_scope`/`company_scope`, the `grant` link to each Action's `action_grant`,
+ * and the intrinsic `self_credentials` edge of the two own-key Actions (every signed-in person manages their own
+ * credentials, which act only with that person's rights). It TOUCHes the missing ones and DELETEs every present one
+ * the derivation does not produce: Actions of uninstalled or unpublished modules, suspended Tenants, inactive
+ * companies. The per-tenant grant scripts write no `action` edges. It writes no role policy (`action_grant` role
+ * edges): that stays with the operator accounts file and the per-tenant scripts. The event-driven runtime reconciler
+ * uses the same derivation between releases. The provisioner's apply is not used: it needs the operator accounts file
+ * and a reviewed fingerprint.
  */
 import path from 'node:path';
 
@@ -65,6 +67,7 @@ export interface ReleaseActionAuthorizationInventory {
 export interface ReleaseActionAuthorizationResult {
   readonly companies: number;
   readonly desired: number;
+  readonly revoked: number;
   readonly tenants: number;
   readonly touched: number;
 }
@@ -120,39 +123,62 @@ export const deriveReleaseActionAuthorization = (
     },
   });
 
-/** Writes only the desired edges SpiceDB lacks, as TOUCH. Present edges, desired or not, are never changed. */
-export const touchMissingActionAuthorization = (
-  rpc: Pick<SpiceDbRpc, 'readRelationships' | 'writeRelationships'>,
+/**
+ * Every live Action edge. The provisioning step reads it before the inventory: an edge the runtime reconciler wrote
+ * for a module installed meanwhile then also appears in the inventory read after it, so the step never revokes it.
+ */
+export const readLiveActionAuthorization = (rpc: Pick<SpiceDbRpc, 'readRelationships'>) =>
+  rpc
+    .readRelationships(
+      v1.ReadRelationshipsRequest.create({
+        consistency: fullyConsistent,
+        relationshipFilter: { resourceType: 'action' },
+      }),
+    )
+    .pipe(
+      Effect.map((rows) => rows.flatMap(({ relationship }) => (relationship === undefined ? [] : [relationship]))),
+      Effect.mapError(() => fail('The live Action edges could not be read')),
+    );
+
+/** One operation over many edges, in batches SpiceDB accepts. */
+const writeActionEdges = (
+  rpc: Pick<SpiceDbRpc, 'writeRelationships'>,
+  relationships: readonly v1.Relationship[],
+  operation: v1.RelationshipUpdate_Operation,
+  reason: string,
+) =>
+  Effect.forEach(
+    EffectArray.chunksOf(relationships, WRITE_BATCH),
+    (batch) =>
+      rpc
+        .writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: batch.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
+          }),
+        )
+        .pipe(Effect.mapError(() => fail(reason))),
+    { concurrency: 1, discard: true },
+  );
+
+/** TOUCHes the desired edges SpiceDB lacks, then DELETEs the live edges the derivation does not produce. */
+export const reconcileActionAuthorization = (
+  rpc: Pick<SpiceDbRpc, 'writeRelationships'>,
+  live: readonly v1.Relationship[],
   desired: readonly v1.Relationship[],
 ) =>
-  Effect.gen(function* touchMissing() {
-    const existing = yield* rpc
-      .readRelationships(
-        v1.ReadRelationshipsRequest.create({
-          consistency: fullyConsistent,
-          relationshipFilter: { resourceType: 'action' },
-        }),
-      )
-      .pipe(Effect.mapError(() => fail('The live Action edges could not be read')));
-    const present = new Set(
-      existing.flatMap(({ relationship }) => (relationship === undefined ? [] : [relationshipKey(relationship)])),
-    );
+  Effect.gen(function* reconcileLive() {
+    // An empty derivation would revoke every Action of every Tenant; Core Actions always derive for an active Tenant.
+    if (desired.length === 0) {
+      return yield* fail('The derivation produced no Action edges; nothing was revoked');
+    }
+    const present = new Set(live.map(relationshipKey));
+    const wanted = new Set(desired.map(relationshipKey));
     const missing = desired.filter((relationship) => !present.has(relationshipKey(relationship)));
-    yield* Effect.forEach(
-      EffectArray.chunksOf(missing, WRITE_BATCH),
-      (batch) =>
-        rpc
-          .writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: batch.map((relationship) =>
-                v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.TOUCH, relationship }),
-              ),
-            }),
-          )
-          .pipe(Effect.mapError(() => fail('Missing Action edges could not be written'))),
-      { concurrency: 1, discard: true },
-    );
-    return missing.length;
+    const stale = live.filter((relationship) => !wanted.has(relationshipKey(relationship)));
+    const { DELETE, TOUCH } = v1.RelationshipUpdate_Operation;
+    yield* writeActionEdges(rpc, missing, TOUCH, 'Missing Action edges could not be written');
+    yield* writeActionEdges(rpc, stale, DELETE, 'Stale Action edges could not be revoked');
+    return { revoked: stale.length, touched: missing.length };
   });
 
 /** The administrator pool reads every Tenant; the runtime identity's row security would hide other Tenants. */
@@ -227,15 +253,18 @@ export const provisionReleaseActionAuthorization = (
       (client) => Effect.sync(() => client.close()),
     );
     return yield* Effect.gen(function* applyRelease() {
+      const rpc = yield* connect;
+      const live = yield* readLiveActionAuthorization(rpc);
       const derived = yield* deriveReleaseActionAuthorization(
         actions,
         publishedModuleKeys,
         yield* readReleaseActionAuthorizationInventory,
       );
-      const touched = yield* touchMissingActionAuthorization(yield* connect, derived.relationships);
+      const { revoked, touched } = yield* reconcileActionAuthorization(rpc, live, derived.relationships);
       return {
         companies: derived.companies,
         desired: derived.relationships.length,
+        revoked,
         tenants: derived.tenants,
         touched,
       } satisfies ReleaseActionAuthorizationResult;
@@ -257,7 +286,7 @@ const ReleaseActionAuthorizationStatusSchema = Schema.Struct({
   outcome: Schema.Literals(['applied', 'failed']),
   reason: Schema.optional(Schema.String),
   revision: Schema.String,
-  revoked: Schema.Number,
+  revoked: Schema.optional(Schema.Number),
   tenants: Schema.optional(Schema.Number),
   touched: Schema.optional(Schema.Number),
 });

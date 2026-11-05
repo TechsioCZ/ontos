@@ -33,12 +33,6 @@ import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 
 import {
-  buildActionAuthorizationRelationships,
-  buildIntrinsicSelfCredentialRelationships,
-  deriveScopedActionAuthorization,
-} from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { bootstrapRelationshipsFromNative } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
@@ -347,8 +341,12 @@ const authorityRole: DemoRole = {
   modules: { [markets]: 'read', [registry]: 'read' },
 };
 
-/** Identity admission stays with the native installers; service roles cannot open the staff Shell. */
+/**
+ * Identity admission stays with the native installers; service roles cannot open the staff Shell. Action edges (scope,
+ * grant link, self credentials) belong to the release step, which derives them from the modules N1 has installed.
+ */
 const policyOnly = (row: DemoRelationship) =>
+  row.resourceType !== 'action' &&
   !(row.resourceType === 'tenant' && ['member', 'company_member'].includes(row.relation)) &&
   !(row.resourceType === 'legal_entity' && row.relation === 'member');
 const asNative = (row: DemoRelationship) =>
@@ -380,20 +378,7 @@ export const n1GrantRelationships = (access: N1Access, actions: readonly DemoAct
     return yield* Effect.try({
       catch: () => fail('The bounded N1 role policy could not be derived'),
       try: () => {
-        const moduleKeys = [...new Set(actions.map(({ owningModuleKey }) => owningModuleKey))];
-        const scopes = [
-          { moduleKeys, tenantId: N1_TENANT_ID },
-          { legalEntityId: N1_LEGAL_ENTITY_ID, moduleKeys, tenantId: N1_TENANT_ID },
-        ];
-        const scoped = deriveScopedActionAuthorization(actions, scopes);
-        const rows: DemoRelationship[] = [
-          ...containment,
-          // The same scope, grant-link and intrinsic self-credential edges the release step and the provisioner write.
-          ...bootstrapRelationshipsFromNative([
-            ...buildActionAuthorizationRelationships(scoped),
-            ...buildIntrinsicSelfCredentialRelationships(actions, scoped),
-          ]),
-        ];
+        const rows: DemoRelationship[] = [...containment];
         const managed = actions.filter(({ actionKey }) => actionKey === managedKeyAction);
         for (const { email, principalId } of access.accounts) {
           if (email !== administratorEmail) {
