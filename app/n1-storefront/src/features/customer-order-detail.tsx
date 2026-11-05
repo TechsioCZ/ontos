@@ -185,7 +185,11 @@ export const CustomerOrderDetailView = ({
     }
   }, [auth.loaded, email, initial.state, router, viewerEmail]);
   let body;
-  if (!auth.loaded || (initial.state === "ready" && email !== null && email !== viewerEmail)) {
+  if (
+    !auth.loaded ||
+    auth.pending ||
+    (initial.state === "ready" && email !== null && email !== viewerEmail)
+  ) {
     body = <output>{d.accountPage.loading}</output>;
   } else if (email === null) {
     body = (

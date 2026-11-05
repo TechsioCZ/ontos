@@ -51,7 +51,11 @@ export const AccountView = ({
   }, [auth.loaded, email, initial.state, router, viewerEmail]);
   const admitted = auth.loaded && auth.outcome.state === "admitted";
   let content;
-  if (!auth.loaded || (admitted && initial.state === "ready" && viewerEmail !== email)) {
+  if (
+    !auth.loaded ||
+    auth.pending ||
+    (admitted && initial.state === "ready" && viewerEmail !== email)
+  ) {
     content = <output>{d.accountPage.loading}</output>;
   } else if (admitted) {
     content = (
@@ -112,8 +116,7 @@ export const AccountView = ({
               </div>
             </Tabs.Content>
             <Tabs.Content value="addresses">
-              {tab === "addresses" && auth.pending && <output>{d.accountPage.loading}</output>}
-              {tab === "addresses" && !auth.pending && auth.outcome.state === "admitted" && (
+              {tab === "addresses" && auth.outcome.state === "admitted" && (
                 <CustomerAddressesPanel dictionary={d} identity={auth.outcome} />
               )}
             </Tabs.Content>
