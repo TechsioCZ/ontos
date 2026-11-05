@@ -1454,6 +1454,7 @@ jobs:
         working-directory: app
         env:
           BASE_SHA: ${{ steps.base.outputs.base }}
+          COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
           FULL_PLAN: ${{ inputs.full }}
           WORKER_DRIFT: ${{ steps.worker-drift.outputs.drift }}
         run: |
@@ -2511,6 +2512,7 @@ jobs:
       actions: read
       contents: read
     env:
+      COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
       DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
       DEPLOY_TARGET: ${{ needs.deploy-target.outputs.target }}
       OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
@@ -2577,6 +2579,10 @@ jobs:
           ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.yaml
         run: |
           materialize_arguments=(--environment "$DEPLOY_ENVIRONMENT" --input zerops.yaml --output "$ZEROPS_YAML_PATH")
+          if [[ "$DEPLOY_TARGET" == 'zerops' ]]; then
+            export COMPOSITION_INTENT_FILE
+            COMPOSITION_INTENT_FILE="$(jq -er '.intentFile' "$RUNNER_TEMP/deployed-node-release/metadata.json")"
+          fi
           if [[ "$DEPLOY_ENVIRONMENT" == 'production' ]]; then
             materialize_arguments+=(--spicedb-endpoint "$PRODUCTION_SPICEDB_ENDPOINT")
           fi
@@ -2806,6 +2812,7 @@ jobs:
         working-directory: app
         env:
           BASE_SHA: ${{ steps.base.outputs.base }}
+          COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
           FULL_PLAN: ${{ inputs.full }}
           OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
         run: |

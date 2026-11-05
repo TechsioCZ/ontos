@@ -1989,6 +1989,38 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
 const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }) =>
   [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
 
+it('passes the reviewed release intent into the remote Zerops worker host build', () => {
+  const schema = Schema.Struct({
+    jobs: Schema.Struct({
+      'deploy-zerops': Schema.Struct({
+        env: Schema.Record(Schema.String, Schema.String),
+        steps: Schema.Array(WorkflowStepSchema),
+      }),
+    }),
+  });
+  const job = Schema.decodeUnknownSync(schema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs['deploy-zerops'];
+  expect(job.env.COMPOSITION_INTENT_FILE).toBe(
+    expression("vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json'"),
+  );
+  const materialize = job.steps.find(({ run }) => run?.includes('materialize_arguments=') === true);
+  expect(materialize?.run).toContain('export COMPOSITION_INTENT_FILE');
+  expect(materialize?.run).toContain(
+    'COMPOSITION_INTENT_FILE="$(jq -er \'.intentFile\' "$RUNNER_TEMP/deployed-node-release/metadata.json")"',
+  );
+});
+
+it('uses the selected release intent when either deployment planner detects hosted-worker changes', () => {
+  const job = Schema.Struct({ steps: Schema.Array(WorkflowStepSchema) });
+  const schema = Schema.Struct({ jobs: Schema.Struct({ 'deploy-plan': job, 'edge-plan': job }) });
+  const { jobs } = Schema.decodeUnknownSync(schema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  for (const planner of [jobs['deploy-plan'], jobs['edge-plan']]) {
+    const step = planner.steps.find(({ id }) => id === 'impact');
+    expect(step?.env?.COMPOSITION_INTENT_FILE).toBe(
+      expression("vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json'"),
+    );
+  }
+});
+
 it('runs retained-release browser recovery separately with one worker and its publication flag enabled', () => {
   const source: unknown = parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'));
   const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs['service-integration'];

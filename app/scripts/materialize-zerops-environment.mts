@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Layer, Option, Schema } from 'effect';
+import { Config, Effect, FileSystem, Layer, Option, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { isSeq, parseDocument } from 'yaml';
+import { OUTBOX_WORKER_HOST } from './outbox-worker-delivery.mjs';
 
 /**
  * `app/zerops.yaml` describes stage, the environment every push deploys. A deployment to another
@@ -17,9 +18,10 @@ export const SPICEDB_ENDPOINT_VARIABLE = 'SPICEDB_ENDPOINT';
 export const DeploymentEnvironmentSchema = Schema.Literals(['production', 'stage']);
 export type DeploymentEnvironment = typeof DeploymentEnvironmentSchema.Type;
 
-export type ZeropsEnvironmentTarget =
+export type ZeropsEnvironmentTarget = (
   | { readonly environment: 'production'; readonly spiceDbEndpoint: string }
-  | { readonly environment: 'stage' };
+  | { readonly environment: 'stage' }
+) & { readonly compositionIntentFile?: string };
 
 export class ZeropsEnvironmentMaterializationError extends Schema.TaggedError<ZeropsEnvironmentMaterializationError>()(
   'ZeropsEnvironmentMaterializationError',
@@ -32,6 +34,34 @@ const variablePaths = (document: ReturnType<typeof parseDocument>, setupCount: n
   Array.from({ length: setupCount }, (_, index) => index).flatMap((index) =>
     PHASES.map((phase) => ['zerops', index, phase, 'envVariables', variable]).filter((path) => document.hasIn(path)),
   );
+
+const setWorkerHostReleaseIntent = (
+  document: ReturnType<typeof parseDocument>,
+  setupCount: number,
+  intentFile: string,
+) =>
+  Effect.gen(function* setHostReleaseIntent() {
+    if (
+      intentFile.length === 0 ||
+      /^(?:\/|[A-Za-z]:[\\/])/u.test(intentFile) ||
+      intentFile.split(/[\\/]/u).includes('..')
+    ) {
+      return yield* new ZeropsEnvironmentMaterializationError({
+        message: 'the worker release intent must be a workspace-relative checkout file',
+      });
+    }
+    const hosts = Array.from({ length: setupCount }, (_, index) => index).filter(
+      (index) => document.getIn(['zerops', index, 'setup']) === OUTBOX_WORKER_HOST.stageSetup,
+    );
+    const [host] = hosts;
+    if (hosts.length !== 1 || host === undefined || !document.hasIn(['zerops', host, 'build'])) {
+      return yield* new ZeropsEnvironmentMaterializationError({
+        message: 'the worker release intent requires exactly one executable host setup',
+      });
+    }
+    document.setIn(['zerops', host, 'build', 'envVariables', 'COMPOSITION_INTENT_FILE'], intentFile);
+    return yield* Effect.void;
+  });
 
 /** The zerops.yaml text with every build and runtime configured for `target`. */
 export const materializeZeropsEnvironment = (zeropsYamlText: string, target: ZeropsEnvironmentTarget) =>
@@ -67,6 +97,9 @@ export const materializeZeropsEnvironment = (zeropsYamlText: string, target: Zer
         document.setIn(path, target.spiceDbEndpoint);
       }
     }
+    if (target.compositionIntentFile !== undefined) {
+      yield* setWorkerHostReleaseIntent(document, setupCount, target.compositionIntentFile);
+    }
     return document.toString({ lineWidth: 0 });
   });
 
@@ -100,7 +133,13 @@ const materializeCommand = Command.make(
     Effect.gen(function* materialize() {
       const fileSystem = yield* FileSystem.FileSystem;
       const target = yield* commandTarget(environment, spiceDbEndpoint);
-      const text = yield* materializeZeropsEnvironment(yield* fileSystem.readFileString(input), target);
+      const compositionIntentFile = yield* Config.String('COMPOSITION_INTENT_FILE').pipe(
+        Config.withDefault('topology/application-release-intent.json'),
+      );
+      const text = yield* materializeZeropsEnvironment(yield* fileSystem.readFileString(input), {
+        ...target,
+        compositionIntentFile,
+      });
       yield* fileSystem.writeFileString(output, text);
       yield* Effect.logInfo(`Wrote the ${environment} zerops.yaml to ${output}`);
     }),

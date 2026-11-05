@@ -519,6 +519,40 @@ it.effect('pushes every Zerops setup with the deploying environment named in its
   }),
 );
 
+it.effect('passes a custom reviewed intent to only the remote host build in the provider copy', () =>
+  Effect.gen(function* remoteHostReleaseIntent() {
+    const source = readFileSync(zeropsYamlPath, 'utf-8');
+    const compositionIntentFile = 'topology/custom-reviewed-release.json';
+    const materialized = yield* materializeZeropsEnvironment(source, { compositionIntentFile, environment: 'stage' });
+    const documentSchema = Schema.Struct({
+      zerops: Schema.Array(
+        Schema.Struct({
+          build: Schema.Struct({ envVariables: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+          run: Schema.Struct({ envVariables: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+          setup: Schema.String,
+        }),
+      ),
+    });
+    const document = Schema.decodeUnknownSync(documentSchema)(parse(materialized));
+    const host = document.zerops.find(({ setup }) => setup === OUTBOX_WORKER_HOST.stageSetup);
+    expect(host?.build.envVariables?.COMPOSITION_INTENT_FILE).toBe(compositionIntentFile);
+    for (const service of document.zerops) {
+      expect(service.run.envVariables?.COMPOSITION_INTENT_FILE).toBeUndefined();
+      if (service.setup !== OUTBOX_WORKER_HOST.stageSetup) {
+        expect(service.build.envVariables?.COMPOSITION_INTENT_FILE).toBeUndefined();
+      }
+    }
+    expect(readFileSync(zeropsYamlPath, 'utf-8')).toBe(source);
+    for (const intentFile of ['', '../outside.json', '/outside.json']) {
+      const rejected = yield* materializeZeropsEnvironment(source, {
+        compositionIntentFile: intentFile,
+        environment: 'stage',
+      }).pipe(Effect.flip);
+      expect(rejected.message).toContain('workspace-relative');
+    }
+  }),
+);
+
 it('connects Party Registry only as its dedicated request identity', () => {
   const party = serviceEnvironments().get('party-registry') ?? {};
 

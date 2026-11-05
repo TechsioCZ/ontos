@@ -13,7 +13,7 @@ import {
   decodeActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
-import { readOutboxWorkerHost } from '../generate-outbox-worker-deployment.mjs';
+import { readOutboxWorkerHostRelease } from '../generate-outbox-worker-deployment.mjs';
 import {
   deriveHostProofSnapshot,
   HostProofTopologySchema,
@@ -27,11 +27,16 @@ import {
 const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionControls() {
   const workspaceRoot = process.cwd();
   const fileSystem = yield* FileSystem.FileSystem;
-  const topology = yield* Schema.decodeEffect(Schema.fromJsonString(HostProofTopologySchema))(
+  const inventoryTopology = yield* Schema.decodeEffect(Schema.fromJsonString(HostProofTopologySchema))(
     yield* fileSystem.readFileString('topology/reference-topology.json'),
   );
-  const host = yield* readOutboxWorkerHost(workspaceRoot);
+  const release = yield* readOutboxWorkerHostRelease(workspaceRoot);
+  const { host } = release;
   assert.ok(host);
+  const topology = {
+    ...inventoryTopology,
+    verticals: inventoryTopology.verticals.filter(({ id }) => release.moduleAppIds.includes(id)),
+  };
   // Unit control identities derive natively. The packaged shell proof supplies actual compiler metadata.
   const sourceRevision = yield* Effect.try({
     catch: () => new OutboxWorkerHostProofFixtureError({ reason: 'native source identity is unavailable' }),
@@ -70,6 +75,8 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
   assert.equal((yield* client.get(`${origin}/active`)).status, 503);
   const { artifacts, snapshot } = yield* deriveHostProofSnapshot({ artifact, origin, workspaceRoot });
   assert.equal(snapshot.composition.modules.length, topology.verticals.length);
+  assert.ok(!snapshot.composition.modules.some(({ deployment }) => deployment.appId === 'commerce-order'));
+  assert.ok(!host.owners.some(({ ownerId }) => ownerId === 'commerce-order'));
   assert.equal(
     new Set(snapshot.composition.modules.map(({ backend }) => backend.baseUrl)).size,
     topology.verticals.length,

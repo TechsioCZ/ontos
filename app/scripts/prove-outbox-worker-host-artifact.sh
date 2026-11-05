@@ -182,7 +182,11 @@ until [ "$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_cod
 done
 
 loops="$(grep -c 'Outbox Worker loop started' "$log" || true)"
-owners="$(grep -c 'outboxWorkerEntry as ' "$app_directory/scripts/outbox-worker-host.generated.mts")"
+owners="$(node --input-type=module --eval "
+import { readFileSync } from 'node:fs';
+const artifact = JSON.parse(readFileSync(process.argv[1], 'utf-8'));
+process.stdout.write(String(artifact.ownerBuildIdentities.length));
+" "$artifact/app/.zerops/runtime/$setup/worker-artifact.json")"
 if [ "$loops" -ne "$owners" ]; then
   cat "$log"
   echo "The Outbox Worker host started $loops polling loops for $owners hosted owners" >&2

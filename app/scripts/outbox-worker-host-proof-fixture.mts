@@ -64,7 +64,11 @@ import {
 } from './application-composition-authority-publication.mts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
 import { createShellRuntimeContract } from './generate-ontos-shell-runtime-contract.mts';
-import { readOutboxWorkerHost, renderOutboxWorkerHostEntry } from './generate-outbox-worker-deployment.mjs';
+import {
+  readOutboxWorkerHost,
+  readOutboxWorkerHostRelease,
+  renderOutboxWorkerHostEntry,
+} from './generate-outbox-worker-deployment.mjs';
 import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST } from './outbox-worker-delivery.mjs';
 
 export class OutboxWorkerHostProofFixtureError extends Schema.TaggedError<OutboxWorkerHostProofFixtureError>()(
@@ -291,7 +295,7 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
   }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const { artifact, origin, workspaceRoot } = input;
-    const topology = yield* Schema.decodeEffect(Schema.fromJsonString(HostProofTopologySchema))(
+    const inventoryTopology = yield* Schema.decodeEffect(Schema.fromJsonString(HostProofTopologySchema))(
       yield* fileSystem.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json')),
     );
     const host = yield* readOutboxWorkerHost(workspaceRoot);
@@ -301,6 +305,11 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
     ) {
       return yield* fail('the generated worker host does not match native topology discovery');
     }
+    const release = yield* readOutboxWorkerHostRelease(workspaceRoot);
+    const topology = {
+      ...inventoryTopology,
+      verticals: inventoryTopology.verticals.filter(({ id }) => release.moduleAppIds.includes(id)),
+    };
     const sourceRevision = yield* Effect.try({
       catch: () => fail('the native worker source revision cannot be resolved'),
       try: () => resolveUltramodernSourceRevision(workspaceRoot, artifact.sourceRevision),
@@ -313,7 +322,7 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
     yield* verifyHostProofOwnerIdentities({
       artifact,
       contracts,
-      hostedOwnerIds: host.owners.map(({ ownerId }) => ownerId),
+      hostedOwnerIds: release.host?.owners.map(({ ownerId }) => ownerId) ?? [],
       sourceRevision,
       topology,
     });

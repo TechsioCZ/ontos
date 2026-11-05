@@ -1,7 +1,8 @@
 import { NodeServices } from '@effect/platform-node';
-import { Array as Arr, Effect, FileSystem, ManagedRuntime, Order, Path, Schema } from 'effect';
+import { Array as Arr, Config, Effect, FileSystem, ManagedRuntime, Order, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
+import { ApplicationReleaseIntentSchema } from './application-release-intent.mts';
 import {
   PARTY_REGISTRY_REQUEST_SECRET,
   PARTY_REGISTRY_WORKER_SECRET,
@@ -17,6 +18,7 @@ import { readDevelopmentPorts } from './topology-development-ports.mjs';
 
 /** Readiness port of the combined host; it must not collide with any topology vertical port. */
 export const OUTBOX_WORKER_HOST_HEALTH_PORT = '4100';
+const TOPOLOGY_PATH = 'topology/reference-topology.json';
 
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
@@ -97,7 +99,7 @@ export const readOutboxWorkerHost = (root) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
-      yield* fs.readFileString(path.join(root, 'topology/reference-topology.json')),
+      yield* fs.readFileString(path.join(root, TOPOLOGY_PATH)),
     );
     const ports = yield* readDevelopmentPorts(root);
     for (const vertical of topology.verticals) {
@@ -109,6 +111,63 @@ export const readOutboxWorkerHost = (root) =>
     return yield* outboxWorkerHostDelivery(root, topology.verticals).pipe(
       Effect.mapError(() => failure('Invalid generated Outbox Worker delivery')),
     );
+  });
+
+/**
+ * Project the delivery inventory through the same reviewed membership used by release selection.
+ * This is build input, not runtime authority or evidence about excluded owners' durable history.
+ * @param {string} root Workspace root.
+ */
+export const readOutboxWorkerReleaseMembership = (root) =>
+  Effect.gen(function* readReleaseMembership() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const intentPath = yield* Config.String('COMPOSITION_INTENT_FILE').pipe(
+      Config.withDefault('topology/application-release-intent.json'),
+    );
+    if (path.isAbsolute(intentPath) || intentPath.split(/[\\/]/u).includes('..')) {
+      return yield* Effect.fail(failure('The worker release intent must be a workspace-relative checkout file'));
+    }
+    const workspaceRoot = yield* fs.realPath(root);
+    const location = path.resolve(workspaceRoot, intentPath);
+    if (location === workspaceRoot || (yield* fs.realPath(location)) !== location) {
+      return yield* Effect.fail(
+        failure('The worker release intent must not resolve outside the checkout or through symlinks'),
+      );
+    }
+    const intent = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ApplicationReleaseIntentSchema), {
+      onExcessProperty: 'error',
+    })(yield* fs.readFileString(location));
+    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
+      yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH)),
+    );
+    const moduleAppIds = intent.modules.map(({ appId }) => appId);
+    const members = new Set(moduleAppIds);
+    const available = new Set(topology.verticals.map(({ id }) => id));
+    if (members.size !== moduleAppIds.length || moduleAppIds.some((id) => !available.has(id))) {
+      return yield* Effect.fail(
+        failure('The worker release intent contains a duplicate or unknown business deployment'),
+      );
+    }
+    return {
+      intentPath: path.relative(workspaceRoot, location),
+      moduleAppIds,
+    };
+  });
+
+/** @param {string} root Workspace root. */
+export const readOutboxWorkerHostRelease = (root) =>
+  Effect.gen(function* readHostRelease() {
+    const release = yield* readOutboxWorkerReleaseMembership(root);
+    const members = new Set(release.moduleAppIds);
+    const inventory = yield* readOutboxWorkerHost(root);
+    return {
+      ...release,
+      host:
+        inventory === undefined
+          ? undefined
+          : { ...inventory, owners: inventory.owners.filter(({ ownerId }) => members.has(ownerId)) },
+    };
   });
 
 /**
@@ -232,7 +291,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
   Effect.gen(function* generateDeployment() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const topologySource = yield* fs.readFileString(path.join(root, 'topology/reference-topology.json'));
+    const topologySource = yield* fs.readFileString(path.join(root, TOPOLOGY_PATH));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
     const ports = yield* readDevelopmentPorts(root);
     let result = source.replace(

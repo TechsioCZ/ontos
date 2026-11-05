@@ -5,11 +5,12 @@ import path from 'node:path';
 
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeServices } from '@effect/platform-node';
-import { Cause, Effect, Exit, Option, Schema } from 'effect';
+import { Cause, ConfigProvider, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { ApplicationMigrationPlan } from '../application-migration-plan.mts';
 import { selectApplicationReleaseUnits } from '../application-release-intent.mts';
+import type { ApplicationReleaseIntent } from '../application-release-intent.mts';
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
 import {
   planDeploymentImpact as planDeploymentImpactEffect,
@@ -62,6 +63,7 @@ interface FixtureOptions {
   readonly shellVerticalRefs?: readonly string[];
   readonly verticalDependencies?: Readonly<Record<string, readonly string[]>>;
   readonly verticalId?: string;
+  readonly workerOwnerIds?: readonly string[];
 }
 
 interface FixtureOwner {
@@ -104,7 +106,7 @@ interface FixtureCloudflarePlacement {
   readonly unitServiceBindings?: Readonly<Record<string, readonly string[]>>;
 }
 
-type FixtureDocument = FixtureCloudflarePlacement | FixtureOwnership | FixtureTopology;
+type FixtureDocument = ApplicationReleaseIntent | FixtureCloudflarePlacement | FixtureOwnership | FixtureTopology;
 
 const CORE_RUNTIME_OWNER = {
   id: 'core-runtime',
@@ -130,6 +132,7 @@ const SHELL_OWNER = {
 const CLOUDFLARE_PLACEMENT_PATH = 'topology/cloudflare-placement.json';
 const OWNERSHIP_PATH = 'topology/ownership.json';
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
+const RELEASE_INTENT_PATH = 'topology/application-release-intent.json';
 const WORKSPACE_MANIFEST_PATH = 'pnpm-workspace.yaml';
 const DOCUMENTATION_PATH = 'docs/README.md';
 const SHARED_CONTRACT_PATH = 'packages/shared-contracts/src/gateway-context.ts';
@@ -162,6 +165,9 @@ const writeWorkspaceProject = (root: string, owner: FixtureOwner, inputs: Fixtur
       ),
     );
   });
+
+const fixtureWorkerOwners = (options: FixtureOptions, verticalId: string): readonly string[] =>
+  options.workerOwnerIds ?? (options.includeWorker === true ? [verticalId] : []);
 
 const makeFixture = (options: FixtureOptions = {}) =>
   Effect.gen(function* testEffect2() {
@@ -209,6 +215,9 @@ const makeFixture = (options: FixtureOptions = {}) =>
       package: `@app/${id}`,
       path: `verticals/${id}`,
     }));
+    yield* writeJson(root, RELEASE_INTENT_PATH, {
+      modules: [verticalId, ...extraVerticalIds].map((appId) => ({ appId })),
+    });
     const placement: FixtureCloudflarePlacement = {
       buildEnvironment: options.cloudflareBuildEnvironment ?? {},
       retiredWorkers: options.cloudflareRetiredWorkers ?? [],
@@ -249,13 +258,15 @@ const makeFixture = (options: FixtureOptions = {}) =>
     for (const owner of extraVerticalOwners) {
       yield* writeWorkspaceProject(root, owner);
     }
-    if (options.includeWorker === true) {
-      const workerRoot = path.join(root, verticalPath);
+    const workerOwnerIds = fixtureWorkerOwners(options, verticalId);
+    for (const ownerId of workerOwnerIds) {
+      const workerRoot = path.join(root, 'verticals', ownerId);
+      const ownerPackageName = `@app/${ownerId}`;
       yield* Effect.tryPromise(() => mkdir(path.join(workerRoot, 'src/worker-host'), { recursive: true }));
       yield* Effect.tryPromise(() =>
         writeFile(
           path.join(workerRoot, 'package.json'),
-          `${JSON.stringify({ exports: { './outbox-worker-host': './src/worker-host/entry.ts' }, name: verticalPackage, scripts: { 'worker:start': 'node --experimental-strip-types ./src/worker-host/main.ts' } })}\n`,
+          `${JSON.stringify({ exports: { './outbox-worker-host': './src/worker-host/entry.ts' }, name: ownerPackageName, scripts: { 'worker:start': 'node --experimental-strip-types ./src/worker-host/main.ts' } })}\n`,
         ),
       );
       for (const generated of ['src/worker-host/main.ts', 'src/worker-host/entry.ts']) {
@@ -269,7 +280,8 @@ const makeFixture = (options: FixtureOptions = {}) =>
       'spicedb',
       verticalId,
       ...extraVerticalIds,
-      ...(options.includeWorker === true ? [`${verticalId}-worker`, OUTBOX_WORKER_HOST_SETUP] : []),
+      ...workerOwnerIds.map((ownerId) => `${ownerId}-worker`),
+      ...(workerOwnerIds.length === 0 ? [] : [OUTBOX_WORKER_HOST_SETUP]),
       'shellsuperapp',
     ];
     const setupLines = setups.map((setup) => `  - setup: '${setup}'`).join('\n');
@@ -386,7 +398,7 @@ it.live('reconciles every worker of the Outbox Worker mode after a switch in eit
             reconcileWorkers: true,
             rootDirectory: root,
           });
-          expect(toHost.units.providers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+          expect(toHost.units.providers).toEqual(['contacts', OUTBOX_WORKER_HOST_SETUP]);
           expect(toHost.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
           // The mode alone decides: the edge units the plan ships are the same in both modes.
           expect(toHost.units.cloudflare).toEqual(toDedicated.units.cloudflare);
@@ -405,6 +417,89 @@ it.live('reconciles every worker of the Outbox Worker mode after a switch in eit
     );
   }),
 );
+
+for (const outboxWorkerMode of ['host', 'dedicated'] as const) {
+  it.live(`carries the ${outboxWorkerMode} worker build closure into complete release selection`, () =>
+    withFixture(
+      (root) =>
+        Effect.gen(function* workerOwnerSelection() {
+          const owners = ['contacts', 'inventory', 'unrelated'];
+          const available = [...owners, SHELL_ID].map((id) => ({
+            id,
+            packageName: `@app/${id}`,
+            path: id === SHELL_ID ? SHELL_OWNER.path : `verticals/${id}`,
+            workerName: `app-${id}`,
+          }));
+          const baseline = yield* makeApplicationCompositionSnapshotFixture(owners);
+          const plan = yield* planDeploymentImpact({
+            changedPaths: [CONTACTS_WORKER_SOURCE],
+            outboxWorkerMode,
+            rootDirectory: root,
+          });
+          const selection = yield* selectApplicationReleaseUnits(
+            { modules: owners.map((appId) => ({ appId })) },
+            available,
+            plan.units.cloudflare.map(({ id }) => ({ id })),
+            baseline,
+            'cloudflare',
+          );
+          expect(selection).toEqual({
+            complete: available.slice(0, 3),
+            fresh: outboxWorkerMode === 'host' ? available.slice(0, 2) : available.slice(0, 1),
+            removed: [],
+            retained: outboxWorkerMode === 'host' ? available.slice(2, 3) : available.slice(1, 3),
+            shell: { mode: 'retained', unit: available[3] },
+          });
+          expect(plan.phases.filter(({ kind }) => kind === 'provider').map(({ id }) => id)).toEqual(
+            selection.fresh.map(({ id }) => id),
+          );
+          expect(plan.units.workers).toEqual(
+            outboxWorkerMode === 'host' ? [OUTBOX_WORKER_HOST_SETUP] : [CONTACTS_WORKER_SETUP],
+          );
+
+          const unrelated = yield* planDeploymentImpact({
+            changedPaths: ['verticals/unrelated/src/service.ts'],
+            outboxWorkerMode,
+            rootDirectory: root,
+          });
+          expect(unrelated.units.providers).toEqual(['unrelated']);
+          expect(unrelated.units.workers).toEqual([]);
+          const steady = yield* planDeploymentImpact({ changedPaths: [], outboxWorkerMode, rootDirectory: root });
+          expect(steady.any).toBe(false);
+
+          const reconciled = yield* planDeploymentImpact({
+            changedPaths: [],
+            outboxWorkerMode,
+            reconcileWorkers: true,
+            rootDirectory: root,
+          });
+          expect(reconciled.phases.filter(({ kind }) => kind === 'provider').map(({ id }) => id)).toEqual(
+            outboxWorkerMode === 'host' ? ['contacts', 'inventory'] : [],
+          );
+          for (const intentFile of [RELEASE_INTENT_PATH, 'releases/custom-intent.json']) {
+            yield* writeJson(root, intentFile, { modules: owners.map((appId) => ({ appId })) });
+            const changedIntent = yield* planDeploymentImpact({
+              changedPaths: [intentFile],
+              outboxWorkerMode,
+              rootDirectory: root,
+            }).pipe(
+              Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ COMPOSITION_INTENT_FILE: intentFile }))),
+            );
+            expect(changedIntent.phases.filter(({ kind }) => kind === 'provider').map(({ id }) => id)).toEqual(
+              outboxWorkerMode === 'host' ? ['contacts', 'inventory'] : [],
+            );
+            expect(changedIntent.units.workers).toEqual(outboxWorkerMode === 'host' ? [OUTBOX_WORKER_HOST_SETUP] : []);
+          }
+        }),
+      {
+        cloudflarePlacement: ['contacts', 'inventory', 'unrelated', SHELL_ID],
+        extraVerticalIds: ['inventory', 'unrelated'],
+        shellVerticalRefs: [],
+        workerOwnerIds: ['contacts', 'inventory'],
+      },
+    ),
+  );
+}
 
 it.live('fails closed when a generated worker has no Outbox Worker host setup', () =>
   Effect.gen(function* missingHostSetup() {
@@ -426,6 +521,49 @@ it.live('fails closed when a generated worker has no Outbox Worker host setup', 
     );
   }),
 );
+
+for (const outboxWorkerMode of ['dedicated', 'host'] as const) {
+  it.live(`executes only custom reviewed worker membership in ${outboxWorkerMode} mode`, () =>
+    withFixture(
+      (root) =>
+        Effect.gen(function* reviewedWorkerExecution() {
+          const intentFile = 'releases/custom-intent.json';
+          yield* writeJson(root, intentFile, { modules: [{ appId: 'inventory' }] });
+          const provider = ConfigProvider.layer(ConfigProvider.fromUnknown({ COMPOSITION_INTENT_FILE: intentFile }));
+          const full = yield* planDeploymentImpact({ outboxWorkerMode, rootDirectory: root }).pipe(
+            Effect.provide(provider),
+          );
+          const expectedWorkers = outboxWorkerMode === 'host' ? [OUTBOX_WORKER_HOST_SETUP] : ['inventory-worker'];
+          expect(full.units.workers).toEqual(expectedWorkers);
+          expect(full.units.providers).not.toContain(CONTACTS_WORKER_SETUP);
+          expect(full.units.providers).toContain('contacts');
+          expect(full.units.stoppedWorkers).toEqual(
+            outboxWorkerMode === 'host' ? [CONTACTS_WORKER_SETUP, 'inventory-worker'] : [OUTBOX_WORKER_HOST_SETUP],
+          );
+          const reconciled = yield* planDeploymentImpact({
+            changedPaths: [],
+            outboxWorkerMode,
+            reconcileWorkers: true,
+            rootDirectory: root,
+          }).pipe(Effect.provide(provider));
+          expect(reconciled.units.workers).toEqual(expectedWorkers);
+          expect(reconciled.units.stoppedWorkers).toEqual(full.units.stoppedWorkers);
+          yield* writeJson(root, intentFile, { modules: [] });
+          const empty = yield* planDeploymentImpact({ outboxWorkerMode, rootDirectory: root }).pipe(
+            Effect.provide(provider),
+          );
+          expect(empty.units.workers).toEqual([]);
+          expect(empty.units.stoppedWorkers).toEqual([]);
+          yield* writeJson(root, intentFile, { modules: [{ appId: 'unknown-owner' }] });
+          const rejected = yield* planningFailure(
+            planDeploymentImpact({ outboxWorkerMode, rootDirectory: root }).pipe(Effect.provide(provider)),
+          );
+          expect(rejected).toContain('duplicate or unknown business deployment');
+        }),
+      { extraVerticalIds: ['inventory'], workerOwnerIds: ['contacts', 'inventory'] },
+    ),
+  );
+}
 
 /**
  * Each environment's plan, as the workflow reads it: production (`zerops`, `dedicated`) pushes every provider
