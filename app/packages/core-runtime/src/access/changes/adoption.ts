@@ -1,11 +1,11 @@
 import { Match, Predicate, Result, Schema } from 'effect';
 
-import { AccessChangeItemIdSchema } from '../ids.ts';
+import { AccessChangeItemIdSchema, AssignmentIncarnationIdSchema } from '../ids.ts';
 import type { CapabilityKey, PrincipalId, RoleId } from '../ids.ts';
 import type { AccessChangeItem, AccessRisk, Assignment, CatalogSnapshotEntry, Cell, Holder, Role } from '../model.ts';
 import { ACCESS_MODEL_PARSE_OPTIONS, AccessChangeDecisionSchema, AccessChangeItemSchema } from '../model.ts';
 import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
-import { configureAuthorityIssue, deciderIssue, liveDelegation } from './authority.ts';
+import { configureAuthorityIssue, coveringGrantorAssignments, deciderIssue, liveDelegation } from './authority.ts';
 import { withOptional } from '../decision/optional.ts';
 import { compareText, higherRisk } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
@@ -39,6 +39,8 @@ export const AdoptionSelectionSchema = Schema.Struct({
 export type AdoptionSelection = typeof AdoptionSelectionSchema.Type;
 
 export const AdoptionPlanSchema = Schema.Struct({
+  /** Present when a delegation authorized the plan: the grantor assignments covering its cells. */
+  grantorIncarnationIds: Schema.optionalKey(Schema.Array(AssignmentIncarnationIdSchema)),
   /** Present when a delegation authorized the plan: the holders its envelope checked, per edited role. */
   checkedHolders: Schema.optionalKey(CheckedHoldersSchema),
   decisions: Schema.Array(AccessChangeDecisionSchema),
@@ -493,17 +495,33 @@ export const planAdoption = (request: AdoptionRequest): Result.Result<AdoptionPl
   return Result.mapError(
     decodeAdoptionPlan(
       withOptional(
-        {
-          decisions: decisions.success,
-          items: resolved.map(({ item }) => ({ ...item, status: 'adopted' })),
-          preview,
-          roleEdits: edits.success,
-        },
-        'checkedHolders',
+        withOptional(
+          {
+            decisions: decisions.success,
+            items: resolved.map(({ item }) => ({ ...item, status: 'adopted' })),
+            preview,
+            roleEdits: edits.success,
+          },
+          'checkedHolders',
+          Predicate.isTagged(request.authority, 'DelegatedManager')
+            ? checkedHoldersOf(
+                request.assignments,
+                edits.success.map(({ roleId }) => roleId),
+                request.decidedAt,
+              )
+            : undefined,
+        ),
+        'grantorIncarnationIds',
         Predicate.isTagged(request.authority, 'DelegatedManager')
-          ? checkedHoldersOf(
-              request.assignments,
-              edits.success.map(({ roleId }) => roleId),
+          ? coveringGrantorAssignments(
+              {
+                assignments: request.assignments,
+                membership: request.membership,
+                revisions: request.roles.map(({ revision }) => revision),
+              },
+              grantedCells(resolved),
+              request.authority.delegation,
+              request.authority.scope.scope,
               request.decidedAt,
             )
           : undefined,

@@ -603,6 +603,43 @@ const removeTeamMember = (
       ),
     );
 
+/**
+ * A delegated assignment commits only while the grantor still holds what it was checked against: the
+ * covering grantor assignments are locked for share, so a concurrent removal waits for this commit,
+ * and one that already committed makes this write refuse instead of granting authority nobody holds.
+ */
+const requireGrantorAssignments = (
+  transaction: CoreTransaction,
+  scope: OperationalScope,
+  incarnationIds: readonly string[],
+): Effect.Effect<void, AccessIntentError> =>
+  incarnationIds.length === 0
+    ? Effect.void
+    : transaction
+        .select({ incarnationId: accessAssignments.incarnationId })
+        .from(accessAssignments)
+        .where(
+          and(
+            eq(accessAssignments.tenantId, scope.tenantId),
+            inArray(accessAssignments.incarnationId, [...incarnationIds]),
+            eq(accessAssignments.status, 'active'),
+          ),
+        )
+        .for('share')
+        .pipe(
+          durable(PEOPLE_UNIQUE_CONSTRAINTS),
+          Effect.flatMap((rows) =>
+            rows.length === new Set(incarnationIds).size
+              ? Effect.void
+              : Effect.fail(
+                  intentConflict(
+                    'access_intent_record_conflict',
+                    'the grantor no longer holds the authority this delegated assignment was checked against',
+                  ),
+                ),
+          ),
+        );
+
 const applyWrite = (
   transaction: CoreTransaction,
   scope: OperationalScope,
@@ -612,7 +649,11 @@ const applyWrite = (
     Match.tag('EndAssignment', (ending) => endAssignment(transaction, scope, ending)),
     Match.tag('EndDelegation', (ending) => endDelegation(transaction, scope, ending)),
     Match.tag('EndMembership', (ending) => endMembership(transaction, scope, ending)),
-    Match.tag('RecordAssignment', ({ assignment }) => writeAssignment(transaction, assignment)),
+    Match.tag('RecordAssignment', ({ assignment, grantorIncarnationIds }) =>
+      requireGrantorAssignments(transaction, scope, grantorIncarnationIds ?? []).pipe(
+        Effect.andThen(writeAssignment(transaction, assignment)),
+      ),
+    ),
     Match.tag('RecordDelegation', ({ delegation }) => writeDelegation(transaction, delegation)),
     Match.tag('RecordMembership', ({ membership }) => writeMembership(transaction, membership)),
     Match.tag('RecordTeamMember', ({ member }) => writeTeamMember(transaction, member)),

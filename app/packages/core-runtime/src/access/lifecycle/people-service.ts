@@ -1,10 +1,10 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Context, DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Match, Option, Predicate, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
-import { beyondGrantorCell, delegationIsLive } from '../changes/authority.ts';
+import { beyondGrantorCell, coveringGrantorAssignments, delegationIsLive } from '../changes/authority.ts';
 import type { AccessConfigureBasis, GrantedCell, GrantorIntent } from '../changes/authority.ts';
 import { AccessScopeIdSchema, PrincipalIdSchema, TenantIdSchema } from '../ids.ts';
 import type {
@@ -279,11 +279,20 @@ const authorityOf = (
  * A delegated assignment, refused when one of the role's cells reaches more than the grantor holds now.
  * The grantor is checked once the envelope admits the assignment, so its own refusals are heard first.
  */
-const planDelegatedRoleAssignment = (request: RoleAssignmentRequest, beyond: Cell | undefined) =>
+const planDelegatedRoleAssignment = (
+  request: RoleAssignmentRequest,
+  beyond: Cell | undefined,
+  grantorIncarnationIds: readonly AssignmentIncarnationId[],
+) =>
   planRoleAssignment(request).pipe(
     Effect.flatMap((plan) =>
       beyond === undefined
-        ? Effect.succeed(plan)
+        ? Effect.succeed({
+            ...plan,
+            writes: plan.writes.map((write): PeopleIntentWrite =>
+              Predicate.isTagged(write, 'RecordAssignment') ? { ...write, grantorIncarnationIds } : write,
+            ),
+          })
         : Effect.fail(
             peopleRefusal(
               'delegation_outside_grantor_authority',
@@ -687,6 +696,7 @@ export const makeAccessPeopleCommands = (dependencies: {
           planDelegatedRoleAssignment(
             { ...request, delegation: delegated },
             beyondGrantorCell(grantorIntentOf(view), granted, delegated.delegation, request.scope, view.at),
+            coveringGrantorAssignments(grantorIntentOf(view), granted, delegated.delegation, request.scope, view.at),
           ),
       }),
     );

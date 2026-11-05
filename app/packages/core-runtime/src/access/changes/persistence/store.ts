@@ -68,6 +68,8 @@ export interface RecordRoleRevisionInput {
    * saw that person. Absent when a permanent basis authorized the edit, which reaches anyone.
    */
   readonly expectedHolders?: readonly AssignmentIncarnationId[];
+  /** The grantor assignments covering the delegated edit's cells, locked and re-checked as it commits. */
+  readonly grantorIncarnationIds?: readonly AssignmentIncarnationId[];
   /** The trusted request scope: its tenant is written and its person is the author (O66). */
   readonly scope: OperationalScope;
 }

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 
@@ -519,6 +519,7 @@ interface RoleRevisionWrite {
   readonly decidedBy: string;
   readonly edit: RoleCellEdit;
   readonly expectedHolders?: readonly string[];
+  readonly grantorIncarnationIds?: readonly string[];
   readonly tenantId: string;
 }
 
@@ -529,6 +530,39 @@ interface RoleRevisionWrite {
  * the unique index, and re-reads (guarantee 5, D23). The role's exclusive lock comes first, so no new
  * assignment can pin the revision this one succeeds after its holders were moved.
  */
+/**
+ * A delegated edit commits only while its grantor still holds what it was checked against: the
+ * covering grantor assignments are locked for share, so a removal waits for this commit, and one that
+ * already committed refuses the edit as stale.
+ */
+const requireGrantorAssignments = Effect.fn('AccessChangesStore.requireGrantorAssignments')(function* requireGrantor(
+  transaction: CoreTransaction,
+  tenantId: string,
+  incarnationIds: readonly string[],
+) {
+  if (incarnationIds.length === 0) {
+    return yield* Effect.void;
+  }
+  const held = yield* transaction
+    .select({ incarnationId: accessAssignments.incarnationId })
+    .from(accessAssignments)
+    .where(
+      and(
+        eq(accessAssignments.tenantId, tenantId),
+        inArray(accessAssignments.incarnationId, [...incarnationIds]),
+        eq(accessAssignments.status, 'active'),
+      ),
+    )
+    .for('share');
+  if (held.length !== new Set(incarnationIds).size) {
+    return yield* storeConflict(
+      'access_changes_revision_stale',
+      'the grantor no longer holds the authority this delegated edit was checked against',
+    );
+  }
+  return yield* Effect.void;
+});
+
 const recordRevision = Effect.fn('AccessChangesStore.recordRevision')(function* recordRevisionEffect(
   transaction: CoreTransaction,
   write: RoleRevisionWrite,
@@ -548,6 +582,7 @@ const recordRevision = Effect.fn('AccessChangesStore.recordRevision')(function* 
       `role ${edit.roleId} moved from revision ${edit.sourceRevisionId} to ${current.roleRevisionId}`,
     );
   }
+  yield* requireGrantorAssignments(transaction, tenantId, write.grantorIncarnationIds ?? []);
   // Under the lock no assignment can join: a holder the delegated envelope never checked refuses the
   // edit, which the caller re-reads and checks again with that holder in it.
   const { expectedHolders } = write;
@@ -634,6 +669,8 @@ interface DecisionBatch {
   readonly decisions: readonly AccessChangeDecision[];
   readonly expected: AccessChangeDecisionKind;
   readonly expectedStatus: AccessChangeItemStatus;
+  /** The grantor assignments covering a delegated batch's cells, locked and re-checked as it commits. */
+  readonly grantorIncarnationIds?: readonly string[];
   readonly items: readonly AccessChangeItem[];
   readonly roleEdits: readonly RoleCellEdit[];
 }
@@ -722,6 +759,7 @@ const writeDecisionBatchTransaction = Effect.fn('AccessChangesStore.writeDecisio
       (item) => transitionItem(transaction, scope.tenantId, item.id, from, batch.expectedStatus),
       { concurrency: 1, discard: true },
     );
+    yield* requireGrantorAssignments(transaction, scope.tenantId, batch.grantorIncarnationIds ?? []);
     const { catalogSnapshotId } = batch;
     if (catalogSnapshotId !== undefined) {
       yield* Effect.forEach(
@@ -1115,7 +1153,11 @@ export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): 
     return yield* runScoped(scope, (transaction) =>
       recordRevision(
         transaction,
-        input.expectedHolders === undefined ? write : { ...write, expectedHolders: input.expectedHolders },
+        withOptional(
+          withOptional(write, 'expectedHolders', input.expectedHolders),
+          'grantorIncarnationIds',
+          input.grantorIncarnationIds,
+        ),
       ),
     );
   });
@@ -1159,16 +1201,20 @@ export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): 
       return yield* writeDecisionBatch(
         scope,
         withOptional(
-          {
-            catalogSnapshotId,
-            decisions: plan.decisions,
-            expected: 'adopt' as const,
-            expectedStatus: 'adopted' as const,
-            items: plan.items,
-            roleEdits: plan.roleEdits,
-          },
-          'checkedHolders',
-          plan.checkedHolders,
+          withOptional(
+            {
+              catalogSnapshotId,
+              decisions: plan.decisions,
+              expected: 'adopt' as const,
+              expectedStatus: 'adopted' as const,
+              items: plan.items,
+              roleEdits: plan.roleEdits,
+            },
+            'checkedHolders',
+            plan.checkedHolders,
+          ),
+          'grantorIncarnationIds',
+          plan.grantorIncarnationIds,
         ),
       );
     },
@@ -1191,16 +1237,20 @@ export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): 
       return yield* writeDecisionBatch(
         scope,
         withOptional(
-          {
-            catalogSnapshotId,
-            decisions: plan.decisions,
-            expected: 'undo' as const,
-            expectedStatus: 'undone' as const,
-            items: plan.items,
-            roleEdits: plan.roleEdits,
-          },
-          'checkedHolders',
-          plan.checkedHolders,
+          withOptional(
+            {
+              catalogSnapshotId,
+              decisions: plan.decisions,
+              expected: 'undo' as const,
+              expectedStatus: 'undone' as const,
+              items: plan.items,
+              roleEdits: plan.roleEdits,
+            },
+            'checkedHolders',
+            plan.checkedHolders,
+          ),
+          'grantorIncarnationIds',
+          plan.grantorIncarnationIds,
         ),
       );
     },

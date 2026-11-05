@@ -1,6 +1,6 @@
 import { Match, Predicate, Result, Schema } from 'effect';
 
-import { CapabilityKeySchema, RoleIdSchema } from '../ids.ts';
+import { AssignmentIncarnationIdSchema, CapabilityKeySchema, RoleIdSchema } from '../ids.ts';
 import type { CapabilityKey, PrincipalId, RoleId } from '../ids.ts';
 import type {
   AccessChangeDecision,
@@ -18,7 +18,7 @@ import {
   cellSlotKey,
 } from '../model.ts';
 import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
-import { configureAuthorityIssue, deciderIssue } from './authority.ts';
+import { configureAuthorityIssue, coveringGrantorAssignments, deciderIssue } from './authority.ts';
 import { withOptional } from '../decision/optional.ts';
 import { compareText } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
@@ -71,6 +71,8 @@ export const UndoSelectionSchema = Schema.Struct({
 export type UndoSelection = typeof UndoSelectionSchema.Type;
 
 export const UndoPlanSchema = Schema.Struct({
+  /** Present when a delegation authorized the plan: the grantor assignments covering its cells. */
+  grantorIncarnationIds: Schema.optionalKey(Schema.Array(AssignmentIncarnationIdSchema)),
   /** Present when a delegation authorized the plan: the holders its envelope checked, per edited role. */
   checkedHolders: Schema.optionalKey(CheckedHoldersSchema),
   decisions: Schema.Array(AccessChangeDecisionSchema),
@@ -535,18 +537,34 @@ export const planUndo = (request: UndoRequest): Result.Result<UndoPlan, AccessCh
   return Result.mapError(
     decodeUndoPlan(
       withOptional(
-        {
-          decisions,
-          items: request.selections.map(({ item }) => ({ ...item, status: 'undone' })),
-          preview,
-          roleEdits: edits.success,
-          skipped: ordered.flatMap(({ skips }) => skips),
-        },
-        'checkedHolders',
+        withOptional(
+          {
+            decisions,
+            items: request.selections.map(({ item }) => ({ ...item, status: 'undone' })),
+            preview,
+            roleEdits: edits.success,
+            skipped: ordered.flatMap(({ skips }) => skips),
+          },
+          'checkedHolders',
+          Predicate.isTagged(request.authority, 'DelegatedManager')
+            ? checkedHoldersOf(
+                request.assignments,
+                edits.success.map(({ roleId }) => roleId),
+                request.decidedAt,
+              )
+            : undefined,
+        ),
+        'grantorIncarnationIds',
         Predicate.isTagged(request.authority, 'DelegatedManager')
-          ? checkedHoldersOf(
-              request.assignments,
-              edits.success.map(({ roleId }) => roleId),
+          ? coveringGrantorAssignments(
+              {
+                assignments: request.assignments,
+                membership: request.membership,
+                revisions: request.roles.map(({ revision }) => revision),
+              },
+              grantedCells(request, ordered),
+              request.authority.delegation,
+              request.authority.scope.scope,
               request.decidedAt,
             )
           : undefined,
