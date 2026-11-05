@@ -64,6 +64,8 @@ const SHARED_CONTRACTS_WORKSPACE_NAME = 'shared-contracts';
 const SHARED_CONTRACTS_WORKSPACE_PATH = 'packages/shared-contracts';
 const CATALOG_VERTICAL_PATH = 'verticals/catalog';
 const CATALOG_SELECTION_CONTRACT_SUBPATH = 'catalog-selection-evidence';
+const PRICING_SHARED_API_PATH = 'verticals/pricing/shared/api.ts';
+const PRICING_HANDLER_PATH = 'verticals/pricing/api/index.ts';
 
 const INVENTORY_OWNER_PATH = 'verticals/inventory-stock';
 const BOUNDARY_FIXTURE_TOPOLOGY = 'topology/reference-topology.json';
@@ -1161,10 +1163,13 @@ export const api = HttpApi.make('InventoryApi')
     root,
     `${vertical}/api/index.ts`,
     `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { makeReadRuntimeLive } from '@app/core-runtime';
+import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+import { inventoryStockRegistration } from '../vertical.registration.ts';
 // <generated-governed-http-handler-imports>
 import { stockListReadApiLive } from './stock-list-read-server.ts';
 // </generated-governed-http-handler-imports>
-const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));
+const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, inventoryStockRegistration).pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));
 const handlersLive = Layer.mergeAll(
   // <generated-governed-http-handler-layers>
   stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -1230,7 +1235,7 @@ export const manifest = {
   yield* write(
     root,
     INVENTORY_REGISTRATION_PATH,
-    `export const registration = { entrypoints: {
+    `export const inventoryStockRegistration = { entrypoints: {
   api: {
     // <generated-module-registration-apis>
     'stock-list': () => import('./src/api/stock-list-client.ts'),
@@ -1564,7 +1569,7 @@ Object.assign(operationGateway, {
     yield* write(
       root,
       INVENTORY_REGISTRATION_PATH,
-      `export const registration = { entrypoints: { api: {
+      `export const inventoryStockRegistration = { entrypoints: { api: {
   // <generated-module-registration-apis>
   'stock-list': () => import('./src/api/stock-list-client.ts'),
   // </generated-module-registration-apis>
@@ -1984,7 +1989,7 @@ ${uiFields}
     const splitRegistration = `${ownerHeader}import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { inventoryStockManifest } from './vertical.manifest.ts';
 import { inventoryStockRuntimeDeclaration } from './vertical.runtime-declaration.ts';
-${originalProviderRegistration.replace('export const registration = { entrypoints:', 'export const inventoryStockRegistration = defineVerticalRuntimeRegistration({ ...inventoryStockRuntimeDeclaration, entrypoints:').replace('} };', '}, manifest: inventoryStockManifest });')}`;
+${originalProviderRegistration.replace('export const inventoryStockRegistration = { entrypoints:', 'export const inventoryStockRegistration = defineVerticalRuntimeRegistration({ ...inventoryStockRuntimeDeclaration, entrypoints:').replace('} };', '}, manifest: inventoryStockManifest });')}`;
     const splitDeclaration = `${ownerHeader}import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import type { VerticalRuntimeRegistrationInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
@@ -4002,8 +4007,8 @@ it.live('rejects disconnected Action API constructor decoys from the actual gene
       'verticals/pricing/package.json',
       'verticals/pricing/vertical.manifest.ts',
       'verticals/pricing/vertical.registration.ts',
-      'verticals/pricing/api/index.ts',
-      'verticals/pricing/shared/api.ts',
+      PRICING_HANDLER_PATH,
+      PRICING_SHARED_API_PATH,
       'packages/pricing-contracts/package.json',
       'packages/pricing-contracts/src/apis/manage-quotation-action.ts',
       'verticals/pricing/shared/apis/manage-quotation-action.ts',
@@ -4189,6 +4194,42 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
   }),
 );
 
+it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
+  Effect.gen(function* unboundOwnerReadRuntime() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const [shared, handler] = yield* Effect.all(
+      [PRICING_SHARED_API_PATH, PRICING_HANDLER_PATH].map((file) =>
+        Effect.promise(() => readFile(path.join(root, file), 'utf-8')),
+      ),
+    );
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    const ownerRuntime = `const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
+  Layer.provide(readRuntimeDependenciesLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(activeApplicationCompositionLive),
+);`;
+    expect(handler).toContain(ownerRuntime);
+    const direct = handler
+      .replace('  makeReadRuntimeLive,', '  ReadRuntimeLive,')
+      .replace(
+        ownerRuntime,
+        'const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));',
+      );
+    const aliased = handler
+      .replace('  makeReadRuntimeLive,', '  ReadRuntimeLive as GovernedReadRuntimeLive,')
+      .replace(ownerRuntime, '')
+      .replaceAll('readRuntimeDependenciesLive', 'governedReadRuntimeDependenciesLive')
+      .replace(
+        'const governedReadRuntimeLive = readRuntimeLive;',
+        'const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));',
+      );
+    for (const invalid of [direct, aliased]) {
+      expect(invalid).not.toBe(handler);
+      expect(hasValidGovernedHttpCompositionRoot(shared, invalid)).toBe(false);
+    }
+  }),
+);
+
 it.live('counts the actual published Pricing read shim in exact owner inventory and rejects nearby escapes', () =>
   Effect.gen(function* actualPublishedPricingInventory() {
     const root = path.resolve(import.meta.dirname, '../..');
@@ -4198,7 +4239,7 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
       ),
     );
     const sources = new Map(trees.flat());
-    const shared = 'verticals/pricing/shared/api.ts';
+    const shared = PRICING_SHARED_API_PATH;
     const shimFile = 'verticals/pricing/shared/apis/quotation-verification.ts';
     const manifestFile = 'verticals/pricing/vertical.manifest.ts';
     const registrationFile = 'verticals/pricing/vertical.registration.ts';
@@ -4208,7 +4249,7 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
     expect(shim.startsWith(MODULE_API_HEADER)).toBe(false);
     expect(hasPublishedGeneratedContractShim(sources, shimFile, shim)).toBe(true);
     const rootSource = sources.get(shared) ?? '';
-    const handler = sources.get('verticals/pricing/api/index.ts') ?? '';
+    const handler = sources.get(PRICING_HANDLER_PATH) ?? '';
     const headerAnnotation = ".annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })";
     expect(rootSource.includes(headerAnnotation)).toBe(true);
     expect(hasValidGovernedHttpCompositionRoot(rootSource, handler)).toBe(true);
@@ -5116,25 +5157,31 @@ for (const [name, operation, allowed] of [
   ['public generated operation', 'executeQuantityPreparationWithAuthorization', true],
   [PRIVATE_COLOCATED_CALLABLE_CASE, 'privateQuantityClientCallable', false],
 ] as const) {
-  it.live(`checks actual quantity governed client ${name}`, () =>
-    Effect.gen(function* actualQuantityGovernedClient() {
-      const root = yield* makeActualQuantityClientFixture();
-      const file = 'verticals/catalog/src/api/quantity-preparation-client.ts';
-      if (!allowed) {
-        const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
-        yield* write(root, file, `${original}\nexport const privateQuantityClientCallable = () => globalThis;\n`);
-      }
-      const consumer = 'apps/shell-super-app/src/quantity-client-consumer.ts';
-      yield* write(root, consumer, `import { ${operation} } from '@app/catalog/api/quantity-preparation-client';\n`);
-      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-      const diagnostic = Exit.isFailure(result) ? Cause.pretty(result.cause) : name;
-      if (Exit.isFailure(result)) {
-        expect(diagnostic).toContain(consumer);
-        expect(diagnostic).toContain(file);
-      }
-      expect(Exit.isSuccess(result), diagnostic).toBe(allowed);
-    }),
-  );
+  for (const throughSymlink of [false, true]) {
+    it.live(`checks actual quantity governed client ${name}${throughSymlink ? ' through workspace symlink' : ''}`, () =>
+      Effect.gen(function* actualQuantityGovernedClient() {
+        const root = yield* makeActualQuantityClientFixture();
+        const file = 'verticals/catalog/src/api/quantity-preparation-client.ts';
+        if (!allowed) {
+          const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
+          yield* write(root, file, `${original}\nexport const privateQuantityClientCallable = () => globalThis;\n`);
+        }
+        const consumer = 'apps/shell-super-app/src/quantity-client-consumer.ts';
+        yield* write(root, consumer, `import { ${operation} } from '@app/catalog/api/quantity-preparation-client';\n`);
+        const checkRoot = throughSymlink ? path.join(root, 'workspace-alias') : root;
+        if (throughSymlink) {
+          yield* Effect.promise(() => symlink(root, checkRoot, 'dir'));
+        }
+        const result = yield* Effect.exit(checkModuleEntrypointBoundaries(checkRoot));
+        const diagnostic = Exit.isFailure(result) ? Cause.pretty(result.cause) : name;
+        if (Exit.isFailure(result)) {
+          expect(diagnostic).toContain(consumer);
+          expect(diagnostic).toContain(file);
+        }
+        expect(Exit.isSuccess(result), diagnostic).toBe(allowed);
+      }),
+    );
+  }
 }
 
 const makeActualMarketClientFixture = Effect.fn(function* actualMarketClientFixture() {

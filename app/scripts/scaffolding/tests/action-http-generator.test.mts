@@ -68,6 +68,18 @@ const vertical = {
 } satisfies OntosVerticalMetadata;
 const appRoot = path.resolve(import.meta.dirname, '../../..');
 
+it.effect('keeps an existing owner-bound Commerce Order root valid without requiring a registration alias', () =>
+  Effect.gen(function* existingUnaliasedOwnerRoot() {
+    const source = yield* Effect.promise(() =>
+      readFile(path.join(appRoot, 'verticals/commerce-order/api/index.ts'), 'utf-8'),
+    );
+    const owner = { ...vertical, slug: 'commerce-order' };
+    const patched = patchRuntimeRoot(source, owner, 'commitOrderActionApiLive');
+    expect(patched).toContain('GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, commerceOrderRegistration)');
+    expect(patchRuntimeRoot(patched, owner, 'commitOrderActionApiLive')).toBe(patched);
+  }),
+);
+
 it('accepts callable Effect union domain schemas and rejects malformed schema descriptors', () => {
   const domainErrorSchema = Schema.Union([
     Schema.Struct({ _tag: Schema.Literal('ProductConflict'), code: Schema.Literal('product_conflict') }),
@@ -454,34 +466,14 @@ export const createPricingPolicyClient = options => makeEffectHttpApiClient(pric
     expect(runtime).toContain(') satisfies EffectRuntimeLayer;');
     expect(runtime).toContain('governedReadApiHandlersLive');
     expect(runtime).toContain('GovernedReadLayer.provide(governedReadApiHandlersLive)');
-    const legacyRuntime = runtime
-      .replace(
-        /import\s*\{\s*pricingPolicyRegistration\s+as\s+governedOwnerRegistration,?\s*\}\s*from '\.\.\/vertical\.registration\.ts';\s*/u,
-        '',
-      )
-      .replace(
-        /import\s*\{\s*ultramodernDeliveryUnit\s+as\s+governedActionDeliveryUnit,?\s*\}\s*from '\.\.\/shared\/ultramodern-build\.ts';\s*/u,
-        '',
-      )
-      .replace('makeReadRuntimeLive as GovernedMakeReadRuntimeLive', 'ReadRuntimeLive as GovernedReadRuntimeLive')
-      .replace(
-        /const governedActiveApplicationCompositionLive\s*=\s*GovernedApplicationCompositionConfigLive\.pipe\(\s*GovernedReadLayer\.provide\(governedApplicationCompositionSourceLive\),?\s*\);\s*/u,
-        '',
-      )
-      .replace(
-        /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)/u,
-        'GovernedReadRuntimeLive',
-      )
-      .replace('  GovernedReadLayer.provide(governedActiveApplicationCompositionLive),', '');
-    expect(legacyRuntime).toContain('const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(');
-    const upgradedRuntime = patchRuntimeRoot(legacyRuntime, vertical, 'changeRateActionApiLive');
-    expect(upgradedRuntime).toMatch(
+    const patchedRuntime = patchRuntimeRoot(runtime, vertical, 'changeRateActionApiLive');
+    expect(patchedRuntime).toMatch(
       /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)/u,
     );
-    expect(upgradedRuntime).toContain('GovernedReadLayer.provide(governedActiveApplicationCompositionLive)');
-    expect(upgradedRuntime.match(/const governedApplicationCompositionSourceLive =/gu)).toHaveLength(1);
-    expect(upgradedRuntime.match(/const governedActiveApplicationCompositionLive =/gu)).toHaveLength(1);
-    expect(patchRuntimeRoot(upgradedRuntime, vertical, 'changeRateActionApiLive')).toBe(upgradedRuntime);
+    expect(patchedRuntime).toContain('GovernedReadLayer.provide(governedActiveApplicationCompositionLive)');
+    expect(patchedRuntime.match(/const governedApplicationCompositionSourceLive =/gu)).toHaveLength(1);
+    expect(patchedRuntime.match(/const governedActiveApplicationCompositionLive =/gu)).toHaveLength(1);
+    expect(patchRuntimeRoot(patchedRuntime, vertical, 'changeRateActionApiLive')).toBe(patchedRuntime);
 
     yield* scaffoldFixture(root, 'action', [
       VERTICAL_FLAG,
@@ -788,6 +780,47 @@ const assertHttpRefused = Effect.fn(function* assertHttpRefused(root: string) {
   expect(Exit.isFailure(failed)).toBe(true);
   expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
 });
+
+it.live(
+  'rejects unbound Core Read roots before and after Action HTTP generation without partial writes',
+  Effect.fn(function* rejectsUnboundReadRoots() {
+    for (const shared of [true, false]) {
+      yield* withPublishedClientFixture(shared)(
+        Effect.fn(function* unboundReadFixture(root) {
+          const runtimePath = `${OWNER_DIRECTORY}/${RUNTIME_ROOT_PATH}`;
+          for (const actionAlreadyMounted of [false, true]) {
+            if (actionAlreadyMounted) {
+              yield* scaffoldHttp(root);
+            }
+            const runtime = yield* Effect.promise(() => readFile(path.join(root, runtimePath), 'utf-8'));
+            for (const binding of ['ReadRuntimeLive', 'GovernedReadRuntimeLive']) {
+              const unbound = runtime
+                .replace(
+                  'makeReadRuntimeLive as GovernedMakeReadRuntimeLive',
+                  binding === 'ReadRuntimeLive' ? binding : `ReadRuntimeLive as ${binding}`,
+                )
+                .replace(
+                  /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)/u,
+                  binding,
+                );
+              expect(unbound).not.toBe(runtime);
+              expect(unbound).toContain(`const governedReadRuntimeLive = ${binding}.pipe(`);
+              expect(() => patchRuntimeRoot(unbound, vertical, 'changeRateActionApiLive')).toThrow(
+                'requires the canonical owner-bound Read runtime',
+              );
+              yield* write(root, runtimePath, unbound);
+              yield* assertHttpRefused(root);
+              yield* write(root, runtimePath, runtime);
+            }
+          }
+          const before = yield* snapshotTree(root, ['node_modules']);
+          yield* scaffoldHttp(root);
+          expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+        }),
+      );
+    }
+  }),
+);
 
 it.live(
   'Action HTTP preserves canonical named owner client exports',

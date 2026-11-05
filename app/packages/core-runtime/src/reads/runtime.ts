@@ -1506,7 +1506,7 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
   };
 });
 
-/** The legacy Core boundary retains its existing dependency graph and startup behavior. */
+/** Core system reads use their own gates without an owner deployment's Composition admission. */
 export const ReadRuntimeLive = Layer.effect(
   ReadRuntime,
   readRuntimeDependencies.pipe(

@@ -1467,10 +1467,6 @@ const hasOwnerBoundReadPipe = (expression: string | undefined, provider: string)
   );
 };
 
-const hasLegacyReadRuntimePipe = (expression: string | undefined): boolean =>
-  wholeCall(expression, /^ReadRuntimeLive\.pipe\(/u) &&
-  callArgument(expression, /^ReadRuntimeLive\.pipe\(/u) === 'Layer.provide(readRuntimeDependenciesLive)';
-
 const hasGovernedHandlerRoot = (source: string, backendRegistration?: string): boolean => {
   if (!hasBoundOwnerRuntimeConstructors(source, backendRegistration)) {
     return false;
@@ -1494,27 +1490,15 @@ const hasGovernedHandlerRoot = (source: string, backendRegistration?: string): b
   const runtime = assignedExpression(source, /const governedReadRuntimeLive\s*=\s*/u);
   if (
     runtime === undefined ||
-    (!/^readRuntimeLive$/u.test(runtime) &&
-      !runtime.startsWith('GovernedReadRuntimeLive.pipe(') &&
-      !hasOwnerBoundReadPipe(runtime, GOVERNED_READ_DEPENDENCY_PROVISION))
+    (!/^readRuntimeLive$/u.test(runtime) && !hasOwnerBoundReadPipe(runtime, GOVERNED_READ_DEPENDENCY_PROVISION))
   ) {
     return false;
   }
   if (runtime === 'readRuntimeLive') {
     const ownerRuntime = assignedExpression(source, /const readRuntimeLive\s*=\s*/u);
-    if (
-      !hasOwnerBoundReadPipe(ownerRuntime, 'Layer.provide(readRuntimeDependenciesLive)') &&
-      !hasLegacyReadRuntimePipe(ownerRuntime)
-    ) {
+    if (!hasOwnerBoundReadPipe(ownerRuntime, 'Layer.provide(readRuntimeDependenciesLive)')) {
       return false;
     }
-  } else if (hasOwnerBoundReadPipe(runtime, GOVERNED_READ_DEPENDENCY_PROVISION)) {
-    // Constructor and both argument imports were checked above; retain the exact dependency pipe.
-  } else if (
-    !isWholeCallExpression(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) ||
-    callArgument(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) !== GOVERNED_READ_DEPENDENCY_PROVISION
-  ) {
-    return false;
   }
   return effectBffDefinition(source) !== undefined;
 };
