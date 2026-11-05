@@ -28,6 +28,8 @@ import {
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
+import { PartyCorrectionResponseSchema } from '../../shared/apis/party-correction.ts';
+import { PartyCorrectionGovernance } from '../../shared/domain/correction-contracts.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
@@ -44,6 +46,7 @@ import { unarchivePartyAction } from '../../src/actions/unarchive-party.action.t
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
 import { updatePartyRelationshipAction } from '../../src/actions/update-party-relationship.action.ts';
 import { counterpartyReadRead } from '../../src/api/counterparty-read.read.ts';
+import { partyCorrectionRead } from '../../src/api/party-correction.read.ts';
 import { partyDetailRead } from '../../src/api/party-detail.read.ts';
 import { partyMatchDecisionRead } from '../../src/api/party-match-decision.read.ts';
 import {
@@ -827,6 +830,59 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             afterNames.currentFactAssertions.some((fact) => fact.factKind === 'LAST_NAME' && fact.value === 'Lovelace'),
           ).toBe(true);
 
+          // A fresh same-value update is a new operation; replay is not.
+          const beforeEqualUpdate = yield* snapshot();
+          const equalUpdateTransport = yield* freshTransport;
+          const equalUpdatePayload = {
+            partyRef: second.partyRef,
+            expectedRevision: surnameUpdated.revision,
+            lastName: ' Lovelace ',
+            provenanceMethod: 'DOCUMENT',
+            provenanceSource: 'live-acceptance',
+            validFrom: '2023-01-01T00:00:00.000Z',
+          };
+          const equalUpdated = yield* run(
+            runAction({
+              registration: updatePartyAction,
+              payload: equalUpdatePayload,
+              principal: managerPrincipal,
+              transport: equalUpdateTransport,
+            }),
+          );
+          expect(equalUpdated.revision).toBe(surnameUpdated.revision + 1);
+          expect(Option.getOrNull(equalUpdated.lastName)).toBe('Lovelace');
+          const equalDetail = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal, true));
+          const oldSurname = afterNames.currentFactAssertions.find((fact) => fact.factKind === 'LAST_NAME');
+          const equalSurname = equalDetail.currentFactAssertions.find((fact) => fact.factKind === 'LAST_NAME');
+          assert.isOk(oldSurname && equalSurname);
+          expect(equalSurname.assertionId).not.toBe(oldSurname.assertionId);
+          expect(equalSurname.value).toBe('Lovelace');
+          expect(Option.getOrNull(equalDetail.party.firstName)).toBe('Ada');
+          expect(Option.getOrNull(equalDetail.party.businessName)).toBe('Analytical Engines');
+          expect(Option.getOrNull(equalDetail.party.displayName)).toBe('Analytical Engines');
+          expect(Option.getOrElse(equalDetail.factHistory, () => [])).toContainEqual(
+            expect.objectContaining({ assertionId: oldSurname.assertionId, isCurrent: false, state: 'ENDED' }),
+          );
+          const afterEqualUpdate = yield* snapshot();
+          expect(afterEqualUpdate.assertions.length).toBe(beforeEqualUpdate.assertions.length + 1);
+          expect(afterEqualUpdate.core.events.length).toBe(beforeEqualUpdate.core.events.length + 1);
+          expect(afterEqualUpdate.core.outbox.length).toBe(beforeEqualUpdate.core.outbox.length + 1);
+          expect(afterEqualUpdate.core.audits.length).toBe(beforeEqualUpdate.core.audits.length + 1);
+          assert.isOk(
+            Predicate.isTagged(
+              yield* run(
+                runAction({
+                  registration: updatePartyAction,
+                  payload: equalUpdatePayload,
+                  principal: managerPrincipal,
+                  transport: equalUpdateTransport,
+                }).pipe(Effect.flip),
+              ),
+              'ActionAlreadyCommitted',
+            ),
+          );
+          expect(yield* snapshot()).toEqual(afterEqualUpdate);
+
           const corrections = [
             { factKind: 'FIRST_NAME', replacementValue: 'Augusta' },
             { factKind: 'LAST_NAME', replacementValue: 'King' },
@@ -860,6 +916,44 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               const replacementId = Option.getOrNull(corrected.replacementAssertionId);
               expect(replacementId).not.toBe(null);
               expect(replacementId).not.toBe(target.assertionId);
+              const detail = yield* run(
+                Effect.all([ReadRuntime, freshReadTransport]).pipe(
+                  Effect.flatMap(([runtime, readTransport]) =>
+                    runtime.runRead({
+                      registration: partyCorrectionRead,
+                      input: { correctionRef: corrected.correctionRef },
+                      principal: managerReadPrincipal,
+                      transport: readTransport,
+                    }),
+                  ),
+                ),
+              );
+              const encodedDetail = yield* Schema.encodeEffect(PartyCorrectionResponseSchema)(detail);
+              const decodedDetail = yield* Schema.decodeUnknownEffect(PartyCorrectionResponseSchema)(encodedDetail);
+              expect(decodedDetail).toEqual(detail);
+              expect(decodedDetail.correctionRef).toEqual(corrected.correctionRef);
+              expect(decodedDetail.partyRef).toEqual(second.partyRef);
+              expect(decodedDetail.factKind).toBe(change.factKind);
+              expect(decodedDetail.targetAssertionId).toBe(target.assertionId);
+              expect(Option.getOrNull(decodedDetail.replacementAssertionId)).toBe(replacementId);
+              expect(decodedDetail.originalAssertion).toMatchObject({
+                assertionId: target.assertionId,
+                factKind: change.factKind,
+                value: target.value,
+                state: 'SUPERSEDED',
+              });
+              expect(Option.getOrNull(decodedDetail.resultingAssertion)).toMatchObject({
+                assertionId: replacementId,
+                factKind: change.factKind,
+                value: change.replacementValue,
+                state: 'ACTIVE',
+              });
+              expect(decodedDetail.governance).toEqual(PartyCorrectionGovernance);
+              expect(decodedDetail.actingPrincipalId).toBe(managerPrincipal.principalId);
+              expect(decodedDetail.evidenceRefs).toEqual(payload.evidenceRefs);
+              expect(decodedDetail.evidenceSource).toBe(payload.evidenceSource);
+              expect(decodedDetail.reasonCode).toBe(payload.reasonCode);
+              expect(decodedDetail.provenance).toEqual(payload.provenance);
               const after = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal, true));
               expect(after.party.revision).toBe(before.party.revision + 1);
               const replacement = after.currentFactAssertions.find((fact) => fact.factKind === change.factKind);
