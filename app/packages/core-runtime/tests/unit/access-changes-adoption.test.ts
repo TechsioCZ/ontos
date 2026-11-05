@@ -519,6 +519,22 @@ it('bounds a delegated manager to the legal entity of their own delegation', () 
 
   // The delegation's own legal entity is the only place it configures.
   expect(succeeded(adoptIn([roleState({ legalEntityId: LEGAL_ENTITY })])).items[0]?.status).toBe('adopted');
+  // A grantor still in the tenant but no longer in the company holds nothing there to hand on.
+  const tenantOnly = { ...tenantMembership(), legalEntities: [] };
+  expect(
+    failureOf(
+      planAdoption(
+        adoptionRequest({
+          actor: principalHolder(MANAGER),
+          assignments: [activePerson()],
+          authority: delegatedBasis(envelope, scope),
+          membership: tenantOnly,
+          roles: [roleState({ legalEntityId: LEGAL_ENTITY })],
+          selections: [selection(note.id, [adoptionTarget({})])],
+        }),
+      ),
+    ).code,
+  ).toBe('access_changes_delegation_out_of_envelope');
   // A tenant-wide role reaches every company, so it is never a delegate's to edit.
   expect(failureOf(adoptIn([roleState({})])).code).toBe('access_changes_delegation_out_of_envelope');
   // Another legal entity is a different scope with its own delegation.

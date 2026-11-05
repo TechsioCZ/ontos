@@ -4,8 +4,8 @@ import { Context, DateTime, Effect, Layer, Match, Option, Result, Schema } from 
 import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
-import { delegationIsLive } from '../changes/authority.ts';
-import type { AccessConfigureBasis } from '../changes/authority.ts';
+import { beyondGrantorCell, delegationIsLive } from '../changes/authority.ts';
+import type { AccessConfigureBasis, GrantedCell, GrantorIntent } from '../changes/authority.ts';
 import { AccessScopeIdSchema, PrincipalIdSchema, TenantIdSchema } from '../ids.ts';
 import type {
   AccessScopeId,
@@ -46,6 +46,7 @@ import type {
 } from './people-commands.ts';
 import {
   membershipIsLive,
+  peopleRefusal,
   planDelegationGrant,
   planDelegationRevocation,
   planOwnershipTransfer,
@@ -259,6 +260,70 @@ const authorityOf = (
     }
   }
   return { capabilityKeys: [...capabilityKeys], grants };
+};
+
+/**
+ * A delegated assignment, refused when one of the role's cells reaches more than the grantor holds now.
+ * The grantor is checked once the envelope admits the assignment, so its own refusals are heard first.
+ */
+const planDelegatedRoleAssignment = (request: RoleAssignmentRequest, beyond: Cell | undefined) =>
+  planRoleAssignment(request).pipe(
+    Effect.flatMap((plan) =>
+      beyond === undefined
+        ? Effect.succeed(plan)
+        : Effect.fail(
+            peopleRefusal(
+              'delegation_outside_grantor_authority',
+              `${beyond.capabilityKey} ${beyond.mode} reaches more than its grantor holds`,
+            ),
+          ),
+    ),
+  );
+
+/** The cells a role revision grants, each with the catalog entry that governs it. */
+const grantedCellsOf = (
+  chosen: AccessRoleWithRevision,
+  catalog: readonly CatalogSnapshotEntry[],
+): readonly GrantedCell[] => {
+  const entries = new Map(catalog.map((entry) => [entry.key, entry] as const));
+  return chosen.revision.cells.flatMap((cell) => {
+    const entry = entries.get(cell.capabilityKey);
+    return entry === undefined ? [] : [{ cell, entry, roleId: chosen.role.id }];
+  });
+};
+
+/**
+ * The grantor facts of this view in the shape the shared grantor check reads: every assignment and
+ * role revision, and the live members and suspensions of the tenant and each company.
+ */
+const grantorIntentOf = (view: AccessPeopleView): GrantorIntent => {
+  const live = (membership: AccessMembership) =>
+    membership.validFrom <= view.at && (membership.validUntil === undefined || view.at < membership.validUntil);
+  const pathOf = (scopeId: AccessScopeId) => {
+    const rows = view.memberships.filter((membership) => membership.scopeId === scopeId && live(membership));
+    return {
+      members: rows.flatMap((membership) =>
+        membership.kind === 'member' && membership.status === 'active'
+          ? [
+              membership.validUntil === undefined
+                ? { holder: membership.holder }
+                : { expiresAt: membership.validUntil, holder: membership.holder },
+            ]
+          : [],
+      ),
+      suspended: rows.flatMap((membership) => (membership.status === 'suspended' ? [membership.holder] : [])),
+    };
+  };
+  return {
+    assignments: view.assignments,
+    membership: {
+      ...pathOf(view.tenantScopeId),
+      legalEntities: view.scopes.flatMap((row) =>
+        row.legalEntityId === undefined ? [] : [{ ...pathOf(row.scopeId), legalEntityId: row.legalEntityId }],
+      ),
+    },
+    revisions: view.roles.map(({ revision }) => revision),
+  };
 };
 
 const assignmentOfPlan = (planned: PeopleChangePlan): Option.Option<Assignment> =>
@@ -598,11 +663,18 @@ export const makeAccessPeopleCommands = (dependencies: {
     };
     const request: RoleAssignmentRequest =
       command.validUntil === undefined ? proposal : { ...proposal, validUntil: command.validUntil };
-    // A delegated manager assigns through their envelope, so the assignment freezes its limits (D10).
+    // A delegated manager assigns through their envelope, so the assignment freezes its limits (D10),
+    // and only what the grantor still holds: the role's every cell is checked against their live grants.
+    const granted = grantedCellsOf(chosen, catalog.value.entries);
     const planned = yield* firstAcceptedPlan(yield* basesIn(scope, view, command.scopeId), (basis) =>
-      planRoleAssignment(
-        Option.match(basis, { onNone: () => request, onSome: (delegation) => ({ ...request, delegation }) }),
-      ),
+      Option.match(basis, {
+        onNone: () => planRoleAssignment(request),
+        onSome: (delegated) =>
+          planDelegatedRoleAssignment(
+            { ...request, delegation: delegated },
+            beyondGrantorCell(grantorIntentOf(view), granted, delegated.delegation, request.scope, view.at),
+          ),
+      }),
     );
     yield* applyPlan(scope, planned);
     const written = assignmentOfPlan(planned);

@@ -374,8 +374,19 @@ export interface ConfigureCheck {
   readonly tenantId: string;
 }
 
-/** The tenant's live members and suspensions, as the projection reads them at the decision instant. */
-export type GrantorMembership = Pick<TenantProjectionIntent, 'legalEntities' | 'members' | 'suspended'>;
+/** One scope's live members, each with the end date it carries, and its live suspensions. */
+export interface GrantorMembershipPath {
+  readonly members: readonly { readonly expiresAt?: Date; readonly holder: Holder }[];
+  readonly suspended: readonly Holder[];
+}
+
+/**
+ * The tenant's live members and suspensions, and each company's, at the decision instant. The
+ * projection intent carries exactly this shape, so a writer that loaded it passes it as it is.
+ */
+export interface GrantorMembership extends GrantorMembershipPath {
+  readonly legalEntities: readonly (GrantorMembershipPath & { readonly legalEntityId: string })[];
+}
 
 /** The assignments, role revisions and memberships of the tenant a grantor's own grants are read from. */
 export interface GrantorIntent {
@@ -386,24 +397,30 @@ export interface GrantorIntent {
 
 /**
  * Whether the grantor is still a live member on the delegation's scope path, as a decision requires
- * before any of their grants counts: a member of the tenant or of the delegation's company, and
- * suspended in neither. A grantor whose membership ended holds nothing a delegate may hand on.
+ * before any of their grants counts: a live, unsuspended member of the tenant and, for a company
+ * delegation, of that company too, exactly the two memberships the graph's
+ * `access_legal_entity.access` rests on. A grantor whose membership ended holds nothing a delegate may
+ * hand on.
  */
 const grantorIsMember = (membership: GrantorMembership, scope: AccessScope, grantor: PrincipalId, at: Date) => {
   const isGrantor = (holder: Holder): boolean =>
     Predicate.isTagged(holder, 'Principal') && holder.principalId === grantor;
-  const live = (member: { readonly expiresAt?: Date; readonly holder: Holder }): boolean =>
-    isGrantor(member.holder) && (member.expiresAt === undefined || at < member.expiresAt);
-  const company = Match.value(scope).pipe(
-    Match.tags({
-      LegalEntity: ({ legalEntityId }) =>
-        membership.legalEntities.find((entity) => entity.legalEntityId === legalEntityId),
-      TenantContext: () => {},
-    }),
-    Match.exhaustive,
+  const liveIn = (path: GrantorMembershipPath): boolean =>
+    !path.suspended.some(isGrantor) &&
+    path.members.some(
+      (member) => isGrantor(member.holder) && (member.expiresAt === undefined || at < member.expiresAt),
+    );
+  return (
+    liveIn(membership) &&
+    Match.value(scope).pipe(
+      Match.tags({
+        LegalEntity: ({ legalEntityId }) =>
+          membership.legalEntities.some((entity) => entity.legalEntityId === legalEntityId && liveIn(entity)),
+        TenantContext: () => true,
+      }),
+      Match.exhaustive,
+    )
   );
-  const suspended = membership.suspended.some(isGrantor) || (company?.suspended.some(isGrantor) ?? false);
-  return !suspended && (membership.members.some(live) || (company?.members.some(live) ?? false));
 };
 
 /**
@@ -415,7 +432,7 @@ const grantorIsMember = (membership: GrantorMembership, scope: AccessScope, gran
  * under. Authority the grantor holds only through a delegation of their own never counts, and nothing
  * counts once the grantor's own membership has ended, so the check fails closed.
  */
-const beyondGrantorCell = (
+export const beyondGrantorCell = (
   intent: GrantorIntent,
   grantedCells: readonly GrantedCell[],
   delegation: Delegation,
