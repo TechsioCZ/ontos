@@ -617,7 +617,14 @@ const seedMemberships = (schema: IntentLoaderSchema) =>
           scopeId: scopeTenantA,
           validUntil: daysAfter(now, 10),
         }),
-        membership({ holder: person(jana), id: membershipOwner, kind: 'owner', scopeId: scopeTenantA }),
+        // Ownership ends on its own date; it bounds management, never Jana's business decisions (D6).
+        membership({
+          holder: person(jana),
+          id: membershipOwner,
+          kind: 'owner',
+          scopeId: scopeTenantA,
+          validUntil: daysAfter(now, 5),
+        }),
         membership({
           holder: agentHolder(janaAgent),
           id: membershipAgent,
@@ -800,6 +807,7 @@ it.layer(NodeServices.layer)('the tenant intent loader', (suite) => {
       expect(Schema.is(tenantContextScopeSchema)(resolvedTenant.scope)).toBe(true);
       expect(resolvedTenant.tenantId).toBe(TenantIdSchema.make(tenantA));
       expect(resolvedTenant.scopeId).toBe(AccessScopeIdSchema.make(scopeTenantA));
+      // Only the member row's end bounds the path: the owner row's earlier end is management's own.
       expect(resolvedTenant.holderDeadlines.map(({ deadlines }) => deadlines.map(({ source }) => source))).toEqual([
         ['membership'],
       ]);

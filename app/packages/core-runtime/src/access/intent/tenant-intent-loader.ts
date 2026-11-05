@@ -475,15 +475,35 @@ const connectionOf = (row: ConnectionRow) =>
     `agent connection ${row.connectionId}`,
   );
 
-/** The end dates one holder's memberships carry in one scope: the deadline source of D6. */
+/**
+ * The live `member` rows of a set of memberships, with the end date each one carries. Owner and
+ * access-admin rows are management authority, which the graph projects as its own relations and which
+ * still requires membership before it administers anything (O28).
+ *
+ * The membership's own window bounds it here, exactly as the decision engine's time rule bounds every
+ * other intent (D6): a membership that has not started or has already ended is not part of intent at
+ * this instant, so it is never projected as a live tuple.
+ */
+const liveAt = (membership: AccessMembership, at: Date): boolean =>
+  membership.validFrom <= at && (membership.validUntil === undefined || membership.validUntil > at);
+
+/**
+ * The end dates one holder's live `member` rows carry in one scope: the deadline source of D6. Only
+ * operational membership bounds a business decision. An owner or access-admin row is management
+ * authority with its own deadline, read by the configure-authority path, so its end never denies the
+ * capabilities the person still holds as a member.
+ */
 const membershipDeadlines = (
   memberships: readonly AccessMembership[],
   scopeId: string,
   holder: Holder,
+  at: Date,
 ): readonly AuthorityDeadline[] =>
   memberships.flatMap((membership): readonly AuthorityDeadline[] =>
     membership.scopeId === scopeId &&
-    membership.status !== 'revoked' &&
+    membership.kind === 'member' &&
+    membership.status === 'active' &&
+    liveAt(membership, at) &&
     membership.validUntil !== undefined &&
     holderKey(membership.holder) === holderKey(holder)
       ? [{ source: 'membership', until: membership.validUntil }]
@@ -497,18 +517,6 @@ const uniqueDeadlines = (deadlines: readonly AuthorityDeadline[]): readonly Auth
     return seen.has(key) ? false : (seen.add(key), true);
   });
 };
-
-/**
- * The live `member` rows of a set of memberships, with the end date each one carries. Owner and
- * access-admin rows are management authority, which the graph projects as its own relations and which
- * still requires membership before it administers anything (O28).
- *
- * The membership's own window bounds it here, exactly as the decision engine's time rule bounds every
- * other intent (D6): a membership that has not started or has already ended is not part of intent at
- * this instant, so it is never projected as a live tuple.
- */
-const liveAt = (membership: AccessMembership, at: Date): boolean =>
-  membership.validFrom <= at && (membership.validUntil === undefined || membership.validUntil > at);
 
 const activeMembers = (memberships: readonly AccessMembership[], at: Date): readonly ProjectionMemberIntent[] =>
   memberships.flatMap((membership): readonly ProjectionMemberIntent[] => {
@@ -792,8 +800,8 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
     // bound the path, and each holder carries only its own (D6, M2).
     const holderDeadlines: readonly HolderMembershipDeadlines[] = query.holders.map((holder) => ({
       deadlines: uniqueDeadlines([
-        ...(tenantScopeId === undefined ? [] : membershipDeadlines(memberships, tenantScopeId, holder)),
-        ...(row.scopeId === tenantScopeId ? [] : membershipDeadlines(memberships, row.scopeId, holder)),
+        ...(tenantScopeId === undefined ? [] : membershipDeadlines(memberships, tenantScopeId, holder, at)),
+        ...(row.scopeId === tenantScopeId ? [] : membershipDeadlines(memberships, row.scopeId, holder, at)),
       ]),
       holder,
     }));
