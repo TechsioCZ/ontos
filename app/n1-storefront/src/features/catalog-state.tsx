@@ -3,6 +3,8 @@
 import { useParams, useRouter } from "next/navigation";
 import { Skeleton } from "@techsio/ui-kit/atoms/skeleton";
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
+import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { getDictionary } from "@/i18n";
 
 /** Framework loading/unavailable states contain no product fixtures or synthetic success data. */
@@ -34,8 +36,31 @@ export const CatalogState = ({
       >
         {title}
       </h1>
-      <output>{pending ? message : d.unavailableDescription}</output>
-      {pending ? (
+      <output className={pending && kind === "product" ? "sr-only" : ""}>
+        {pending ? message : d.unavailableDescription}
+      </output>
+      {pending && kind === "product" && (
+        <>
+          <div className="w-full">
+            <PriceBlock pendingLabel={d.loadingPrice} state="pending" />
+          </div>
+          <div className="w-full">
+            <AvailabilityStatus pendingLabel={d.loadingAvailability} status="pending" />
+          </div>
+          <Button
+            block
+            isLoading
+            loadingText={d.notifications.loading}
+            size="md"
+            theme="solid"
+            type="button"
+            variant="primary"
+          >
+            {d.notifications.loading}
+          </Button>
+        </>
+      )}
+      {pending && kind === "category" && (
         <div className="w-full">
           <Skeleton speed="slow">
             <Skeleton.Rectangle>
@@ -46,7 +71,8 @@ export const CatalogState = ({
             </div>
           </Skeleton>
         </div>
-      ) : (
+      )}
+      {!pending && (
         <Button block onClick={() => router.refresh()} size="md" theme="solid" variant="primary">
           {d.retry}
         </Button>

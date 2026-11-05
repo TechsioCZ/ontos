@@ -1,5 +1,24 @@
 # Kontrola převodu N1 storefrontu
 
+## C35: skutečný loading READ detailu produktu — 2026-11-05
+
+- Fresh Figma57:3009: existující CatalogState skládá pending PriceBlock,
+  AvailabilityStatus a disabled loading Button z veřejného API kitu. Category
+  loading a skutečný unavailable/retry zůstávají oddělené. Nezobrazuje cenu,
+  sklad ani Přidávám, dokud žádný produkt / cart Action nejsou k dispozici.
+- Generický nadpis zachovává neznámou identitu; nevkládá jméno fixture ani
+  její pevnou výšku. Jen layout wrappery; žádné nové vzhledové třídy na kitu,
+  paletové hodnoty, radius override nebo změna fontu. Canonical N1 tokeny platí.
+- TDD skutečně RED→GREEN;529/529 N1 testů, lint/TSRS, formát a produkční build
+  PASS. Samostatné source/contract review GO. Build běžel s naším FE vypnutým.
+- Browser390 se skutečným katalogem a Slow3G ověřil přechod na reálný detail,
+  ale přechodný pending frame se nepodařilo zachytit. Screenshot začátku
+  navigace není důkazem tohoto stavu; vizuální browser PASS se proto netvrdí.
+  Nezávislé porovnání API/Figma je v soukromém loading contract review.
+- Známý rozdíl importované Figma / canonical tématu zůstává: Button radius8
+  versus N1 radius2, Skeleton4 versus0; neobchází se lokálním CSS. Čeká také
+  společné rozhodnutí o fontu. Celý storefront není prohlášen za1:1 hotový.
+
 ## C34: všechny výslovně podporované locale tagy — 2026-11-05
 
 - N1 market admission chybně zkoušela jen supportedLocales[0]. Owner contract
