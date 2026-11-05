@@ -39,17 +39,17 @@ A Voucher that explicitly activates an eligible free-shipping Promotion for the 
 _Avoid_: free-shipping code as second cart monetary discount, a new consumption or credit model.
 
 **Automatic Promotion**:
-A named Promotion activated by its declared eligibility without an entered Voucher Code. Its accepted monetary target is the merchandise cart, not a separately discounted product or category. A free-shipping Promotion can also have automatic activation for the selected Delivery Offer.
+A Promotion activated when its declared eligibility holds without a Voucher Code; automatic monetary offers target the merchandise cart, while automatic free-shipping offers target the selected Delivery Offer.
 _Avoid_: automatic product discount as Promotion, generic targeting engine.
 
 **Free-shipping Promotion**:
-A Promotion offering a Free-shipping Entitlement for the selected Delivery Offer of an exact purchase. Its merchant-defined meaning includes automatic or Voucher-triggered activation, an optional Free-shipping Minimum, permitted delivery methods and an Effective Period. These conditions belong to the immutable published offer; Delivery/Shipping owns the offered delivery service and its customer-charged amount.
+An immutable offer that grants a Free-shipping Entitlement for a selected Delivery Offer when its declared activation, optional minimum, permitted method and Effective Period match. Delivery/Shipping, not Promotion, owns the offered delivery service and its customer-charged amount.
 _Avoid_: merchandise-cart monetary discount, a new canonical ShippingTarget object, Promotion-owned delivery method or price, carrier cost as customer charge.
 
 ### Eligibility, selection and application order
 
 **Promotion Target**:
-The exact business subject receiving a benefit: a Purchase Demand Occurrence, the merchandise cart, or the selected Delivery Offer / Shipping component for free shipping. "Shipping target" is a descriptive reference to the Delivery-owned choice, not a new canonical resource. A target is distinct from eligibility conditions and from the recipients of a cart allocation.
+The exact business subject receiving an offered benefit: an original Purchase Demand Occurrence, the merchandise cart or the selected Delivery Offer for free shipping. “Shipping target” describes the last Delivery-owned choice, not a separate Promotion resource or an eligibility condition.
 _Avoid_: eligibility filter as benefit target, allocation recipient as another Promotion, delivery method catalog as the selected purchase delivery.
 
 **Promotion Eligibility**:
@@ -57,7 +57,7 @@ The satisfaction of an offer's declared conditions for an exact purchase and tru
 _Avoid_: eligible means applied, permission to administer means eligibility to receive a benefit.
 
 **Promotion Eligible Basis**:
-The monetary basis of the original purchase occurrences eligible for a particular monetary Promotion, in its Resolved Promotion Monetary Basis. Eligibility may concern only a subset of the complete purchase. For a cart Promotion, its basis follows the applicable Product Vouchers. Retaining the complete purchase for binding and evidence does not make every occurrence an eligible recipient.
+The monetary value of original purchase occurrences eligible for a particular benefit, on the purchase's resolved GROSS/NET basis after any earlier applicable reductions. The complete purchase retains all original occurrences for identity and evidence, but unrelated occurrences do not become eligible recipients.
 _Avoid_: complete purchase sum as proof of eligible capacity, removing unrelated occurrences from purchase identity, original undiscounted subtotal as post-voucher basis.
 
 **Cart Promotion Priority**:
@@ -65,15 +65,15 @@ The explicit merchant-managed ranking used to select at most one eligible mercha
 _Avoid_: best-price winner, database order as priority, eligibility as a conflict by itself, fixed-first as a second arithmetic layer.
 
 **Free-shipping Priority**:
-The separate merchant-managed ranking of eligible free-shipping Promotions, whether automatic or Voucher-triggered, for the selected Delivery Offer of one exact purchase. At most one offer is selected for that delivery; an ambiguous required ranking is a configuration conflict rather than an implicit winner. This ranking is distinct from the merchandise-cart monetary priority.
+The merchant-managed ranking that selects at most one eligible free-shipping Promotion for a selected Delivery Offer, independent of merchandise-cart priority. Missing or tied required ordering is a configuration conflict, not an implied best-price winner.
 _Avoid_: free-shipping offers sharing the monetary cart slot, multiple selected shipping offers for the same delivery, arbitrary winner.
 
 **Free-shipping Minimum**:
-An optional merchant-configured merchandise purchase threshold for a free-shipping Promotion. It is compared with the authoritative Published Merchandise Value after Product Vouchers and the selected cart monetary Promotion, in the same purchase-level resolved GROSS/NET basis as those benefits. It excludes the Shipping charge; equality with the minimum satisfies the condition. There is no independent NET/GROSS selector or rounding rule for this minimum.
+An optional merchandise threshold checked against authoritative Published Merchandise Value after applicable product and cart discounts, in the purchase's resolved GROSS/NET basis and excluding Shipping. Equality meets the threshold; the minimum introduces neither another basis selector nor another price-rounding rule.
 _Avoid_: pre-discount basket threshold, exact unpublished subtotal as the published threshold input, a second B2B basis decision, including Shipping in the minimum, treating a NET publication as GROSS.
 
 **Promotion Application Order**:
-The fixed product-before-cart sequence: Product Vouchers apply to their occurrences before the selected merchandise-cart monetary Promotion. A Free-shipping Minimum is assessed against the published merchandise value after both monetary layers. Fixed-amount and percentage effect kinds do not reverse these layers.
+The fixed sequence in which Product Voucher benefits apply before the one selected cart monetary benefit. Free-shipping minimum eligibility follows publication of the completed merchandise value; fixed and percentage benefit kinds do not reverse that order.
 _Avoid_: fixed-first or percentage-first arithmetic overriding product-before-cart, selection priority as calculation order.
 
 **Product–Cart Discount Combination**:
@@ -95,7 +95,7 @@ A configured proportional reduction of an eligible monetary basis. The percentag
 _Avoid_: percentage value as applied currency amount.
 
 **Resolved Promotion Monetary Basis**:
-The authoritative tax-inclusive or tax-exclusive basis used consistently by merchandise monetary applications in one purchase. It expresses the benefit's commercial meaning, not a tax rate, Taxable Basis or legal tax treatment. It does not change the basis of independently owned Pricing or Tax outputs.
+The purchase-wide tax-inclusive (GROSS) or tax-exclusive (NET) basis on which merchandise Promotion benefits are applied, distinct from taxable basis or legal tax treatment. It does not change independently owned Pricing publication amounts or Tax calculations.
 _Avoid_: B2B flag as basis, gross/net display preference as authority, Promotion deciding VAT, relabeling a published NET amount as GROSS.
 
 **Remaining Promotion Eligible Capacity**:
@@ -103,11 +103,11 @@ The positive monetary value still available to receive a particular benefit on i
 _Avoid_: original undiscounted value, rounded display as exact capacity, negative capacity repaired through ordinary voucher application, carry-over credit.
 
 **Applied Monetary Benefit**:
-The attributable monetary reduction actually granted by a Promotion Application, after its eligibility and capacity rules. It retains its supported calculation precision, distinct from the configured benefit and from the final published price. A later price-rounding difference does not retroactively change the applied benefit.
+The actual attributable monetary reduction from a Promotion Application after eligibility and capacity limits, retained at supported calculation precision. It is distinct from the configured benefit and from subsequent price-rounding differences, which never rewrite it.
 _Avoid_: configured fixed amount as necessarily fully applied, independently rounded savings as a second deduction, rounding adjustment as a Promotion benefit, negative contribution notation as a second benefit.
 
 **Published Merchandise Value**:
-The authoritative post-discount monetary value of the merchandise for an exact purchase, with an explicit currency, NET/GROSS basis and owner evidence. The term distinguishes a published commercial value from exact intermediate calculation values; it does not create another monetary owner or a new Pricing GROSS total. Its basis must match the purpose for which it is consumed, including a Free-shipping Minimum. It excludes the separately owned Shipping charge and is not the complete Purchase Payable Amount.
+The authoritative purchase-bound post-discount merchandise amount with explicit currency, NET/GROSS basis and current owner evidence, excluding Shipping and distinct from unpublished intermediate values. It is neither a new Promotion-owned monetary total nor the full Purchase Payable Amount, and published NET cannot stand in for GROSS.
 _Avoid_: frontend subtotal as authority, exact pre-publication sum as a published amount, published NET silently treated as GROSS, total payable including Shipping as merchandise value.
 
 ### Applied results and evidence
@@ -117,19 +117,23 @@ The attributable application of one immutable Promotion to an exact purchase and
 _Avoid_: Promotion definition as application, anonymous aggregate discount.
 
 **Promotion Application Set**:
-The ordered result preserving each application's separate identity, target and evidence. Product-voucher applications on different occurrences, the selected cart application and any Free-shipping Entitlement remain distinguishable. Completeness describes the evidenced result, not an assumption that all required foreign-owner facts are already available.
+The attributable ordered result of Promotion applications preserving each actual target, benefit and evidence, including product, cart and any free-shipping results. Its merchandise monetary part may be complete before Shipping eligibility is known; that completeness must not be mistaken for a verified whole-purchase Shipping or payable outcome.
 _Avoid_: single anonymous benefit, losing the selected offer identity by aggregation, unverified shipping eligibility represented as complete success.
 
+**Merchandise Monetary Proof**:
+The complete Current proof of selected or demonstrably absent product-voucher and cart monetary applications for an exact purchase, including their exact benefits, allocations and selection evidence. It is the merchandise portion of a Promotion Application Set, available before free-shipping eligibility is decided without claiming a complete Shipping result or payable.
+_Avoid_: a second Promotion Application, a complete Shipping decision, a guess that an absent owner response means no eligible promotion.
+
 **Cart Promotion Allocation**:
-The attribution of one Applied Monetary Benefit to eligible original Purchase Demand Occurrences in proportion to their positive remaining eligible basis. The allocations retain supported calculation precision, preserve the total applied benefit and stay within each recipient's capacity. They explain the same single cart application; they are not additional Promotions or product-voucher applications. Allocation remainders are distinct from final price publication rounding.
+The exact attribution of one cart Applied Monetary Benefit to eligible original Purchase Demand Occurrences in proportion to their remaining positive basis, conserving the applied total and each recipient's capacity. It is neither another Promotion application nor a Pricing price-rounding adjustment.
 _Avoid_: new cart Promotion per recipient, proportional allocation as stacking offers, mandatory cent rounding of each allocation, Tax allocation as the same owner fact.
 
 **Free-shipping Entitlement**:
-The attributable result of a selected free-shipping Promotion for an exact purchase and chosen Delivery Offer. It records why the purchase qualifies for free shipping; it is not itself the Delivery/Shipping owner's published customer charge. An already-zero authoritative Shipping charge does not create another monetary reduction or credit, and an unavailable charge is not proof of zero.
+The attributable benefit of a selected free-shipping Promotion for the purchase's selected Delivery Offer, independent of the actual customer-charged Shipping amount. An authoritative zero charge yields no extra monetary credit, while a missing Shipping charge is not proof of zero.
 _Avoid_: entitlement as proof of a missing Shipping amount, anonymous zero replacing offer attribution, additional monetary cart allocation, carrier cost reimbursement.
 
 **Accepted Promotion Evidence**:
-The identities, applied benefits, allocations and relevant source meaning retained for a successful historical purchase. It explains that accepted result without turning history into a Current offer or importing an external voucher identity. The exact applied benefit and the separately owned publication evidence retain their distinct meanings.
+The historical record of Promotion/Voucher identities, applied benefits, allocations and source meaning actually used in an accepted purchase. It remains distinct from current eligibility and from separately owned price-publication or rounding evidence.
 _Avoid_: recalculating accepted benefits from current policy, historical evidence as current eligibility, rewriting historical discounts to balance a rounded total.
 
 ### Shared-language references
@@ -139,7 +143,7 @@ A descriptive alias for the existing Commerce Purchase Demand Occurrence used as
 _Avoid_: Product ID, SKU, display-row position or price equality as occurrence identity; merging equal-valued occurrences.
 
 **Pricing Rounding Adjustment**:
-The existing Pricing-owned signed difference between an original line's published commercial value and its exact final value before publication. It explains final price publication without changing the Applied Monetary Benefit. It is distinct from Tax's rounding difference and from Cart Promotion Allocation remainders.
+The Pricing-owned signed difference between an original line's published commercial value and its exact pre-publication value. It is neither another discount nor a cart-allocation remainder or Tax rounding.
 _Avoid_: a new voucher or fee, adjusting the actual discount to balance the basket, another independent rounding of the sum of published lines, Tax rounding as Pricing rounding.
 
 **Promotion Administration**:
