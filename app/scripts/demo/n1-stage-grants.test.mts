@@ -24,7 +24,15 @@ import {
 } from './n1-stage-grants.mts';
 import type { N1ContractDocument, N1GrantPlan, N1PermissionCheck } from './n1-stage-grants.mts';
 import { akrosPlaygroundTenantId } from './akros-playground-policy.mts';
-import { demoTenantId } from './fixture-ids.mts';
+import {
+  demoId,
+  demoTenantId,
+  demoLegalEntityId,
+  crmDemoLegalEntityId,
+  akrosDemoLegalEntityId,
+  eshopDemoLegalEntityId,
+  rentalDemoLegalEntityId,
+} from './fixture-ids.mts';
 import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
@@ -34,6 +42,29 @@ const ignoredCredential = ['private', 'test', 'sentinel'].join('-');
 const bindManagedKey = 'core.identity.bind-managed-api-key';
 const merchandiseModule = 'demo.merchandise';
 const workTasksModule = 'work.tasks';
+const commerceModule = 'commerce.customer-context';
+const commercePortalName = 'n1-commerce-portal';
+const partyModule = 'party.registry';
+const ownerActions = [
+  'core.identity.reserve-principal-binding',
+  'core.identity.activate-principal-binding',
+  'party.registry.accept-retail-enrollment-evidence',
+  'party.registry.create-party',
+  'party.registry.counterparty-customer-onboard',
+  'party.registry.add-contact-point',
+  'commerce.customer-context.ensure-retail-customer-profile',
+  'commerce.customer-context.bind-retail-portal-profile',
+] as const;
+const deniedOwnerActions = [
+  'core.identity.change-principal-binding-status',
+  'commerce.customer-context.record-portal-enrollment-outcome',
+  'party.registry.update-party',
+  'party.registry.update-contact-point',
+];
+const portalActions = [
+  'commerce.customer-context.start-portal-enrollment',
+  'commerce.customer-context.claim-portal-enrollment-transition',
+] as const;
 const allAssertions = 'assert-all';
 const deniedAssertions = 'assert-denied';
 const access = () => ({
@@ -121,8 +152,20 @@ const contract = (appId: string, moduleId: string, actionKey = `${moduleId}.appl
   runtime: { outboxSubscriptions: [] },
   schemaVersion: '2',
 });
-const documents = (): readonly N1ContractDocument[] =>
-  n1ManifestSources.map(({ appId, moduleId }) => ({ appId, source: JSON.stringify(contract(appId, moduleId)) }));
+const documents = (omitted?: string): readonly N1ContractDocument[] =>
+  n1ManifestSources.map(({ appId, moduleId }) => {
+    const fixture = contract(appId, moduleId);
+    const moduleKeys = [...ownerActions, ...portalActions, ...deniedOwnerActions].filter((key) =>
+      key.startsWith(`${moduleId}.`),
+    );
+    const keys = moduleKeys.filter((key) => key !== omitted);
+    if (moduleKeys.length > 0) {
+      fixture.manifest.publicSurface.actions = keys.flatMap(
+        (key) => contract(appId, moduleId, key).manifest.publicSurface.actions,
+      );
+    }
+    return { appId, source: JSON.stringify(fixture) };
+  });
 const parseAccess = (input: ReturnType<typeof access>) => decodeN1Access(JSON.stringify(input));
 const buildPlan = (input: ReturnType<typeof access>, contracts: readonly N1ContractDocument[]) =>
   parseAccess(input).pipe(Effect.flatMap((decoded) => createN1GrantPlan(decoded, contracts)));
@@ -153,12 +196,12 @@ it.effect('projects credentials away and rejects another target, duplicate accou
   }),
 );
 
-it.effect('decodes only the four complete public owner contracts and the current Core catalog', () =>
+it.effect('decodes only the six complete public owner contracts and the current Core catalog', () =>
   Effect.gen(function* publicContracts() {
     const decoded = yield* decodeN1Contracts(documents());
     expect(decoded.actions.some(({ actionKey }) => actionKey === bindManagedKey)).toBe(true);
     expect(decoded.actions.some(({ actionKey }) => actionKey === 'demo.merchandise.apply-command')).toBe(true);
-    expect(decoded.contracts).toHaveLength(4);
+    expect(decoded.contracts).toHaveLength(6);
     yield* fails(decodeN1Contracts(documents().slice(1)));
     yield* fails(decodeN1Contracts([...documents(), ...documents()]));
     yield* fails(
@@ -210,7 +253,11 @@ it.effect(
             expect(Array.isArray(scope)).toBe(true);
             if (Array.isArray(scope)) {
               expect(scope[0]).toBe(N1_TENANT_ID);
-              expect([null, N1_LEGAL_ENTITY_ID, 'legal_entity']).toContain(scope[1]);
+              if (object.objectType === 'identity_namespace') {
+                expect(scope[1]).toBe('ontos.commerce.portal.better-auth.v1');
+              } else {
+                expect([null, N1_LEGAL_ENTITY_ID, 'legal_entity']).toContain(scope[1]);
+              }
               if (scope[1] === 'legal_entity') {
                 expect(scope[2]).toBe(N1_LEGAL_ENTITY_ID);
               }
@@ -232,7 +279,9 @@ it.effect(
       expect(n1ServiceDefinitions(plan.access).map(({ principalId }) => principalId)).toEqual([
         principal('3'),
         principal('4'),
+        demoId('core.principal', commercePortalName),
       ]);
+      expect(n1ServiceDefinitions(plan.access)[2]?.displayName).toBe(commercePortalName);
     }),
 );
 
@@ -297,7 +346,7 @@ const hasModuleGrant = (rows: readonly v1.Relationship[], moduleId: string, rela
   );
 
 it.effect(
-  'storefront gets only Market reads, module access and two apply-command executors; authority gets only Market/registry reads',
+  'storefront gets Market reads, module access, two apply-command and two portal executors; authority gets only Market/registry reads',
   () =>
     Effect.gen(function* serviceGrants() {
       const plan = yield* planFixture();
@@ -346,7 +395,9 @@ it.effect(
         .filter(({ expected, label }) => expected && label.startsWith(`${storefrontId}: N1 service Action `))
         .map(({ label }) => label.slice(`${storefrontId}: N1 service Action `.length))
         .toSorted();
-      expect(storefrontExecutes).toEqual(['demo.merchandise.apply-command', 'work.tasks.apply-command']);
+      expect(storefrontExecutes).toEqual(
+        [...portalActions, 'demo.merchandise.apply-command', 'work.tasks.apply-command'].toSorted(),
+      );
       expect(
         plan.relationships.filter((row) => row.resource?.objectType === 'resource' && row.relation === 'module'),
       ).toHaveLength(2);
@@ -526,4 +577,89 @@ it.effect(
       // The self-credential edge, like every Action edge, comes from the release step, not the N1 plan.
       expect(plan.relationships.some((row) => row.resource?.objectType === 'action')).toBe(false);
     }),
+);
+
+it.effect('N1 Commerce has its own native service identity and exactly eight owner executors', () =>
+  Effect.gen(function* commerceOwnerPolicy() {
+    const plan = yield* planFixture();
+    const owner = n1ServiceDefinitions(plan.access).find(({ displayName }) => displayName === commercePortalName);
+    expect(owner).toBeDefined();
+    if (owner === undefined) {
+      return;
+    }
+    expect(owner.tenantId).toBe(N1_TENANT_ID);
+    expect(owner.legalEntityId).toBe(N1_LEGAL_ENTITY_ID);
+    expect([principal('1'), principal('2'), principal('3'), principal('4')]).not.toContain(owner.principalId);
+    const prefix = `${owner.principalId}: N1 service Action `;
+    expect(
+      plan.checks
+        .filter(({ expected, label }) => expected && label.startsWith(prefix))
+        .map(({ label }) => label.slice(prefix.length))
+        .toSorted(),
+    ).toEqual([...ownerActions].toSorted());
+    const grants = plan.relationships.filter(
+      (row) => row.subject?.object?.objectId === serviceRole(commercePortalName),
+    );
+    expect(
+      grants.some((row) => row.resource?.objectType === 'identity_namespace' && row.relation === 'provisioner'),
+    ).toBe(true);
+    expect(
+      grants.some((row) => row.resource?.objectType === 'tenant' && row.relation === 'party_identity_manager'),
+    ).toBe(true);
+    expect(
+      grants.some((row) => row.resource?.objectType === 'legal_entity' && row.relation === 'counterparty_manager'),
+    ).toBe(true);
+    for (const moduleId of [commerceModule, partyModule]) {
+      expect(hasModuleGrant(grants, moduleId, 'accessor_role')).toBe(true);
+      expect(hasModuleGrant(grants, moduleId, 'writer_role')).toBe(false);
+    }
+    expect(grants.some((row) => row.resource?.objectType === 'context_permission')).toBe(false);
+    for (const key of [...deniedOwnerActions, ...portalActions]) {
+      expect(
+        plan.checks.some(
+          ({ expected, label, principalId }) =>
+            !expected && principalId === owner.principalId && label.endsWith(`Action ${key}`),
+        ),
+      ).toBe(true);
+    }
+    for (const company of new Set([
+      demoLegalEntityId,
+      rentalDemoLegalEntityId,
+      crmDemoLegalEntityId,
+      akrosDemoLegalEntityId,
+      eshopDemoLegalEntityId,
+    ])) {
+      expect(
+        plan.checks.some(
+          ({ expected, principalId, resource }) =>
+            !expected &&
+            principalId === owner.principalId &&
+            resource.objectId === toLegalEntityAccessObjectId(demoTenantId, company),
+        ),
+      ).toBe(true);
+    }
+    const admittedTenant = plan.checks.filter(
+      ({ expected, permission, principalId, resource }) =>
+        expected &&
+        principalId === owner.principalId &&
+        resource.objectType === 'tenant' &&
+        permission === 'select_context',
+    );
+    expect(admittedTenant.map(({ resource }) => resource.objectId)).toEqual([N1_TENANT_ID]);
+    expect(
+      plan.checks.some(
+        ({ expected, label, principalId }) =>
+          !expected && principalId === owner.principalId && label.includes('no service staff Shell'),
+      ),
+    ).toBe(true);
+    yield* fails(parseAccess({ ...access(), services: { ...access().services, storefront: owner.principalId } }));
+  }),
+);
+
+it.effect('missing a required owner or storefront Action refuses the whole plan before installation', () =>
+  Effect.gen(function* missingPortalAction() {
+    for (const missing of [...ownerActions.filter((key) => !key.startsWith('core.')), ...portalActions]) {
+      yield* fails(buildPlan(access(), documents(missing)));
+    }
+  }),
 );

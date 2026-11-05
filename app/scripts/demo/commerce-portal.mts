@@ -44,6 +44,9 @@ import {
 } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
+import { decodeJwt } from 'jose';
+import { issueApiKeyGatewayContext } from '../../packages/shared-contracts/src/gateway-context-api-key.ts';
+import { GatewayContextClaimsSchema } from '../../packages/shared-contracts/src/gateway-context.ts';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
@@ -70,23 +73,26 @@ import {
 } from './permissions.mts';
 import type { CommercePortalWorkload } from './permissions.mts';
 import { akrosPlaygroundCommercePortal } from './akros-playground-policy.mts';
+import { n1CommercePortal, N1_STAGE_ORIGIN } from './n1-stage-grants.mts';
 
 const STAFF_NAMESPACE = 'ontos.staff.better-auth.v1';
 const SHELL_AUDIENCE = 'shell-super-app';
 const PARTY_REGISTRY_AUDIENCE = 'party-registry';
-const GATEWAY_CONTEXT_AUDIENCES = ['commerce-customer-context', PARTY_REGISTRY_AUDIENCE, 'privacy'] as const;
+const COMMERCE_AUDIENCE = 'commerce-customer-context';
+const GATEWAY_CONTEXT_AUDIENCES = [COMMERCE_AUDIENCE, PARTY_REGISTRY_AUDIENCE, 'privacy'] as const;
 const BINDING_OPERATIONS = ['activate', 'read', 'reserve', 'resolve', 'status'] as const;
 
 /** Every Tenant workload this repository provisions, by the name operators pass as `--workload`. */
 export const commercePortalWorkloads = {
   'akros-playground': { operatorEmail: 'admin@akros.playground', workload: akrosPlaygroundCommercePortal },
   demo: { operatorEmail: 'obchod@demo.ontos', workload: demoCommercePortalWorkload },
+  n1: { operatorEmail: 'admin@n1.ontos.demo', workload: n1CommercePortal },
 } as const satisfies Readonly<
   Record<string, { readonly operatorEmail: string; readonly workload: CommercePortalWorkload }>
 >;
 type WorkloadName = keyof typeof commercePortalWorkloads;
 /** The demo workload stays first: it is the provider deployment's attester. */
-const workloadNames: readonly WorkloadName[] = ['demo', 'akros-playground'];
+const workloadNames: readonly WorkloadName[] = ['demo', 'akros-playground', 'n1'];
 
 /**
  * The Shell's external identity provider deployment data for the portal namespace: per Tenant, its own workload
@@ -100,6 +106,14 @@ export const commercePortalExternalIdentityDeployment = (
     attesterPrincipalId: attester.principalId,
     authenticationNamespaceId: COMMERCE_PORTAL_NAMESPACE,
     grants: workloads.flatMap(({ principalId, tenantId }) => {
+      const bindingOperations =
+        tenantId === n1CommercePortal.tenantId
+          ? (['activate', 'read', 'reserve', 'resolve'] as const)
+          : BINDING_OPERATIONS;
+      const audiences =
+        tenantId === n1CommercePortal.tenantId
+          ? ([GATEWAY_CONTEXT_AUDIENCES[0], PARTY_REGISTRY_AUDIENCE] as const)
+          : GATEWAY_CONTEXT_AUDIENCES;
       const workload = {
         receivingAudience: SHELL_AUDIENCE,
         targetAuthenticationNamespaceId: COMMERCE_PORTAL_NAMESPACE,
@@ -108,8 +122,8 @@ export const commercePortalExternalIdentityDeployment = (
         workloadPrincipalId: principalId,
       };
       return [
-        ...BINDING_OPERATIONS.map((operation) => ({ ...workload, operation })),
-        ...GATEWAY_CONTEXT_AUDIENCES.map((targetAudience) => ({
+        ...bindingOperations.map((operation) => ({ ...workload, operation })),
+        ...audiences.map((targetAudience) => ({
           ...workload,
           operation: 'gateway-context' as const,
           targetAudience,
@@ -197,6 +211,7 @@ const operatorPasswords = {
     Config.withDefault(Redacted.make('password1234')),
   ),
   demo: Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(Config.withDefault(Redacted.make('password1234'))),
+  n1: Config.Redacted('ONTOS_N1_PASSWORD'),
 } satisfies Readonly<Record<WorkloadName, Config.Config<Redacted.Redacted>>>;
 const shellConfig = Config.all({
   compositionUrl: Config.String('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL').pipe(
@@ -255,6 +270,47 @@ const writeEnv = Effect.fn('CommercePortal.writeEnv')(function* writeEnv(
   yield* fs.chmod(envFile, 0o600);
 });
 
+/** Inspect only a fresh Shell response: the receiving owner still verifies the signed assertion. */
+export const verifyN1CommercePortalKey = Effect.fn('CommercePortal.verifyN1Key')(function* verifyN1Key(
+  key: Redacted.Redacted,
+  shellUrl: string,
+  compositionRevision: string,
+) {
+  for (const audience of [PARTY_REGISTRY_AUDIENCE, COMMERCE_AUDIENCE] as const) {
+    const response = yield* issueApiKeyGatewayContext(
+      { audience, compositionRevision, legalEntityId: n1CommercePortal.legalEntityId },
+      { apiKey: key, baseUrl: `${shellUrl}/shell-super-app-api`, requestCorrelation: randomUUID() },
+    ).pipe(Effect.mapError(() => fail('N1 Commerce workload gateway verification failed; credentials withheld')));
+    const claims = yield* Effect.try({
+      catch: () => fail('N1 Commerce workload assertion metadata is invalid; credentials withheld'),
+      try: () => decodeJwt(response.token),
+    }).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(GatewayContextClaimsSchema)),
+      Effect.mapError(() => fail('N1 Commerce workload assertion metadata is invalid; credentials withheld')),
+    );
+    if (
+      claims.principal.authMethod !== 'api_key' ||
+      claims.principal.principalId !== n1CommercePortal.principalId ||
+      claims.principal.tenantId !== n1CommercePortal.tenantId ||
+      claims.principal.legalEntityId !== n1CommercePortal.legalEntityId ||
+      claims.aud !== audience ||
+      claims.compositionRevision !== compositionRevision ||
+      response.compositionRevision !== compositionRevision
+    ) {
+      return yield* fail('N1 Commerce workload identity or scope mismatch; credentials withheld');
+    }
+  }
+  return yield* Effect.void;
+});
+
+/** Validate the named N1 target before acquiring privileged database services. */
+export const validateN1CommercePortalEnvironment = Config.all({
+  environment: Config.schema(Schema.Literal('stage'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
+  shellUrl: Config.schema(Schema.Literal(N1_STAGE_ORIGIN), 'ONTOS_SHELL_URL'),
+}).pipe(
+  Effect.mapError(() => fail('N1 Commerce provisioning requires the explicit Stage environment and N1 Shell origin')),
+);
+
 /** Reuses a key that still mints a gateway assertion, otherwise issues one through the Shell. */
 const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(
   previous: Redacted.Redacted | undefined,
@@ -272,6 +328,11 @@ const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(
     Effect.mapError(() => fail(`composition ${compositionUrl} is not available; start the demo first`)),
   );
   if (previous !== undefined) {
+    if (operator === 'n1') {
+      yield* verifyN1CommercePortalKey(previous, shellUrl, revision);
+      yield* Console.log('commerce-portal: N1 API key identity verified and reused');
+      return previous;
+    }
     const works = yield* post(
       `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`,
       {
@@ -312,10 +373,12 @@ const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(
     },
   );
   if (issued.status !== 200) {
-    const detail = yield* issued.text;
-    return yield* fail(`API key issue failed with HTTP ${issued.status}: ${detail.slice(0, 300)}`);
+    return yield* fail(`API key issue failed with HTTP ${issued.status}; credentials withheld`);
   }
   const { secret } = yield* HttpClientResponse.schemaBodyJson(IssuedKeySchema)(issued);
+  if (operator === 'n1') {
+    yield* verifyN1CommercePortalKey(secret, shellUrl, revision);
+  }
   yield* Console.log('commerce-portal: API key issued');
   return secret;
 });
@@ -587,23 +650,37 @@ const command = Command.make(
     keyFile: Flag.String('key-file').pipe(Flag.optional),
     workload: Flag.Literals('workload', workloadNames).pipe(Flag.optional),
   },
-  (flags) =>
+  (flags) => {
     // The bundle step is file-only: it runs on the operator's machine without the database or the Shell.
-    Option.isSome(flags.workload) &&
-    Option.isSome(flags.keyFile) &&
-    Option.isSome(flags.bundle) &&
-    Option.isSome(flags.bundleOut)
-      ? persistTenantBundle(flags.workload.value, flags.keyFile.value, flags.bundle.value, flags.bundleOut.value).pipe(
-          Effect.asVoid,
-          Effect.tapError(failureReport),
-        )
-      : Layer.build(
-          Layer.effectDiscard(selectedRun(flags).pipe(Effect.scoped)).pipe(Layer.provide(commercePortalServicesLive)),
-        ).pipe(Effect.scoped, Effect.asVoid, Effect.tapError(failureReport)),
+    if (
+      Option.isSome(flags.workload) &&
+      Option.isSome(flags.keyFile) &&
+      Option.isSome(flags.bundle) &&
+      Option.isSome(flags.bundleOut)
+    ) {
+      return persistTenantBundle(
+        flags.workload.value,
+        flags.keyFile.value,
+        flags.bundle.value,
+        flags.bundleOut.value,
+      ).pipe(Effect.asVoid, Effect.tapError(failureReport));
+    }
+    const configuredServices = Option.isNone(flags.workload)
+      ? commercePortalServicesLive.pipe(Layer.provideMerge(environmentLive))
+      : commercePortalServicesLive;
+    return Effect.gen(function* configuredProvision() {
+      if (Option.isSome(flags.workload) && flags.workload.value === 'n1') {
+        yield* validateN1CommercePortalEnvironment;
+      }
+      yield* Layer.build(
+        Layer.effectDiscard(selectedRun(flags).pipe(Effect.scoped)).pipe(Layer.provide(configuredServices)),
+      );
+    }).pipe(Effect.scoped, Effect.asVoid, Effect.tapError(failureReport));
+  },
 );
 if (import.meta.main) {
   const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
-    Layer.provide(environmentLive),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv())),
     Layer.provide(NodeServices.layer),
   );
   const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));

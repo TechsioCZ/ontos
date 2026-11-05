@@ -38,6 +38,7 @@ import {
   OntosModuleDeploymentContractSchema,
 } from '../../packages/core-runtime/src/modules/manifest.ts';
 import type { OntosActionContract } from '../../packages/core-runtime/src/modules/manifest.ts';
+import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../packages/core-runtime/src/permissions/schema.ts';
@@ -52,10 +53,20 @@ import {
   akrosPlaygroundServices,
   akrosPlaygroundTenantId,
 } from './akros-playground-policy.mts';
-import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import type { DemoAction, DemoRelationship, DemoRole } from './permissions.mts';
+import {
+  akrosDemoLegalEntityId,
+  demoId,
+  demoLegalEntityId,
+  demoTenantId,
+  crmDemoLegalEntityId,
+  eshopDemoLegalEntityId,
+  rentalDemoLegalEntityId,
+} from './fixture-ids.mts';
+import type { CommercePortalWorkload, DemoAction, DemoRelationship, DemoRole } from './permissions.mts';
 import {
   akrosStorefrontPrincipal,
+  COMMERCE_PORTAL_NAMESPACE,
+  demoCommercePortalWorkload,
   companyCoreModuleStructure,
   companyHumanAccounts,
   demoHumanAccounts,
@@ -72,6 +83,32 @@ const merchandise = 'demo.merchandise';
 const markets = 'commerce.market-catalog';
 const registry = 'commerce.storefront-registry';
 const workTasks = 'work.tasks';
+const commerce = 'commerce.customer-context';
+const party = 'party.registry';
+const commercePortalName = 'n1-commerce-portal';
+/** Prospective native identity; only the reviewed installer creates/adopts it. Never a live-state assertion. */
+export const n1CommercePortal: CommercePortalWorkload = {
+  apiKeyName: commercePortalName,
+  displayName: commercePortalName,
+  legalEntityId: N1_LEGAL_ENTITY_ID,
+  principalId: demoId('core.principal', commercePortalName),
+  roleKey: commercePortalName,
+  tenantId: N1_TENANT_ID,
+};
+export const n1CommercePortalActionKeys: readonly string[] = [
+  'core.identity.reserve-principal-binding',
+  'core.identity.activate-principal-binding',
+  'party.registry.accept-retail-enrollment-evidence',
+  'party.registry.create-party',
+  'party.registry.counterparty-customer-onboard',
+  'party.registry.add-contact-point',
+  'commerce.customer-context.ensure-retail-customer-profile',
+  'commerce.customer-context.bind-retail-portal-profile',
+];
+const portalActionKeys = [
+  'commerce.customer-context.start-portal-enrollment',
+  'commerce.customer-context.claim-portal-enrollment-transition',
+];
 const managedKeyAction = 'core.identity.bind-managed-api-key';
 const storefrontName = 'n1-storefront';
 const marketAuthorityName = 'n1-market-authority';
@@ -80,6 +117,8 @@ export const n1ManifestSources = [
   { appId: 'commerce-market-catalog', moduleId: markets },
   { appId: 'storefront-registry', moduleId: registry },
   { appId: 'work-tasks', moduleId: workTasks },
+  { appId: 'commerce-customer-context', moduleId: commerce },
+  { appId: 'party-registry', moduleId: party },
 ] as const;
 const modes = ['plan', 'apply', 'verify'] as const;
 type Mode = (typeof modes)[number];
@@ -122,10 +161,9 @@ const oldPrincipals = EffectArray.sort(
       ...akrosPlaygroundAccounts.map(({ principalId }) => principalId),
       ...akrosPlaygroundServices.map(({ principalId }) => principalId),
       ...demoHumanAccounts.map(({ principalId }) => principalId),
-      ...companyHumanAccounts
-        .filter(({ legalEntityId }) => legalEntityId === akrosDemoLegalEntityId)
-        .map(({ principalId }) => principalId),
+      ...companyHumanAccounts.map(({ principalId }) => principalId),
       akrosStorefrontPrincipal.principalId,
+      demoCommercePortalWorkload.principalId,
     ]),
   ],
   Order.String,
@@ -138,7 +176,13 @@ export const decodeN1Access = (source: string) =>
       const ids = [...access.accounts.map(({ principalId }) => principalId), ...Object.values(access.services)];
       return new Set(ids).size !== 4 ||
         new Set(access.accounts.map(({ email }) => email)).size !== 2 ||
-        ids.some((id) => oldPrincipals.includes(id) || id === N1_TENANT_ID || id === N1_LEGAL_ENTITY_ID) ||
+        ids.some(
+          (id) =>
+            oldPrincipals.includes(id) ||
+            id === N1_TENANT_ID ||
+            id === N1_LEGAL_ENTITY_ID ||
+            id === n1CommercePortal.principalId,
+        ) ||
         new Set(Object.values(access.modules)).size !== 3
         ? Effect.fail(fail('N1 identities must be distinct, new, and contain both authorized accounts'))
         : Effect.succeed({
@@ -182,7 +226,7 @@ export const decodeN1Contracts = (documents: readonly N1ContractDocument[]) =>
       documents.length !== n1ManifestSources.length ||
       new Set(documents.map(({ appId }) => appId)).size !== n1ManifestSources.length
     ) {
-      return yield* fail('Exactly the three live N1 public contracts are required');
+      return yield* fail('Exactly the six live N1 public contracts are required');
     }
     const actions: DemoAction[] = [];
     for (const descriptor of coreActionCatalog) {
@@ -224,7 +268,10 @@ export const decodeN1Contracts = (documents: readonly N1ContractDocument[]) =>
     if (
       new Set(actions.map(({ actionKey }) => actionKey)).size !== actions.length ||
       !actions.some(({ actionKey }) => actionKey === 'demo.merchandise.apply-command') ||
-      !actions.some(({ actionKey }) => actionKey === managedKeyAction)
+      !actions.some(({ actionKey }) => actionKey === managedKeyAction) ||
+      [...n1CommercePortalActionKeys, ...portalActionKeys].some(
+        (required) => !actions.some(({ actionKey }) => actionKey === required),
+      )
     ) {
       return yield* fail('The N1 Action slice is incomplete or contains duplicate Action keys');
     }
@@ -295,6 +342,12 @@ export const n1ServiceDefinitions = (access: N1Access) => [
     principalId: access.services['market-authority'],
     tenantId: N1_TENANT_ID,
   },
+  {
+    displayName: n1CommercePortal.displayName,
+    legalEntityId: N1_LEGAL_ENTITY_ID,
+    principalId: n1CommercePortal.principalId,
+    tenantId: N1_TENANT_ID,
+  },
 ];
 
 /** Company administrator of N1 only: company roles and Core module reach, no tenant-wide superadmin. */
@@ -303,7 +356,7 @@ const administratorRole: DemoRole = {
   modules: { [markets]: 'write', [merchandise]: 'write', [registry]: 'write', [workTasks]: 'write' },
 };
 /**
- * The storefront service runs exactly two Actions: the merchandise apply-command (guest quote and order; the command
+ * The storefront service runs four explicit Actions: enrollment start/claim, the merchandise apply-command (guest quote and order; the command
  * guard admits only PlaceStorefrontOrder) and the work-tasks apply-command (the contact inquiry's CreateTask).
  *
  * Coupling in the role model: a non-restricted `write` module gets both `<module>.read_all` and `<module>.write_all`
@@ -313,6 +366,7 @@ const administratorRole: DemoRole = {
  * keeps only the one listed executor.
  */
 const storefrontActionKeys = {
+  [commerce]: portalActionKeys,
   [merchandise]: ['demo.merchandise.apply-command'],
   [workTasks]: ['work.tasks.apply-command'],
 } as const;
@@ -332,9 +386,14 @@ const companyRoleObject = (roleKey: string) =>
 const storefrontRole: DemoRole = {
   actionKeys: storefrontActionKeys,
   contextPermissions: storefrontWriteAllPermissions,
-  label: 'N1 storefront: public catalog, Market resolution, guest order and inquiry Actions',
-  modules: { [markets]: 'read', [merchandise]: 'write', [workTasks]: 'write' },
-  restrictedModules: [merchandise, workTasks],
+  label: 'N1 storefront: public catalog, Market resolution, guest order, inquiry and enrollment',
+  modules: { [commerce]: 'read', [markets]: 'read', [merchandise]: 'write', [workTasks]: 'write' },
+  restrictedModules: [merchandise, workTasks, commerce],
+};
+const commercePortalRole: DemoRole = {
+  label: 'N1 Commerce retail enrollment owner',
+  modules: { [commerce]: 'read', [party]: 'read' },
+  restrictedModules: [commerce, party],
 };
 const authorityRole: DemoRole = {
   label: 'N1 Market cross-owner validation',
@@ -361,6 +420,13 @@ const asNative = (row: DemoRelationship) =>
 
 export const n1GrantRelationships = (access: N1Access, actions: readonly DemoAction[]) =>
   Effect.gen(function* boundedRelationships() {
+    if (
+      [...n1CommercePortalActionKeys, ...portalActionKeys].some(
+        (key) => !actions.some(({ actionKey }) => actionKey === key),
+      )
+    ) {
+      return yield* fail('The N1 enrollment Action prerequisites are incomplete');
+    }
     const containment: DemoRelationship[] = [];
     for (const resource of [rootResource, storefrontResource]) {
       const edge = ownerResourceModuleContainment(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, resource);
@@ -443,6 +509,12 @@ export const n1GrantRelationships = (access: N1Access, actions: readonly DemoAct
             role: authorityRole,
             roleKey: marketAuthorityName,
           },
+          {
+            principalId: n1CommercePortal.principalId,
+            readers: [],
+            role: commercePortalRole,
+            roleKey: n1CommercePortal.roleKey,
+          },
         ];
         for (const { principalId, readers, role, roleKey } of services) {
           rows.push(
@@ -455,6 +527,35 @@ export const n1GrantRelationships = (access: N1Access, actions: readonly DemoAct
             rows.push(roleRelationship('module_access', moduleObject(moduleId).objectId, 'reader_role', roleId));
           }
         }
+        const ownerRole = toScopedRoleObjectId({
+          legalEntityId: N1_LEGAL_ENTITY_ID,
+          roleKey: n1CommercePortal.roleKey,
+          tenantId: N1_TENANT_ID,
+        });
+        const namespace = toIdentityNamespaceAccessObjectId(N1_TENANT_ID, COMMERCE_PORTAL_NAMESPACE) ?? '';
+        rows.push(
+          {
+            relation: 'tenant',
+            resourceId: namespace,
+            resourceType: 'identity_namespace',
+            subjectId: N1_TENANT_ID,
+            subjectType: 'tenant',
+          },
+          roleRelationship('identity_namespace', namespace, 'provisioner', ownerRole),
+          roleRelationship('tenant', N1_TENANT_ID, 'party_identity_manager', ownerRole),
+          roleRelationship('legal_entity', companyObject().objectId, 'counterparty_manager', ownerRole),
+          ...actions
+            .filter(({ actionKey }) => n1CommercePortalActionKeys.includes(actionKey))
+            .flatMap((action) =>
+              scopedDemoActionRelationships(
+                n1CommercePortal.principalId,
+                action,
+                N1_LEGAL_ENTITY_ID,
+                N1_TENANT_ID,
+                n1CommercePortal.roleKey,
+              ),
+            ),
+        );
         return EffectArray.sortWith(
           [
             ...new Map(
@@ -505,16 +606,41 @@ type CheckAdder = (
 /** Service principals: no staff rights, storefront and authority reads only, exact Actions. */
 const serviceChecks = (access: N1Access, actions: readonly DemoAction[], add: CheckAdder) => {
   const tenant = { objectId: N1_TENANT_ID, objectType: 'tenant' };
-  for (const principalId of Object.values(access.services)) {
+  for (const { principalId } of n1ServiceDefinitions(access)) {
+    const owner = principalId === n1CommercePortal.principalId;
     add(principalId, true, tenant, 'access', 'N1 service tenant admission');
     add(principalId, true, companyObject(), 'access', 'N1 service company admission');
     for (const permission of ['select_context', 'manage_identity']) {
-      add(principalId, false, tenant, permission, `no staff tenant ${permission}`);
+      add(principalId, owner && permission === 'select_context', tenant, permission, `service tenant ${permission}`);
     }
     add(principalId, false, companyObject(), 'write_all', 'no service company administration');
     add(principalId, false, moduleObject('core.shell'), 'access', 'no service staff Shell');
-    add(principalId, true, moduleObject(markets), 'read_all', 'N1 service Market resolution');
-    add(principalId, true, resourceObject(rootResource), 'read', 'N1 Market catalog root read');
+    add(principalId, !owner, moduleObject(markets), 'read_all', 'N1 service Market resolution');
+    add(principalId, !owner, resourceObject(rootResource), 'read', 'N1 Market catalog root read');
+    for (const moduleId of [commerce, party]) {
+      add(
+        principalId,
+        owner || (moduleId === commerce && principalId === access.services.storefront),
+        moduleObject(moduleId),
+        'access',
+        `N1 service ${moduleId} reach`,
+      );
+      add(principalId, false, moduleObject(moduleId), 'write_all', `no service ${moduleId} write_all`);
+    }
+    add(principalId, owner, tenant, 'manage_party_identity', 'N1 retail Party identity owner');
+    add(principalId, owner, companyObject(), 'manage_counterparty', 'N1 retail counterparty owner');
+    for (const namespace of [COMMERCE_PORTAL_NAMESPACE, 'ontos.staff.better-auth.v1']) {
+      add(
+        principalId,
+        owner && namespace === COMMERCE_PORTAL_NAMESPACE,
+        {
+          objectId: toIdentityNamespaceAccessObjectId(N1_TENANT_ID, namespace) ?? '',
+          objectType: 'identity_namespace',
+        },
+        'provision',
+        'N1 namespace-qualified identity provision',
+      );
+    }
     for (const moduleId of [merchandise, workTasks]) {
       for (const permission of ['read_all', 'write_all']) {
         add(principalId, false, moduleObject(moduleId), permission, `no service staff ${moduleId} ${permission}`);
@@ -536,8 +662,12 @@ const serviceChecks = (access: N1Access, actions: readonly DemoAction[], add: Ch
         );
       }
     }
-    const grantedActionKeys: readonly string[] =
-      principalId === access.services.storefront ? Object.values(storefrontActionKeys).flat() : [];
+    let grantedActionKeys: readonly string[] = [];
+    if (owner) {
+      grantedActionKeys = n1CommercePortalActionKeys;
+    } else if (principalId === access.services.storefront) {
+      grantedActionKeys = Object.values(storefrontActionKeys).flat();
+    }
     for (const action of actions) {
       const granted = grantedActionKeys.includes(action.actionKey);
       add(
@@ -655,11 +785,19 @@ export const n1PermissionChecks = (access: N1Access, actions: readonly DemoActio
   }
   for (const principalId of [
     ...access.accounts.map((account) => account.principalId),
-    ...Object.values(access.services),
+    ...n1ServiceDefinitions(access).map((service) => service.principalId),
   ]) {
     for (const [tenantId, legalEntityId] of [
       [akrosPlaygroundTenantId, akrosPlaygroundLegalEntityId],
-      [demoTenantId, akrosDemoLegalEntityId],
+      ...[
+        ...new Set([
+          demoLegalEntityId,
+          rentalDemoLegalEntityId,
+          crmDemoLegalEntityId,
+          akrosDemoLegalEntityId,
+          eshopDemoLegalEntityId,
+        ]),
+      ].map((companyId) => [demoTenantId, companyId] as const),
     ]) {
       add(principalId, false, { objectId: tenantId, objectType: 'tenant' }, 'access', `denied old tenant ${tenantId}`);
       add(principalId, false, companyObject(tenantId, legalEntityId), 'access', `denied old company ${legalEntityId}`);
@@ -760,11 +898,12 @@ export const revokeRetiredN1Relationships = (
       .map((line) => line.split(' ')[1] ?? '');
     const principals = [
       ...plan.access.accounts.map(({ principalId }) => principalId),
-      ...Object.values(plan.access.services),
+      ...n1ServiceDefinitions(plan.access).map(({ principalId }) => principalId),
     ];
-    const serviceRoles = [storefrontName, marketAuthorityName].map((roleKey) =>
+    const serviceRoles = [storefrontName, marketAuthorityName, n1CommercePortal.roleKey].map((roleKey) =>
       toScopedRoleObjectId({ legalEntityId: N1_LEGAL_ENTITY_ID, roleKey, tenantId: N1_TENANT_ID }),
     );
+    serviceRoles.push(toScopedRoleObjectId({ roleKey: n1CommercePortal.roleKey, tenantId: N1_TENANT_ID }));
     const filters = [
       ...principals.flatMap((optionalSubjectId) =>
         types
@@ -829,7 +968,7 @@ export const executeN1ReviewedPlan = <E1, R1, E2, R2, E3, R3>(
     // through apply (stale grants are revoked) and are then checked in full below.
     const converged = new Set([
       ...plan.access.accounts.map(({ principalId }) => principalId),
-      ...Object.values(plan.access.services),
+      ...n1ServiceDefinitions(plan.access).map(({ principalId }) => principalId),
     ]);
     yield* ports.verify(plan.checks.filter(({ expected, principalId }) => !expected && !converged.has(principalId)));
     if (mode === 'apply') {

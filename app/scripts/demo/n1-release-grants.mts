@@ -19,17 +19,12 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
-import { decodeN1Access, n1GrantRelationships, N1StageGrantError } from './n1-stage-grants.mts';
+import { decodeN1Access, n1GrantRelationships, n1ManifestSources, N1StageGrantError } from './n1-stage-grants.mts';
 import { reconcileServiceGrants } from './reconcile-stage-service-grants.mts';
 
 export const N1_RELEASE_ACCESS_FILE = 'scripts/demo/n1-stage-access.json';
 // The owners the reviewed N1 plan builds from; with the core Actions they are the whole N1 action universe.
-const n1OwnerModules = new Set([
-  'demo.merchandise',
-  'commerce.market-catalog',
-  'commerce.storefront-registry',
-  'work.tasks',
-]);
+const n1OwnerModules = new Set<string>(n1ManifestSources.map(({ moduleId }) => moduleId));
 
 const fail = (reason: string) => new N1StageGrantError({ reason });
 

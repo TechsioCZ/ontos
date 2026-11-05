@@ -3,15 +3,26 @@ import { readFileSync } from 'node:fs';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { decodeN1Access, N1_LEGAL_ENTITY_ID, N1_TENANT_ID } from './n1-stage-grants.mts';
+import {
+  decodeN1Access,
+  n1ManifestSources,
+  n1ServiceDefinitions,
+  N1_LEGAL_ENTITY_ID,
+  N1_TENANT_ID,
+} from './n1-stage-grants.mts';
 
-const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf-8');
 
 it.effect('the committed N1 identities decode to the stage tenant and both N1 accounts', () =>
   Effect.gen(function* committedAccess() {
     const access = yield* decodeN1Access(read('n1-stage-access.json'));
     expect(access.tenantId).toBe(N1_TENANT_ID);
     expect(access.legalEntityId).toBe(N1_LEGAL_ENTITY_ID);
+    expect(n1ServiceDefinitions(access).map(({ displayName }) => displayName)).toEqual([
+      'n1-storefront',
+      'n1-market-authority',
+      'n1-commerce-portal',
+    ]);
     expect(access.accounts.map(({ email }) => email)).toEqual(['admin@n1.ontos.demo', 'catalog@n1.ontos.demo']);
   }),
 );
@@ -31,4 +42,16 @@ it('app-host runs the N1 release grants right after the demo service grants', ()
   expect(demo).toBeGreaterThan(-1);
   expect(n1).toBeGreaterThan(demo);
   expect(host).toContain("['scripts/demo/n1-release-grants.mts']");
+});
+
+it('the release discovery uses exactly the reviewed six owner modules', () => {
+  expect(n1ManifestSources.map(({ moduleId }) => moduleId)).toEqual([
+    'demo.merchandise',
+    'commerce.market-catalog',
+    'commerce.storefront-registry',
+    'work.tasks',
+    'commerce.customer-context',
+    'party.registry',
+  ]);
+  expect(read('n1-release-grants.mts')).toContain('new Set<string>(n1ManifestSources.map(({ moduleId }) => moduleId))');
 });
