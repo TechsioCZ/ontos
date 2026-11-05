@@ -374,11 +374,37 @@ export interface ConfigureCheck {
   readonly tenantId: string;
 }
 
-/** The assignments and role revisions of the tenant a grantor's own grants are read from. */
+/** The tenant's live members and suspensions, as the projection reads them at the decision instant. */
+export type GrantorMembership = Pick<TenantProjectionIntent, 'legalEntities' | 'members' | 'suspended'>;
+
+/** The assignments, role revisions and memberships of the tenant a grantor's own grants are read from. */
 export interface GrantorIntent {
   readonly assignments: readonly Assignment[];
+  readonly membership: GrantorMembership;
   readonly revisions: readonly RoleRevision[];
 }
+
+/**
+ * Whether the grantor is still a live member on the delegation's scope path, as a decision requires
+ * before any of their grants counts: a member of the tenant or of the delegation's company, and
+ * suspended in neither. A grantor whose membership ended holds nothing a delegate may hand on.
+ */
+const grantorIsMember = (membership: GrantorMembership, scope: AccessScope, grantor: PrincipalId, at: Date) => {
+  const isGrantor = (holder: Holder): boolean =>
+    Predicate.isTagged(holder, 'Principal') && holder.principalId === grantor;
+  const live = (member: { readonly expiresAt?: Date; readonly holder: Holder }): boolean =>
+    isGrantor(member.holder) && (member.expiresAt === undefined || at < member.expiresAt);
+  const company = Match.value(scope).pipe(
+    Match.tags({
+      LegalEntity: ({ legalEntityId }) =>
+        membership.legalEntities.find((entity) => entity.legalEntityId === legalEntityId),
+      TenantContext: () => {},
+    }),
+    Match.exhaustive,
+  );
+  const suspended = membership.suspended.some(isGrantor) || (company?.suspended.some(isGrantor) ?? false);
+  return !suspended && (membership.members.some(live) || (company?.members.some(live) ?? false));
+};
 
 /**
  * The first granted cell that reaches more than the delegation's grantor holds now, if any. A
@@ -386,17 +412,20 @@ export interface GrantorIntent {
  * grant, so every cell a delegated manager grants (by saving, adopting or undoing a role change) is
  * checked against the grantor's own live, direct grants in the delegation's scope: the same capability
  * and mode, every record the cell reaches, and for money a ceiling covering the one the cell spends
- * under. Authority the grantor holds only through a delegation of their own never counts, so the
- * check fails closed.
+ * under. Authority the grantor holds only through a delegation of their own never counts, and nothing
+ * counts once the grantor's own membership has ended, so the check fails closed.
  */
 const beyondGrantorCell = (
   intent: GrantorIntent,
   grantedCells: readonly GrantedCell[],
   delegation: Delegation,
+  scope: AccessScope,
   at: Date,
 ): Cell | undefined => {
   const revisions = new Map(intent.revisions.map((revision) => [revision.id, revision] as const));
+  const member = grantorIsMember(intent.membership, scope, delegation.grantedBy, at);
   const held = intent.assignments.flatMap((assignment) =>
+    member &&
     assignment.scopeId === delegation.scopeId &&
     assignment.delegated === undefined &&
     assignment.status === 'active' &&
@@ -476,7 +505,7 @@ export const configureAuthorityIssue = (check: ConfigureCheck): AccessChangesErr
   if (envelope !== undefined) {
     return accessChangesError('access_changes_delegation_out_of_envelope', envelope);
   }
-  const beyondGrantor = beyondGrantorCell(check.grantorIntent, check.grantedCells, delegation, check.at);
+  const beyondGrantor = beyondGrantorCell(check.grantorIntent, check.grantedCells, delegation, scope.scope, check.at);
   return beyondGrantor === undefined
     ? undefined
     : accessChangesError(

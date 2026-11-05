@@ -1463,6 +1463,7 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
             decisionIds: new Map([[itemId, uid(73)]]),
             entries: releaseTwo.entries,
             items: state.items,
+            membership: { legalEntities: [], members: [], suspended: [] },
             namedEffects: new Map([[itemId, capabilityEffectLabel(releaseTwoEntry)]]),
             newRevisionIds: new Map([[bootstrapped.roleId, newRevisionId]]),
             preview,

@@ -44,7 +44,7 @@ import {
   cellSlotKey,
   namesRoleTemplate,
 } from '../model.ts';
-import type { AccessConfigureBasis, GrantedCell } from './authority.ts';
+import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
 import { configureAuthorityIssue } from './authority.ts';
 import { cellsWith, cellsWithout, toSortedCells } from './cells.ts';
 import { compareText } from './compare.ts';
@@ -584,6 +584,8 @@ interface RoleRevisionAuthorityCheck {
   readonly catalog: CatalogSnapshot | undefined;
   readonly catalogSnapshotId: CatalogSnapshotId;
   readonly edit: RoleCellEdit;
+  /** The tenant's live members and suspensions, so a grantor whose membership ended counts for nothing. */
+  readonly membership: GrantorMembership;
   readonly roles: readonly RoleWithRevision[];
   readonly tenantId: string;
 }
@@ -641,7 +643,11 @@ const roleRevisionAuthorityIssue = (check: RoleRevisionAuthorityCheck): AccessCh
       authority,
       capabilityKeys: [...new Set(grantedCells.map(({ cell }) => cell.capabilityKey))],
       grantedCells,
-      grantorIntent: { assignments: check.assignments, revisions: check.roles.map(({ revision }) => revision) },
+      grantorIntent: {
+        assignments: check.assignments,
+        membership: check.membership,
+        revisions: check.roles.map(({ revision }) => revision),
+      },
       roles: [role.role],
       tenantId: check.tenantId,
     });
@@ -714,6 +720,7 @@ export const writeRoleRevision = Effect.fn('RoleRevision.writeRoleRevision')(fun
     catalog: Option.getOrUndefined(release),
     catalogSnapshotId: request.catalogSnapshotId,
     edit: request.edit,
+    membership: intent,
     roles: changes.roles,
     tenantId,
   });

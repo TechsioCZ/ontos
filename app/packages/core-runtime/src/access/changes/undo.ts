@@ -17,7 +17,7 @@ import {
   AccessChangeItemSchema,
   cellSlotKey,
 } from '../model.ts';
-import type { AccessConfigureBasis, GrantedCell } from './authority.ts';
+import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
 import { configureAuthorityIssue, deciderIssue } from './authority.ts';
 import { compareText } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
@@ -85,6 +85,8 @@ export interface UndoRequest {
   readonly decisionIds: ReadonlyMap<string, string>;
   /** The currently published catalog: a cell is restorable only for a published capability (O1). */
   readonly entries: readonly CatalogSnapshotEntry[];
+  /** The tenant's live members and suspensions, so a grantor whose membership ended counts for nothing. */
+  readonly membership: GrantorMembership;
   readonly newRevisionIds: ReadonlyMap<string, string>;
   /** The preview the person saw; it is checked whenever the undo widens access (D7b). */
   readonly preview: AdoptionPreview;
@@ -491,7 +493,11 @@ export const planUndo = (request: UndoRequest): Result.Result<UndoPlan, AccessCh
     authority: request.authority,
     capabilityKeys: uniqueCells(ordered.flatMap(({ restore }) => restore)).map(({ capabilityKey }) => capabilityKey),
     grantedCells: grantedCells(request, ordered),
-    grantorIntent: { assignments: request.assignments, revisions: request.roles.map(({ revision }) => revision) },
+    grantorIntent: {
+      assignments: request.assignments,
+      membership: request.membership,
+      revisions: request.roles.map(({ revision }) => revision),
+    },
     roles: touchedRoles(request, ordered),
     tenantId: request.tenantId,
   });

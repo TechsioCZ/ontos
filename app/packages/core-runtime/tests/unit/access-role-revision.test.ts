@@ -568,7 +568,8 @@ const loaderService = (
       catalogEntries: [],
       coverage: 'complete',
       legalEntities: [],
-      members: [],
+      // The grantor of every fixture delegation is a live tenant member.
+      members: [{ holder: principalHolder(PERSON) }],
       owners: [],
       principals: [],
       scopes: [

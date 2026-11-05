@@ -36,6 +36,7 @@ import {
   roleRevision,
   succeeded,
   TENANT,
+  tenantMembership,
 } from './access-changes-fixtures.ts';
 
 const X = 'test.party.add-note';
@@ -90,6 +91,7 @@ const undoRequest = (input: UndoInput): UndoRequest => {
     decidedAt: instant(6),
     decisionIds: new Map(input.selections.map(({ item }, index) => [item.id, fixedId(85 + index)] as const)),
     entries,
+    membership: tenantMembership(),
     newRevisionIds: input.newRevisionIds ?? new Map([[ROLE, fixedId(43)]]),
     preview: input.preview ?? freshPreview(assignments, input.selections.at(0)?.item.id ?? addedItem.id),
     revisions: input.revisions,
