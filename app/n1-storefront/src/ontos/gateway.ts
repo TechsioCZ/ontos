@@ -117,6 +117,7 @@ export const readOwner = <A, I>(
       schedule: Schedule.spaced("250 millis"),
       times: 2,
       while: (error) =>
-        error.reason === "response" && (error.status === 409 || error.status === 503),
+        error.reason === "response" &&
+        (error.status === 409 || error.status === 502 || error.status === 503),
     }),
   );

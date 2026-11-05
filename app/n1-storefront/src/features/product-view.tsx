@@ -140,6 +140,17 @@ export const ProductView = ({
           </Gallery>
         </div>
         <div className="flex min-w-0 flex-col gap-6 md:gap-0">
+          {product.manufacturer !== undefined && product.manufacturer.length > 0 && (
+            <div className={current.sku.length === 0 ? "order-0 md:mb-4" : "order-0"}>
+              <p className="font-medium md:hidden">
+                {d.manufacturer}: {product.manufacturer}
+              </p>
+              <dl className="hidden flex-wrap justify-between gap-2 text-fg-secondary md:flex">
+                <dt>{d.manufacturer}</dt>
+                <dd>{product.manufacturer}</dd>
+              </dl>
+            </div>
+          )}
           {current.sku.length > 0 && (
             <dl className="order-0 hidden flex-wrap justify-between gap-2 text-fg-secondary md:mb-4 md:flex">
               <dt>{d.productCode}</dt>

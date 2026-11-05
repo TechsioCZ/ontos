@@ -1,5 +1,42 @@
 # Kontrola převodu N1 storefrontu
 
+## C26: skutečný výrobce a rozbalení velikostí — 2026-11-05
+
+Veřejný owner již posílá `sourceProductId`. Audit všech12672 zdrojových řádků
+potvrdil, že importovaný parametr Značka vznikl výhradně spojením s producer.title;
+žádný původní parametr stejného názvu nekolidoval. N1 nyní dekóduje toto veřejné
+pole a promítá výrobce jen z přesného auditovaného importního namespace a právě
+jedné neprázdné Značky bez jednotky. Neznámý původ, duplicita ani Bez výrobce
+nedostanou odhadnutý údaj. Původní ID se nepředává do prezentačního modelu.
+Skutečný Fox Rwt z katalogu má Fox Racing; desktopový řádek nad SKU a mobilní
+text odpovídají čerstvým Figma219:2769 a39:2459. CS/EN a escapování textu otestované.
+Nezávislé vizuální review přijalo pouze tento region, nikoli celou PDP.
+
+Karta zachovává skutečné první3velikosti/+N z Figma214:3250. Historický N1
+variants-box dokládá rozbalení při hover/focus. Knihovní Popover nyní načte
+jediný přesný produkt až při interakci: market-aware full slug1, přesná kontrola
+ID/slugu, pouze aktivní skutečné názvy/ID. Žádné přednačítání detailů celé mřížky.
+Cache32/1min sdílí souběžné požadavky. Chyba ponechá původní3/+N; odkazy vedou
+na obyčejný detail a nevybírají variantu ani nepřidávají do košíku.
+
+Skutečný browser1440/390: v klidu0nových variantních požadavků, první hover
+1GET a6nativních velikostí. Tab vstoupil do odkazů rozbaleného panelu; jeden
+Escape ho zavřel a vrátil focus. Původní opětovné otevření při návratu focusu
+bylo nalezeno proklikáním, opraveno a má sekvenční regrese. Dotykové otevření/
+zavření fungovalo; panel278px se vešel do390px bez overflow. Kliknutí na mobilní
+nabídku zavřelo panel a ponechalo focus v nabídce. Pending unmount potlačuje
+aktualizaci React stavu; netvrdíme zrušení sdíleného cache fetch.
+
+Čtecí gateway po skutečně pozorovaném přechodném502 opakuje celý kombinovaný
+read s novým contextem, stejně jako409/503; nejvýše3pokusy.401/403 a vadné
+kontrakty zůstávají terminální. Žádný Action retry nepřibyl.
+
+421/421testů, lint/TSRS, formát a produkční Next build PASS. Vizuální důkazy
+n1-c26-fox-desktop/mobile a n1-c26-card-expanded-desktop/mobile jsou v.local.
+Stage má skutečný katalog, ale jeho nákup nemá pozitivní PASS: native dryRun
+vrátil403/action_permission_denied, bez zápisu objednávky/skladu. Transport je
+shodný s aktuálním AKROS. Oprava oprávnění potřebuje odpovídajícího ownera.
+
 ## C22–C25: košík, obnova a konkrétní Figma regiony — 2026-11-05
 
 - C22 rozlišuje pouze šest pevných fází selhání quote. Žádná upstream těla,

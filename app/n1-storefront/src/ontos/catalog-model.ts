@@ -58,6 +58,7 @@ export const CatalogResponseSchema = Schema.Struct({
       published: Schema.optionalKey(Schema.Boolean),
       sku: optionalString,
       slug: Schema.String,
+      sourceProductId: optionalString,
       stockOnHand: optionalNumber,
       stockTracked: Schema.optionalKey(Schema.Boolean),
       storefrontVariantPreview: Schema.optionalKey(
@@ -135,6 +136,7 @@ export interface ProductDetailModel extends ProductCardModel {
   readonly categoryId: string | null;
   readonly imageAlt: string;
   readonly images: readonly string[];
+  readonly manufacturer?: string;
   readonly minimumQuantity: number;
   readonly paragraphs: readonly string[];
   readonly parameters: typeof ParametersSchema.Type;
@@ -295,6 +297,27 @@ const variantDetailsOf = (
   return variants;
 };
 
+/** The audited N1 import joins producer.title into this parameter; other brands are not inferred. */
+const manufacturerOf = (product: OwnerProduct): string | undefined => {
+  if (
+    product.sourceProductId === undefined ||
+    product.sourceProductId.trim() !== product.sourceProductId ||
+    !/^n1legacy:sql:f7972caf6a5bac9f3050968baf274669fbdc9cbf:product:\d+$/u.test(
+      product.sourceProductId,
+    )
+  ) {
+    return undefined;
+  }
+  const candidates = (product.parameters ?? []).filter((parameter) => parameter.label === "Značka");
+  const [candidate] = candidates;
+  return candidates.length === 1 &&
+    candidate?.unit === "" &&
+    candidate.value.trim().length > 0 &&
+    candidate.value.trim() !== "Bez výrobce"
+    ? candidate.value
+    : undefined;
+};
+
 const detailOf = (
   product: OwnerProduct,
   card: ProductCardModel,
@@ -304,7 +327,8 @@ const detailOf = (
     product.gallery ??
     (product.imageSrc !== undefined && product.imageSrc.length > 0 ? [product.imageSrc] : []);
   const variants = variantDetailsOf(product, card, hosts);
-  return {
+  const manufacturer = manufacturerOf(product);
+  const detail: ProductDetailModel = {
     ...card,
     categoryId: product.categoryId ?? null,
     imageAlt: product.imageAlt ?? product.name,
@@ -330,6 +354,7 @@ const detailOf = (
     unit: product.unit ?? "",
     variants,
   };
+  return manufacturer === undefined ? detail : { ...detail, manufacturer };
 };
 
 export const projectCatalog = (

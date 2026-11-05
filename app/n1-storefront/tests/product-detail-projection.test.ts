@@ -43,6 +43,27 @@ const variant = {
 };
 
 describe("owner-backed PDP amounts and stock", () => {
+  it.each(["cs", "en"])(
+    "renders only the proved manufacturer in %s without an invented manufacturer link",
+    (locale) => {
+      const dictionary = getDictionary(locale);
+      const product = detail({
+        ...leaf,
+        parameters: [{ label: "Značka", unit: "", value: "Fox & Racing" }],
+        sourceProductId: "n1legacy:sql:f7972caf6a5bac9f3050968baf274669fbdc9cbf:product:1965",
+      });
+      const html = renderToStaticMarkup(
+        createElement(ProductView, { dictionary, locale, product }),
+      );
+      expect(html).toContain(`${dictionary.manufacturer}: Fox &amp; Racing`);
+      expect(html).toContain(`<dt>${dictionary.manufacturer}</dt><dd>Fox &amp; Racing</dd>`);
+      const missing = renderToStaticMarkup(
+        createElement(ProductView, { dictionary, locale, product: detail(leaf) }),
+      );
+      expect(missing).not.toContain(dictionary.manufacturer);
+      expect(html).not.toContain("/vyrobce/");
+    },
+  );
   it.each(["cs", "en"])("marks only the actual selected variant in %s", (locale) => {
     const product = detail({
       ...leaf,

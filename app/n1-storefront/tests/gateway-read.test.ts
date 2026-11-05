@@ -53,7 +53,7 @@ const scenario = (statuses: readonly number[], validContract = true) => {
 };
 
 describe("governed read recovery", () => {
-  it.effect.each([409, 503])("reissues the combined read after transient HTTP %s", (status) =>
+  it.effect.each([409, 502, 503])("reissues the combined read after transient HTTP %s", (status) =>
     Effect.gen(function* recoverTransientRead() {
       const owner = scenario([status, 200]);
       const fiber = yield* Effect.forkChild(owner.program);

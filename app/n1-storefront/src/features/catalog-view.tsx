@@ -11,6 +11,7 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import type { Dictionary } from "@/i18n";
 import type { CatalogModel } from "@/ontos/catalog-model";
 import { priceProps } from "./price-props";
+import { CardVariants } from "./card-variants";
 
 const stockStatus = {
   available: "in-stock",
@@ -113,27 +114,11 @@ export const CatalogView = ({
                 )}
               </Link>
             </div>
-            <div className="flex min-h-7 flex-wrap items-center justify-center gap-1">
-              {(product.variantPreview ?? []).map((variant) => (
-                <LinkButton
-                  as={NextLink}
-                  density="compact"
-                  href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}
-                  key={variant.id}
-                  prefetch={false}
-                  size="sm"
-                  theme="outlined"
-                  variant="tertiary"
-                >
-                  {variant.name}
-                </LinkButton>
-              ))}
-              {(product.variantPreview?.length ?? 0) > 0 && (product.variantCount ?? 0) > 3 && (
-                <span className="text-xs text-fg-secondary">
-                  +{(product.variantCount ?? 0) - 3}
-                </span>
-              )}
-            </div>
+            <CardVariants
+              key={`${locale}:${product.id}:${product.slug}`}
+              locale={locale}
+              product={product}
+            />
             <div className="flex justify-center">
               {product.stock === "unknown" ? (
                 <AvailabilityStatus
