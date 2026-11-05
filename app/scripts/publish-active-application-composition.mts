@@ -1243,16 +1243,9 @@ const migrateCommand = Command.make(
             () => stop,
           );
         });
-        if (mode === 'verify-only') {
-          return yield* Layer.build(
-            Layer.effectDiscard(withApplicationCompositionPublicationLock(deployment, precondition)).pipe(
-              Layer.provide(Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ZeropsPublicApiLive)),
-            ),
-          ).pipe(Effect.asVoid);
-        }
         return yield* Layer.build(
           Layer.effectDiscard(
-            runApplicationCompositionMigration(deployment, configuredInitialCutover(environment), precondition),
+            runApplicationCompositionMigration(deployment, configuredInitialCutover(environment), precondition, mode),
           ).pipe(
             Layer.provide(
               Layer.mergeAll(

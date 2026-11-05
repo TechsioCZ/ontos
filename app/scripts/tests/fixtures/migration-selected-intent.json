@@ -1,0 +1,13 @@
+{
+  "migrationRequirements": {
+    "mode": "selected",
+    "owners": [
+      {
+        "migrate": true,
+        "ownerId": "core-runtime",
+        "verify": true
+      }
+    ]
+  },
+  "modules": []
+}

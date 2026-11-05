@@ -295,6 +295,12 @@ interface CurrentApplicationCompositionAuthority {
   readonly validUntil: Date;
 }
 
+const isSettledVerification = (
+  current: CurrentApplicationCompositionAuthority | undefined,
+  precondition: ApplicationCompositionBaselinePrecondition | undefined,
+): boolean =>
+  current?.phase === 'migrated' || (current?.phase === 'active' && current.revision === precondition?.targetRevision);
+
 const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuthority.prepareDrain')(
   function* prepareApplicationCompositionDrain<Failure, Requirements>(
     current: CurrentApplicationCompositionAuthority,
@@ -382,6 +388,7 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
     migration: Effect.Effect<Value, Failure, Requirements>,
     verifyInitialCutover: Effect.Effect<void, InitialFailure, InitialRequirements>,
     precondition?: ApplicationCompositionBaselinePrecondition,
+    mode: 'migrate' | 'verify-only' = 'migrate',
   ) {
     const database = yield* CoreDatabase;
     return yield* withApplicationCompositionPublicationLock(
@@ -401,6 +408,11 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
               .where(eq(applicationCompositionAuthority.authorityKey, 'active')))[0]
           : undefined;
         yield* requireCapturedBaseline(current, precondition);
+        // Verification may repeat after migration completion or publication, but must not
+        // start another drain or reopen admission. Pending SQL never takes this path.
+        if (mode === 'verify-only' && isSettledVerification(current, precondition)) {
+          return yield* migration;
+        }
         if (
           precondition !== undefined &&
           (precondition.baselineRevision === precondition.targetRevision ||

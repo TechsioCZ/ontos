@@ -49,6 +49,15 @@ const SESSION_LOCK = 'SESSION LOCK';
 const SESSION_UNLOCK = 'SESSION UNLOCK';
 const MIGRATION_EVENT = 'MIGRATION';
 const COMMITTED_DRAINING = 'COMMITTED draining';
+const COMMITTED_SEALED = 'COMMITTED sealed';
+const COMMITTED_MIGRATED = 'COMMITTED migrated';
+const DRAIN_BLOCKED = 'DRAIN BLOCKED';
+const DRAIN_COMPLETE = 'DRAIN COMPLETE';
+const DURABLE_BLOCKED = 'DURABLE BLOCKED';
+const VERIFY_ONLY = 'verify-only';
+const SCHEMA_VERIFIED = 'OWNER SCHEMA VERIFIED';
+const PROVIDER_VERIFIED = 'VERIFIED PROVIDER';
+const REPLACEMENT_ALLOWED = 'REPLACEMENT WORKERS ALLOWED';
 const DURABLE_COMPLETE = 'DURABLE COMPLETE';
 const ROLLBACK_EVENT = 'TRANSACTION ROLLBACK';
 const LEGACY_TRANSACTION_CHECK = 'LEGACY TRANSACTION CHECK';
@@ -390,14 +399,14 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
     if (durableWork && outboxWork) {
       const blocked = options.progressBlocks?.[progressRead] ?? false;
       progressRead += 1;
-      events.push(blocked ? 'DRAIN BLOCKED' : 'DRAIN COMPLETE');
+      events.push(blocked ? DRAIN_BLOCKED : DRAIN_COMPLETE);
       return [{ blocked }];
     }
     if (durablePoll) {
       durablePoll = false;
       const blocked = options.durableBlocks?.[durableRead] ?? options.ownerWorkPending ?? false;
       durableRead += 1;
-      events.push(blocked ? 'DURABLE BLOCKED' : DURABLE_COMPLETE);
+      events.push(blocked ? DURABLE_BLOCKED : DURABLE_COMPLETE);
       return [{ blocked }];
     }
     return [{ blocked: durableWork ? (options.ownerWorkPending ?? false) : (options.sealOutboxPending ?? false) }];
@@ -512,6 +521,196 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   };
 };
 
+const releasePrecondition = { baselineRevision: '1'.repeat(64), targetRevision: '2'.repeat(64) };
+
+it.effect('verify-only verifies committed SQL before completing a sealed retry', () =>
+  Effect.gen(function* verifiesCommittedReleaseRetry() {
+    const fixture = migrationFixture({ currentRevision: releasePrecondition.baselineRevision, initialPhase: 'sealed' });
+    const result = yield* runApplicationCompositionMigration(
+      Effect.sync(() => {
+        expect(fixture.phase()).toBe('sealed');
+        expect(fixture.legacy.observations).toHaveLength(1);
+        fixture.events.push(SCHEMA_VERIFIED);
+        return 'verified-committed-sql';
+      }),
+      initialProviderProof,
+      releasePrecondition,
+      VERIFY_ONLY,
+    ).pipe(Effect.provide(fixture.layer));
+    expect(result).toBe('verified-committed-sql');
+    expect(fixture.phase()).toBe('migrated');
+    expect(fixture.events.indexOf(SCHEMA_VERIFIED)).toBeLessThan(fixture.events.indexOf(COMMITTED_MIGRATED));
+    expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
+    expect(fixture.events).not.toContain(COMMITTED_DRAINING);
+    expect(fixture.statements.some((statement) => /^(?:alter|create) /iu.test(statement))).toBe(false);
+
+    const failed = migrationFixture({ currentRevision: releasePrecondition.baselineRevision, initialPhase: 'sealed' });
+    const failure = yield* runApplicationCompositionMigration(
+      Effect.fail('owner verification failed'),
+      initialProviderProof,
+      releasePrecondition,
+      VERIFY_ONLY,
+    ).pipe(Effect.provide(failed.layer), Effect.flip);
+    expect(failure).toBe('owner verification failed');
+    expect(failed.phase()).toBe('sealed');
+    expect(failed.events).not.toContain(COMMITTED_MIGRATED);
+    expect(failed.events.at(-1)).toBe(SESSION_UNLOCK);
+  }),
+);
+
+it.effect('a no-SQL release drains durable and Outbox work before permitting replacement workers', () =>
+  Effect.gen(function* drainsBeforeReplacementWorkers() {
+    const fixture = migrationFixture({
+      currentRevision: releasePrecondition.baselineRevision,
+      durableBlocks: [true, false],
+      progressBlocks: [true, false],
+    });
+    let replacementAllowed = false;
+    const fiber = yield* runApplicationCompositionMigration(
+      Effect.sync(() => {
+        expect(fixture.phase()).toBe('sealed');
+        fixture.events.push(PROVIDER_VERIFIED);
+      }),
+      initialProviderProof,
+      releasePrecondition,
+      VERIFY_ONLY,
+    ).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          replacementAllowed = true;
+          fixture.events.push(REPLACEMENT_ALLOWED);
+        }),
+      ),
+      Effect.provide(fixture.layer),
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust('0 seconds');
+    expect(fixture.phase()).toBe('active');
+    expect(fixture.admission()).toBe('closed');
+    expect(fixture.events).toContain(DURABLE_BLOCKED);
+    expect(replacementAllowed).toBe(false);
+    yield* TestClock.adjust('3 seconds');
+    yield* TestClock.adjust('0 seconds');
+    expect(fixture.phase()).toBe('draining');
+    expect(fixture.events).toContain(DRAIN_BLOCKED);
+    expect(fixture.events).not.toContain(PROVIDER_VERIFIED);
+    expect(replacementAllowed).toBe(false);
+    yield* TestClock.adjust('3 seconds');
+    yield* Fiber.join(fiber);
+    expect(fixture.phase()).toBe('migrated');
+    expect(replacementAllowed).toBe(true);
+    const ordered = [
+      DURABLE_COMPLETE,
+      COMMITTED_DRAINING,
+      DRAIN_COMPLETE,
+      COMMITTED_SEALED,
+      PROVIDER_VERIFIED,
+      COMMITTED_MIGRATED,
+      SESSION_UNLOCK,
+      REPLACEMENT_ALLOWED,
+    ].map((event) => fixture.events.indexOf(event));
+    expect(ordered.every((position) => position >= 0)).toBe(true);
+    expect(ordered).toEqual(EffectArray.sort(ordered, Order.Number));
+  }),
+);
+
+it.effect('both migration modes initialize without an authority table or row and retain cutover gates', () =>
+  Effect.gen(function* initializesFirstRelease() {
+    for (const mode of ['migrate', VERIFY_ONLY] as const) {
+      for (const options of [{ schemaInitialized: false }, { missingAuthority: true }]) {
+        const fixture = migrationFixture(options);
+        yield* runApplicationCompositionMigration(
+          Effect.sync(() => {
+            fixture.events.push(MIGRATION_EVENT);
+          }),
+          initialProviderProof,
+          { baselineRevision: null, targetRevision: releasePrecondition.targetRevision },
+          mode,
+        ).pipe(Effect.provide(fixture.layer));
+        expect(fixture.proofRequests).toHaveLength(4);
+        expect(fixture.events.indexOf(LEGACY_TRANSACTION_CHECK)).toBeLessThan(fixture.events.indexOf(MIGRATION_EVENT));
+        expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
+        expect(fixture.statements.some((statement) => /^(?:insert|update|delete) /iu.test(statement))).toBe(false);
+        if (options.schemaInitialized === false) {
+          expect(fixture.statements.some((statement) => statement.includes(AUTHORITY_FROM))).toBe(false);
+        }
+      }
+    }
+    const refused = migrationFixture({ schemaInitialized: false });
+    const failure = yield* runApplicationCompositionMigration(
+      Effect.die('Initial deployment must not run without cutover proof'),
+      Effect.fail('legacy executable still present'),
+      { baselineRevision: null, targetRevision: releasePrecondition.targetRevision },
+      'migrate',
+    ).pipe(Effect.provide(refused.layer), Effect.flip);
+    expect(failure).toBe('legacy executable still present');
+    expect(refused.events.at(-1)).toBe(SESSION_UNLOCK);
+  }),
+);
+
+it.effect('verify-only repeats completed or active-target verification without another lifecycle transition', () =>
+  Effect.gen(function* verifiesSettledReleaseRetry() {
+    for (const options of [
+      { initialPhase: 'migrated' as const },
+      { currentRevision: releasePrecondition.targetRevision },
+      {},
+    ]) {
+      const fixture = migrationFixture({ currentRevision: releasePrecondition.baselineRevision, ...options });
+      let verified = false;
+      yield* runApplicationCompositionMigration(
+        Effect.sync(() => {
+          verified = true;
+        }),
+        Effect.die('A settled or unchanged release must not repeat cutover'),
+        options.currentRevision === undefined && options.initialPhase === undefined
+          ? {
+              baselineRevision: releasePrecondition.baselineRevision,
+              targetRevision: releasePrecondition.baselineRevision,
+            }
+          : releasePrecondition,
+        VERIFY_ONLY,
+      ).pipe(Effect.provide(fixture.layer));
+      expect(verified).toBe(true);
+      expect(fixture.events).toEqual([SESSION_LOCK, SESSION_UNLOCK]);
+      expect(fixture.statements.some((statement) => /^(?:insert|update|delete|alter|create) /iu.test(statement))).toBe(
+        false,
+      );
+    }
+  }),
+);
+
+it.effect('both modes reject changed baselines and SQL migration cannot use the active-target verification path', () =>
+  Effect.gen(function* rejectsUnsafeReleaseRetry() {
+    for (const scenario of [
+      {
+        mode: VERIFY_ONLY,
+        options: {},
+        precondition: { baselineRevision: null, targetRevision: '2'.repeat(64) },
+      },
+      {
+        mode: 'migrate' as const,
+        options: {},
+        precondition: { baselineRevision: null, targetRevision: '2'.repeat(64) },
+      },
+      {
+        mode: 'migrate' as const,
+        options: { currentRevision: releasePrecondition.targetRevision },
+        precondition: releasePrecondition,
+      },
+    ] as const) {
+      const fixture = migrationFixture({ currentRevision: releasePrecondition.baselineRevision, ...scenario.options });
+      const failure = yield* runApplicationCompositionMigration(
+        Effect.die('Rejected releases must not reach the provider'),
+        Effect.die('Rejected releases must not reach cutover'),
+        scenario.precondition,
+        scenario.mode,
+      ).pipe(Effect.provide(fixture.layer), Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+      expect(fixture.events).toEqual([SESSION_LOCK, SESSION_UNLOCK]);
+    }
+  }),
+);
+
 it.effect('fences concurrent public writers before acquiring owner leases for both drain and seal', () =>
   Effect.gen(function* authorityBeforeOwnerEvidence() {
     const fixture = migrationFixture();
@@ -566,15 +765,15 @@ it.effect('commits draining and sealing before migration, then records completio
       ...ownerObservationEvents,
       COMMITTED_DRAINING,
       OWNER_RELEASE,
-      'DRAIN BLOCKED',
-      'DRAIN COMPLETE',
+      DRAIN_BLOCKED,
+      DRAIN_COMPLETE,
       ...retirementEvents.slice(4, 8),
       LEGACY_TRANSACTION_CHECK,
       ...ownerObservationEvents,
-      'COMMITTED sealed',
+      COMMITTED_SEALED,
       OWNER_RELEASE,
       MIGRATION_EVENT,
-      'COMMITTED migrated',
+      COMMITTED_MIGRATED,
       SESSION_UNLOCK,
     ]);
     expect(fixture.phase()).toBe('migrated');
@@ -645,7 +844,7 @@ it.effect('closes new durable admission and leaves existing jobs active until th
     yield* TestClock.adjust('0 seconds');
     expect(fixture.phase()).toBe('active');
     expect(fixture.admission()).toBe('closed');
-    expect(fixture.events).toContain('DURABLE BLOCKED');
+    expect(fixture.events).toContain(DURABLE_BLOCKED);
     expect(fixture.events).not.toContain(COMMITTED_DRAINING);
     expect(fixture.events).not.toContain(MIGRATION_EVENT);
 
@@ -666,7 +865,7 @@ it.effect('preserves the sealed fence after native migration failure and refuses
     ).pipe(Effect.provide(failed.layer), Effect.flip);
     expect(failure).toBe('native migration failed');
     expect(failed.phase()).toBe('sealed');
-    expect(failed.events).not.toContain('COMMITTED migrated');
+    expect(failed.events).not.toContain(COMMITTED_MIGRATED);
     expect(failed.events.at(-1)).toBe(SESSION_UNLOCK);
 
     const completed = migrationFixture({ initialPhase: 'migrated' });

@@ -78,6 +78,7 @@ const nativeLegacyOwners = Layer.unwrap(
 ).pipe(Layer.provide(NodeServices.layer));
 
 const PENDING_TOPIC = 'publication.pending';
+const VERIFY_ONLY = 'verify-only';
 const PRODUCER_MODULE = 'publication.test';
 const LEGACY_ACCOUNT_ID = 'a'.repeat(32);
 const LEGACY_NODE_PATH = '/api/rest/public/service-stack/publication-legacy-node';
@@ -214,6 +215,17 @@ it.live(
           .pipe(Effect.orDie),
       );
       const first = yield* snapshot('first', 0);
+      let initialVerifications = 0;
+      yield* runApplicationCompositionMigration(
+        Effect.sync(() => {
+          initialVerifications += 1;
+        }),
+        initialCutoverProvider(undefined, false).proof,
+        { baselineRevision: null, targetRevision: first.composition.revision },
+        VERIFY_ONLY,
+      );
+      expect(initialVerifications).toBe(1);
+      expect(yield* observer.executor.select().from(applicationCompositionAuthority)).toEqual([]);
       const initialPointerCalls = yield* Ref.make(0);
       for (const [nodeStatus, workerPresent] of [
         ['ACTIVE', false],
@@ -906,17 +918,30 @@ it.live(
         revision: fourth.composition.revision,
       });
       const migrationResult = yield* runApplicationCompositionMigration(
-        observer.executor
-          .execute(
-            sql`alter table ${applicationCompositionAuthority} alter column ${sql.identifier(migrationColumn)} set default true`,
+        Effect.gen(function* verifyAlreadyCommittedMigration() {
+          const [column] = yield* observer.executor.execute<{ readonly present: boolean }>(
+            sql`select exists(select 1 from information_schema.columns
+              where table_schema='core' and table_name='application_composition_authority'
+                and column_name=${migrationColumn} and data_type='boolean') as present`,
             'objects',
-          )
-          .pipe(Effect.timeout('5 seconds'), Effect.as('migration-complete')),
+          );
+          expect(column?.present).toBe(true);
+          return 'migration-complete';
+        }).pipe(Effect.timeout('5 seconds')),
         transitionProvider.proof,
+        { baselineRevision: fourth.composition.revision, targetRevision: fifth.composition.revision },
+        VERIFY_ONLY,
       );
       expect(migrationResult).toBe('migration-complete');
       const [afterMigrationSuccess] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(afterMigrationSuccess).toMatchObject({ phase: 'migrated', revision: fourth.composition.revision });
+      yield* runApplicationCompositionMigration(
+        Effect.void,
+        rejectUnexpectedProof,
+        { baselineRevision: fourth.composition.revision, targetRevision: fifth.composition.revision },
+        VERIFY_ONLY,
+      );
+      expect(yield* observer.executor.select().from(applicationCompositionAuthority)).toEqual([afterMigrationSuccess]);
       const migratedRenewal = { ...fourth, validUntil: DateTime.add(fourth.validUntil, { milliseconds: 10_000 }) };
       yield* publishApplicationCompositionAuthoritySnapshot(migratedRenewal, Effect.void, rejectUnexpectedProof, {
         baselineRevision: fourth.composition.revision,
@@ -965,6 +990,13 @@ it.live(
         phase: 'active',
         revision: fifth.composition.revision,
       });
+      yield* runApplicationCompositionMigration(
+        Effect.void,
+        rejectUnexpectedProof,
+        { baselineRevision: fifth.composition.revision, targetRevision: fifth.composition.revision },
+        VERIFY_ONLY,
+      );
+      expect(yield* observer.executor.select().from(applicationCompositionAuthority)).toEqual([afterMigratedPromotion]);
 
       // The old artifact set is explicitly promoted against CURRENT B, with a new observation.
       // Additive schema remains installed; this does not replay its former publication context.
@@ -1013,6 +1045,81 @@ it.live(
         )
         .pipe(Effect.flip);
       expect(Schema.is(ApplicationCompositionAuthorityError)(replacedRevisionAdmission)).toBe(true);
+
+      // An implementation-only release has no pending DDL, but old durable jobs and
+      // Outbox deliveries must still finish before the CLI can return to worker deployment.
+      const implementationOnly = yield* snapshot('implementation-only', 120_000);
+      yield* observer.executor.execute(
+        sql`select core.track_application_composition_durable_work(${PRODUCER_MODULE}, ${fourth.composition.revision}, ${durableWorkId}, true)`,
+        'objects',
+      );
+      yield* observer.executor
+        .update(outboxMessages)
+        .set({ matchedAt: null })
+        .where(eq(outboxMessages.outboxMessageId, messageId));
+      yield* observer.executor
+        .update(outboxDeliveries)
+        .set({ status: 'pending' })
+        .where(eq(outboxDeliveries.outboxMessageId, messageId));
+      const verificationCalls = yield* Ref.make(0);
+      const verifyingRelease = yield* runApplicationCompositionMigration(
+        Effect.gen(function* verifyImplementationOnlyRelease() {
+          const [authority] = yield* observer.executor.select().from(applicationCompositionAuthority);
+          expect(authority?.phase).toBe('sealed');
+          yield* Ref.update(verificationCalls, (calls) => calls + 1);
+        }),
+        transitionProvider.proof,
+        { baselineRevision: fourth.composition.revision, targetRevision: implementationOnly.composition.revision },
+        VERIFY_ONLY,
+      ).pipe(Effect.forkChild);
+      yield* observer.executor
+        .select()
+        .from(applicationCompositionAuthority)
+        .pipe(
+          Effect.repeat({
+            schedule: Schedule.spaced('10 millis'),
+            until: (rows) => rows[0]?.durableWorkAdmission === 'closed',
+          }),
+          Effect.timeout('5 seconds'),
+        );
+      expect(yield* Ref.get(verificationCalls)).toBe(0);
+      yield* observer.executor.execute(
+        sql`select core.track_application_composition_durable_work(${PRODUCER_MODULE}, ${fourth.composition.revision}, ${durableWorkId}, false)`,
+        'objects',
+      );
+      yield* observer.executor
+        .select()
+        .from(applicationCompositionAuthority)
+        .pipe(
+          Effect.repeat({ schedule: Schedule.spaced('10 millis'), until: (rows) => rows[0]?.phase === 'draining' }),
+          Effect.timeout('5 seconds'),
+        );
+      expect(yield* Ref.get(verificationCalls)).toBe(0);
+      expect(
+        yield* observer.executor.transaction((transaction) =>
+          isApplicationCompositionWorkDrained(transaction, fourth.composition.revision),
+        ),
+      ).toBe(false);
+      yield* observer.executor
+        .update(outboxMessages)
+        .set({ matchedAt: yield* DateTime.nowAsDate })
+        .where(eq(outboxMessages.outboxMessageId, messageId));
+      yield* observer.executor
+        .update(outboxDeliveries)
+        .set({ status: 'done' })
+        .where(eq(outboxDeliveries.outboxMessageId, messageId));
+      yield* Fiber.join(verifyingRelease).pipe(Effect.timeout('10 seconds'));
+      expect(yield* Ref.get(verificationCalls)).toBe(1);
+      expect((yield* observer.executor.select().from(applicationCompositionAuthority))[0]?.phase).toBe('migrated');
+      yield* publishApplicationCompositionAuthoritySnapshot(implementationOnly, Effect.void, transitionProvider.proof, {
+        baselineRevision: fourth.composition.revision,
+        targetRevision: implementationOnly.composition.revision,
+      });
+      expect((yield* observer.executor.select().from(applicationCompositionAuthority))[0]).toMatchObject({
+        durableWorkAdmission: 'open',
+        phase: 'active',
+        revision: implementationOnly.composition.revision,
+      });
       expect(database.executor).toBeDefined();
     }).pipe(
       Effect.provide(
