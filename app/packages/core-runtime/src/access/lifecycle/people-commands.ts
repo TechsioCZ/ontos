@@ -34,6 +34,7 @@ import {
   planDelegatedAssignment,
   selectorCovers,
 } from './delegation.ts';
+import { GrantorCoverSchema } from '../changes/authority.ts';
 import { isSoleAdministrator } from './owners.ts';
 import type { ScopeAdministration } from './owners.ts';
 
@@ -161,7 +162,7 @@ export const PeopleIntentWriteSchema = Schema.Union([
   Schema.TaggedStruct('RecordAssignment', {
     assignment: AssignmentSchema,
     /** A delegated assignment's covering grantor assignments, locked and re-checked as it commits. */
-    grantorIncarnationIds: Schema.optionalKey(Schema.Array(AssignmentIncarnationIdSchema)),
+    grantorCover: Schema.optionalKey(GrantorCoverSchema),
   }),
   /** An assignment only ends; the row keeps every frozen delegated limit it was written with. */
   Schema.TaggedStruct('EndAssignment', { incarnationId: AssignmentIncarnationIdSchema }),

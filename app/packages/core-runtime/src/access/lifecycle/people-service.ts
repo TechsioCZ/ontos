@@ -5,7 +5,7 @@ import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
 import { beyondGrantorCell, coveringGrantorAssignments, delegationIsLive } from '../changes/authority.ts';
-import type { AccessConfigureBasis, GrantedCell, GrantorIntent } from '../changes/authority.ts';
+import type { AccessConfigureBasis, GrantedCell, GrantorCover, GrantorIntent } from '../changes/authority.ts';
 import { AccessScopeIdSchema, PrincipalIdSchema, TenantIdSchema } from '../ids.ts';
 import type {
   AccessScopeId,
@@ -282,7 +282,7 @@ const authorityOf = (
 const planDelegatedRoleAssignment = (
   request: RoleAssignmentRequest,
   beyond: Cell | undefined,
-  grantorIncarnationIds: readonly AssignmentIncarnationId[],
+  grantorCover: GrantorCover,
 ) =>
   planRoleAssignment(request).pipe(
     Effect.flatMap((plan) =>
@@ -290,7 +290,7 @@ const planDelegatedRoleAssignment = (
         ? Effect.succeed({
             ...plan,
             writes: plan.writes.map((write): PeopleIntentWrite =>
-              Predicate.isTagged(write, 'RecordAssignment') ? { ...write, grantorIncarnationIds } : write,
+              Predicate.isTagged(write, 'RecordAssignment') ? { ...write, grantorCover } : write,
             ),
           })
         : Effect.fail(

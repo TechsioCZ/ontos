@@ -4,6 +4,7 @@ import type { Effect, Option } from 'effect';
 import type { OperationalScope } from '../../../operations/context.ts';
 import type { CoreTransaction } from '../../../db/types.ts';
 import type { AssignmentIncarnationId, CatalogSnapshotId } from '../../ids.ts';
+import type { GrantorCover } from '../authority.ts';
 import type { AccessChangeDecision, AccessChangeItem, CatalogSnapshot, Role, RoleRevision } from '../../model.ts';
 import type { AdoptionPlan, DeclinePlan } from '../adoption.ts';
 import type { ChangeItemPlan } from '../items.ts';
@@ -69,7 +70,7 @@ export interface RecordRoleRevisionInput {
    */
   readonly expectedHolders?: readonly AssignmentIncarnationId[];
   /** The grantor assignments covering the delegated edit's cells, locked and re-checked as it commits. */
-  readonly grantorIncarnationIds?: readonly AssignmentIncarnationId[];
+  readonly grantorCover?: GrantorCover;
   /** The trusted request scope: its tenant is written and its person is the author (O66). */
   readonly scope: OperationalScope;
 }

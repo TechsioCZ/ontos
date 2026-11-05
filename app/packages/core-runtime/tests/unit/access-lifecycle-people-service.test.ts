@@ -365,7 +365,11 @@ it.effect('assigns through a delegated manager envelope only, and freezes its li
     expect(assigned.assignment?.validUntil).toEqual(delegation.validUntil);
     // The write names the grantor assignment that covers it, which the store locks as it commits.
     expect(written).toEqual([
-      { _tag: 'RecordAssignment', assignment: assigned.assignment, grantorIncarnationIds: [ids.incarnation(10)] },
+      {
+        _tag: 'RecordAssignment',
+        assignment: assigned.assignment,
+        grantorCover: [{ incarnationId: ids.incarnation(10), roleRevisionId: ids.roleRevision(10) }],
+      },
     ]);
 
     // A role outside `roleIds`, the manager themselves and a person outside the envelope are refused.

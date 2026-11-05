@@ -1,6 +1,6 @@
 import { Match, Predicate, Result, Schema } from 'effect';
 
-import { AssignmentIncarnationIdSchema, CapabilityKeySchema, RoleIdSchema } from '../ids.ts';
+import { CapabilityKeySchema, RoleIdSchema } from '../ids.ts';
 import type { CapabilityKey, PrincipalId, RoleId } from '../ids.ts';
 import type {
   AccessChangeDecision,
@@ -18,7 +18,7 @@ import {
   cellSlotKey,
 } from '../model.ts';
 import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
-import { configureAuthorityIssue, coveringGrantorAssignments, deciderIssue } from './authority.ts';
+import { configureAuthorityIssue, coveringGrantorAssignments, deciderIssue, GrantorCoverSchema } from './authority.ts';
 import { withOptional } from '../decision/optional.ts';
 import { compareText } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
@@ -72,7 +72,7 @@ export type UndoSelection = typeof UndoSelectionSchema.Type;
 
 export const UndoPlanSchema = Schema.Struct({
   /** Present when a delegation authorized the plan: the grantor assignments covering its cells. */
-  grantorIncarnationIds: Schema.optionalKey(Schema.Array(AssignmentIncarnationIdSchema)),
+  grantorCover: Schema.optionalKey(GrantorCoverSchema),
   /** Present when a delegation authorized the plan: the holders its envelope checked, per edited role. */
   checkedHolders: Schema.optionalKey(CheckedHoldersSchema),
   decisions: Schema.Array(AccessChangeDecisionSchema),
@@ -554,7 +554,7 @@ export const planUndo = (request: UndoRequest): Result.Result<UndoPlan, AccessCh
               )
             : undefined,
         ),
-        'grantorIncarnationIds',
+        'grantorCover',
         Predicate.isTagged(request.authority, 'DelegatedManager')
           ? coveringGrantorAssignments(
               {
