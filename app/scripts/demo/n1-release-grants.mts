@@ -5,14 +5,19 @@
  * n1-stage-access.json) and never revokes. Removing stale N1 grants stays with the operator plan/apply command.
  */
 import { NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Exit, FileSystem, Redacted, Schema } from 'effect';
+import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { Command } from 'effect/cli';
-import { FetchHttpClient } from 'effect/http';
 
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
+import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
-import { createN1GrantPlan, decodeN1Access, loadN1Contracts, N1StageGrantError } from './n1-stage-grants.mts';
+import { decodeN1Access, n1GrantRelationships, N1StageGrantError } from './n1-stage-grants.mts';
 import { reconcileServiceGrants } from './reconcile-stage-service-grants.mts';
 
 export const N1_RELEASE_ACCESS_FILE = 'scripts/demo/n1-stage-access.json';
@@ -26,7 +31,10 @@ export const releaseN1Grants = Effect.gen(function* releaseN1GrantsProgram() {
     Effect.mapError(() => fail('The committed N1 access file could not be read')),
     Effect.flatMap(decodeN1Access),
   );
-  const plan = yield* createN1GrantPlan(access, yield* loadN1Contracts);
+  // The active composition is the same local source the demo grants read: no public HTTP while the app is starting.
+  const source = yield* ActiveApplicationCompositionService;
+  const actions = yield* discoverCurrentActions(yield* source.load);
+  const relationships = yield* n1GrantRelationships(access, actions);
   const environment = yield* Config.all({
     SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
     SPICEDB_ENDPOINT: Config.schema(Schema.Literal('spicedb:50051'), 'SPICEDB_ENDPOINT'),
@@ -44,7 +52,7 @@ export const releaseN1Grants = Effect.gen(function* releaseN1GrantsProgram() {
     }),
     (client) => Effect.sync(() => client.close()),
   );
-  const result = yield* reconcileServiceGrants(rpc, plan.relationships, 'apply');
+  const result = yield* reconcileServiceGrants(rpc, relationships, 'apply');
   return yield* Console.log({ applied: result.applied, desired: result.desired, missing: result.missing });
 }).pipe(Effect.scoped);
 
@@ -64,9 +72,13 @@ if (import.meta.main) {
       ),
       { version: '1.0.0' },
     ).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provide(ProcessDatabasePoolsLive),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          ActiveApplicationCompositionConfigLive.pipe(Layer.provide(ActiveApplicationCompositionSourceLive)),
+          ProcessDatabasePoolsLive,
+          NodeServices.layer,
+        ),
+      ),
     ),
   );
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;

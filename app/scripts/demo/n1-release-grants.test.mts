@@ -18,7 +18,8 @@ it.effect('the committed N1 identities decode to the stage tenant and both N1 ac
 
 it('the release reconcile only adds the reviewed N1 set and has no revoke path', () => {
   const source = read('n1-release-grants.mts');
-  expect(source).toContain("reconcileServiceGrants(rpc, plan.relationships, 'apply')");
+  expect(source).toContain("reconcileServiceGrants(rpc, relationships, 'apply')");
+  expect(source).not.toContain('loadN1Contracts');
   expect(source).not.toContain('RelationshipUpdate_Operation.DELETE');
   expect(source).not.toContain('revokeRetiredN1Relationships');
 });
