@@ -8,7 +8,11 @@ import { createActionCollector } from '../../../../packages/core-runtime/src/act
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
-import { makePartyRef, partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
+import {
+  makePartyRef,
+  PartyCandidateSchema,
+  partySubjectKeyFromString,
+} from '../../shared/domain/identity-contracts.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
 import { matchPartyAction } from '../../src/actions/match-party.action.ts';
@@ -1078,6 +1082,63 @@ it.effect('bound Guest evidence cannot enter Create or Match without its exact t
     }
   }),
 );
+
+it('Guest candidate fingerprint survives nested JSON object reordering without accepting changed scope', () => {
+  const original = guestCandidate();
+  const wireCodec = Schema.fromJsonString(PartyCandidateSchema);
+  const wireRoundtrip = Schema.decodeUnknownSync(wireCodec)(Schema.encodeSync(wireCodec)(original));
+  const restored: PartyCandidate = {
+    ...wireRoundtrip,
+    subjectEvidence: (wireRoundtrip.subjectEvidence ?? []).map((evidence) => {
+      const binding = evidence.guestBinding;
+      return binding === undefined
+        ? evidence
+        : {
+            ...evidence,
+            guestBinding: {
+              legalEntityRef: {
+                tenantId: binding.legalEntityRef.tenantId,
+                resourceType: binding.legalEntityRef.resourceType,
+                resourceId: binding.legalEntityRef.resourceId,
+                moduleId: binding.legalEntityRef.moduleId,
+              },
+              correlationRoot: binding.correlationRoot,
+            },
+          };
+    }),
+  };
+  expect(restored).toEqual(original);
+  expect(candidateFingerprint(restored)).toBe(candidateFingerprint(original));
+  for (const field of ['tenantId', 'resourceId'] as const) {
+    const changed = {
+      ...restored,
+      subjectEvidence: (restored.subjectEvidence ?? []).map((evidence) => {
+        const binding = evidence.guestBinding;
+        return binding === undefined
+          ? evidence
+          : {
+              ...evidence,
+              guestBinding: {
+                ...binding,
+                legalEntityRef: { ...binding.legalEntityRef, [field]: '90000000-0000-4000-8000-000000000001' },
+              },
+            };
+      }),
+    };
+    expect(candidateFingerprint(changed)).not.toBe(candidateFingerprint(original));
+  }
+  const changedValue = {
+    ...restored,
+    subjectEvidence: (restored.subjectEvidence ?? []).map((evidence) => ({
+      ...evidence,
+      statement: 'Different accepted subject statement',
+    })),
+  };
+  expect(candidateFingerprint(changedValue)).not.toBe(candidateFingerprint(original));
+  expect(candidateFingerprint({ ...restored, validFrom: DateTime.makeUnsafe('2020-01-02T00:00:00.000Z') })).not.toBe(
+    candidateFingerprint(original),
+  );
+});
 
 it.effect('accepted Guest binding remains in the immutable matching snapshot and decision evaluation', () =>
   Effect.gen(function* retainedGuestBinding() {
