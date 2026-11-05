@@ -1,6 +1,6 @@
 import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import { eq } from 'drizzle-orm';
-import { DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect, Match } from 'effect';
 import { NodeCrypto } from '@effect/platform-node';
 import { expect, it } from 'effect-rstest';
 
@@ -13,16 +13,16 @@ import {
   duplicateCandidateCases,
   parties,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyOfficialIdentifiers,
   partyRelations,
 } from '../../src/db/schema.ts';
 import type { PartyTransaction } from '../../src/db/types.ts';
-import { lockAndResolveClaims, lockTenantIdentityWrites } from '../../src/services/party-identifier-claim.service.ts';
+import { lockTenantIdentityWrites } from '../../src/services/party-identifier-claim.service.ts';
 import {
   createOrMatchParty,
   matchParty,
+  resolveDuplicateCandidateCreate,
   resolveDuplicateCandidateMatch,
 } from '../../src/services/party-matching-persistence.service.ts';
 import {
@@ -41,7 +41,7 @@ const principalId = 'bc200000-0000-4000-8000-000000000001';
 
 it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect(
-    'real PostgreSQL identity locks serialize concurrent exact creates and repeated identifier acceptance',
+    'real PostgreSQL identity locks serialize concurrent review cases and repeated identifier acceptance',
     () =>
       Effect.gen(function* identityConcurrencyTest() {
         const clients = yield* openPartyBoundaryClients({ runtimeMaxConnections: 2 });
@@ -56,7 +56,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             partyMatchDecisions,
             duplicateCandidateCaseParties,
             duplicateCandidateCases,
-            partyIdentifierClaims,
             partyOfficialIdentifiers,
             partyFactAssertions,
             parties,
@@ -76,7 +75,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             {
               identifierType: 'ICO' as const,
               value: '27074358',
-              verification: 'VERIFIED' as const,
             },
           ],
           partyType: 'ORGANIZATION' as const,
@@ -106,10 +104,27 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             ),
           { concurrency: 'unbounded' },
         );
-        expect(results.map((result) => result.outcome).toSorted()).toEqual(['CREATED', 'MATCHED_EXISTING']);
-        const created = Option.getOrThrow(Option.fromNullishOr(results.find((result) => result.outcome === 'CREATED')));
-        expect(created.outcome).toBe('CREATED');
-        const partyId = created.partyRef.resourceId;
+        expect(results.map((result) => result.outcome)).toEqual(['AMBIGUOUS', 'AMBIGUOUS']);
+        const [firstResult, secondResult] = results;
+        if (firstResult?.outcome !== 'AMBIGUOUS' || secondResult?.outcome !== 'AMBIGUOUS') {
+          return yield* Effect.die(new Error('Declared identifiers bypassed explicit identity review'));
+        }
+        expect(firstResult.caseRef).toEqual(secondResult.caseRef);
+        expect(yield* admin.select().from(parties).where(eq(parties.tenantId, tenantId))).toEqual([]);
+        const reviewedCreate = yield* scoped((transaction) =>
+          resolveDuplicateCandidateCreate(transaction, {
+            actionInvocationId: 'bc300000-0000-4000-8000-000000000020',
+            candidateCaseId: firstResult.caseRef.resourceId,
+            expectedRevision: 1,
+            principalId,
+            reason: 'Reviewed this subject before creating its Party',
+            tenantId,
+          }),
+        );
+        if (reviewedCreate.partyRef === null) {
+          return yield* Effect.die(new Error('Reviewed Create did not produce its exact Party reference'));
+        }
+        const partyId = reviewedCreate.partyRef.resourceId;
         const canonical = yield* admin.select().from(parties).where(eq(parties.tenantId, tenantId));
         expect(canonical).toHaveLength(1);
         expect(canonical[0]?.currentDisplayName).toBe(null);
@@ -118,13 +133,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           .from(partyFactAssertions)
           .where(eq(partyFactAssertions.tenantId, tenantId));
         expect(nameAssertions.some((row) => row.factKind === 'DISPLAY_NAME')).toBe(false);
-        const weakCandidate = {
-          ...candidate,
-          officialIdentifiers: candidate.officialIdentifiers.map((identifier) => ({
-            ...identifier,
-            verification: 'UNVERIFIED' as const,
-          })),
-        };
+        const weakCandidate = candidate;
         const review = yield* scoped((transaction) =>
           matchParty(transaction, {
             actionInvocationId: 'bc300000-0000-4000-8000-000000000010',
@@ -230,17 +239,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const identifier = normalizeOfficialIdentifier({
           identifierType: 'CZ_DIC',
           value: 'CZ27074358',
-          verification: 'VERIFIED',
         });
         const add = (actionInvocationId: string) =>
           scoped((transaction) =>
             Effect.gen(function* acceptIdentifier() {
               yield* lockTenantIdentityWrites(transaction, tenantId);
-              yield* lockAndResolveClaims(transaction, tenantId, [identifier]);
               return yield* addOfficialIdentifierRecord(transaction, tenantId, partyId, identifier, {
                 actionInvocationId,
-                matchRuleVersion: 'party-exact-claims.v1',
-                partyType: 'ORGANIZATION',
                 principalId,
                 provenanceMethod: 'REGISTRY',
                 provenanceSource: 'identity-concurrency-test',
@@ -251,24 +256,15 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const first = yield* add('bc300000-0000-4000-8000-000000000003');
         const repeated = yield* add('bc300000-0000-4000-8000-000000000004');
         expect(repeated.officialIdentifierId).toBe(first.officialIdentifierId);
-        const claims = yield* admin
-          .select()
-          .from(partyIdentifierClaims)
-          .where(eq(partyIdentifierClaims.tenantId, tenantId));
-        expect(claims).toHaveLength(2);
-
-        const upgradeIdentifier = normalizeOfficialIdentifier({
+        const reusedIdentifier = normalizeOfficialIdentifier({
           identifierType: 'ICO',
           value: '26168685',
-          verification: 'UNVERIFIED',
         });
         yield* scoped((transaction) =>
-          Effect.gen(function* seedUnverifiedIdentifier() {
+          Effect.gen(function* seedDeclaredIdentifier() {
             yield* lockTenantIdentityWrites(transaction, tenantId);
-            return yield* addOfficialIdentifierRecord(transaction, tenantId, partyId, upgradeIdentifier, {
+            return yield* addOfficialIdentifierRecord(transaction, tenantId, partyId, reusedIdentifier, {
               actionInvocationId: 'bc300000-0000-4000-8000-000000000005',
-              matchRuleVersion: 'party-exact-claims.v1',
-              partyType: 'ORGANIZATION',
               principalId,
               provenanceMethod: 'REGISTRY',
               provenanceSource: 'identity-concurrency-test',
@@ -280,49 +276,35 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ['bc300000-0000-4000-8000-000000000006', 'bc300000-0000-4000-8000-000000000007'],
           (actionInvocationId) =>
             scoped((transaction) =>
-              Effect.gen(function* concurrentUpgrade() {
+              Effect.gen(function* concurrentAcceptance() {
                 yield* lockTenantIdentityWrites(transaction, tenantId);
-                yield* lockAndResolveClaims(transaction, tenantId, [
-                  { ...upgradeIdentifier, verification: 'VERIFIED' },
-                ]);
-                return yield* acceptMatchingOfficialIdentifierRecord(
-                  transaction,
-                  tenantId,
-                  partyId,
-                  { ...upgradeIdentifier, verification: 'VERIFIED' },
-                  {
-                    actionInvocationId,
-                    matchRuleVersion: 'party-exact-claims.v1',
-                    partyType: 'ORGANIZATION',
-                    principalId,
-                    provenanceMethod: 'REGISTRY',
-                    provenanceSource: 'identity-concurrency-test',
-                    validFrom: candidate.validFrom,
-                  },
-                );
+                return yield* acceptMatchingOfficialIdentifierRecord(transaction, tenantId, partyId, reusedIdentifier, {
+                  actionInvocationId,
+                  principalId,
+                  provenanceMethod: 'REGISTRY',
+                  provenanceSource: 'identity-concurrency-test',
+                  validFrom: candidate.validFrom,
+                });
               }),
             ),
           { concurrency: 'unbounded' },
         );
-        expect(accepted.map((result) => result._tag).toSorted()).toEqual(['reused', 'updated']);
+        expect(
+          accepted.map((result) =>
+            Match.value(result).pipe(
+              Match.tag('added', () => false),
+              Match.tag('reused', () => true),
+              Match.exhaustive,
+            ),
+          ),
+        ).toEqual([true, true]);
         const upgraded = yield* admin
           .select()
           .from(partyOfficialIdentifiers)
           .where(eq(partyOfficialIdentifiers.tenantId, tenantId));
         expect(upgraded.filter((row) => row.normalizedValue === '26168685')).toHaveLength(1);
         const upgradedAssertion = upgraded.find((row) => row.normalizedValue === '26168685');
-        expect(upgradedAssertion?.verificationState).toBe('VERIFIED');
-        const upgradeClaims = yield* admin
-          .select()
-          .from(partyIdentifierClaims)
-          .where(eq(partyIdentifierClaims.tenantId, tenantId));
-        const exactUpgradeClaims = upgradeClaims.filter(
-          (claim) =>
-            claim.identifierTypeKey === 'ICO' && claim.namespace === 'CZ:ICO' && claim.normalizedValue === '26168685',
-        );
-        expect(exactUpgradeClaims).toHaveLength(1);
-        expect(exactUpgradeClaims[0]?.partyId).toBe(partyId);
-        expect(exactUpgradeClaims[0]?.officialIdentifierId).toBe(upgradedAssertion?.officialIdentifierId);
+        expect(upgradedAssertion?.acceptedByActionInvocationId).toBe('bc300000-0000-4000-8000-000000000005');
       }),
   );
 });

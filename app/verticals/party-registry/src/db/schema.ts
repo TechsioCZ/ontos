@@ -47,7 +47,6 @@ export const PARTY_TABLE_INVENTORY = [
   'party_contact_points',
   'party_corrections',
   'party_fact_assertions',
-  'party_identifier_claims',
   'party_match_decisions',
   'party_merges',
   'party_official_identifiers',
@@ -70,12 +69,7 @@ const provenanceColumns = () => ({
   evidenceReference: text('evidence_reference'),
 });
 
-const verificationColumns = () => ({
-  verificationState: text('verification_state').default('UNVERIFIED').notNull(),
-  verificationMethod: text('verification_method'),
-  verifierReference: text('verifier_reference'),
-  verifiedByPrincipalId: uuid('verified_by_principal_id'),
-  verifiedAt: timestamp('verified_at', { withTimezone: true }),
+const acceptanceColumns = () => ({
   acceptedByActionInvocationId: uuid('accepted_by_action_invocation_id').notNull(),
   acceptedByPrincipalId: uuid('accepted_by_principal_id').notNull(),
   policyVersion: text('policy_version').notNull(),
@@ -113,17 +107,11 @@ const activePeriodConstraints = (
 
 const contactEvidenceConstraints = (
   prefix: string,
-  table: Readonly<
-    Record<keyof ReturnType<typeof endedPeriodColumns> | keyof ReturnType<typeof verificationColumns>, AnyPgColumn>
-  >,
+  table: Readonly<Record<keyof ReturnType<typeof endedPeriodColumns>, AnyPgColumn>>,
 ) => [
   check(
     `${prefix}_end_evidence_ck`,
     sql`(${table.validTo} is null and ${table.endReason} is null and ${table.endProvenanceSource} is null and ${table.endProvenanceMethod} is null and ${table.endEvidenceRefs} is null and ${table.endedByActionInvocationId} is null and ${table.endedByPrincipalId} is null and ${table.endedRecordedAt} is null) or (${table.validTo} is not null and ${table.endReason} = btrim(${table.endReason}) and length(${table.endReason}) > 0 and ${table.endProvenanceSource} = btrim(${table.endProvenanceSource}) and length(${table.endProvenanceSource}) > 0 and ${table.endProvenanceMethod} = btrim(${table.endProvenanceMethod}) and length(${table.endProvenanceMethod}) > 0 and jsonb_typeof(${table.endEvidenceRefs}) = 'array' and jsonb_array_length(${table.endEvidenceRefs}) <= 32 and ${table.endedByActionInvocationId} is not null and ${table.endedByPrincipalId} is not null and ${table.endedRecordedAt} is not null and ${table.endedRecordedAt} >= ${table.recordedAt})`,
-  ),
-  check(
-    `${prefix}_verification_ck`,
-    sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or (${table.verifiedAt} is not null and length(btrim(${table.verificationMethod})) > 0 and length(btrim(${table.verifierReference})) > 0))`,
   ),
 ];
 
@@ -139,7 +127,6 @@ export interface PartyCandidateIdentifierSnapshot {
   readonly identifierTypeKey: 'CZ_DIC' | 'ICO';
   readonly namespace: string;
   readonly normalizedValue: string;
-  readonly verificationState: 'REJECTED' | 'UNVERIFIED' | 'VERIFIED';
 }
 
 export interface PartyCandidateSnapshot {
@@ -175,7 +162,6 @@ export interface PartyEvidenceExplanation {
   readonly reason: string;
   readonly reviewedCaseRef?: typeof DuplicateCandidateCaseRefSchema.Type;
   readonly ruleKey: string;
-  readonly verification?: 'REJECTED' | 'UNVERIFIED' | 'VERIFIED';
 }
 
 export interface PartyMergeConsumerReadiness {
@@ -238,7 +224,7 @@ export const partyFactAssertions = enableGovernedRls(
       normalizedValue: text('normalized_value').notNull(),
       ...activePeriodColumns(),
       ...provenanceColumns(),
-      ...verificationColumns(),
+      ...acceptanceColumns(),
       supersedesAssertionId: uuid('supersedes_assertion_id'),
       retractsAssertionId: uuid('retracts_assertion_id'),
     },
@@ -268,10 +254,6 @@ export const partyFactAssertions = enableGovernedRls(
         sql`${table.normalizedValue} = btrim(${table.normalizedValue}) and length(${table.normalizedValue}) > 0`,
       ),
       ...activePeriodConstraints('party_fact_assertions', table),
-      check(
-        'party_fact_assertions_verification_ck',
-        sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or ${table.verifiedAt} is not null)`,
-      ),
       externalEvidenceConstraint('party_fact_assertions_external_evidence_ck', table.externalEvidence),
       ...gatewayScopedTenantRlsPolicies(
         'party_fact_assertions_tenant',
@@ -298,9 +280,6 @@ export const partyOfficialIdentifiers = enableGovernedRls(
       provenanceSource: text('provenance_source').notNull(),
       provenanceMethod: text('provenance_method').notNull(),
       externalEvidence: jsonb('external_evidence').$type<EncodedAresAppliedEvidence>(),
-      verificationState: text('verification_state').default('UNVERIFIED').notNull(),
-      verifiedByPrincipalId: uuid('verified_by_principal_id'),
-      verifiedAt: timestamp('verified_at', { withTimezone: true }),
       acceptedByActionInvocationId: uuid('accepted_by_action_invocation_id').notNull(),
       acceptedByPrincipalId: uuid('accepted_by_principal_id').notNull(),
       policyVersion: text('policy_version').notNull(),
@@ -335,10 +314,6 @@ export const partyOfficialIdentifiers = enableGovernedRls(
         sql`${table.originalInputDigits} is null or (${table.identifierTypeKey} = 'ICO' and ${table.originalInputDigits} ~ '^[0-9]{1,8}$' and lpad(${table.originalInputDigits}, 8, '0') = ${table.normalizedValue})`,
       ),
       ...activePeriodConstraints('party_official_identifiers', table),
-      check(
-        'party_official_identifiers_verification_ck',
-        sql`${table.verificationState} in ('UNVERIFIED', 'VERIFIED', 'REJECTED') and (${table.verificationState} <> 'VERIFIED' or ${table.verifiedAt} is not null)`,
-      ),
       externalEvidenceConstraint('party_official_identifiers_external_evidence_ck', table.externalEvidence),
       ...gatewayScopedTenantRlsPolicies(
         'party_official_identifiers_tenant',
@@ -349,48 +324,6 @@ export const partyOfficialIdentifiers = enableGovernedRls(
         'party_official_identifiers_tenant',
         table.tenantId,
         PARTY_REGISTRY_WORKER_IDENTITY.role,
-      ),
-    ],
-  ),
-);
-
-export const partyIdentifierClaims = enableGovernedRls(
-  partySchema.table(
-    'party_identifier_claims',
-    {
-      identifierClaimId: uuid('identifier_claim_id').defaultRandom().primaryKey(),
-      tenantId: uuid('tenant_id').notNull(),
-      identifierTypeKey: text('identifier_type_key').notNull(),
-      namespace: text('namespace').notNull(),
-      normalizedValue: text('normalized_value').notNull(),
-      partyId: uuid('party_id').notNull(),
-      officialIdentifierId: uuid('official_identifier_id').notNull(),
-      claimedAt: timestamp('claimed_at', { withTimezone: true }).defaultNow().notNull(),
-    },
-    (table) => [
-      unique('party_identifier_claims_tenant_id_uk').on(table.tenantId, table.identifierClaimId),
-      unique('party_identifier_claims_exact_claim_uk').on(
-        table.tenantId,
-        table.identifierTypeKey,
-        table.namespace,
-        table.normalizedValue,
-      ),
-      foreignKey({
-        columns: [table.tenantId, table.partyId],
-        foreignColumns: [parties.tenantId, parties.partyId],
-        name: 'party_identifier_claims_tenant_party_fk',
-      }).onDelete('restrict'),
-      foreignKey({
-        columns: [table.tenantId, table.officialIdentifierId],
-        foreignColumns: [partyOfficialIdentifiers.tenantId, partyOfficialIdentifiers.officialIdentifierId],
-        name: 'party_identifier_claims_tenant_identifier_fk',
-      }).onDelete('restrict'),
-      index('party_identifier_claims_party_lookup_idx').on(table.tenantId, table.partyId),
-      check('party_identifier_claims_type_ck', sql`${table.identifierTypeKey} in ('ICO', 'CZ_DIC')`),
-      ...gatewayScopedTenantRlsPolicies(
-        'party_identifier_claims_tenant',
-        table.tenantId,
-        PARTY_REGISTRY_REQUEST_IDENTITY.role,
       ),
     ],
   ),
@@ -421,7 +354,7 @@ export const partyContactPoints = enableGovernedRls(
       ...endedPeriodColumns(),
       ...provenanceColumns(),
       additionalEvidenceRefs: jsonb('additional_evidence_refs').$type<readonly string[]>().default([]).notNull(),
-      ...verificationColumns(),
+      ...acceptanceColumns(),
       supersedesContactPointId: uuid('supersedes_contact_point_id'),
       retractsContactPointId: uuid('retracts_contact_point_id'),
     },
@@ -496,7 +429,7 @@ export const partyContactPointPurposes = enableGovernedRls(
       preferred: boolean('preferred').default(false).notNull(),
       ...endedPeriodColumns(),
       ...provenanceColumns(),
-      ...verificationColumns(),
+      ...acceptanceColumns(),
       revision: integer('revision').default(1).notNull(),
     },
     (table) => [
@@ -521,7 +454,7 @@ export const partyContactPointPurposes = enableGovernedRls(
       ),
       check(
         'party_contact_point_purposes_registry_ck',
-        sql`(${table.purposeKey} <> 'REGISTERED') or (${table.registryContext} <> 'GENERAL' and ${table.jurisdiction} ~ '^[A-Z]{2}$' and ${table.jurisdiction} <> 'ZZ')`,
+        sql`(${table.registryContext} = 'GENERAL' and ${table.jurisdiction} = 'ZZ') or (${table.purposeKey} = 'REGISTERED' and ${table.registryContext} <> 'GENERAL' and length(btrim(${table.registryContext})) > 0 and ${table.registryContext} = btrim(${table.registryContext}) and ${table.jurisdiction} ~ '^[A-Z]{2}$' and ${table.jurisdiction} <> 'ZZ')`,
       ),
       ...activePeriodConstraints('party_contact_point_purposes', table),
       ...contactEvidenceConstraints('party_contact_point_purposes', table),
@@ -1284,7 +1217,6 @@ export const partyDatabaseSchema = {
   partyContactPoints,
   partyCorrections,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyMerges,
   partyOfficialIdentifiers,
@@ -1305,7 +1237,6 @@ export const PARTY_TABLES = [
   partyContactPoints,
   partyCorrections,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyMerges,
   partyOfficialIdentifiers,

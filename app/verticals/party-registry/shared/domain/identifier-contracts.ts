@@ -9,8 +9,6 @@ export { OfficialIdentifierClaimConflict } from './identifier-errors/claim-confl
 export { OfficialIdentifierInvalid } from './identifier-errors/invalid.ts';
 
 const OfficialIdentifierTypeSchema = Schema.Literals(['ICO', 'CZ_DIC']);
-export const IdentifierVerificationSchema = Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']);
-export type IdentifierVerification = typeof IdentifierVerificationSchema.Type;
 
 const isValidCzechIco = (value: string): boolean => {
   if (!/^[0-9]{8}$/u.test(value)) {
@@ -25,7 +23,6 @@ export const OfficialIdentifierInputSchema = Schema.Struct({
   identifierType: OfficialIdentifierTypeSchema,
   namespace: Schema.optionalKey(Schema.Never),
   value: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-  verification: IdentifierVerificationSchema,
 }).check(
   Schema.makeFilter((input) => {
     const value = input.value.trim().toUpperCase();
@@ -51,28 +48,7 @@ export const normalizeOfficialIdentifier = (input: OfficialIdentifierInput): Nor
     identifierType: input.identifierType,
     namespace: input.identifierType === 'ICO' ? 'CZ:ICO' : 'CZ:DIC',
     normalizedValue,
-    verification: input.verification,
   };
-};
-
-export const qualifiesForExclusiveClaim = (
-  identifier: NormalizedOfficialIdentifier,
-  partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED',
-  matchRuleVersion: string,
-): boolean =>
-  matchRuleVersion === 'party-exact-claims.v1' &&
-  identifier.verification === 'VERIFIED' &&
-  partyType === 'ORGANIZATION';
-
-export const qualifyingClaimKey = (
-  input: OfficialIdentifierInput,
-  partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED',
-  matchRuleVersion: string,
-): string | undefined => {
-  const normalized = normalizeOfficialIdentifier(input);
-  return qualifiesForExclusiveClaim(normalized, partyType, matchRuleVersion)
-    ? [normalized.identifierType, normalized.namespace, normalized.normalizedValue].join('\u0000')
-    : undefined;
 };
 
 export const OfficialIdentifierAssertionStateSchema = Schema.Literals([
@@ -98,7 +74,6 @@ export const OfficialIdentifierAssertionSchema = Schema.Struct({
   state: OfficialIdentifierAssertionStateSchema,
   validFrom: CanonicalUtcTimestampJsonSchema,
   validTo: Schema.toEncoded(Schema.OptionFromNullOr(CanonicalUtcTimestampJsonSchema)),
-  verification: IdentifierVerificationSchema,
 }).check(
   Schema.makeFilter((assertion) =>
     assertion.originalInputDigits === undefined ||

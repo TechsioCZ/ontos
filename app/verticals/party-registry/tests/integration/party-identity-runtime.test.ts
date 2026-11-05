@@ -67,7 +67,7 @@ const freshTransport = nextUuid.pipe(
 const freshReadTransport = nextUuid.pipe(Effect.map((correlationId) => ({ correlationId })));
 const candidate = (ico: string): EncodedPartyCandidate => ({
   partyType: 'ORGANIZATION',
-  officialIdentifiers: [{ identifierType: 'ICO', value: ico, verification: 'VERIFIED' }],
+  officialIdentifiers: [{ identifierType: 'ICO', value: ico }],
   subjectEvidence: [
     {
       kind: 'ACTOR_ATTESTATION',
@@ -289,7 +289,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   privacyClassification: 'PERSONAL',
                   provenance: contactPointProvenance,
                   validFrom: '2026-09-01T00:00:00.000Z',
-                  verification: { state: 'UNVERIFIED' },
                 },
                 principal,
                 transport: yield* freshTransport,

@@ -1,5 +1,6 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
+import { InvoiceRecipientResolutionResponseSchema } from '../../shared/apis/invoice-recipient-resolution.ts';
 import { ActiveSavedAddressSchema, reconcileDefaults } from '../../shared/domain/address-book.ts';
 import { UpdateSavedAddressPayloadSchema } from '../../shared/domain/address-actions.ts';
 import {
@@ -693,3 +694,98 @@ it.effect('rejects a stale delivery proposal before address or availability fall
     expect(availabilityReads).toBe(0);
   }),
 );
+
+for (const source of ['PARTY_REGISTRY', 'PURCHASE_EVIDENCE'] as const) {
+  it.effect(`roundtrips a declared ${source} invoice identifier without a verification marker`, () =>
+    Effect.gen(function* declaredInvoiceIdentifier() {
+      const identifier =
+        source === 'PARTY_REGISTRY'
+          ? {
+              identifierType: 'CZ_DIC',
+              normalizedValue: 'CZ12345678',
+              officialIdentifierRef: {
+                moduleId: 'party.registry' as const,
+                resourceId: 'identifier-1',
+                resourceType: 'party.registry.party-official-identifier' as const,
+                tenantId,
+              },
+              source,
+              sourceRevision: 3,
+            }
+          : {
+              evidenceRef: 'purchase-evidence:identifier-1',
+              identifierType: 'CZ_DIC',
+              normalizedValue: 'CZ12345678',
+              source,
+              sourceRevision: 3,
+            };
+      const resolution = yield* resolveInvoiceRecipient(
+        {
+          explicitChoice: { choiceEvidenceRef: 'one-time-declared-address', kind: 'ONE_TIME', postalAddress: postal },
+          purchasingContext,
+          subject: { kind: 'PROFILE', profile },
+        },
+        trustedScope,
+        invoicePorts({
+          loadCurrent: () =>
+            Effect.succeed({
+              ...invoiceCurrent,
+              identity: { ...invoiceCurrent.identity, officialIdentifiers: [identifier] },
+            }),
+        }),
+      );
+      const response = yield* Schema.decodeUnknownEffect(InvoiceRecipientResolutionResponseSchema)({ resolution });
+      if (resolution.kind === 'INVOICE_RECIPIENT_RESOLVED') {
+        const invalidRevision = {
+          ...resolution,
+          decisionBundle: {
+            ...resolution.decisionBundle,
+            recipient: {
+              ...resolution.decisionBundle.recipient,
+              identity: {
+                ...resolution.decisionBundle.recipient.identity,
+                officialIdentifiers: [{ ...identifier, sourceRevision: 0 }],
+              },
+            },
+          },
+        };
+        expect(() =>
+          Schema.decodeUnknownSync(InvoiceRecipientResolutionResponseSchema)({ resolution: invalidRevision }),
+        ).toThrow();
+        if (source === 'PARTY_REGISTRY') {
+          const foreignIdentifier = {
+            ...identifier,
+            officialIdentifierRef: {
+              moduleId: 'party.registry',
+              resourceId: 'identifier-foreign',
+              resourceType: 'party.registry.party-official-identifier',
+              tenantId: '90000000-0000-4000-8000-000000000009',
+            },
+          };
+          const wrongTenant = {
+            ...resolution,
+            decisionBundle: {
+              ...resolution.decisionBundle,
+              recipient: {
+                ...resolution.decisionBundle.recipient,
+                identity: { ...resolution.decisionBundle.recipient.identity, officialIdentifiers: [foreignIdentifier] },
+              },
+            },
+          };
+          expect(() =>
+            Schema.decodeUnknownSync(InvoiceRecipientResolutionResponseSchema)({ resolution: wrongTenant }),
+          ).toThrow();
+        }
+      }
+
+      const encoded = yield* Schema.encodeEffect(InvoiceRecipientResolutionResponseSchema)(response);
+      expect(encoded.resolution.kind).toBe('INVOICE_RECIPIENT_RESOLVED');
+      if (encoded.resolution.kind === 'INVOICE_RECIPIENT_RESOLVED') {
+        const [accepted] = encoded.resolution.decisionBundle.recipient.identity.officialIdentifiers;
+        expect(accepted).toEqual(identifier);
+        expect(accepted).not.toHaveProperty('verification');
+        expect(encoded.resolution.decisionBundle.recipient.identity.sourceRevision).toBe(2);
+      }
+    }),
+  );
+}

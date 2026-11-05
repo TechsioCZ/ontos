@@ -43,11 +43,13 @@ import { committedCreateResult } from '../../shared/domain/matching-contracts.ts
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { matchPartyAction } from '../../src/actions/match-party.action.ts';
+import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
 import {
   createPartyWithAuthorization,
   matchPartyWithAuthorization,
+  resolveDuplicateCandidateCreateWithAuthorization,
   resolveDuplicateCandidateMatchWithAuthorization,
   recoverPartyCreateWithAuthorization,
   archivePartyWithAuthorization,
@@ -58,7 +60,6 @@ import { makePartyDatabase } from '../../src/db/client.ts';
 import {
   duplicateCandidateCases,
   parties,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyOfficialIdentifiers,
 } from '../../src/db/schema.ts';
@@ -96,6 +97,7 @@ it.layer(
             actionKeys: [
               createPartyAction,
               matchPartyAction,
+              resolveDuplicateCandidateCreateAction,
               resolveDuplicateCandidateMatchAction,
               archivePartyAction,
             ].map((action) => action.descriptor.actionKey),
@@ -175,9 +177,7 @@ it.layer(
         const candidate = {
           displayName: 'Reviewed external organization',
           evidenceRefs: ['reviewed-match/document'],
-          officialIdentifiers: [
-            { identifierType: 'ICO' as const, value: '27074358', verification: 'VERIFIED' as const },
-          ],
+          officialIdentifiers: [{ identifierType: 'ICO' as const, value: '27074358' }],
           partyType: 'ORGANIZATION' as const,
           provenance: { method: 'DOCUMENT', source: 'reviewed-match-test' },
           subjectEvidence: [
@@ -193,15 +193,26 @@ it.layer(
           validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
         };
         yield* Effect.logInfo('1239 stage seed');
-        const seed = yield* runHttp(
+        const seedOpened = yield* runHttp(
           createPartyWithAuthorization({ candidate }, yield* authorization(), yield* options),
         );
-        assert.isOk(seed.outcome === 'CREATED');
+        assert.isOk(seedOpened.outcome === 'AMBIGUOUS');
+        const seed = yield* runHttp(
+          resolveDuplicateCandidateCreateWithAuthorization(
+            {
+              caseRef: seedOpened.caseRef,
+              expectedRevision: 1,
+              reason: 'Reviewed initial concrete external subject',
+            },
+            yield* authorization(),
+            yield* options,
+          ),
+        );
+        assert.isOk(seed.partyRef);
         const weak = {
           ...candidate,
           officialIdentifiers: candidate.officialIdentifiers.map((identifier) => ({
             ...identifier,
-            verification: 'UNVERIFIED' as const,
           })),
         };
         yield* Effect.logInfo('1239 stage open');
@@ -296,10 +307,6 @@ it.layer(
               .select()
               .from(duplicateCandidateCases)
               .where(eq(duplicateCandidateCases.tenantId, fixture.tenantId)),
-            claims: admin
-              .select()
-              .from(partyIdentifierClaims)
-              .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
             identifiers: admin
               .select()
               .from(partyOfficialIdentifiers)
@@ -346,7 +353,7 @@ it.layer(
             expect.arrayContaining([expect.objectContaining({ reviewedCaseRef: opened.caseRef })]),
           );
         }
-        expect((yield* ownerSnapshot()).cases).toEqual(caseBefore);
+        expect((yield* ownerSnapshot()).cases).toEqual(beforeReplay.cases);
         expect((yield* ownerSnapshot()).parties).toEqual(beforeReplay.parties);
         expect((yield* ownerSnapshot()).decisions).toHaveLength(beforeReplay.decisions.length + 2);
 
@@ -452,9 +459,12 @@ it.layer(
         expect(yield* ownerSnapshot()).toEqual(beforeDenials);
         const foreignFixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
-            actionKeys: [createPartyAction, matchPartyAction, resolveDuplicateCandidateMatchAction].map(
-              (action) => action.descriptor.actionKey,
-            ),
+            actionKeys: [
+              createPartyAction,
+              matchPartyAction,
+              resolveDuplicateCandidateCreateAction,
+              resolveDuplicateCandidateMatchAction,
+            ].map((action) => action.descriptor.actionKey),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
             ownerRegistration: partyRegistryBackendRegistration,
@@ -464,10 +474,22 @@ it.layer(
           (value) => value.close().pipe(Effect.orDie),
         );
         const foreignActor = { ...foreignFixture.manager, legalEntityId: foreignFixture.legalEntityId };
-        const foreignCreated = yield* runHttp(
+        const foreignOpened = yield* runHttp(
           createPartyWithAuthorization({ candidate }, yield* authorization(foreignActor), yield* options),
         );
-        assert.isOk(foreignCreated.outcome === 'CREATED');
+        assert.isOk(foreignOpened.outcome === 'AMBIGUOUS');
+        const foreignCreated = yield* runHttp(
+          resolveDuplicateCandidateCreateWithAuthorization(
+            {
+              caseRef: foreignOpened.caseRef,
+              expectedRevision: 1,
+              reason: 'Reviewed foreign-tenant concrete subject',
+            },
+            yield* authorization(foreignActor),
+            yield* options,
+          ),
+        );
+        assert.isOk(foreignCreated.partyRef);
         expect(foreignCreated.partyRef.tenantId).toBe(foreignFixture.tenantId);
         expect(foreignCreated.partyRef).not.toEqual(seed.partyRef);
         expect(
@@ -548,13 +570,13 @@ it.layer(
         );
         expect(incompatible.outcome).toBe('AMBIGUOUS');
         const competingSubjectKey = partySubjectKeyFromString(yield* nextId);
-        const secondCanonical = yield* runHttp(
+        const secondOpened = yield* runHttp(
           createPartyWithAuthorization(
             {
               candidate: {
                 ...candidate,
                 displayName: 'Independent competing organization',
-                officialIdentifiers: [{ identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' }],
+                officialIdentifiers: [{ identifierType: 'ICO', value: '26168685' }],
                 subjectEvidence: candidate.subjectEvidence.map((evidence) => ({
                   ...evidence,
                   subjectKey: competingSubjectKey,
@@ -565,17 +587,26 @@ it.layer(
             yield* options,
           ),
         );
-        assert.isOk(secondCanonical.outcome === 'CREATED');
+        assert.isOk(secondOpened.outcome === 'AMBIGUOUS');
+        const secondCanonical = yield* runHttp(
+          resolveDuplicateCandidateCreateWithAuthorization(
+            {
+              caseRef: secondOpened.caseRef,
+              expectedRevision: 1,
+              reason: 'Reviewed independent competing subject',
+            },
+            yield* authorization(),
+            yield* options,
+          ),
+        );
+        assert.isOk(secondCanonical.partyRef);
         const beforeCompeting = yield* ownerSnapshot();
         const competing = yield* runHttp(
           matchPartyWithAuthorization(
             {
               candidate: {
                 ...candidate,
-                officialIdentifiers: [
-                  ...candidate.officialIdentifiers,
-                  { identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' },
-                ],
+                officialIdentifiers: [...candidate.officialIdentifiers, { identifierType: 'ICO', value: '26168685' }],
               },
             },
             yield* authorization(),
@@ -587,7 +618,6 @@ it.layer(
         expect(competingDecision.partyRef).toBe(null);
         expect(competingDecision.caseRef).not.toBe(null);
         const afterCompeting = yield* ownerSnapshot();
-        expect(afterCompeting.claims).toEqual(beforeCompeting.claims);
         expect(afterCompeting.identifiers).toEqual(beforeCompeting.identifiers);
         expect(afterCompeting.parties).toEqual(beforeCompeting.parties);
         yield* Effect.logInfo('1239 stage retained case');

@@ -148,7 +148,7 @@ it.effect('Unarchive review outcome commits once and replays without an unarchiv
         ...party,
         archivedAt: Option.some(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
       },
-      reasonCode: 'EXACT_CLAIM_CONFLICT' as const,
+      reasonCode: 'OPEN_DUPLICATE_CASE' as const,
     };
     const harness = yield* makeActionTestHarness({
       ownerRegistration: partyRegistryBackendRegistration,

@@ -23,6 +23,7 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import {
   createPartyWithAuthorization,
+  resolveDuplicateCandidateCreateWithAuthorization,
   addContactPointWithAuthorization,
   endContactPointWithAuthorization,
   executePartyContactPointDetailWithAuthorization,
@@ -420,6 +421,7 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
       actionExecutor: 'manager-only',
       actionKeys: [
         'party.registry.create-party',
+        'party.registry.resolve-duplicate-candidate-create',
         'party.registry.add-contact-point',
         'party.registry.end-contact-point',
         addSavedAddressAction.descriptor.actionKey,
@@ -580,12 +582,12 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
     >[number]['subjectKey']
   >()(yield* nextId);
-  const created = yield* createPartyWithAuthorization(
+  const opened = yield* createPartyWithAuthorization(
     {
       candidate: {
         displayName: 'Postal future End owner',
         evidenceRefs: ['native-postal-owner-proof'],
-        officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+        officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
         partyType: 'ORGANIZATION',
         provenance: { method: 'REVIEWED_DOCUMENT', source: 'postal-future-end-native' },
         subjectEvidence: [
@@ -604,7 +606,17 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
     yield* authorization(),
     yield* options,
   );
-  assert.isOk(created.outcome === 'CREATED');
+  assert.isOk(opened.outcome === 'AMBIGUOUS');
+  const created = yield* resolveDuplicateCandidateCreateWithAuthorization(
+    {
+      caseRef: opened.caseRef,
+      expectedRevision: 1,
+      reason: 'Reviewed the concrete postal owner without relying on declared ICO identity',
+    },
+    yield* authorization(),
+    yield* options,
+  );
+  assert.isOk(created.partyRef !== null);
   const legalEntityRef = {
     moduleId: 'core.identity' as const,
     resourceId: fixture.legalEntityId,
@@ -784,12 +796,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,
@@ -822,12 +828,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,
@@ -870,12 +870,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,
@@ -927,12 +921,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,
@@ -1009,12 +997,6 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
       privacyClassification: 'BUSINESS_SENSITIVE',
       provenance,
       validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-      verification: {
-        method: 'MANUAL_CONFIRMATION',
-        state: 'VERIFIED',
-        verifiedAt: yield* DateTime.now,
-        verifierReference: 'native-postal-source-verifier',
-      },
     },
     yield* authorization(),
     yield* options,

@@ -235,20 +235,22 @@ or jurisdiction for a real-world Party. It is distinct from an OntOS Resource id
 Record Reference, and a provider-issued Connector Registry correlation.
 
 **Identifier Type** — Governed definition of one Official Identifier's business meaning,
-normalization, validation, applicability, namespace, multiplicity, collision, verification, and
+normalization, validation, applicability, namespace, multiplicity, collision, provenance, and
 matching semantics. A generic free-text OTHER value is not an Identifier Type.
 
 **Party Fact Assertion** — Provenance-backed statement about a Party-owned fact with recorded time,
-real-world validity where applicable, lifecycle state, and verification context. Current state is
-derived from accepted assertions; correction does not silently overwrite history.
+real-world validity where applicable, lifecycle state, and actual acceptance context. Current state is
+derived from accepted assertions; correction does not silently overwrite history. Acceptance does not
+classify the assertion as VERIFIED, UNVERIFIED, or REJECTED or guarantee factual truth.
 
 **Party Matching** — Tenant-scoped decision that compares a Party Candidate with existing Parties
 and returns MATCHED, NO_MATCH, or AMBIGUOUS under explicit Match Rules. It does not merge Parties or
 use a search result as identity authority.
 
 **Match Rule** — Versioned and explainable Party Matching policy that defines which normalized facts,
-provenance, verification, and conflicts permit a matching outcome. An opaque score is not a Match
-Rule.
+provenance, accepted identity decisions, and conflicts permit a matching outcome. Equal declared
+identifiers, names or contacts can nominate candidates but cannot alone establish identity. An opaque
+score is not a Match Rule.
 
 **Duplicate Candidate Case** — Durable Party Registry review case created when available evidence
 cannot safely choose an existing Party or permit a new Party. It is not the UNRESOLVED Party Type or

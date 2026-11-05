@@ -1,0 +1,23 @@
+ALTER TABLE "party"."party_contact_point_purposes" DROP CONSTRAINT "party_contact_point_purposes_verification_ck";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_points" DROP CONSTRAINT "party_contact_points_verification_ck";--> statement-breakpoint
+ALTER TABLE "party"."party_fact_assertions" DROP CONSTRAINT "party_fact_assertions_verification_ck";--> statement-breakpoint
+ALTER TABLE "party"."party_official_identifiers" DROP CONSTRAINT "party_official_identifiers_verification_ck";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_point_purposes" DROP COLUMN "verification_state";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_point_purposes" DROP COLUMN "verification_method";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_point_purposes" DROP COLUMN "verifier_reference";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_point_purposes" DROP COLUMN "verified_by_principal_id";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_point_purposes" DROP COLUMN "verified_at";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_points" DROP COLUMN "verification_state";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_points" DROP COLUMN "verification_method";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_points" DROP COLUMN "verifier_reference";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_points" DROP COLUMN "verified_by_principal_id";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_points" DROP COLUMN "verified_at";--> statement-breakpoint
+ALTER TABLE "party"."party_fact_assertions" DROP COLUMN "verification_state";--> statement-breakpoint
+ALTER TABLE "party"."party_fact_assertions" DROP COLUMN "verification_method";--> statement-breakpoint
+ALTER TABLE "party"."party_fact_assertions" DROP COLUMN "verifier_reference";--> statement-breakpoint
+ALTER TABLE "party"."party_fact_assertions" DROP COLUMN "verified_by_principal_id";--> statement-breakpoint
+ALTER TABLE "party"."party_fact_assertions" DROP COLUMN "verified_at";--> statement-breakpoint
+ALTER TABLE "party"."party_official_identifiers" DROP COLUMN "verification_state";--> statement-breakpoint
+ALTER TABLE "party"."party_official_identifiers" DROP COLUMN "verified_by_principal_id";--> statement-breakpoint
+ALTER TABLE "party"."party_official_identifiers" DROP COLUMN "verified_at";--> statement-breakpoint
+ALTER TABLE "party"."party_contact_point_purposes" DROP CONSTRAINT "party_contact_point_purposes_registry_ck", ADD CONSTRAINT "party_contact_point_purposes_registry_ck" CHECK (("registry_context" = 'GENERAL' and "jurisdiction" = 'ZZ') or ("purpose_key" = 'REGISTERED' and "registry_context" <> 'GENERAL' and length(btrim("registry_context")) > 0 and "registry_context" = btrim("registry_context") and "jurisdiction" ~ '^[A-Z]{2}$' and "jurisdiction" <> 'ZZ'));

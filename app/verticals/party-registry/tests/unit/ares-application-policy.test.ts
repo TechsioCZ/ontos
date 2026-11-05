@@ -330,7 +330,6 @@ it('candidate prefill supplies a proposal without declaring subject type or acto
     {
       identifierType: 'ICO',
       value: evidence.subject.ico,
-      verification: 'UNVERIFIED',
     },
   ]);
   expect(candidate.provenance.externalEvidence).toBe(undefined);

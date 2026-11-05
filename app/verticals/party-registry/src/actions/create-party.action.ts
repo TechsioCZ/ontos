@@ -13,12 +13,8 @@ import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { ClaimOwnedByDifferentParty, DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { candidateFingerprint, createOrMatchParty } from '../services/party-matching-persistence.service.ts';
-import {
-  publishAttachedOfficialIdentifiers,
-  publishUpdatedOfficialIdentifiers,
-} from './attached-official-identifier-events.ts';
+import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
 import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
-import { OfficialIdentifierUpdatedEventSchema } from './update-party-official-identifier.action.ts';
 
 export type { CreatePartyPayload } from '../../shared/actions/create-party.ts';
 const CreatePartyErrorSchema = Schema.Union([
@@ -30,7 +26,6 @@ const CreatePartyErrorSchema = Schema.Union([
 const PartyCreatedEventSchema = Schema.Struct({ partyRef: PartyRefSchema });
 const domainEvents = {
   'party.registry.official-identifier-added.v1': AddPartyOfficialIdentifierResultSchema,
-  'party.registry.official-identifier-updated.v1': OfficialIdentifierUpdatedEventSchema,
   'party.registry.party-created.v1': PartyCreatedEventSchema,
 } as const;
 
@@ -45,11 +40,10 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
   payload: CreatePartyPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
 ) {
-  const {
-    addedOfficialIdentifierRefs = [],
-    updatedOfficialIdentifiers = [],
-    ...result
-  } = yield* context.services.createOrMatch(payload.candidate, context.actionInvocationId);
+  const { addedOfficialIdentifierRefs = [], ...result } = yield* context.services.createOrMatch(
+    payload.candidate,
+    context.actionInvocationId,
+  );
   const target = result.outcome === 'AMBIGUOUS' ? result.caseRef : result.partyRef;
   yield* context.recordDataAccess({
     accessKind: 'read',
@@ -78,13 +72,6 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
   }
   if (result.outcome === 'MATCHED_EXISTING') {
     yield* publishAttachedOfficialIdentifiers(context, result.partyRef, addedOfficialIdentifierRefs);
-    yield* publishUpdatedOfficialIdentifiers(
-      context,
-      result.partyRef,
-      updatedOfficialIdentifiers,
-      payload.candidate.evidenceRefs,
-      'Matching acceptance upgraded an existing current identifier to VERIFIED',
-    );
   }
   return result;
 });

@@ -139,7 +139,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             candidate: {
               partyType: 'ORGANIZATION',
               displayName: 'Tenant Party proof',
-              officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+              officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
               subjectEvidence: [
                 {
                   kind: 'ACTOR_ATTESTATION',

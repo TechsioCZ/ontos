@@ -58,6 +58,8 @@ import {
 } from '@app/core-runtime';
 import {
   createPartyWithAuthorization,
+  executeDuplicateCandidateDetailWithAuthorization,
+  resolveDuplicateCandidateCreateWithAuthorization,
   addContactPointWithAuthorization,
   executePartyContactPointDetailWithAuthorization,
   executePartyDetailWithAuthorization,
@@ -3546,6 +3548,7 @@ it.live(
                 'core.identity.bind-self-api-key',
                 'core.identity.set-self-api-key-binding-status',
                 'party.registry.create-party',
+                'party.registry.resolve-duplicate-candidate-create',
                 'commerce.catalog.create-product',
                 'commerce.catalog.set-product-manufacturer',
               ],
@@ -3918,7 +3921,7 @@ it.live(
             expect(enrolledCatalog.origin).toBe(catalog.origin);
             expect(enrolledCatalog.compiled).toEqual(catalog.compiled);
             yield* grantNativeCatalogModuleAccess(fixture.core);
-            const partyAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+            const partySeedAuthorizationInput: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0] = {
               apiKey: personalKey.secret,
               audience: 'party-registry',
               authBindingId: personalKey.authBindingId,
@@ -3928,14 +3931,15 @@ it.live(
               principalId: fixture.core.manager.principalId,
               publicKey: signingKeyPair.publicKey,
               revision: approved.composition.revision,
-            });
+            };
+            const partyAuthorization = yield* issueNativeApiKeyGatewayAuthorization(partySeedAuthorizationInput);
             yield* Effect.logInfo('Native Manufacturer Party seed started', { phase: 'actual-public-party-create' });
             const createdParty = yield* createPartyWithAuthorization(
               {
                 candidate: {
                   displayName: 'Native manufacturer organization',
                   evidenceRefs: ['native/manufacturer'],
-                  officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+                  officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
                   partyType: 'ORGANIZATION',
                   provenance: { method: 'DOCUMENT', source: 'native-manufacturer-proof' },
                   subjectEvidence: [
@@ -3959,13 +3963,39 @@ it.live(
                 idempotencyKey: yield* crypto.randomUUIDv4(),
               },
             );
-            expect(createdParty.outcome).toBe('CREATED');
-            if (createdParty.outcome !== 'CREATED') {
+            expect(createdParty.outcome).toBe('AMBIGUOUS');
+            if (createdParty.outcome !== 'AMBIGUOUS') {
+              return yield* new PackagedOwnerStartupError({ reason: 'Party seed must enter explicit identity review' });
+            }
+            const detailAuthorization = yield* issueNativeApiKeyGatewayAuthorization(partySeedAuthorizationInput);
+            const caseDetail = yield* executeDuplicateCandidateDetailWithAuthorization(
+              { caseRef: createdParty.caseRef },
+              Redacted.value(detailAuthorization.authorization),
+              yield* crypto.randomUUIDv4(),
+              { baseUrl: `${party.origin}${party.apiPrefix}`, compositionRevision: approved.composition.revision },
+            );
+            const reviewAuthorization = yield* issueNativeApiKeyGatewayAuthorization(partySeedAuthorizationInput);
+            const reviewedParty = yield* resolveDuplicateCandidateCreateWithAuthorization(
+              {
+                caseRef: createdParty.caseRef,
+                expectedRevision: caseDetail.revision,
+                reason: 'Explicitly reviewed native fixture subject',
+              },
+              Redacted.value(reviewAuthorization.authorization),
+              {
+                baseUrl: `${party.origin}${party.apiPrefix}`,
+                compositionRevision: approved.composition.revision,
+                correlationId: yield* crypto.randomUUIDv4(),
+                idempotencyKey: yield* crypto.randomUUIDv4(),
+              },
+            );
+            expect(reviewedParty.outcome).toBe('CREATE_NEW');
+            if (reviewedParty.partyRef === null) {
               return yield* new PackagedOwnerStartupError({
-                reason: 'Actual verified Party seed did not create a fresh identity',
+                reason: 'Explicit Party fixture review did not create one identity',
               });
             }
-            const { partyRef } = createdParty;
+            const { partyRef } = reviewedParty;
             yield* setNativeTenantRole(
               {
                 principalId: fixture.core.manager.principalId,
@@ -4667,6 +4697,7 @@ it.live('completes the real CCC Guest attribution through Party with the origina
             [
               'core.identity.bind-self-api-key',
               'party.registry.create-party',
+              'party.registry.resolve-duplicate-candidate-create',
               'commerce.customer-context.attribute-guest-retail-customer',
             ],
             gatewayMaterial,
@@ -5039,7 +5070,7 @@ it.live('completes the real CCC Guest attribution through Party with the origina
             resourceType: 'core.identity.legal-entity',
             tenantId: fixture.core.tenantId,
           };
-          const partyAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+          const partySeedAuthorizationInput: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0] = {
             apiKey: personalKey.secret,
             audience: 'party-registry',
             authBindingId: personalKey.authBindingId,
@@ -5050,14 +5081,15 @@ it.live('completes the real CCC Guest attribution through Party with the origina
             principalId: fixture.core.manager.principalId,
             publicKey: signingKeyPair.publicKey,
             revision: approved.composition.revision,
-          });
+          };
+          const partyAuthorization = yield* issueNativeApiKeyGatewayAuthorization(partySeedAuthorizationInput);
           yield* Effect.logInfo('Native Guest Party seed started', { phase: 'actual-public-party-create' });
           const createdParty = yield* createPartyWithAuthorization(
             {
               candidate: {
                 displayName: 'Native Guest organization',
                 evidenceRefs: [guestEvidenceRef],
-                officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+                officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
                 partyType: 'ORGANIZATION',
                 provenance: { method: 'DOCUMENT', source: 'native-guest-proof' },
                 subjectEvidence: [
@@ -5082,13 +5114,39 @@ it.live('completes the real CCC Guest attribution through Party with the origina
               idempotencyKey: yield* crypto.randomUUIDv4(),
             },
           );
-          expect(createdParty.outcome).toBe('CREATED');
-          if (createdParty.outcome !== 'CREATED') {
+          expect(createdParty.outcome).toBe('AMBIGUOUS');
+          if (createdParty.outcome !== 'AMBIGUOUS') {
+            return yield* new PackagedOwnerStartupError({ reason: 'Party seed must enter explicit identity review' });
+          }
+          const detailAuthorization = yield* issueNativeApiKeyGatewayAuthorization(partySeedAuthorizationInput);
+          const caseDetail = yield* executeDuplicateCandidateDetailWithAuthorization(
+            { caseRef: createdParty.caseRef },
+            Redacted.value(detailAuthorization.authorization),
+            yield* crypto.randomUUIDv4(),
+            { baseUrl: `${party.origin}${party.apiPrefix}`, compositionRevision: approved.composition.revision },
+          );
+          const reviewAuthorization = yield* issueNativeApiKeyGatewayAuthorization(partySeedAuthorizationInput);
+          const reviewedParty = yield* resolveDuplicateCandidateCreateWithAuthorization(
+            {
+              caseRef: createdParty.caseRef,
+              expectedRevision: caseDetail.revision,
+              reason: 'Explicitly reviewed native fixture subject',
+            },
+            Redacted.value(reviewAuthorization.authorization),
+            {
+              baseUrl: `${party.origin}${party.apiPrefix}`,
+              compositionRevision: approved.composition.revision,
+              correlationId: yield* crypto.randomUUIDv4(),
+              idempotencyKey: yield* crypto.randomUUIDv4(),
+            },
+          );
+          expect(reviewedParty.outcome).toBe('CREATE_NEW');
+          if (reviewedParty.partyRef === null) {
             return yield* new PackagedOwnerStartupError({
-              reason: 'Actual verified Party seed did not create a fresh identity',
+              reason: 'Explicit Party fixture review did not create one identity',
             });
           }
-          const { partyRef } = createdParty;
+          const { partyRef } = reviewedParty;
           yield* setNativeTenantRole(
             {
               principalId: fixture.core.manager.principalId,
@@ -5377,6 +5435,7 @@ it.live(
               [
                 'core.identity.bind-self-api-key',
                 'party.registry.create-party',
+                'party.registry.resolve-duplicate-candidate-create',
                 'commerce.customer-context.ensure-retail-customer-profile',
                 'commerce.customer-context.bind-retail-portal-profile',
                 'commerce.customer-context.add-saved-address',
@@ -5851,7 +5910,7 @@ it.live(
               resourceType: 'core.identity.legal-entity',
               tenantId: fixture.core.tenantId,
             };
-            const partyAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+            const partySeedAuthorizationInput: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0] = {
               apiKey: personalKey.secret,
               audience: 'party-registry',
               authBindingId: personalKey.authBindingId,
@@ -5862,14 +5921,15 @@ it.live(
               principalId: fixture.core.manager.principalId,
               publicKey: signingKeyPair.publicKey,
               revision: approved.composition.revision,
-            });
+            };
+            const partyAuthorization = yield* issueNativeApiKeyGatewayAuthorization(partySeedAuthorizationInput);
             yield* Effect.logInfo('Native Retail Party seed started', { phase: 'actual-public-party-create' });
             const createdParty = yield* createPartyWithAuthorization(
               {
                 candidate: {
                   displayName: 'Native Retail organization',
                   evidenceRefs: [retailEvidenceRef],
-                  officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+                  officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
                   partyType: 'ORGANIZATION',
                   provenance: { method: 'DOCUMENT', source: 'native-retail-proof' },
                   subjectEvidence: [
@@ -5893,13 +5953,39 @@ it.live(
                 idempotencyKey: yield* crypto.randomUUIDv4(),
               },
             );
-            expect(createdParty.outcome).toBe('CREATED');
-            if (createdParty.outcome !== 'CREATED') {
+            expect(createdParty.outcome).toBe('AMBIGUOUS');
+            if (createdParty.outcome !== 'AMBIGUOUS') {
+              return yield* new PackagedOwnerStartupError({ reason: 'Party seed must enter explicit identity review' });
+            }
+            const detailAuthorization = yield* issueNativeApiKeyGatewayAuthorization(partySeedAuthorizationInput);
+            const caseDetail = yield* executeDuplicateCandidateDetailWithAuthorization(
+              { caseRef: createdParty.caseRef },
+              Redacted.value(detailAuthorization.authorization),
+              yield* crypto.randomUUIDv4(),
+              { baseUrl: `${party.origin}${party.apiPrefix}`, compositionRevision: approved.composition.revision },
+            );
+            const reviewAuthorization = yield* issueNativeApiKeyGatewayAuthorization(partySeedAuthorizationInput);
+            const reviewedParty = yield* resolveDuplicateCandidateCreateWithAuthorization(
+              {
+                caseRef: createdParty.caseRef,
+                expectedRevision: caseDetail.revision,
+                reason: 'Explicitly reviewed native fixture subject',
+              },
+              Redacted.value(reviewAuthorization.authorization),
+              {
+                baseUrl: `${party.origin}${party.apiPrefix}`,
+                compositionRevision: approved.composition.revision,
+                correlationId: yield* crypto.randomUUIDv4(),
+                idempotencyKey: yield* crypto.randomUUIDv4(),
+              },
+            );
+            expect(reviewedParty.outcome).toBe('CREATE_NEW');
+            if (reviewedParty.partyRef === null) {
               return yield* new PackagedOwnerStartupError({
-                reason: 'Actual verified Party seed did not create a fresh identity',
+                reason: 'Explicit Party fixture review did not create one identity',
               });
             }
-            const { partyRef } = createdParty;
+            const { partyRef } = reviewedParty;
             yield* setNativeTenantRole(
               {
                 principalId: fixture.core.manager.principalId,
@@ -6539,7 +6625,6 @@ it.live(
                     privacyClassification: 'BUSINESS_SENSITIVE',
                     provenance: { authoritative: false, method: 'MANUAL_CONFIRMATION', source: 'USER_ASSERTION' },
                     validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-                    verification: { state: 'UNVERIFIED' },
                   },
                   Redacted.value(contactProof.authorization),
                   {

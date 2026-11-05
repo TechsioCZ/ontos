@@ -127,7 +127,7 @@ it('keeps ADDRESS structured, multi-purpose, and preferred independently per pur
     }),
   ).toThrow();
 });
-it('requires authoritative, registry-scoped evidence only for REGISTERED', () => {
+it('requires authoritative evidence for an explicitly registry-scoped REGISTERED purpose', () => {
   expect(() =>
     assertAddressPurposeRules(
       [
@@ -189,7 +189,6 @@ it('declares tenant-authorized idempotent Actions and prevents value overwrite t
       privacyClassification: 'PERSONAL',
       provenance,
       validFrom: '2026-09-01T00:00:00.000Z',
-      verification: { state: 'UNVERIFIED' },
     }),
   ).not.toThrow();
   expect(() =>
@@ -306,7 +305,6 @@ it('models an originally wrong Contact Point as an explicit correction with opti
             evidenceReference: 'evidence:customer-confirmation:42',
           },
           validFrom: '2026-09-03T10:00:00.000Z',
-          verification: { state: 'UNVERIFIED' },
         },
         type: 'CORRECT_CONTACT_POINT',
       },
@@ -366,11 +364,63 @@ it('projects independently auditable whole-contact and ADDRESS-purpose ends', ()
         state: 'ACTIVE',
         validFrom: '2026-09-01T00:00:00.000Z',
         validTo: '2026-10-01T00:00:00.000Z',
-        verification: { state: 'UNVERIFIED' },
       },
     ],
     type: 'ADDRESS',
   });
   expect(address.purposes[0]?.end).toEqual(end);
   expect(address.purposes[0]?.current, 'a future end remains current before boundary').toBe(true);
+});
+
+it('accepts a declared REGISTERED purpose without registry authority or evidence', () => {
+  expect(() => assertAddressPurposeRules([{ preferred: true, purpose: 'REGISTERED' }], provenance)).not.toThrow();
+});
+it('accepts contact input without verification and rejects removed verification payloads', () => {
+  const payload = {
+    contactPoint: { preferred: true, type: 'EMAIL', value: 'declared@example.test' },
+    partyRef,
+    privacyClassification: 'PERSONAL',
+    provenance,
+    validFrom: '2026-09-01T00:00:00.000Z',
+  };
+  expect(() => Schema.decodeUnknownSync(AddContactPointPayloadSchema)(payload)).not.toThrow();
+  expect(() =>
+    Schema.decodeUnknownSync(AddContactPointPayloadSchema, { onExcessProperty: 'error' })({
+      ...payload,
+      verification: { state: 'VERIFIED' },
+    }),
+  ).toThrow();
+  expect(() =>
+    Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
+      change: { type: 'ENRICH_VERIFICATION', verification: { state: 'VERIFIED' } },
+      contactPointRef: { ...partyRef, resourceType: 'party.registry.party-contact-point' },
+      expectedRevision: 1,
+      provenance,
+    }),
+  ).toThrow();
+});
+
+it('rejects synthetic registry context and keeps it exclusive to REGISTERED', () => {
+  const authoritative = { ...provenance, authoritative: true, evidenceReference: 'evidence:registry:1' };
+  for (const registryContext of [
+    { jurisdiction: 'CZ', registryKey: 'GENERAL' },
+    { jurisdiction: 'ZZ', registryKey: 'ARES' },
+    { jurisdiction: 'invalid', registryKey: 'ARES' },
+  ]) {
+    expect(() =>
+      assertAddressPurposeRules([{ preferred: false, purpose: 'REGISTERED', registryContext }], authoritative),
+    ).toThrow();
+  }
+  expect(() =>
+    assertAddressPurposeRules(
+      [
+        {
+          preferred: false,
+          purpose: 'BILLING',
+          registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
+        },
+      ],
+      authoritative,
+    ),
+  ).toThrow();
 });

@@ -14,6 +14,7 @@ import type { AresAppliedEvidence } from '../../shared/domain/ares-application.t
 import { AresSubjectEvidenceSchema } from '../../shared/domain/ares-evidence.ts';
 import { AssertionIdSchema, TargetAssertionIdSchema } from '../../shared/domain/correction-contracts.ts';
 import { PartyIdSchema } from '../../shared/domain/identity-contracts.ts';
+import { PartyContactPointSchema } from '../../shared/domain/contact-point.ts';
 import {
   AresApplySelectionInvalid,
   applyAresObservationWithActions as applyAresObservation,
@@ -117,7 +118,6 @@ const request: AresApplyRequest = {
         identifier: {
           identifierType: 'ICO',
           value: '12345678',
-          verification: 'VERIFIED',
         },
         partyRef,
         provenanceMethod: 'ARES_USER_CONFIRMED',
@@ -242,6 +242,44 @@ it.layer(
         ),
       ).toBe(true);
       expect(outcome.completed.map(({ route }) => route)).toEqual(['PARTY_UPDATE', 'IDENTIFIER_ADD']);
+    }),
+  );
+  aresIt.effect('a conflicting declared DIC defers ARES application without a verification marker', () =>
+    Effect.gen(function* declaredIdentifierConflict() {
+      const calls: string[] = [];
+      const outcome = yield* applyAresObservation(request, makeInvoker(calls), {
+        gateway,
+        reads: {
+          ...makeReads(),
+          identifiers: () =>
+            Effect.succeed({
+              items: [
+                {
+                  identifierType: 'CZ_DIC' as const,
+                  namespace: 'CZ:DIC',
+                  normalizedValue: 'CZ87654321',
+                  officialIdentifierRef: {
+                    moduleId: 'party.registry' as const,
+                    resourceId: '40000000-0000-4000-8000-000000000001',
+                    resourceType: 'party.registry.party-official-identifier' as const,
+                    tenantId: partyRef.tenantId,
+                  },
+                  partyRef,
+                  recordedAt: application.decidedAt,
+                  state: 'ACTIVE' as const,
+                  validFrom: application.decidedAt,
+                  validTo: null,
+                },
+              ],
+            }),
+        },
+      });
+      const deferred = Match.value(outcome).pipe(
+        Match.tag('AresApplyDeferred', (value) => value),
+        Match.orElse(() => expect.unreachable('Expected conflicting declared identity to defer apply')),
+      );
+      expect(deferred.application.outcome).toBe('IDENTITY_AMBIGUITY');
+      expect(calls).toEqual([]);
     }),
   );
   aresIt.effect('propagates bounded evidence and independent command delivery keys', () =>
@@ -433,6 +471,111 @@ it.layer(
       expect(calls).toEqual([]);
     }),
   );
+  aresIt.effect('equal declared REGISTERED address is not relabelled as registry-sourced by ARES apply', () =>
+    Effect.gen(function* declaredAddressPreservesSource() {
+      const calls: string[] = [];
+      const provenance = { authoritative: false, method: 'DECLARED_BY_PARTY', source: 'PARTY_DECLARATION' };
+      const declared = yield* Schema.decodeUnknownEffect(PartyContactPointSchema)({
+        contactPointRef: {
+          ...partyRef,
+          resourceId: '40000000-0000-4000-8000-000000000002',
+          resourceType: 'party.registry.party-contact-point',
+        },
+        current: true,
+        end: null,
+        partyRef,
+        storedPartyRef: partyRef,
+        privacyClassification: 'PUBLIC',
+        provenance,
+        recordedAt: confirmedAt,
+        revision: 1,
+        state: 'ACTIVE',
+        validFrom: confirmedAt,
+        validTo: null,
+        value: {
+          type: 'ADDRESS',
+          address: {
+            addressLine1: 'Main 10',
+            addressLine2: null,
+            city: 'Prague',
+            countryCode: 'CZ',
+            postalCode: '11000',
+            region: null,
+          },
+          purposes: [
+            {
+              current: true,
+              end: null,
+              preferred: false,
+              purpose: 'REGISTERED',
+              provenance,
+              recordedAt: confirmedAt,
+              revision: 1,
+              state: 'ACTIVE',
+              validFrom: confirmedAt,
+              validTo: null,
+            },
+          ],
+        },
+      });
+      const outcome = yield* applyAresObservation(
+        {
+          ...request,
+          selections: [
+            {
+              fact: 'REGISTERED_ADDRESS',
+              idempotencyKey: 'ares-declared-equality',
+              route: 'CONTACT_POINT_ADD',
+              payload: {
+                contactPoint: {
+                  type: 'ADDRESS',
+                  address: { addressLine1: 'Main 10', city: 'Prague', countryCode: 'CZ', postalCode: '11000' },
+                  purposes: [
+                    {
+                      preferred: false,
+                      purpose: 'REGISTERED',
+                      registryContext: { registryKey: 'ARES', jurisdiction: 'CZ' },
+                    },
+                  ],
+                },
+                partyRef,
+                privacyClassification: 'PUBLIC',
+                provenance: {
+                  authoritative: true,
+                  evidenceReference: 'ares:12345678',
+                  method: 'PROVIDER_OBSERVATION',
+                  source: 'EXTERNAL_EVIDENCE',
+                },
+                validFrom: decodedObservation.observedAt,
+              },
+            },
+          ],
+        },
+        {
+          ...makeInvoker(calls),
+          addContactPoint: () => {
+            calls.push('unexpected-source-rewrite');
+            return Effect.fail(new TestFailure({ action: 'source-rewrite' }));
+          },
+        },
+        { gateway, reads: { ...makeReads(), contactPoints: () => Effect.succeed({ items: [declared] }) } },
+      );
+      const completed = Match.value(outcome).pipe(
+        Match.tag('AresApplyCompleted', (value) => value),
+        Match.orElse(() => expect.unreachable('Expected an already-satisfied address')),
+      );
+      expect(completed.completed).toEqual([]);
+      expect(completed.skipped).toEqual([
+        { fact: 'REGISTERED_ADDRESS', reason: 'ALREADY_SATISFIED', route: 'CONTACT_POINT_ADD' },
+      ]);
+      expect(calls).toEqual([]);
+      expect(declared.provenance.authoritative).toBe(false);
+      if (declared.value.type !== 'ADDRESS') {
+        expect.unreachable('Expected declared address');
+      }
+      expect(Object.hasOwn(declared.value.purposes[0] ?? {}, 'registryContext')).toBe(false);
+    }),
+  );
   aresIt.effect('does not accept a different street number as the observed registered address', () =>
     Effect.gen(function* doesNotAcceptADifferent() {
       const calls: string[] = [];
@@ -473,7 +616,6 @@ it.layer(
                 source: 'EXTERNAL_EVIDENCE',
               },
               validFrom: decodedObservation.observedAt,
-              verification: { state: 'UNVERIFIED' },
             },
             route: 'CONTACT_POINT_ADD',
           },
@@ -585,7 +727,6 @@ it.layer(
                   state: 'ACTIVE' as const,
                   validFrom: application.decidedAt,
                   validTo: null,
-                  verification: 'VERIFIED' as const,
                 },
               ],
             }),
@@ -829,7 +970,6 @@ it.layer(
             source: 'EXTERNAL_EVIDENCE',
           },
           validFrom: decodedObservation.observedAt,
-          verification: { state: 'UNVERIFIED' },
         },
         route: 'CONTACT_POINT_ADD',
       };

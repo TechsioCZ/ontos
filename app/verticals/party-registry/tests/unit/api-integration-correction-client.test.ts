@@ -3,6 +3,11 @@ import { expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { CorrectPartyFactPayloadSchema } from '../../shared/command-api.ts';
+import { executePartyContactPointDetailWithAuthorization } from '../../src/api/party-contact-point-detail-client.ts';
+import { executePartyContactPointsWithAuthorization } from '../../src/api/party-contact-points-client.ts';
+import { executePartyOfficialIdentifierDetailWithAuthorization } from '../../src/api/party-official-identifier-detail-client.ts';
+import { executePartyOfficialIdentifierHistoryWithAuthorization } from '../../src/api/party-official-identifier-history-client.ts';
+
 import {
   correctPartyFactWithAuthorization,
   createPartyWithAuthorization,
@@ -202,4 +207,135 @@ it.effect('public clients discover the first assertion and submit a governed cor
     });
     expect(requests.every((request) => request.headers.get('authorization') === 'Bearer test-assertion')).toBe(true);
   }),
+);
+
+it.effect(
+  'public identifier and contact clients roundtrip declared facts without verification or invented registry scope',
+  () =>
+    Effect.gen(function* verificationFreePublicReads() {
+      const officialIdentifierRef = { ...partyRef, resourceType: 'party.registry.party-official-identifier' } as const;
+      const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' } as const;
+      const identifier = {
+        identifierType: 'CZ_DIC',
+        namespace: 'CZ:DIC',
+        normalizedValue: 'CZ12345678',
+        officialIdentifierRef,
+        partyRef,
+        recordedAt: timestamp,
+        state: 'ENDED',
+        validFrom: timestamp,
+        validTo: '2026-10-01T00:00:00.000Z',
+      };
+      const provenance = { authoritative: false, method: 'DECLARED_BY_PARTY', source: 'PARTY_DECLARATION' };
+      const contact = {
+        contactPointRef,
+        partyRef,
+        storedPartyRef: partyRef,
+        current: true,
+        end: null,
+        privacyClassification: 'PERSONAL',
+        provenance,
+        recordedAt: timestamp,
+        revision: 1,
+        state: 'ACTIVE',
+        validFrom: timestamp,
+        validTo: null,
+        value: {
+          type: 'ADDRESS',
+          address: {
+            addressLine1: 'Na Prikope 1',
+            addressLine2: null,
+            city: 'Praha',
+            countryCode: 'CZ',
+            postalCode: '11000',
+            region: null,
+          },
+          purposes: [
+            {
+              preferred: true,
+              purpose: 'REGISTERED',
+              current: true,
+              end: null,
+              provenance,
+              recordedAt: timestamp,
+              revision: 1,
+              state: 'ACTIVE',
+              validFrom: timestamp,
+              validTo: null,
+            },
+          ],
+        },
+      };
+      const requestedPaths: string[] = [];
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          HttpRouter.toWebHandler(
+            HttpRouter.add(
+              '*',
+              '/*',
+              Effect.gen(function* handlePublicRead() {
+                const request = yield* HttpServerRequest.HttpServerRequest;
+                requestedPaths.push(request.url);
+                expect(request.headers['authorization']).toBe('Bearer public-read-test');
+                if (request.url.endsWith('/reads/party-official-identifier-detail')) {
+                  return HttpServerResponse.jsonUnsafe(identifier);
+                }
+                if (request.url.endsWith('/reads/party-official-identifier-history')) {
+                  return HttpServerResponse.jsonUnsafe({ items: [identifier] });
+                }
+                if (request.url.endsWith('/reads/party-contact-point-detail')) {
+                  return HttpServerResponse.jsonUnsafe(contact);
+                }
+                expect(request.url.endsWith('/reads/party-contact-points')).toBe(true);
+                return HttpServerResponse.jsonUnsafe({ items: [contact] });
+              }),
+            ),
+            { disableLogger: true },
+          ),
+        ),
+        (resource) => Effect.promise(() => resource.dispose()),
+      );
+      const fakeFetch: typeof fetch = (input, init) => server.handler(new Request(input, init));
+      const options = { baseUrl: 'https://party.example/party-registry-api' };
+      yield* Effect.gen(function* assertPublicReadRoundtrip() {
+        const detail = yield* executePartyOfficialIdentifierDetailWithAuthorization(
+          { officialIdentifierRef },
+          'Bearer public-read-test',
+          'verification-free-read',
+          options,
+        );
+        const history = yield* executePartyOfficialIdentifierHistoryWithAuthorization(
+          { partyRef },
+          'Bearer public-read-test',
+          'verification-free-read',
+          options,
+        );
+        expect(detail.normalizedValue).toBe('CZ12345678');
+        expect(detail.state).toBe('ENDED');
+        expect(history.items[0]).toEqual(detail);
+        expect(detail).not.toHaveProperty('verification');
+        const address = yield* executePartyContactPointDetailWithAuthorization(
+          { contactPointRef },
+          'Bearer public-read-test',
+          'verification-free-read',
+          options,
+        );
+        const contacts = yield* executePartyContactPointsWithAuthorization(
+          { partyRef, includeHistorical: true },
+          'Bearer public-read-test',
+          'verification-free-read',
+          options,
+        );
+        expect(contacts.items[0]).toEqual(address);
+        expect(address.provenance).toEqual(provenance);
+        expect(address).not.toHaveProperty('verification');
+        expect(address.value.type).toBe('ADDRESS');
+        if (address.value.type === 'ADDRESS') {
+          expect(address.value.purposes[0]?.purpose).toBe('REGISTERED');
+          expect(address.value.purposes[0]).not.toHaveProperty('registryContext');
+          expect(address.value.purposes[0]).not.toHaveProperty('verification');
+        }
+      }).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+      expect(requestedPaths).toHaveLength(4);
+    }),
 );

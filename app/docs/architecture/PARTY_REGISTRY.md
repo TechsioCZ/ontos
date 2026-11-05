@@ -87,7 +87,6 @@ The initial logical table set is:
 ```text
 party.parties
 party.party_official_identifiers
-party.party_identifier_claims
 party.party_contact_points
 party.party_relationships
 party.counterparties
@@ -110,11 +109,10 @@ Party identity             unique (tenant_id, party_id)
 Counterparty context       unique (tenant_id, party_id, legal_entity_id)
 Party match decision       unique (tenant_id, action_invocation_id)
 Party alias                unique (tenant_id, alias_party_id)
-Strong identifier claim    unique (tenant_id, identifier_type_key, namespace, normalized_value)
 Current preferred contact  type/purpose-specific partial uniqueness where the type allows one
 ```
 
-A `party_identifier_claims` row exists only when the Identifier Type and verification/provenance state permit an exclusive identity claim. An unverified or non-exclusive identifier assertion may exist without a claim and cannot create an automatic MATCHED outcome.
+Declared Official Identifiers nominate weak candidates; an equal IČO or DIČ never automatically establishes Party identity. There is no general Party verification state or verification-based exclusive claim table. Accepted identity review remains explicit and tenant-scoped.
 
 ## Party Candidate
 
@@ -134,69 +132,45 @@ When matching is ambiguous, the Duplicate Candidate case stores the canonical de
 
 ## Atomic Party create
 
-Party create must be safe under concurrent requests and projection lag.
+Party create must be safe under concurrent requests and projection lag. CoreSDK owns the canonical transaction and Action idempotency anchor. The owner acquires the existing tenant identity-write advisory lock before evaluating current candidates and review state.
 
 ```text
 PartyCreate(candidate)
-  normalize candidate with versioned type rules
-  reject insufficient evidence that one real-world subject exists
+  normalize candidate using existing type rules
+  require sufficient supported subject evidence
 
   begin CoreSDK-owned canonical transaction
     lock/reuse Action idempotency anchor
-    acquire deterministic transaction-scoped locks for every qualifying claim key
-    resolve every qualifying strong identifier claim
-    partition them into resolved Party claims and unclaimed claims
+    acquire tenant identity-write lock
+    recover an applicable accepted review decision for this exact candidate, if present
+    otherwise evaluate tenant-scoped weak candidates and existing create eligibility
 
-    if resolved claims point to several Parties or contradict authoritative evidence
+    if identity remains ambiguous or explicit review is required
       create/reuse DuplicateCandidateCase
       persist AMBIGUOUS PartyMatchDecision
       return AMBIGUOUS(caseRef, decisionRef)
 
-    if resolved claims point to exactly one Party
-      validate every remaining authoritative fact against that Party
-      attach every compatible unclaimed strong claim to that Party
-        uniqueness is protected by the already-held claim-key locks
-      insert accepted compatible assertions on that Party
-      persist MATCHED PartyMatchDecision with operation CREATE and committedCreateOutcome MATCHED_EXISTING
+    if an exact accepted review authorizes the existing target
+      validate canonical target, lifecycle, evidence and scope
+      accept compatible assertions without changing their original acceptance on reuse
+      persist MATCHED decision with committedCreateOutcome MATCHED_EXISTING
       return MATCHED_EXISTING(partyRef, decisionRef)
 
-    if no strong claim exists
-      require explicit create-without-strong-identifier policy
-      if review is required
-        create/reuse DuplicateCandidateCase
-        persist AMBIGUOUS PartyMatchDecision
-        return AMBIGUOUS(caseRef, decisionRef)
+    if NO_MATCH and the existing evidence/review policy authorizes creation
+      insert one Party and accepted initial assertions
+      persist CREATED PartyMatchDecision
+      collect PartyCreated and linked Outbox Messages
+      return CREATED(partyRef, decisionRef)
 
-    reserve every unclaimed qualifying claim for one prospective Party identity
-    uniqueness is protected by the already-held claim-key locks
-    insert one Party
-    insert accepted initial assertions
-    attach every reserved claim to that Party
-    persist CREATED PartyMatchDecision
-    collect PartyCreated and linked Outbox Messages
-    return CREATED(partyRef, decisionRef)
-
-  commit canonical state, decision/case state, Action evidence,
-    Domain Events, linked Outbox Messages, and invocation success atomically
+  commit canonical state, decisions/cases, Action evidence,
+    Domain Events, linked Outbox Messages and invocation success atomically
 ```
 
-CoreSDK opens the one canonical transaction and constructs an owner-local `PartyIdentifierClaimService` bound to it. Before reading claims, the service sorts every normalized claim key and acquires transaction-scoped database locks in that deterministic order. An equivalent conflict-tolerant single-transaction primitive is acceptable only when it provides the same observable serialization. The service then reads or attaches claims without exposing a database executor and without allowing the handler to begin, commit, roll back, or retry a transaction.
+Exact declared identifier or display-name equality can nominate candidates, but cannot itself select an existing Party, authorize merge, grant access or prove Guest identity. ARES lookup is optional read/prefill by `ico`; it does not create or match a Party. Required matching unavailability and ambiguity cannot be converted to `NO_MATCH`.
 
-A competing Action waits for the same claim-key locks and then observes the committed owner before it decides. A uniqueness conflict after those locks indicates a broken invariant, not an instruction for the business handler to open a fresh transaction. Database unavailability or an indeterminate commit follows the existing Core-owned Action reconciliation lifecycle.
+The current actor-evidence and explicit review paths remain. Separate manual/client evidence, structured names and Commerce profile IČO changes belong to their own implementation work; removing verification does not fabricate those contracts or replace their authority.
 
-A preflight fuzzy search may improve user experience, but the transaction repeats every invariant read against the Party Registry operational store. A result from Core Search is never sufficient to create, match, or reject a Party.
-
-The create Action result is:
-
-```text
-CREATED(partyRef, decisionRef)
-MATCHED_EXISTING(partyRef, decisionRef)
-AMBIGUOUS(caseRef, decisionRef)
-```
-
-Insufficient evidence that the Candidate represents one real-world subject is a typed domain rejection and persists no Party Match Decision or Duplicate Candidate case. Identifier conflicts that require durable review produce the committed `AMBIGUOUS` result instead of returning an Action failure whose transaction would roll back the case.
-
-`NO_MATCH` is an internal matching result, not proof that an insert will remain safe after the transaction begins.
+The owner-local lock service retains only tenant identity-write serialization. Competing Actions re-evaluate canonical state after acquiring that lock. Business handlers receive scoped services and never open, commit, roll back or retry transactions. Database unavailability and indeterminate commit continue through the existing Core-owned reconciliation lifecycle. Search remains a projection and cannot authorize a create or match.
 
 ### Commit, publication, and recovery
 
@@ -219,7 +193,6 @@ validFrom / validTo          real-world effective time
 recordedAt                   when OntOS learned the assertion
 state                        active | ended | superseded | retracted | disputed
 provenance                   source and method
-verification                 state, verifier, verifiedAt
 acceptedBy                   Action, Principal, policy version
 supersedes/retracts          optional prior assertion reference
 ```
@@ -230,7 +203,7 @@ Rules:
 2. Ending a fact does not delete its assertion.
 3. Correction retracts or supersedes a wrong assertion; it is not an in-place value overwrite.
 4. A legitimate new real-world value ends the old period and adds a new assertion where the fact type is historical.
-5. Formal validity, authoritative verification, freshness, and matching strength remain separate.
+5. Formal validity, actual source observations, freshness and identity decisions remain separate. Acceptance does not assert factual truth.
 6. Raw provider payloads stay with the adapter or Evidence Artifact boundary. Party Registry stores bounded normalized evidence and references.
 7. A current projection is derived from accepted assertion state and effective time.
 
@@ -274,9 +247,8 @@ Each Identifier Type declares:
 - normalization and formal validation;
 - allowed Party Types;
 - multiplicity and effective-time rules;
-- whether a qualifying assertion may hold an exclusive claim;
-- verification/provenance required for that claim;
-- matching rules permitted to consume it.
+- actual source provenance and acceptance;
+- weak-candidate matching rules permitted to consume it.
 
 Do not persist `OTHER`, generic `VAT_ID`, connector IDs, or Source Record References as Official Identifiers.
 
@@ -287,6 +259,8 @@ Do not persist `OTHER`, generic `VAT_ID`, connector IDs, or Source Record Refere
 Initial Contact Point Types are `EMAIL`, `PHONE`, and structured `ADDRESS`.
 
 Contact Points are contactability facts, not credentials or identity keys. The same normalized email or phone may belong to several Parties. Matching may use them only under explicit Match Rules.
+
+A declared `REGISTERED` purpose may omit registry context and evidence reference with truthful non-authoritative provenance. Persistence uses `GENERAL/ZZ` only to represent absent context; public DTOs omit `registryContext`. A real registry observation retains its explicit valid context and actual authoritative evidence. Current uniqueness remains per Party and registry scope. `REGISTERED` does not automatically become `BILLING` or change address selection precedence.
 
 ADDRESS may carry compatible purposes:
 
@@ -564,3 +538,33 @@ The initial implementation is not complete until these behaviors pass:
 Run the smallest affected dependency cone for each implementation increment. File presence, a manifest declaration, or a generated marker is not evidence that these behaviors work.
 
 ARES dispatch preserves the original confirmed observation and uses its `servedAt` as the logical as-of `decidedAt` in the command provenance envelope. This keeps the command payload and idempotency hash stable across delivery attempts; it is not the execution timestamp. Assertion `recordedAt` and Core invocation/audit time record actual acceptance. Both the original confirmation and refreshed observation must remain fresh; a new refresh cannot revive an expired confirmation. Failed or indeterminate receipts require standard commit resolution before retry.
+
+## Removing general Party verification
+
+Party assertions, Official Identifiers, Contact Points and address-purpose assignments do not carry
+`VERIFIED`, `UNVERIFIED` or `REJECTED` as a general truth classification. Actual provenance,
+acceptance Action/Principal/policy, revisions, effective time, Correction and End history remain.
+Authentication, channel-control proofs, Privacy verification and unrelated domain outcomes retain
+their own meanings.
+
+The verification-column removal and claim-table retirement are forward owner migrations. Apply
+schema, owner Actions/Reads, generated clients, producer adapters and workers as one coordinated
+release; an intermediate schema must not run with old binaries or queued old payloads. There is no
+client backfill, dual-write or substitute trust flag for this change.
+
+For a disposable non-client environment, first inventory the affected Party assertions,
+identifier/contact/purpose records, candidate/decision/correction snapshots, linked obsolete outbox
+deliveries and Search projections. Record the exact environment and row/message/index allowlist,
+including references, before cleanup. Quiesce affected writers/workers, apply forward migrations,
+remove only allowlisted obsolete fixtures/messages in referential order, then rebuild projections
+through the existing owner operations and activate matching application/client/worker versions.
+Never reset Core identity, tenants, permissions, authentication, other domains or deployment
+configuration. If client data is discovered, stop destructive cleanup and resolve that scope before
+continuing. Rollback requires coherent schema/application versions or restoration of the designated
+disposable fixture state; old binaries cannot use dropped columns.
+
+Use the existing isolated native database fixtures for fresh-schema and populated pre-change
+upgrade tests. Prove actual governed writes, history Reads, worker/Search processing, ARES application
+and Commerce recipient consumption after the migration. A scan for old field names or an empty
+schema alone does not establish completion. Record execution evidence and any explicitly deferred
+integration scenarios separately from this current implementation guide.

@@ -212,7 +212,6 @@ export const prefillPartyCandidateFromAres = (input: typeof AresSubjectEvidenceS
       {
         identifierType: 'ICO',
         value: evidence.subject.ico,
-        verification: 'UNVERIFIED',
       },
     ],
     partyType: 'UNRESOLVED',
@@ -358,7 +357,7 @@ const applyFactDecision = (
   canonical: AresCanonicalSnapshot,
   userConfirmed: boolean,
 ): AresFactDecision => {
-  // Only ORGANIZATION ICO assertions qualify for the current authoritative claim rule.
+  // The current ARES ICO enrichment policy supports ORGANIZATION facts, not identity matching.
   if (fact === 'ICO' && canonical.partyType !== 'ORGANIZATION') {
     return blocked(fact, 'NEEDS_CONFIRMATION', 'party_type_not_supported_for_authoritative_ico');
   }

@@ -20,7 +20,6 @@ import type { AddressPurposeAssignment, PartyContactPoint } from '../../shared/d
 import {
   ContactPointInputSchema,
   assertAddressPurposeRules,
-  assertVerificationRules,
   normalizeContactPointInput,
   normalizedAddressKey,
 } from '../../shared/domain/contact-point.ts';
@@ -72,10 +71,6 @@ type ProvenanceRecord = Pick<
   PartyContactPointRecord,
   'evidenceReference' | 'externalEvidence' | 'provenanceAuthoritative' | 'provenanceMethod' | 'provenanceSource'
 >;
-type VerificationRecord = Pick<
-  PartyContactPointRecord,
-  'verificationMethod' | 'verificationState' | 'verifiedAt' | 'verifierReference'
->;
 type EndRecord = Pick<
   PartyContactPointRecord,
   | 'endEvidenceRefs'
@@ -119,13 +114,6 @@ const encodeExternalEvidence = (provenance: AddContactPointCommand['provenance']
     : Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(provenance.externalEvidence).pipe(
         Effect.mapError(unavailable),
       );
-
-const verificationDto = (row: VerificationRecord) => ({
-  ...(row.verificationMethod === null ? {} : { method: row.verificationMethod }),
-  state: row.verificationState as 'REJECTED' | 'UNVERIFIED' | 'VERIFIED',
-  ...(row.verifiedAt === null ? {} : { verifiedAt: instantFromDate(row.verifiedAt) }),
-  ...(row.verifierReference === null ? {} : { verifierReference: row.verifierReference }),
-});
 
 const endDto = Effect.fn('PartyContactPointPersistenceService.endDto')(function* makeEndDto(row: EndRecord) {
   if (row.validTo === null) {
@@ -210,8 +198,7 @@ const purposeDto = Effect.fn('PartyContactPointPersistenceService.purposeDto')(f
     state: row.state as 'ACTIVE' | 'DISPUTED' | 'ENDED' | 'RETRACTED' | 'SUPERSEDED',
     validFrom: instantFromDate(row.validFrom),
     validTo: row.validTo === null ? null : instantFromDate(row.validTo),
-    verification: verificationDto(row),
-    ...(row.purposeKey === 'REGISTERED'
+    ...(row.purposeKey === 'REGISTERED' && row.registryContext !== 'GENERAL' && row.jurisdiction !== 'ZZ'
       ? {
           registryContext: {
             jurisdiction: row.jurisdiction,
@@ -284,7 +271,6 @@ const contactPointDto = Effect.fn('PartyContactPointPersistenceService.contactPo
       validFrom: instantFromDate(row.validFrom),
       validTo: row.validTo === null ? null : instantFromDate(row.validTo),
       value,
-      verification: verificationDto(row),
     } satisfies PartyContactPoint;
   },
 );
@@ -513,15 +499,6 @@ const contactValueColumns = (normalized: ReturnType<typeof normalizeContactPoint
   return { ...addressColumns, ...channelColumns, ...phoneColumns };
 };
 
-const acceptedVerificationColumns = (command: AddContactPointCommand) => ({
-  verificationMethod: command.verification.method ?? null,
-  verificationState: command.verification.state,
-  verifiedAt:
-    command.verification.verifiedAt === undefined ? null : DateTime.toDateUtc(command.verification.verifiedAt),
-  verifiedByPrincipalId: command.verification.state === 'VERIFIED' ? command.acceptedByPrincipalId : null,
-  verifierReference: command.verification.verifierReference ?? null,
-});
-
 export const addContactPointRecord = Effect.fn('PartyContactPointPersistenceService.addContactPointRecord')(
   function* addContactPoint(
     transaction: PartyScopedTransaction,
@@ -552,7 +529,6 @@ export const addContactPointRecord = Effect.fn('PartyContactPointPersistenceServ
           { cause },
         ),
       try: () => {
-        assertVerificationRules(command.verification);
         if (contactPoint.type === 'ADDRESS') {
           assertAddressPurposeRules(contactPoint.purposes, command.provenance);
         }
@@ -658,7 +634,6 @@ export const addContactPointRecord = Effect.fn('PartyContactPointPersistenceServ
         provenanceSource: command.provenance.source,
         tenantId: scope.tenantId,
         validFrom: instantAsDate(command.validFrom),
-        ...acceptedVerificationColumns(command),
       })
       .returning()
       .pipe(Effect.mapError(unavailable));
@@ -980,34 +955,6 @@ export const updateContactPointRecord = Effect.fn('PartyContactPointPersistenceS
         });
       }).pipe(Effect.withSpan('PartyContactPointPersistenceService.setChannelPreference'));
     }
-    if (change.type === 'ENRICH_VERIFICATION') {
-      return yield* Effect.gen(function* enrichVerification() {
-        yield* transaction
-          .update(partyContactPoints)
-          .set({
-            revision: nextRevision,
-            verificationMethod: change.verification.method ?? null,
-            verificationState: change.verification.state,
-            verifiedAt:
-              change.verification.verifiedAt === undefined ? null : DateTime.toDateUtc(change.verification.verifiedAt),
-            verifiedByPrincipalId: change.verification.state === 'VERIFIED' ? command.acceptedByPrincipalId : null,
-            verifierReference: change.verification.verifierReference ?? null,
-          })
-          .where(
-            and(
-              eq(partyContactPoints.tenantId, scope.tenantId),
-              eq(partyContactPoints.contactPointId, row.contactPointId),
-            ),
-          )
-          .pipe(Effect.mapError(unavailable));
-        return yield* loadUpdatedContactPoint({
-          aliases,
-          row,
-          scope,
-          transaction,
-        });
-      }).pipe(Effect.withSpan('PartyContactPointPersistenceService.enrichVerification'));
-    }
     if (change.type === 'ADD_PROVENANCE') {
       return yield* Effect.gen(function* addProvenance() {
         if (row.provenanceSource !== change.provenance.source || row.provenanceMethod !== change.provenance.method) {
@@ -1233,10 +1180,7 @@ export const endContactPointRecord = Effect.fn('PartyContactPointPersistenceServ
               reason: 'A purpose can be ended only on an ADDRESS Contact Point',
             });
           }
-          if (
-            (selectedTarget.target.purpose === 'REGISTERED') !==
-            (selectedTarget.target.registryContext !== undefined)
-          ) {
+          if (selectedTarget.target.purpose !== 'REGISTERED' && selectedTarget.target.registryContext !== undefined) {
             return yield* new PartyContactPointInvalid({
               code: 'party_contact_point_invalid',
               reason: 'Only REGISTERED purpose uses an explicit registry context',

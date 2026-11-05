@@ -370,7 +370,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           privacyClassification: 'PUBLIC',
           provenance: contactPointProvenance,
           validFrom: '2026-09-07T00:00:00.000Z',
-          verification: { state: 'UNVERIFIED' },
         } as const;
         const invalidContactResponseRequest = new Request('http://localhost/party-registry/actions/add-contact-point', {
           body: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
@@ -422,7 +421,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             identifier: {
               identifierType: 'ICO',
               value: '27074358',
-              verification: 'VERIFIED',
             },
             partyRef,
             provenanceMethod: 'DOCUMENT',
@@ -497,9 +495,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           },
           '/party-registry/actions/update-party-official-identifier': {
             change: {
-              expectedVerification: 'UNVERIFIED',
-              type: 'SET_VERIFICATION',
-              verification: 'VERIFIED',
+              type: 'END_VALIDITY',
+              validTo: '2026-10-01T00:00:00.000Z',
             },
             evidenceRefs: ['document:verified'],
             officialIdentifierRef: {

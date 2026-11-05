@@ -706,14 +706,9 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
       icoValues: activeIdentifiers
         .filter(({ identifierType }) => identifierType === 'ICO')
         .map(({ normalizedValue }) => normalizedValue),
-      identityAmbiguous: activeIdentifiers.some(({ identifierType, normalizedValue, verification }) => {
+      identityAmbiguous: activeIdentifiers.some(({ identifierType, normalizedValue }) => {
         const observedDic = Option.getOrNull(observation.subject.dic);
-        return (
-          identifierType === 'CZ_DIC' &&
-          verification === 'VERIFIED' &&
-          observedDic !== null &&
-          normalizedValue !== observedDic
-        );
+        return identifierType === 'CZ_DIC' && observedDic !== null && normalizedValue !== observedDic;
       }),
       partyType: party.partyType,
       registeredAddresses,

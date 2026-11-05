@@ -45,7 +45,7 @@ it('names, reference prefixes and identifiers never substitute for subject evide
       subjectEvidence: [],
     }),
     candidate({
-      officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+      officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
       subjectEvidence: [],
     }),
   ]) {

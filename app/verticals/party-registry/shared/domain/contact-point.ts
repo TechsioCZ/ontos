@@ -28,8 +28,6 @@ const ContactPointLifecycleStateSchema = Schema.Literals(['ACTIVE', 'ENDED', 'SU
 export const ContactPointPrivacyClassificationSchema = Schema.Literals(['PUBLIC', 'BUSINESS_SENSITIVE', 'PERSONAL']);
 export type ContactPointPrivacyClassification = typeof ContactPointPrivacyClassificationSchema.Type;
 
-const ContactPointVerificationStateSchema = Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']);
-
 export const ContactPointProvenanceSchema = Schema.Struct({
   authoritative: Schema.Boolean,
   evidenceReference: Schema.optionalKey(TrimmedTextSchema),
@@ -48,14 +46,6 @@ const ContactPointProvenanceHistorySchema = Schema.Struct({
   ...ContactPointProvenanceSchema.fields,
   evidenceReferences: Schema.optionalKey(Schema.Array(TrimmedTextSchema).check(Schema.isMaxLength(33))),
 });
-
-export const ContactPointVerificationSchema = Schema.Struct({
-  method: Schema.optionalKey(TrimmedTextSchema),
-  state: ContactPointVerificationStateSchema,
-  verifiedAt: Schema.optionalKey(ContactPointTimestampSchema),
-  verifierReference: Schema.optionalKey(TrimmedTextSchema),
-});
-export type ContactPointVerification = typeof ContactPointVerificationSchema.Type;
 
 const EmailValueSchema = Schema.Trim.check(
   Schema.isMinLength(3),
@@ -192,7 +182,6 @@ export const AddressContactPointValueSchema = Schema.Struct({
       state: ContactPointLifecycleStateSchema,
       validFrom: ContactPointTimestampSchema,
       validTo: Schema.Union([ContactPointTimestampSchema, Schema.Null]),
-      verification: ContactPointVerificationSchema,
     }),
   ),
   type: Schema.Literal('ADDRESS'),
@@ -217,7 +206,6 @@ export const PartyContactPointSchema = Schema.Struct({
   validFrom: ContactPointTimestampSchema,
   validTo: Schema.Union([ContactPointTimestampSchema, Schema.Null]),
   value: ContactPointValueSchema,
-  verification: ContactPointVerificationSchema,
 });
 export type PartyContactPoint = typeof PartyContactPointSchema.Type;
 
@@ -355,17 +343,6 @@ export const normalizeContactPointInput = (input: ContactPointInput): Normalized
     }),
   );
 
-export const assertVerificationRules = (verification: ContactPointVerification): void => {
-  if (
-    verification.state === 'VERIFIED' &&
-    (verification.method === undefined ||
-      verification.verifiedAt === undefined ||
-      verification.verifierReference === undefined)
-  ) {
-    return invalidContactPoint('VERIFIED contact channel requires method, time, and verifier provenance');
-  }
-};
-
 export const normalizedAddressKey = (address: StructuredAddress): string => {
   const normalized = normalizeAddress(address);
   return [
@@ -384,18 +361,17 @@ const assertAddressPurposeAssignment = (
   assignment: AddressPurposeAssignment,
   provenance: ContactPointProvenance,
 ): void => {
-  if (assignment.purpose === 'REGISTERED') {
+  if (assignment.purpose === 'REGISTERED' && assignment.registryContext !== undefined) {
     if (
-      assignment.registryContext === undefined ||
       assignment.registryContext.registryKey === 'GENERAL' ||
       !/^[A-Za-z]{2}$/u.test(assignment.registryContext.jurisdiction) ||
       assignment.registryContext.jurisdiction.toUpperCase() === 'ZZ' ||
       !provenance.authoritative ||
       provenance.evidenceReference === undefined
     ) {
-      return invalidContactPoint('REGISTERED requires an explicit registry context and authoritative provenance');
+      return invalidContactPoint('Explicit REGISTERED registry context requires authoritative provenance and evidence');
     }
-  } else if (assignment.registryContext !== undefined) {
+  } else if (assignment.purpose !== 'REGISTERED' && assignment.registryContext !== undefined) {
     return invalidContactPoint('Registry context belongs only to REGISTERED purpose');
   }
 };

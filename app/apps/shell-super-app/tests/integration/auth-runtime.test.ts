@@ -2339,8 +2339,15 @@ const PartyGatewayReferenceSchema = Schema.Struct({
   resourceType: Schema.Literal('party.registry.party'),
   tenantId: Schema.String.pipe(Schema.brand('TenantId')),
 });
-const PartyCreatedResponseSchema = Schema.Struct({
-  outcome: Schema.Literal('CREATED'),
+const PartyPendingCreateResponseSchema = Schema.Struct({
+  caseRef: Schema.Struct({
+    ...PartyGatewayReferenceSchema.fields,
+    resourceType: Schema.Literal('party.registry.duplicate-candidate-case'),
+  }),
+  outcome: Schema.Literal('AMBIGUOUS'),
+});
+const PartyReviewedCreateResponseSchema = Schema.Struct({
+  outcome: Schema.Literal('CREATE_NEW'),
   partyRef: PartyGatewayReferenceSchema,
 });
 const PartyGatewayDetailResponseSchema = Schema.Struct({
@@ -2660,6 +2667,7 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
         bindSelfApiKeyAction.descriptor.actionKey,
         changeTenantModuleStateAction.descriptor.actionKey,
         'party.registry.create-party',
+        'party.registry.resolve-duplicate-candidate-create',
       ],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -3048,7 +3056,7 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
         candidate: {
           displayName: 'Public tenant gateway proof',
           evidenceRefs: ['review/public-party-gateway'],
-          officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+          officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
           partyType: 'ORGANIZATION',
           provenance: { method: 'DOCUMENT', source: 'public-party-gateway' },
           subjectEvidence: [
@@ -3067,8 +3075,41 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
       token,
     );
     expect(createdResponse.status).toBe(200);
-    const created = yield* Schema.decodeUnknownEffect(PartyCreatedResponseSchema)(
+    const pendingCreate = yield* Schema.decodeUnknownEffect(PartyPendingCreateResponseSchema)(
       yield* Effect.tryPromise(() => createdResponse.json()),
+    );
+    const created = yield* Effect.scoped(
+      Effect.gen(function* explicitlyReviewPartySeed() {
+        const reviewModuleAccess = yield* makeContextPermissionRelationshipMutationLive();
+        const reviewGrant = {
+          principal: apiKeyPrincipal,
+          target: { moduleId: 'party.registry', permission: 'module.access' },
+          tenantId: fixture.tenantId,
+        };
+        yield* Effect.acquireRelease(reviewModuleAccess.mutate({ ...reviewGrant, operation: 'grant' }), () =>
+          reviewModuleAccess.mutate({ ...reviewGrant, operation: 'revoke' }).pipe(Effect.orDie),
+        );
+        const caseResponse = yield* request(
+          '/reads/duplicate-candidate-detail',
+          JSON.stringify({ caseRef: pendingCreate.caseRef }),
+        );
+        expect(caseResponse.status).toBe(200);
+        const caseDetail = yield* Schema.decodeUnknownEffect(Schema.Struct({ revision: Schema.Number }))(
+          yield* Effect.tryPromise(() => caseResponse.json()),
+        );
+        const reviewedResponse = yield* request(
+          '/party-registry/actions/resolve-duplicate-candidate-create',
+          JSON.stringify({
+            caseRef: pendingCreate.caseRef,
+            expectedRevision: caseDetail.revision,
+            reason: 'Explicitly reviewed the public gateway fixture subject',
+          }),
+        );
+        expect(reviewedResponse.status).toBe(200);
+        return yield* Schema.decodeUnknownEffect(PartyReviewedCreateResponseSchema)(
+          yield* Effect.tryPromise(() => reviewedResponse.json()),
+        );
+      }),
     );
     expect(created.partyRef.tenantId).toBe(fixture.tenantId);
     const detailPayload = { partyRef: created.partyRef };

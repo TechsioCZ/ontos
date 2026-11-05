@@ -137,7 +137,6 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
         source: 'USER_ASSERTION',
       },
       validFrom: '2020-01-01T00:00:00.000Z',
-      verification: { state: 'UNVERIFIED' },
     };
     const contact = yield* runtime
       .runAction({
@@ -158,7 +157,6 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
       );
     expect(storedContact).toMatchObject({
       provenanceAuthoritative: false,
-      verificationState: 'UNVERIFIED',
       evidenceReference: evidenceRef,
       state: 'ACTIVE',
     });
@@ -196,12 +194,6 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
           ...contactPayload,
           contactPoint: { preferred: false, type: 'EMAIL', value: 'verified-guest-1241@example.test' },
           provenance: { ...contactPayload.provenance, authoritative: true },
-          verification: {
-            state: 'VERIFIED',
-            method: 'MANUAL_CONFIRMATION',
-            verifiedAt: DateTime.formatIso(yield* DateTime.now),
-            verifierReference: 'reviewed-channel-control',
-          },
         },
         principal: yield* gateway.verifyPrincipal(principal),
         transport: yield* transport,

@@ -77,7 +77,6 @@ const provenance = {
   method: 'MANUAL_CONFIRMATION',
   source: 'PARTY_DECLARATION',
 } as const;
-const verification = { state: 'VERIFIED' } as const;
 const currentPostalContactPoint = Schema.decodeUnknownSync(PartyContactPointDetailResponseSchema)({
   contactPointRef,
   current: true,
@@ -112,12 +111,10 @@ const currentPostalContactPoint = Schema.decodeUnknownSync(PartyContactPointDeta
         state: 'ACTIVE',
         validFrom: at,
         validTo: null,
-        verification,
       },
     ],
     type: 'ADDRESS',
   },
-  verification,
 });
 
 interface ObservedInvocation {

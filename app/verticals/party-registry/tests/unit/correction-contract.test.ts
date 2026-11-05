@@ -464,26 +464,6 @@ for (const scenario of [
     claimReads: [],
     reason: /enrichment/u,
   },
-  {
-    name: 'Party Type correction reconciles newly eligible claims before superseding the original fact',
-    original: 'PERSON',
-    replacement: 'ORGANIZATION',
-    claimReads: [
-      [],
-      [
-        {
-          identifierTypeKey: 'ICO',
-          namespace: 'CZ:ICO',
-          normalizedValue: '27074358',
-          officialIdentifierId: replacementId,
-          verificationState: 'VERIFIED',
-        },
-      ],
-      [],
-      [{ partyId: organizationId }],
-    ],
-    reason: /exclusive identifier claims/u,
-  },
 ]) {
   it.effect(scenario.name, () =>
     Effect.gen(function* rejectCorrectionScenario() {
@@ -638,9 +618,6 @@ it.effect(
             [],
             [{ partyId: scenario.partyId }],
             [targetAssertion],
-            [],
-            [],
-            [],
             [relationship],
           ]);
           const command = yield* Schema.decodeUnknownEffect(PartyCorrectionCommandSchema)({
@@ -737,17 +714,7 @@ it.effect('Party Type correction preserves the SQL-selected incompatible relatio
     const conflictingRow = relationshipRow({
       relationshipId: '93000000-0000-4000-8000-000000000001',
     });
-    const h = transactionHarness([
-      [],
-      [{ partyId }],
-      [],
-      [{ partyId }],
-      [targetAssertion],
-      [],
-      [],
-      [],
-      [conflictingRow],
-    ]);
+    const h = transactionHarness([[], [{ partyId }], [], [{ partyId }], [targetAssertion], [conflictingRow]]);
     const command = yield* Schema.decodeEffect(PartyCorrectionCommandSchema)({
       ...evidence,
       factKind: 'PARTY_TYPE',
@@ -800,7 +767,6 @@ const identifierCorrectionRow = (overrides: Readonly<Record<string, unknown>> = 
   tenantId,
   validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2025-01-01T00:00:00.000Z')),
   validTo: null,
-  verificationState: 'VERIFIED',
   ...overrides,
 });
 const identifierCorrectionCommand = (replacementValue?: string) =>
@@ -817,8 +783,6 @@ const identifierCorrectionSelects = (replacement: readonly Readonly<Record<strin
   [],
   [{ partyId }],
   [identifierCorrectionRow()],
-  [],
-  [],
   replacement,
 ];
 it.effect('identifier correction converges to existing Current B without inserting or rewriting B', () =>
@@ -863,7 +827,6 @@ it.effect('identifier correction rejects same-ID and incompatible replacement be
       { identifierTypeKey: 'CZ_DIC', namespace: 'CZ:DIC' },
       { normalizedValue: '27074358' },
       { state: 'ENDED', isCurrent: false },
-      { verificationState: 'REJECTED' },
       { validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2027-01-01T00:00:00.000Z')) },
       { validTo: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')) },
     ]) {

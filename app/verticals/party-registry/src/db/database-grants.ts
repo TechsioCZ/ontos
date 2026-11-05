@@ -20,7 +20,6 @@ const PARTY_TABLES = [
   'party_contact_points',
   'party_corrections',
   'party_fact_assertions',
-  'party_identifier_claims',
   'party_match_decisions',
   'party_merges',
   'party_official_identifiers',

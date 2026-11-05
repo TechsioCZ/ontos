@@ -67,7 +67,7 @@ import { executePartyCorrectionWithAuthorization } from '../../src/api/party-cor
 import { executePartyOfficialIdentifierHistoryWithAuthorization } from '../../src/api/party-official-identifier-history-client.ts';
 import { lockTenantIdentityWrites } from '../../src/services/party-identifier-claim.service.ts';
 import { makePartyDatabase } from '../../src/db/client.ts';
-import { partyCorrections, partyIdentifierClaims, partyOfficialIdentifiers } from '../../src/db/schema.ts';
+import { partyCorrections, partyOfficialIdentifiers } from '../../src/db/schema.ts';
 
 import {
   PartyCommandCommitIndeterminateProblemSchema,
@@ -229,12 +229,11 @@ const makeFixture = Effect.gen(function* makeFixture() {
       : never,
     identifierType: 'ICO' | 'CZ_DIC' = 'ICO',
     actor = principal,
-    verification: 'UNVERIFIED' | 'VERIFIED' = 'UNVERIFIED',
   ) {
     return yield* runHttp(
       addPartyOfficialIdentifierWithAuthorization(
         {
-          identifier: { identifierType, value, verification },
+          identifier: { identifierType, value },
           partyRef,
           provenanceMethod: 'MANUAL',
           provenanceSource: 'original-input-test',
@@ -299,8 +298,6 @@ const makeFixture = Effect.gen(function* makeFixture() {
   });
   const corrections = () =>
     admin.select().from(partyCorrections).where(eq(partyCorrections.tenantId, fixture.tenantId));
-  const claims = () =>
-    admin.select().from(partyIdentifierClaims).where(eq(partyIdentifierClaims.tenantId, fixture.tenantId));
   const resolve = Effect.fn('IdentifierCorrectionReuseTest.resolve')(function* resolve(invocationId: string) {
     return yield* runHttp(
       resolvePartyCommandCommitWithAuthorization(
@@ -332,7 +329,6 @@ const makeFixture = Effect.gen(function* makeFixture() {
     end,
     add,
     authorization,
-    claims,
     connections,
     coreEvidenceExecutor,
     correct,
@@ -367,7 +363,6 @@ it.layer(
         assert.isOk(newRow);
         expect(newRow.normalizedValue).toBe('01000004');
         expect(newRow.supersedesOfficialIdentifierId).toBe(a.officialIdentifierRef.resourceId);
-        expect(newRow.verificationState).toBe('UNVERIFIED');
         const retracted = yield* h.correct(partyRef, replacementId, undefined, yield* h.options);
         expect(Option.isNone(retracted.replacementAssertionId)).toBe(true);
         expect((yield* h.rows()).find((row) => row.officialIdentifierId === replacementId)?.state).toBe('RETRACTED');
@@ -643,11 +638,10 @@ it.layer(
         const h = yield* makeFixture;
         const partyRef = yield* h.create();
         const a = yield* h.add(partyRef, '27074358', yield* h.options);
-        const b = yield* h.add(partyRef, '26168685', yield* h.options, 'ICO', h.principal, 'VERIFIED');
+        const b = yield* h.add(partyRef, '26168685', yield* h.options, 'ICO', h.principal);
         const before = yield* h.rows();
         const beforeB = before.find((row) => row.officialIdentifierId === b.officialIdentifierRef.resourceId);
         assert.isOk(beforeB);
-        const priorClaims = yield* h.claims();
         const repeated = yield* h.add(partyRef, '26168685', yield* h.options);
         expect(repeated.officialIdentifierRef).toEqual(b.officialIdentifierRef);
         expect(yield* h.rows()).toEqual(before);
@@ -664,7 +658,6 @@ it.layer(
         expect(after.find((row) => row.officialIdentifierId === a.officialIdentifierRef.resourceId)?.state).toBe(
           'SUPERSEDED',
         );
-        expect(yield* h.claims()).toEqual(priorClaims);
         const history = yield* h.history(partyRef);
         expect(history.items).toHaveLength(2);
         expect(history.items.filter((row) => row.state === 'ACTIVE').map((row) => row.officialIdentifierRef)).toEqual([
