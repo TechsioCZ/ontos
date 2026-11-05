@@ -30,6 +30,7 @@ import {
 } from '../publish-active-application-composition.mts';
 import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
 import { parseZeropsEnvFile } from '../zerops-public-api.mts';
+import { ApplicationReleaseIntentSchema } from '../application-release-intent.mts';
 
 const encoder = new TextEncoder();
 const JsonText = Schema.fromJsonString(Schema.Unknown);
@@ -121,6 +122,7 @@ const PARTY_REMOTE = 'verticalPartyRegistry';
 const CUSTOMER_CONTEXT = 'commerce-customer-context';
 const CUSTOMER_CONTEXT_MODULE = 'commerce.customer-context';
 const OUTBOX_WORKER_HOST_SETUP = 'outbox-worker-host';
+const EXCLUDED_WORKER_OWNER = 'commerce-order';
 const PRICE_GROUP_CATALOG = 'price-group-catalog';
 const CUSTOMER_CONTEXT_WORKER = 'commerce-customer-context-worker';
 const PARTY_MODULE = 'party.registry';
@@ -442,6 +444,10 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
   Effect.gen(function* workerModeSetups() {
     const zeropsYaml = readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8');
     const topology = readReferenceTopology();
+    const intent = Schema.decodeUnknownSync(Schema.fromJsonString(ApplicationReleaseIntentSchema))(
+      readFileSync(new URL('../../topology/application-release-intent.json', import.meta.url), 'utf-8'),
+    );
+    const members = intent.modules.map(({ appId }) => appId);
     expect(yield* otherModeWorkerSetups(zeropsYaml, topology, 'dedicated')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
     expect(yield* otherModeWorkerSetups(zeropsYaml, topology, 'host')).toEqual([
       'party-registry-worker',
@@ -451,14 +457,13 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
       'privacy-worker',
       'commerce-order-worker',
     ]);
-    expect(yield* modeWorkerSetups(zeropsYaml, topology, 'host')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
-    expect(yield* modeWorkerSetups(zeropsYaml, topology, 'dedicated')).toEqual([
+    expect(yield* modeWorkerSetups(zeropsYaml, topology, 'host', members)).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* modeWorkerSetups(zeropsYaml, topology, 'dedicated', members)).toEqual([
       'party-registry-worker',
       CUSTOMER_CONTEXT_WORKER,
       'price-group-catalog-worker',
       'inventory-worker',
       'privacy-worker',
-      'commerce-order-worker',
     ]);
     expect(serviceIdVariable(OUTBOX_WORKER_HOST_SETUP)).toBe('ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID');
     expect(serviceIdVariable(CUSTOMER_CONTEXT_WORKER)).toBe('ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID');
@@ -469,11 +474,13 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
 it.effect('excludes non-topology workers and undefined topology workers from mode setup inventory', () =>
   Effect.gen(function* excludesUndeclaredWorkerSetups() {
     const yaml = 'zerops:\n  - setup: catalog-worker\n  - setup: unrelated-worker\n  - setup: outbox-worker-host\n';
-    const topology = { verticals: [{ id: 'catalog' }, { id: 'commerce-order' }] };
-    expect(yield* modeWorkerSetups(yaml, topology, 'dedicated')).toEqual(['catalog-worker']);
+    const topology = { verticals: [{ id: 'catalog' }, { id: EXCLUDED_WORKER_OWNER }] };
+    expect(yield* modeWorkerSetups(yaml, topology, 'dedicated', ['catalog'])).toEqual(['catalog-worker']);
     expect(yield* otherModeWorkerSetups(yaml, topology, 'host')).toEqual(['catalog-worker']);
-    expect(yield* modeWorkerSetups(yaml, topology, 'host')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* modeWorkerSetups(yaml, topology, 'host', ['catalog'])).toEqual([OUTBOX_WORKER_HOST_SETUP]);
     expect(yield* otherModeWorkerSetups(yaml, topology, 'dedicated')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* modeWorkerSetups(yaml, topology, 'dedicated', [EXCLUDED_WORKER_OWNER])).toEqual([]);
+    expect(yield* modeWorkerSetups(yaml, topology, 'host', [EXCLUDED_WORKER_OWNER])).toEqual([]);
   }),
 );
 
@@ -619,7 +626,7 @@ it('bounds each refresh and yields it to a main deploy in flight', () => {
   ] as const) {
     const job = jobs[name];
     expect(job?.concurrency?.group).toBe(`zerops-${environment}`);
-    expect(job?.needs).toEqual(['deploy-guard']);
+    expect(job?.needs).toEqual(environment === 'stage' ? ['deploy-guard', 'stage-target'] : ['deploy-guard']);
     expect(job?.if).toBe(`needs.deploy-guard.outputs.${environment}-deploy-active == 'false'`);
     expect(job?.['timeout-minutes']).toBeLessThanOrEqual(10);
     // Every install and the publication carry their own bound inside the job's.
