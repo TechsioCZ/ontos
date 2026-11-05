@@ -20,7 +20,11 @@ import {
   commerceEnrollmentOwnerAttemptStoreForRun,
   commerceEnrollmentOwnerTransitionPreparationAuthorityForPorts,
 } from './owner-transition-production.ts';
-import type { CommerceEnrollmentOwnerPreparationPort } from './owner-transition-production.ts';
+import type {
+  CommerceEnrollmentOwnerPreparationPort,
+  CommerceEnrollmentOwnerTransactionRun,
+} from './owner-transition-production.ts';
+import { readEnrollmentStorefrontOrigin } from '../attempts/registration-persistence.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from './owner-transition-driver.ts';
 import type {
   CommerceEnrollmentOwnerAttemptStore,
@@ -211,6 +215,18 @@ export const providerObservationFor = Effect.fn('CommerceEnrollmentPortalAuthOwn
   },
 );
 
+/** The storefront the Attempt started on, read in its own owner transaction. */
+export const storefrontOriginReader = (
+  run: CommerceEnrollmentOwnerTransactionRun,
+  attempt: EnrollmentAttemptSnapshot,
+) =>
+  run(
+    attempt.targetLegalEntityId === undefined
+      ? { tenantId: attempt.tenantId }
+      : { legalEntityId: attempt.targetLegalEntityId, tenantId: attempt.tenantId },
+    (transaction) => readEnrollmentStorefrontOrigin(transaction, attempt.portalEnrollmentAttemptId),
+  );
+
 /** Account creation is complete only after the correlated account's verification email is reissued. */
 export const providerAccountCreationObservationFor = Effect.fn(
   'CommerceEnrollmentPortalAuthOwnerPreparation.providerAccountCreationObservation',
@@ -218,6 +234,7 @@ export const providerAccountCreationObservationFor = Effect.fn(
   attempt: EnrollmentAttemptSnapshot,
   reconciliation: CommercePortalAuthAccountCreationReconciliation,
   ownerInvocationId: CommerceEnrollmentOwnerReconciliationInput['ownerInvocationId'],
+  readStorefrontOrigin: Effect.Effect<Option.Option<string>, CommerceEnrollmentAttemptError>,
 ): Effect.fn.Return<
   CommerceEnrollmentProviderOwnerReconciliationObservation,
   InstanceType<typeof CommerceEnrollmentOwnerEffectUnavailable>
@@ -234,8 +251,13 @@ export const providerAccountCreationObservationFor = Effect.fn(
   // Keep provider delivery behind the local Attempt decode: malformed durable evidence must fail
   // closed before reconciliation performs an externally visible email send.
   // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Evidence validation intentionally gates verification delivery and fixes their failure ordering.
+  const storefrontOrigin = yield* readStorefrontOrigin.pipe(
+    Effect.mapError((failure) =>
+      reconciliationUnavailable('The enrollment storefront could not be read for account reconciliation', failure),
+    ),
+  );
   const reissued = yield* reconciliation
-    .reissueVerificationEmail({ ownerInvocationId })
+    .reissueVerificationEmail({ ownerInvocationId, storefrontOrigin })
     .pipe(
       Effect.mapError((failure) =>
         reconciliationUnavailable(
@@ -310,6 +332,7 @@ const prepareRecord = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.pr
     accountLookup: CommercePortalAuthAccountLookup,
     accountCreationReconciliation: CommercePortalAuthAccountCreationReconciliation,
     binding: CommerceEnrollmentPreparedOwnerBinding,
+    run: CommerceEnrollmentOwnerTransactionRun,
   ): Effect.fn.Return<CommerceEnrollmentOwnerTransitionPreparationResult, CommerceEnrollmentAttemptError> {
     const { attempt, operation } = yield* Effect.all(
       {
@@ -354,6 +377,7 @@ const prepareRecord = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.pr
             attempt,
             accountCreationReconciliation,
             reconciliation.ownerInvocationId,
+            storefrontOriginReader(run, attempt),
           )
         : providerObservationFor(attempt, accountLookup, reconciliation.ownerInvocationId),
     );
@@ -401,7 +425,7 @@ export const makeCommerceEnrollmentPortalAuthOwnerPreparationPort = Effect.fn(
     const prepared =
       input.actionKey === CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY
         ? prepareClaim(store, input)
-        : prepareRecord(store, accountLookup, accountCreationReconciliation, input);
+        : prepareRecord(store, accountLookup, accountCreationReconciliation, input, runner.run);
     return prepared.pipe(Effect.match({ onFailure: preparationFailure, onSuccess: (result) => result }));
   };
   return { ...PORTAL_ACCOUNT_TRANSITION_IDENTITY, prepare };

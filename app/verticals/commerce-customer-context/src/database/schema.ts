@@ -323,6 +323,11 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     retailRegistration: jsonb('retail_registration').$type<DatabaseJsonObject>(),
     revision: integer('revision').default(1).notNull(),
     state: text('state').default('IN_PROGRESS').notNull(),
+    /**
+     * Immutable trusted origin of the storefront the customer started on. Every verification mail of the Attempt,
+     * including a background re-send, links back to it; the realm rebases only onto a trusted origin.
+     */
+    storefrontOrigin: text('storefront_origin'),
     subjectType: text('subject_type'),
     /** While this stands in the future one replica owns this Attempt's sweep; it expires on its own. */
     sweepClaimedUntil: timestamp('sweep_claimed_until', { withTimezone: true }),
@@ -351,6 +356,10 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     check(
       'ccc_retail_registration_object_ck',
       sql`${table.retailRegistration} is null or (${table.journey} = 'RETAIL_SELF_ENROLLMENT' and jsonb_typeof(${table.retailRegistration}) = 'object' and length(${table.retailRegistration}::text) <= 2000 and ${table.retailRegistration} ? 'displayName' and ${table.retailRegistration} ? 'email' and ${table.retailRegistration} - ARRAY['displayName', 'email', 'phone'] = '{}'::jsonb)`,
+    ),
+    check(
+      'ccc_portal_enrollment_attempts_storefront_origin_ck',
+      sql`${table.storefrontOrigin} is null or (length(${table.storefrontOrigin}) <= 300 and ${table.storefrontOrigin} ~ '^https?://[^/?#@[:space:]]+$')`,
     ),
     check(
       'ccc_portal_enrollment_attempts_intent_key_ck',

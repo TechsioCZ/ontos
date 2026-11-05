@@ -13,6 +13,7 @@ import {
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { eq, sql } from 'drizzle-orm';
 import { Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { readEnrollmentStorefrontOrigin } from '../../src/enrollment/attempts/registration-persistence.ts';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -43,6 +44,7 @@ import {
   EnrollmentPrincipalIdSchema,
   EnrollmentProviderSubjectIdSchema,
   EnrollmentResourceIdSchema,
+  EnrollmentStorefrontOriginSchema,
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
@@ -270,11 +272,30 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
       yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
 
       const created = yield* inScope((persistence) =>
-        persistence.create(startInput('durable-enrollment-live', 'd6100000-0000-4000-8000-000000000001')),
+        persistence.create({
+          ...startInput('durable-enrollment-live', 'd6100000-0000-4000-8000-000000000001'),
+          storefrontOrigin: Schema.decodeSync(EnrollmentStorefrontOriginSchema)(
+            'https://ontos-stage-shop.web-revolution.cz',
+          ),
+        }),
       );
       const replayedCreate = yield* inScope((persistence) =>
-        persistence.create(startInput('durable-enrollment-live', 'd6100000-0000-4000-8000-000000000002')),
+        persistence.create({
+          ...startInput('durable-enrollment-live', 'd6100000-0000-4000-8000-000000000002'),
+          storefrontOrigin: Schema.decodeSync(EnrollmentStorefrontOriginSchema)(
+            'https://ontos-stage-akros.web-revolution.cz',
+          ),
+        }),
       );
+      // The storefront the Attempt started on is recorded once; a replay from another storefront never moves it.
+      const storedOrigin = yield* runtime.transaction((transaction) =>
+        Effect.gen(function* readStoredStorefront() {
+          yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
+          const invoker = scopedRoutineInvokerFromTransaction(makeTransactionExecutor(transaction), scope);
+          return yield* readEnrollmentStorefrontOrigin(invoker, created.attempt.portalEnrollmentAttemptId);
+        }),
+      );
+      expect(storedOrigin).toStrictEqual(Option.some('https://ontos-stage-shop.web-revolution.cz'));
       expect(created.outcome).toBe('CREATED');
       expect(created.attempt.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
       expect(replayedCreate.attempt.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
@@ -908,6 +929,7 @@ it.live(
         const terminateInput = {
           actionInvocationId: actionInvocationId('d6990000-0000-4000-8000-000000000004'),
           actorPrincipalId: principalId,
+          compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
           expectedRevision: successful.attempt.revision,
           portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
           reason: 'owner_finished',
@@ -1161,6 +1183,7 @@ it.live('closes owner admission while already claimed effects retain operation-s
       const terminateInput = {
         actionInvocationId: actionInvocationId('d69b0000-0000-4000-8000-000000000006'),
         actorPrincipalId: principalId,
+        compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
         expectedRevision: finished.attempt.revision,
         portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
         reason: 'owner_finished',

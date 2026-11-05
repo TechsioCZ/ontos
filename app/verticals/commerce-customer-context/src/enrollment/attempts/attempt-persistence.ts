@@ -6,7 +6,7 @@ import type {
   ScopedRoutineParameter,
 } from '@app/core-runtime';
 import { readRetailEnrollmentRestartContext, RETAIL_RESTART_PREFIX } from '../journeys/retail-enrollment-restart.ts';
-import { writeRetailEnrollmentRegistration } from './registration-persistence.ts';
+import { writeEnrollmentStorefrontOrigin, writeRetailEnrollmentRegistration } from './registration-persistence.ts';
 import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -1287,6 +1287,16 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
                     input.retailRegistration,
                   ),
             ),
+            // Recorded with the new Attempt only: an existing one keeps the storefront it started on.
+            Effect.tap((result) =>
+              input.storefrontOrigin === undefined || result.outcome !== 'CREATED'
+                ? Effect.void
+                : writeEnrollmentStorefrontOrigin(
+                    transaction,
+                    result.attempt.portalEnrollmentAttemptId,
+                    input.storefrontOrigin,
+                  ),
+            ),
           ),
         ),
       ),
@@ -1397,12 +1407,18 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
       ),
     terminate: (input) =>
       ensureTenant(scope, input.tenantId).pipe(
-        // Parked work from an earlier release is re-admitted to this one; a terminal Attempt is left as it is and
-        // answers ALREADY_TERMINAL below, and unresolved owner work refuses re-admission (the trigger's fence).
-        Effect.flatMap(() =>
-          transaction
-            .invoke(admitAttemptRoutine, [input.portalEnrollmentAttemptId, input.compositionRevision])
-            .pipe(Effect.mapError(mapRoutineError)),
+        // Parked work admitted under an earlier release is re-admitted to this one first. Work already admitted here,
+        // terminal Attempts and unknown ids go straight to the native terminate answer; unresolved owner work still
+        // refuses re-admission through the composition fence.
+        Effect.flatMap(() => invokeAttempt(readAttemptRoutine, [input.portalEnrollmentAttemptId])),
+        Effect.flatMap(([current]) =>
+          current === undefined ||
+          current.composition_revision === input.compositionRevision ||
+          ['COMPLETE', 'TERMINATED', 'FAILED'].includes(current.state)
+            ? Effect.void
+            : transaction
+                .invoke(admitAttemptRoutine, [input.portalEnrollmentAttemptId, input.compositionRevision])
+                .pipe(Effect.mapError(mapRoutineError)),
         ),
         Effect.flatMap(() =>
           invokeAttempt(terminateAttemptRoutine, [

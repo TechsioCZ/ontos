@@ -27,6 +27,7 @@ import type { CommerceEnrollmentAttemptError } from '../../src/enrollment/attemp
 import {
   makeCommerceEnrollmentPortalAuthOwnerPreparationPort,
   providerObservationFor,
+  providerAccountCreationObservationFor,
 } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommerceEnrollmentOwnerTransactionRunner } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import {
@@ -384,3 +385,25 @@ for (const scenario of [
     }),
   );
 }
+
+it.effect('re-sends the verification mail to the storefront the Attempt started on', () =>
+  Effect.gen(function* resendsToTheStoredStorefront() {
+    const requests: { readonly ownerInvocationId: string; readonly storefrontOrigin: Option.Option<string> }[] = [];
+    const observation = yield* providerAccountCreationObservationFor(
+      observedAttempt(),
+      {
+        reissueVerificationEmail: (input) =>
+          Effect.sync(() => {
+            requests.push(input);
+            return Option.some({ providerSubjectId: 'provider-user-shop' });
+          }),
+      },
+      ownerInvocationId,
+      Effect.succeedSome('https://ontos-stage-shop.web-revolution.cz'),
+    );
+    expect(observation.outcome).toBe('FOUND');
+    expect(requests).toStrictEqual([
+      { ownerInvocationId, storefrontOrigin: Option.some('https://ontos-stage-shop.web-revolution.cz') },
+    ]);
+  }),
+);

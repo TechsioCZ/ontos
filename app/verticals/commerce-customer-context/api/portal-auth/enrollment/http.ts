@@ -39,6 +39,7 @@ import {
   EnrollmentKeySchema,
   EnrollmentPrincipalIdSchema,
   EnrollmentResourceIdSchema,
+  EnrollmentStorefrontOriginSchema,
   EnrollmentTenantIdSchema,
   ReadEnrollmentAttemptInputSchema,
   RecordEnrollmentOutcomeInputSchema,
@@ -872,11 +873,17 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     });
 
   const continuation = yield* CommerceEnrollmentContinuation;
-  const intent =
-    restart?.intent ??
-    (yield* commercePortalAuthEnrollmentIntent(input).pipe(
-      Effect.mapError(commercePortalAuthEnrollmentInvalidProblem),
-    ));
+  // The admitted request origin is the storefront this Attempt starts on; every later verification mail returns there.
+  const storefrontOrigin = yield* Schema.decodeUnknownEffect(EnrollmentStorefrontOriginSchema)(
+    request.headers['origin'],
+  ).pipe(Effect.mapError(commercePortalAuthEnrollmentInvalidProblem));
+  const intent = {
+    ...(restart?.intent ??
+      (yield* commercePortalAuthEnrollmentIntent(input).pipe(
+        Effect.mapError(commercePortalAuthEnrollmentInvalidProblem),
+      ))),
+    storefrontOrigin,
+  };
   const restartRunner = yield* CommerceEnrollmentOwnerTransactionRunner;
   const started = yield* restart === undefined
     ? runEnrollmentAction(startPortalEnrollmentAction, intent)

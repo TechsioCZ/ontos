@@ -8,6 +8,7 @@ import type { CommercePortalAuthAccountCreationReconciliation } from '../../../a
 import { CommercePortalAuthDatabase } from './portal-auth-database.ts';
 import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-types.ts';
 import { user } from './portal-auth-tables.ts';
+import { storefrontVerificationCallback } from '../../../api/portal-auth/provider/storefront-verification-link.ts';
 
 const reconciliationUnavailable = (reason: string, cause: unknown): CommercePortalAuthAccountCreationUnavailable =>
   Object.defineProperty(new CommercePortalAuthAccountCreationUnavailable({ reason }), 'cause', {
@@ -21,7 +22,7 @@ const makeCommercePortalAuthAccountCreationReconciliation = (
   provider: CommercePortalAuthAccountCreationProviderService['Service'],
 ): CommercePortalAuthAccountCreationReconciliation => ({
   reissueVerificationEmail: Effect.fn('CommercePortalAuthAccountCreationReconciliation.reissueVerificationEmail')(
-    function* reissueVerificationEmail({ ownerInvocationId }) {
+    function* reissueVerificationEmail({ ownerInvocationId, storefrontOrigin }) {
       const correlated = yield* database
         .select({ email: user.email, providerSubjectId: user.id })
         .from(user)
@@ -40,8 +41,11 @@ const makeCommercePortalAuthAccountCreationReconciliation = (
         return Option.none();
       }
 
+      const body = Option.isSome(storefrontOrigin)
+        ? { callbackURL: storefrontVerificationCallback(new URL(storefrontOrigin.value)), email: account.email }
+        : { email: account.email };
       yield* provider.api
-        .sendVerificationEmail({ body: { email: account.email } })
+        .sendVerificationEmail({ body })
         .pipe(
           Effect.mapError((cause) =>
             reconciliationUnavailable(

@@ -100,7 +100,11 @@ import {
 import type { RetailSelfEnrollmentStepIntent } from '../journeys/retail-self-enrollment-contracts.ts';
 import { decodeOwnerResolution, ownerUnavailable } from './owner-effect-codec.ts';
 import type { OwnerResolutionDraft } from './owner-effect-codec.ts';
-import { providerAccountCreationObservationFor, providerObservationFor } from './owner-transition-composition.ts';
+import {
+  providerAccountCreationObservationFor,
+  providerObservationFor,
+  storefrontOriginReader,
+} from './owner-transition-composition.ts';
 import { commerceEnrollmentCoreIdentityOwnerEffectFor } from './owner-transition-driver.ts';
 import type {
   CommerceEnrollmentCoreIdentityOwnerEffectOptions,
@@ -805,6 +809,7 @@ const portalAccountEntry =
   (
     accountLookup: CommercePortalAuthAccountLookup,
     accountCreationReconciliation: CommercePortalAuthAccountCreationReconciliation,
+    run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
   ): PortalAccountRegistryEntry =>
   (transition, context) =>
     Effect.succeedSome({
@@ -815,6 +820,10 @@ const portalAccountEntry =
               context.attempt,
               accountCreationReconciliation,
               reconciliation.ownerInvocationId,
+              Option.match(run, {
+                onNone: () => Effect.succeedNone,
+                onSome: (owner) => storefrontOriginReader(owner, context.attempt),
+              }),
             )
           : providerObservationFor(context.attempt, accountLookup, reconciliation.ownerInvocationId),
       ).reconcile,
@@ -1332,7 +1341,7 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
           `commerce-enrollment-continuation:${context.attempt.portalEnrollmentAttemptId}`,
         ),
     };
-    const portalAccount = portalAccountEntry(accountLookup, accountCreationReconciliation);
+    const portalAccount = portalAccountEntry(accountLookup, accountCreationReconciliation, ownerTransactionRun);
     const entries: ReadonlyMap<string, RegistryEntry> = new Map([
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, RETAIN_RETAIL_RESULTS_TRANSITION),

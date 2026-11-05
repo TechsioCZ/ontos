@@ -14,6 +14,8 @@ interface CommercePortalAuthAccountCreationReconciliationResult {
 export interface CommercePortalAuthAccountCreationReconciliation {
   readonly reissueVerificationEmail: (input: {
     readonly ownerInvocationId: string;
+    /** The storefront the Attempt started on; the re-sent link returns there when it is a trusted origin. */
+    readonly storefrontOrigin: Option.Option<string>;
   }) => Effect.Effect<
     Option.Option<CommercePortalAuthAccountCreationReconciliationResult>,
     CommercePortalAuthAccountCreationUnavailable

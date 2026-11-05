@@ -4,6 +4,7 @@ import { Effect, Option, Schema } from 'effect';
 import {
   EnrollmentAttemptIdSchema,
   EnrollmentResourceIdSchema,
+  EnrollmentStorefrontOriginSchema,
   RetailEnrollmentRegistrationSchema,
 } from '../../../shared/enrollment-contracts.ts';
 import type {
@@ -36,6 +37,29 @@ const readRegistrationRoutine = defineScopedRoutine({
   ],
   resultSchema: Schema.Struct({ registration: RetailEnrollmentRegistrationSchema }),
   routineKey: 'portal-enrollment.registration.read',
+  schema: 'commerce_customer_context',
+});
+const writeStorefrontOriginRoutine = defineScopedRoutine({
+  name: 'write_portal_enrollment_storefront_origin',
+  ownerModuleKey,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'text' },
+  ],
+  resultSchema: Schema.Struct({ written: Schema.Boolean }),
+  routineKey: 'portal-enrollment.storefront-origin.write',
+  schema: 'commerce_customer_context',
+});
+const readStorefrontOriginRoutine = defineScopedRoutine({
+  name: 'read_portal_enrollment_storefront_origin',
+  ownerModuleKey,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: Schema.Struct({ storefront_origin: EnrollmentStorefrontOriginSchema }),
+  routineKey: 'portal-enrollment.storefront-origin.read',
   schema: 'commerce_customer_context',
 });
 const readAccountPartyRoutine = defineScopedRoutine({
@@ -80,6 +104,29 @@ export const readRetailEnrollmentRegistration = (
   transaction.invoke(readRegistrationRoutine, [attemptId]).pipe(
     Effect.mapError((cause) => attemptUnavailable('The retail registration could not be read', attemptId, cause)),
     Effect.map((rows) => Option.fromNullishOr(rows[0]?.registration)),
+  );
+
+/** Records the storefront a new Attempt started on; the first recorded storefront stays (immutable). */
+export const writeEnrollmentStorefrontOrigin = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  attemptId: EnrollmentAttemptId,
+  storefrontOrigin: string,
+) =>
+  transaction.invoke(writeStorefrontOriginRoutine, [attemptId, storefrontOrigin]).pipe(
+    Effect.mapError((cause) =>
+      attemptUnavailable('The enrollment storefront could not be durably recorded', attemptId, cause),
+    ),
+    Effect.asVoid,
+  );
+
+/** The storefront an Attempt started on, for every later verification mail it sends. */
+export const readEnrollmentStorefrontOrigin = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  attemptId: EnrollmentAttemptId,
+) =>
+  transaction.invoke(readStorefrontOriginRoutine, [attemptId]).pipe(
+    Effect.mapError((cause) => attemptUnavailable('The enrollment storefront could not be read', attemptId, cause)),
+    Effect.map((rows) => Option.map(Option.fromNullishOr(rows[0]), (row) => String(row.storefront_origin))),
   );
 
 /** Exact provider-subject mapping, never an email-based customer search. */

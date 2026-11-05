@@ -116,6 +116,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'read_original_portal_enrollment',
   'read_portal_enrollment_attempt',
   'read_portal_enrollment_owner_operation',
+  'read_portal_enrollment_storefront_origin',
   'read_price_group_assignment_compatibility_evidence',
   'read_price_group_assignments',
   'read_privacy_measure_execution',
@@ -166,6 +167,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'verify_payment_terms_reconciliation_owner',
   'write_customer_consent_receipt',
   'write_demo_newsletter_choice',
+  'write_portal_enrollment_storefront_origin',
   'write_retail_enrollment_registration',
 ] as const;
 

@@ -171,12 +171,23 @@ export const RetailEnrollmentRegistrationSchema = Schema.Struct({
 });
 export type RetailEnrollmentRegistration = typeof RetailEnrollmentRegistrationSchema.Type;
 
+/**
+ * The trusted origin of the storefront an Attempt started on: a bare HTTP(S) origin. Verification mail links back to
+ * it, and the realm rebases a link only onto one of its trusted origins.
+ */
+export const EnrollmentStorefrontOriginSchema = Schema.String.check(
+  Schema.isMaxLength(300),
+  Schema.isPattern(/^https?:\/\/[^/?#@\s]+$/u),
+).pipe(Schema.brand('EnrollmentStorefrontOrigin'));
+
 export const EnrollmentAttemptIntentSchema = Schema.Struct({
   intentDigest: EnrollmentDigestSchema,
   intentKey: EnrollmentKeySchema,
   invitationId: Schema.optionalKey(EnrollmentInvitationIdSchema),
   journey: EnrollmentJourneySchema,
   retailRegistration: Schema.optionalKey(RetailEnrollmentRegistrationSchema),
+  /** Recorded once, when the Attempt is created; never part of the intent identity or digest. */
+  storefrontOrigin: Schema.optionalKey(EnrollmentStorefrontOriginSchema),
   targetLegalEntityId: Schema.optionalKey(EnrollmentLegalEntityIdSchema),
   targetResourceId: Schema.optionalKey(EnrollmentResourceIdSchema),
 });
