@@ -17,12 +17,16 @@ import {
   planTeamMembership,
 } from '../../src/access/lifecycle/people-commands.ts';
 import type { ManagerAuthority } from '../../src/access/lifecycle/delegation.ts';
-import type { PeopleChangePlan, PeopleIntentWrite } from '../../src/access/lifecycle/people-commands.ts';
+import type {
+  GrantorAlternative,
+  PeopleChangePlan,
+  PeopleIntentWrite,
+} from '../../src/access/lifecycle/people-commands.ts';
 import { AccessMembershipIdSchema, AccessMembershipSchema } from '../../src/access/intent/memberships.ts';
 import type { AccessMembership, MembershipKind, MembershipStatus } from '../../src/access/intent/memberships.ts';
 import { AccessTeamMemberIdSchema, AccessTeamMemberSchema, AccessTeamSchema } from '../../src/access/intent/teams.ts';
 import type { AccessTeam, AccessTeamMember } from '../../src/access/intent/teams.ts';
-import type { AccessScope, Assignment, Delegation, RoleRevision } from '../../src/access/model.ts';
+import type { AccessScope, Assignment, Cell, Delegation, RoleRevision } from '../../src/access/model.ts';
 import {
   capabilityKey,
   clockDates,
@@ -531,6 +535,8 @@ interface DelegationRequestFixture {
   readonly memberships?: readonly AccessMembership[];
 }
 
+const czkCeiling = (limitMinor: number) => ({ currency: CZK, limitMinor });
+
 const delegationRequest = (fixture: DelegationRequestFixture = {}) => {
   const base = {
     ...facts,
@@ -610,47 +616,54 @@ it.effect('grants one bounded delegation and refuses a misattributed, self-manag
     );
     expect(unknownRole.code).toBe('delegation_role_unknown');
 
-    // A delegation beyond its grantor's own amount ceiling is widening authority nobody holds.
-    const overCeiling = yield* Effect.flip(
+    // The grantor's grants are checked against every cell the delegated roles carry, mode by mode.
+    const money = [makeEntry({ amountInput: 'amountMinor' })];
+    const runCell = makeCell({ mode: 'run' });
+    const bounded = (
+      delegation: Delegation,
+      grants: readonly GrantorAlternative[],
+      delegatedCells: readonly Cell[] = [runCell],
+    ) =>
       planDelegationGrant({
-        ...delegationRequest({
-          at: dates.now,
-          delegation: live({ amountCeiling: { currency: CZK, limitMinor: 9000 } }),
-        }),
-        grantorCeilings: new Map([[ENVELOPE_KEY, [{ currency: CZK, limitMinor: 5000 }]]]),
-      }),
+        ...delegationRequest({ at: dates.now, delegation }),
+        catalog: money,
+        delegatedCells,
+        grantorAuthority: new Map([[ENVELOPE_KEY, grants]]),
+      });
+
+    // A delegation beyond its grantor's own amount ceiling is widening authority nobody holds ...
+    const overCeiling = yield* Effect.flip(
+      bounded(live({ amountCeiling: czkCeiling(9000) }), [{ amountCeiling: czkCeiling(5000), mode: 'run' }]),
     );
     expect(overCeiling.code).toBe('delegation_amount_outside_envelope');
-
-    // A capped grantor cannot hand out an envelope that names no ceiling: that one is unlimited.
-    const uncapped = yield* Effect.flip(
-      planDelegationGrant({
-        ...delegationRequest({ at: dates.now, delegation: live() }),
-        grantorCeilings: new Map([[ENVELOPE_KEY, [{ currency: CZK, limitMinor: 5000 }]]]),
-      }),
-    );
+    // ... and a capped grantor cannot hand out an envelope that names no ceiling: that one is unlimited.
+    const uncapped = yield* Effect.flip(bounded(live(), [{ amountCeiling: czkCeiling(5000), mode: 'run' }]));
     expect(uncapped.code).toBe('delegation_amount_outside_envelope');
 
-    // Each grant for a capability is an alternative: the wider one covers what the narrower does not ...
-    const covered = yield* planDelegationGrant({
-      ...delegationRequest({ at: dates.now, delegation: live({ amountCeiling: { currency: CZK, limitMinor: 500 } }) }),
-      grantorCeilings: new Map([
-        [
-          ENVELOPE_KEY,
-          [
-            { currency: CZK, limitMinor: 100 },
-            { currency: CZK, limitMinor: 1000 },
-          ],
-        ],
-      ]),
-    });
+    // Each grant is an alternative: the wider one covers what the narrower does not ...
+    const covered = yield* bounded(live({ amountCeiling: czkCeiling(500) }), [
+      { amountCeiling: czkCeiling(100), mode: 'run' },
+      { amountCeiling: czkCeiling(1000), mode: 'run' },
+    ]);
     expect(writeTags(covered)).toEqual(['RecordDelegation']);
     // ... and an uncapped grant covers even an envelope with no ceiling.
-    const unlimited = yield* planDelegationGrant({
-      ...delegationRequest({ at: dates.now, delegation: live() }),
-      grantorCeilings: new Map([[ENVELOPE_KEY, 'uncapped']]),
-    });
+    const unlimited = yield* bounded(live(), [{ mode: 'run' }]);
     expect(writeTags(unlimited)).toEqual(['RecordDelegation']);
+
+    // A grant to propose never lifts the ceiling on running, nor stands in for running at all ...
+    const proposeLiftsRun = yield* Effect.flip(
+      bounded(live(), [{ amountCeiling: czkCeiling(5000), mode: 'run' }, { mode: 'propose' }]),
+    );
+    expect(proposeLiftsRun.code).toBe('delegation_amount_outside_envelope');
+    const proposeOnly = yield* Effect.flip(bounded(live({ amountCeiling: czkCeiling(100) }), [{ mode: 'propose' }]));
+    expect(proposeOnly.code).toBe('delegation_outside_grantor_authority');
+    // ... while a role that only proposes is covered by the grant to propose.
+    const proposing = yield* bounded(
+      live(),
+      [{ amountCeiling: czkCeiling(5000), mode: 'run' }, { mode: 'propose' }],
+      [makeCell({ mode: 'propose' })],
+    );
+    expect(writeTags(proposing)).toEqual(['RecordDelegation']);
 
     // The envelope never reaches a person who is not a live member of its scope.
     const nonMember = yield* Effect.flip(

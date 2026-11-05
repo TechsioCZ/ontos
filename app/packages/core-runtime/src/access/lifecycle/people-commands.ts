@@ -11,10 +11,12 @@ import {
 import type { AccessTeam, AccessTeamMember, AccessTeamMemberId } from '../intent/teams.ts';
 import { AccessTeamMemberIdSchema, AccessTeamMemberSchema } from '../intent/teams.ts';
 import type {
+  AccessMode,
   AccessScope,
   AmountCeiling,
   Assignment,
   CatalogSnapshotEntry,
+  Cell,
   Delegation,
   Holder,
   Role,
@@ -850,21 +852,24 @@ export const planRoleUnassignment = (
  * ---------------------------------------------------------------------------------------------- */
 
 /**
- * What a grantor holds for one money capability: `uncapped` when any of their grants for it names no
- * ceiling, otherwise every ceiling they hold for it, each one an alternative the decision engine accepts.
+ * One grant the grantor holds for a capability: the mode it reaches and, for a capability that moves
+ * money, its ceiling (none means uncapped). Each grant is its own alternative, as the decision engine
+ * reads it: a narrow grant never hides a wider one, and one mode's limit never bounds another's.
  */
-export type GrantorCeilings = 'uncapped' | readonly AmountCeiling[];
+export interface GrantorAlternative {
+  readonly amountCeiling?: AmountCeiling;
+  readonly mode: AccessMode;
+}
 
 export interface DelegationGrantRequest extends PeopleCommandFacts {
   readonly catalog: readonly CatalogSnapshotEntry[];
+  /** The cells of the roles the delegation lets its manager assign, as those roles stand now. */
+  readonly delegatedCells?: readonly Cell[];
   readonly delegation: Delegation;
+  /** Every grant the grantor holds, per capability key; checked against `delegatedCells` mode by mode. */
+  readonly grantorAuthority?: ReadonlyMap<CatalogSnapshotEntry['key'], readonly GrantorAlternative[]>;
   /** The grantor's own capability keys, read from their live authority; a delegate never exceeds them. */
   readonly grantorCapabilityKeys: readonly CatalogSnapshotEntry['key'][];
-  /**
-   * The money ceilings the grantor holds, per capability they may spend money through. A key that is
-   * absent moves no money.
-   */
-  readonly grantorCeilings?: ReadonlyMap<CatalogSnapshotEntry['key'], GrantorCeilings>;
   readonly managerAuthority: ManagerAuthority;
   readonly memberships: readonly AccessMembership[];
   readonly roles: readonly Role[];
@@ -877,26 +882,44 @@ export interface DelegationGrantRequest extends PeopleCommandFacts {
  * granted by a person who holds what they hand out, never to itself, and never re-delegated (P8).
  */
 /**
- * True when a delegation hands out a money envelope wider than its grantor holds for any capability it
- * covers (D10b). Each capability is checked on its own, and it fits when one of the grantor's grants
- * for it covers the envelope: an uncapped grant, or a ceiling in the same currency at least as high. A
- * delegation that names no ceiling is unlimited, so only an uncapped grant covers it.
+ * Why a delegation would let its manager hand out more than the grantor holds (D10b), if it would.
+ * Every mode the delegated roles' cells use for a covered capability needs one of the grantor's grants
+ * for that capability in that same mode. For a capability that moves money, that grant must also cover
+ * the delegation's ceiling: uncapped, or in the same currency and at least as high. A delegation that
+ * names no ceiling is unlimited, so only an uncapped grant covers it. The delegation's own ceiling is
+ * what is checked, never a cell's, because the ceiling outlives any revision of the roles it covers. A
+ * grant to propose therefore never lifts a ceiling on running, and never stands in for running.
  */
-const beyondGrantorCeiling = (
-  delegation: Delegation,
-  grantorCeilings: ReadonlyMap<CatalogSnapshotEntry['key'], GrantorCeilings> | undefined,
-): boolean =>
-  delegation.capabilityKeys.some((capabilityKey) => {
-    const held = grantorCeilings?.get(capabilityKey) ?? 'uncapped';
-    const { amountCeiling } = delegation;
-    return (
-      held !== 'uncapped' &&
-      (amountCeiling === undefined ||
-        !held.some(
-          (ceiling) => ceiling.currency === amountCeiling.currency && amountCeiling.limitMinor <= ceiling.limitMinor,
-        ))
-    );
+const beyondGrantorAuthority = (
+  request: DelegationGrantRequest,
+): 'delegation_amount_outside_envelope' | 'delegation_outside_grantor_authority' | undefined => {
+  const { delegation, grantorAuthority } = request;
+  if (grantorAuthority === undefined) {
+    return undefined;
+  }
+  const moneyKeys = new Set(
+    request.catalog.filter((entry) => entry.amountInput !== undefined).map((entry) => entry.key),
+  );
+  const envelope = new Set<string>(delegation.capabilityKeys);
+  const { amountCeiling } = delegation;
+  const issues = (request.delegatedCells ?? []).flatMap((cell) => {
+    if (!envelope.has(cell.capabilityKey)) {
+      return [];
+    }
+    const inMode = (grantorAuthority.get(cell.capabilityKey) ?? []).filter((grant) => grant.mode === cell.mode);
+    const covers = (grant: GrantorAlternative): boolean =>
+      !moneyKeys.has(cell.capabilityKey) ||
+      grant.amountCeiling === undefined ||
+      (amountCeiling !== undefined &&
+        amountCeiling.currency === grant.amountCeiling.currency &&
+        amountCeiling.limitMinor <= grant.amountCeiling.limitMinor);
+    if (inMode.length === 0) {
+      return ['delegation_outside_grantor_authority' as const];
+    }
+    return inMode.some(covers) ? [] : ['delegation_amount_outside_envelope' as const];
   });
+  return issues.find((issue) => issue === 'delegation_outside_grantor_authority') ?? issues[0];
+};
 
 export const planDelegationGrant = (
   request: DelegationGrantRequest,
@@ -922,14 +945,6 @@ export const planDelegationGrant = (
       ),
     );
   }
-  if (beyondGrantorCeiling(delegation, request.grantorCeilings)) {
-    return Effect.fail(
-      peopleRefusal(
-        'delegation_amount_outside_envelope',
-        'The delegation amount ceiling is outside the ceiling its grantor holds',
-      ),
-    );
-  }
   return Effect.gen(function* planDelegationGrantEffect() {
     yield* Effect.mapError(
       assertDelegationEnvelope({
@@ -942,6 +957,16 @@ export const planDelegationGrant = (
       }),
       toPeopleRefusal,
     );
+    // Checked after the envelope rule, so a delegate asking to re-delegate hears that rule first.
+    const grantorIssue = beyondGrantorAuthority(request);
+    if (grantorIssue !== undefined) {
+      return yield* peopleRefusal(
+        grantorIssue,
+        grantorIssue === 'delegation_amount_outside_envelope'
+          ? 'The delegation amount ceiling is outside the ceiling its grantor holds in that mode'
+          : 'The delegation reaches a mode its grantor holds no grant in',
+      );
+    }
     yield* Effect.mapError(assertDelegationLive({ delegation, managerIsMember: true }), toPeopleRefusal);
     yield* requireLiveMember({
       at: request.at,
