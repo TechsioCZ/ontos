@@ -51,10 +51,16 @@ process="$(jq -n --rawfile yaml app/zerops.yaml --arg setup "$setup" '{zeropsYam
 process_id="$(jq -er '.id' <<<"$process")"
 echo "build and deploy process $process_id for app version $version_id"
 while true; do
-  status="$(curl -fsS "${auth[@]}" "$api/process/$process_id" | jq -r '.status')"
+  state="$(curl -fsS "${auth[@]}" "$api/process/$process_id")"
+  status="$(jq -r '.status' <<<"$state")"
   case "$status" in
     FINISHED) echo "$setup deployed in $(($(date +%s) - started))s"; exit 0 ;;
-    FAILED | CANCELED) echo "$setup build and deploy $status" >&2; exit 1 ;;
+    FAILED | CANCELED)
+      echo "$setup build and deploy $status" >&2
+      # The Actions log is public: print the failure fields and key names only, never the user who started it.
+      jq -c '{keys: keys, actionName, finished, failReason, error, publicMeta}' <<<"$state" >&2 || true
+      exit 1
+      ;;
   esac
   sleep 15
 done
