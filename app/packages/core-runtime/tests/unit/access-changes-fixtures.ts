@@ -216,6 +216,7 @@ export const assignment = (
     readonly holder?: Holder;
     readonly incarnationId?: string;
     readonly roleId?: string;
+    readonly roleRevisionId?: string;
     readonly scopeId?: string;
     readonly status?: string;
     readonly validFrom?: Date;
@@ -228,7 +229,7 @@ export const assignment = (
     holder: input.holder ?? principalHolder(),
     incarnationId: input.incarnationId ?? fixedId(50),
     roleId: input.roleId ?? ROLE,
-    roleRevisionId: fixedId(40),
+    roleRevisionId: input.roleRevisionId ?? fixedId(40),
     scopeId: input.scopeId ?? SCOPE,
     status: input.status ?? 'active',
     tenantId: TENANT,

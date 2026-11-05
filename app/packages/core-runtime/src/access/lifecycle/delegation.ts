@@ -1,11 +1,13 @@
-import { Clock, DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Clock, DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
 
 import type { AssignmentIncarnationId, CapabilityKey, PrincipalId, RoleId } from '../ids.ts';
 import type {
   AccessScope,
+  AmountCeiling,
   Assignment,
   CatalogSnapshotEntry,
   Cell,
+  CellSelector,
   DelegatedLimits,
   Delegation,
   Holder,
@@ -169,6 +171,30 @@ const ceilingIssue = (
         'The amount limit of the cell is not inside the delegation amount ceiling',
       );
 };
+
+/**
+ * Whether one selector reaches every record another reaches: `all` reaches every record, explicit
+ * targets reach any subset of themselves, and every other relation reaches only that same relation.
+ */
+export const selectorCovers = (held: CellSelector, wanted: CellSelector): boolean =>
+  Match.value(held).pipe(
+    Match.tags({
+      all: () => true,
+      assigned: () => Predicate.isTagged(wanted, 'assigned'),
+      entrusted: () => Predicate.isTagged(wanted, 'entrusted'),
+      targets: ({ recordKeys }) => {
+        const reached = new Set<string>(recordKeys);
+        return Predicate.isTagged(wanted, 'targets') && wanted.recordKeys.every((recordKey) => reached.has(recordKey));
+      },
+      team: () => Predicate.isTagged(wanted, 'team'),
+    }),
+    Match.exhaustive,
+  );
+
+/** Whether a held amount ceiling covers a wanted one: uncapped covers all, else same currency, no higher. */
+export const ceilingCovers = (held: AmountCeiling | undefined, wanted: AmountCeiling | undefined): boolean =>
+  held === undefined ||
+  (wanted !== undefined && wanted.currency === held.currency && wanted.limitMinor <= held.limitMinor);
 
 /**
  * D10/P8: one cell is inside the envelope when its exact capability key, its role and — for a money

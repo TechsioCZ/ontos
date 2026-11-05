@@ -217,14 +217,14 @@ const authorityOf = (
   const moneyKeys = new Set(catalog.filter((entry) => entry.amountInput !== undefined).map((entry) => entry.key));
   const capabilityKeys = new Set<CatalogSnapshotEntry['key']>();
   const grants = new Map<CatalogSnapshotEntry['key'], GrantorAlternative[]>();
-  // Every grant is kept as its own alternative, with its mode: one capability's or one mode's limit
+  // Every grant is kept as its own alternative, with its mode and records: one capability's or one mode's limit
   // never bounds another's, and a narrow grant never hides a wider one.
   const hold = (cell: Cell, cellCeiling: AmountCeiling | undefined) => {
     capabilityKeys.add(cell.capabilityKey);
     const grant: GrantorAlternative =
       cellCeiling === undefined || !moneyKeys.has(cell.capabilityKey)
-        ? { mode: cell.mode }
-        : { amountCeiling: cellCeiling, mode: cell.mode };
+        ? { mode: cell.mode, selector: cell.selector }
+        : { amountCeiling: cellCeiling, mode: cell.mode, selector: cell.selector };
     grants.set(cell.capabilityKey, [...(grants.get(cell.capabilityKey) ?? []), grant]);
   };
   for (const assignment of view.assignments) {

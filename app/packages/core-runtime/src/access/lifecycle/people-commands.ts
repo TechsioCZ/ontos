@@ -17,6 +17,7 @@ import type {
   Assignment,
   CatalogSnapshotEntry,
   Cell,
+  CellSelector,
   Delegation,
   Holder,
   Role,
@@ -29,7 +30,9 @@ import {
   assertDelegatedAssignmentStaysBounded,
   assertDelegationEnvelope,
   assertDelegationLive,
+  ceilingCovers,
   planDelegatedAssignment,
+  selectorCovers,
 } from './delegation.ts';
 import { isSoleAdministrator } from './owners.ts';
 import type { ScopeAdministration } from './owners.ts';
@@ -852,13 +855,14 @@ export const planRoleUnassignment = (
  * ---------------------------------------------------------------------------------------------- */
 
 /**
- * One grant the grantor holds for a capability: the mode it reaches and, for a capability that moves
+ * One grant the grantor holds for a capability: the mode and records it reaches and, for a capability that moves
  * money, its ceiling (none means uncapped). Each grant is its own alternative, as the decision engine
  * reads it: a narrow grant never hides a wider one, and one mode's limit never bounds another's.
  */
 export interface GrantorAlternative {
   readonly amountCeiling?: AmountCeiling;
   readonly mode: AccessMode;
+  readonly selector: CellSelector;
 }
 
 export interface DelegationGrantRequest extends PeopleCommandFacts {
@@ -883,12 +887,13 @@ export interface DelegationGrantRequest extends PeopleCommandFacts {
  */
 /**
  * Why a delegation would let its manager hand out more than the grantor holds (D10b), if it would.
- * Every mode the delegated roles' cells use for a covered capability needs one of the grantor's grants
- * for that capability in that same mode. For a capability that moves money, that grant must also cover
- * the delegation's ceiling: uncapped, or in the same currency and at least as high. A delegation that
- * names no ceiling is unlimited, so only an uncapped grant covers it. The delegation's own ceiling is
- * what is checked, never a cell's, because the ceiling outlives any revision of the roles it covers. A
- * grant to propose therefore never lifts a ceiling on running, and never stands in for running.
+ * Every cell the delegated roles carry for a covered capability needs one of the grantor's grants for
+ * that capability in the same mode, reaching every record the cell reaches. For a capability that
+ * moves money, one such grant must also cover the delegation's ceiling: uncapped, or in the same
+ * currency and at least as high. A delegation that names no ceiling is unlimited, so only an uncapped
+ * grant covers it. The delegation's own ceiling is checked, never a cell's, because it bounds every
+ * cell the delegate later assigns. A grant to propose therefore never lifts a ceiling on running, and
+ * never stands in for running; a grant for one record never stands in for all of them.
  */
 const beyondGrantorAuthority = (
   request: DelegationGrantRequest,
@@ -906,17 +911,15 @@ const beyondGrantorAuthority = (
     if (!envelope.has(cell.capabilityKey)) {
       return [];
     }
-    const inMode = (grantorAuthority.get(cell.capabilityKey) ?? []).filter((grant) => grant.mode === cell.mode);
-    const covers = (grant: GrantorAlternative): boolean =>
-      !moneyKeys.has(cell.capabilityKey) ||
-      grant.amountCeiling === undefined ||
-      (amountCeiling !== undefined &&
-        amountCeiling.currency === grant.amountCeiling.currency &&
-        amountCeiling.limitMinor <= grant.amountCeiling.limitMinor);
-    if (inMode.length === 0) {
+    const reaching = (grantorAuthority.get(cell.capabilityKey) ?? []).filter(
+      (grant) => grant.mode === cell.mode && selectorCovers(grant.selector, cell.selector),
+    );
+    if (reaching.length === 0) {
       return ['delegation_outside_grantor_authority' as const];
     }
-    return inMode.some(covers) ? [] : ['delegation_amount_outside_envelope' as const];
+    const covered =
+      !moneyKeys.has(cell.capabilityKey) || reaching.some((grant) => ceilingCovers(grant.amountCeiling, amountCeiling));
+    return covered ? [] : ['delegation_amount_outside_envelope' as const];
   });
   return issues.find((issue) => issue === 'delegation_outside_grantor_authority') ?? issues[0];
 };

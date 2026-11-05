@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import type { AccessScopeId, PrincipalId } from '../../src/access/ids.ts';
+import { RecordKeySchema } from '../../src/access/ids.ts';
 import {
   combinePeopleChangePlans,
   membershipIsLive,
@@ -536,6 +537,11 @@ interface DelegationRequestFixture {
 }
 
 const czkCeiling = (limitMinor: number) => ({ currency: CZK, limitMinor });
+/** One grantor grant over every record, capped in CZK when a limit is given. */
+const grantOf = (mode: GrantorAlternative['mode'], limitMinor?: number): GrantorAlternative =>
+  limitMinor === undefined
+    ? { mode, selector: { _tag: 'all' } }
+    : { amountCeiling: czkCeiling(limitMinor), mode, selector: { _tag: 'all' } };
 
 const delegationRequest = (fixture: DelegationRequestFixture = {}) => {
   const base = {
@@ -632,38 +638,46 @@ it.effect('grants one bounded delegation and refuses a misattributed, self-manag
       });
 
     // A delegation beyond its grantor's own amount ceiling is widening authority nobody holds ...
-    const overCeiling = yield* Effect.flip(
-      bounded(live({ amountCeiling: czkCeiling(9000) }), [{ amountCeiling: czkCeiling(5000), mode: 'run' }]),
-    );
+    const overCeiling = yield* Effect.flip(bounded(live({ amountCeiling: czkCeiling(9000) }), [grantOf('run', 5000)]));
     expect(overCeiling.code).toBe('delegation_amount_outside_envelope');
     // ... and a capped grantor cannot hand out an envelope that names no ceiling: that one is unlimited.
-    const uncapped = yield* Effect.flip(bounded(live(), [{ amountCeiling: czkCeiling(5000), mode: 'run' }]));
+    const uncapped = yield* Effect.flip(bounded(live(), [grantOf('run', 5000)]));
     expect(uncapped.code).toBe('delegation_amount_outside_envelope');
 
     // Each grant is an alternative: the wider one covers what the narrower does not ...
     const covered = yield* bounded(live({ amountCeiling: czkCeiling(500) }), [
-      { amountCeiling: czkCeiling(100), mode: 'run' },
-      { amountCeiling: czkCeiling(1000), mode: 'run' },
+      grantOf('run', 100),
+      grantOf('run', 1000),
     ]);
     expect(writeTags(covered)).toEqual(['RecordDelegation']);
     // ... and an uncapped grant covers even an envelope with no ceiling.
-    const unlimited = yield* bounded(live(), [{ mode: 'run' }]);
+    const unlimited = yield* bounded(live(), [grantOf('run')]);
     expect(writeTags(unlimited)).toEqual(['RecordDelegation']);
 
     // A grant to propose never lifts the ceiling on running, nor stands in for running at all ...
-    const proposeLiftsRun = yield* Effect.flip(
-      bounded(live(), [{ amountCeiling: czkCeiling(5000), mode: 'run' }, { mode: 'propose' }]),
-    );
+    const proposeLiftsRun = yield* Effect.flip(bounded(live(), [grantOf('run', 5000), grantOf('propose')]));
     expect(proposeLiftsRun.code).toBe('delegation_amount_outside_envelope');
-    const proposeOnly = yield* Effect.flip(bounded(live({ amountCeiling: czkCeiling(100) }), [{ mode: 'propose' }]));
+    const proposeOnly = yield* Effect.flip(bounded(live({ amountCeiling: czkCeiling(100) }), [grantOf('propose')]));
     expect(proposeOnly.code).toBe('delegation_outside_grantor_authority');
     // ... while a role that only proposes is covered by the grant to propose.
     const proposing = yield* bounded(
       live(),
-      [{ amountCeiling: czkCeiling(5000), mode: 'run' }, { mode: 'propose' }],
+      [grantOf('run', 5000), grantOf('propose')],
       [makeCell({ mode: 'propose' })],
     );
     expect(writeTags(proposing)).toEqual(['RecordDelegation']);
+
+    // A grant for some records never stands in for all of them.
+    const someRecords = yield* Effect.flip(
+      bounded(live({ amountCeiling: czkCeiling(100) }), [
+        {
+          amountCeiling: czkCeiling(5000),
+          mode: 'run',
+          selector: { _tag: 'targets', recordKeys: [RecordKeySchema.make('invoice-a')] },
+        },
+      ]),
+    );
+    expect(someRecords.code).toBe('delegation_outside_grantor_authority');
 
     // The envelope never reaches a person who is not a live member of its scope.
     const nonMember = yield* Effect.flip(
