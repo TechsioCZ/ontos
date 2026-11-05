@@ -1,13 +1,22 @@
-import { Match, Option, Schema } from 'effect';
+import { Match, Option, Predicate, Schema } from 'effect';
 
 import { LegalEntityIdSchema } from '../ids.ts';
 import { earliestDeadline } from '../decision/contract.ts';
 import type { TenantProjectionIntent } from '../compiler/intent.ts';
 import type { AccessMembership } from '../intent/memberships.ts';
 import type { AccessScopeId, CapabilityKey, LegalEntityId, PrincipalId, RoleId } from '../ids.ts';
-import { delegationCellIssue } from '../lifecycle/delegation.ts';
+import { ceilingCovers, delegationCellIssue, selectorCovers } from '../lifecycle/delegation.ts';
 import type { DelegatedCellRequest } from '../lifecycle/delegation.ts';
-import type { AccessScope, AccessScopeRecord, Delegation, Holder, Role } from '../model.ts';
+import type {
+  AccessScope,
+  AccessScopeRecord,
+  Assignment,
+  Cell,
+  Delegation,
+  Holder,
+  Role,
+  RoleRevision,
+} from '../model.ts';
 import { AccessScopeRecordSchema, DelegationSchema } from '../model.ts';
 import type { AccessChangesError } from './errors.ts';
 import { accessChangesError } from './errors.ts';
@@ -359,9 +368,57 @@ export interface ConfigureCheck {
   readonly authority: AccessConfigureBasis;
   readonly capabilityKeys: readonly CapabilityKey[];
   readonly grantedCells: readonly GrantedCell[];
+  /** The tenant's live intent, so a delegated manager is bounded by what their grantor holds now. */
+  readonly grantorIntent: GrantorIntent;
   readonly roles: readonly Role[];
   readonly tenantId: string;
 }
+
+/** The assignments and role revisions of the tenant a grantor's own grants are read from. */
+export interface GrantorIntent {
+  readonly assignments: readonly Assignment[];
+  readonly revisions: readonly RoleRevision[];
+}
+
+/**
+ * The first granted cell that reaches more than the delegation's grantor holds now, if any. A
+ * delegation names capabilities, roles and a money ceiling, never the mode, records and limit of each
+ * grant, so every cell a delegated manager grants (by saving, adopting or undoing a role change) is
+ * checked against the grantor's own live, direct grants in the delegation's scope: the same capability
+ * and mode, every record the cell reaches, and for money a ceiling covering the one the cell spends
+ * under. Authority the grantor holds only through a delegation of their own never counts, so the
+ * check fails closed.
+ */
+const beyondGrantorCell = (
+  intent: GrantorIntent,
+  grantedCells: readonly GrantedCell[],
+  delegation: Delegation,
+  at: Date,
+): Cell | undefined => {
+  const revisions = new Map(intent.revisions.map((revision) => [revision.id, revision] as const));
+  const held = intent.assignments.flatMap((assignment) =>
+    assignment.scopeId === delegation.scopeId &&
+    assignment.delegated === undefined &&
+    assignment.status === 'active' &&
+    assignment.validFrom <= at &&
+    (assignment.validUntil === undefined || at < assignment.validUntil) &&
+    Predicate.isTagged(assignment.holder, 'Principal') &&
+    assignment.holder.principalId === delegation.grantedBy
+      ? (revisions.get(assignment.roleRevisionId)?.cells ?? [])
+      : [],
+  );
+  return grantedCells.find(
+    ({ cell, entry }) =>
+      !held.some(
+        (grant) =>
+          grant.capabilityKey === cell.capabilityKey &&
+          grant.mode === cell.mode &&
+          selectorCovers(grant.selector, cell.selector) &&
+          (entry.amountInput === undefined ||
+            ceilingCovers(grant.amountCeiling, cell.amountCeiling ?? delegation.amountCeiling)),
+      ),
+  )?.cell;
+};
 
 /**
  * Configuration authority for one decision: every edited role must be inside the decider's scope,
@@ -416,5 +473,14 @@ export const configureAuthorityIssue = (check: ConfigureCheck): AccessChangesErr
     scope,
     tenantId: check.tenantId,
   });
-  return envelope === undefined ? undefined : accessChangesError('access_changes_delegation_out_of_envelope', envelope);
+  if (envelope !== undefined) {
+    return accessChangesError('access_changes_delegation_out_of_envelope', envelope);
+  }
+  const beyondGrantor = beyondGrantorCell(check.grantorIntent, check.grantedCells, delegation, check.at);
+  return beyondGrantor === undefined
+    ? undefined
+    : accessChangesError(
+        'access_changes_delegation_out_of_envelope',
+        `${beyondGrantor.capabilityKey} ${beyondGrantor.mode} reaches more than grantor ${delegation.grantedBy} holds`,
+      );
 };

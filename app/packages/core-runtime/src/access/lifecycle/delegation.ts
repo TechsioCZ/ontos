@@ -173,20 +173,22 @@ const ceilingIssue = (
 };
 
 /**
- * Whether one selector reaches every record another reaches: `all` reaches every record, explicit
- * targets reach any subset of themselves, and every other relation reaches only that same relation.
+ * Whether one holder's selector reaches every record another holder's selector reaches. `all` reaches
+ * every record and explicit targets reach any subset of themselves. A holder-relative selector
+ * (assigned, entrusted, team) reaches different records for every holder, so a grant of one never
+ * covers another person's: only `all` does, and the check fails closed.
  */
 export const selectorCovers = (held: CellSelector, wanted: CellSelector): boolean =>
   Match.value(held).pipe(
     Match.tags({
       all: () => true,
-      assigned: () => Predicate.isTagged(wanted, 'assigned'),
-      entrusted: () => Predicate.isTagged(wanted, 'entrusted'),
+      assigned: () => false,
+      entrusted: () => false,
       targets: ({ recordKeys }) => {
         const reached = new Set<string>(recordKeys);
         return Predicate.isTagged(wanted, 'targets') && wanted.recordKeys.every((recordKey) => reached.has(recordKey));
       },
-      team: () => Predicate.isTagged(wanted, 'team'),
+      team: () => false,
     }),
     Match.exhaustive,
   );
