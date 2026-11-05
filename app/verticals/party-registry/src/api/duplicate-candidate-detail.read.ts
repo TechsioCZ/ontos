@@ -36,7 +36,9 @@ export const duplicateCandidateDetailRead = defineRead(
       {
         fieldClass: 'personal_data',
         fields: [
-          'candidate.displayName',
+          'candidate.businessName',
+          'candidate.firstName',
+          'candidate.lastName',
           'candidate.officialIdentifiers',
           'candidate.subjectEvidence',
           'evaluatedEvidence',
