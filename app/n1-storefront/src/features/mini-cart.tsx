@@ -236,8 +236,10 @@ const MiniCartStatus = ({
     <Image alt="" as={NextImage} height={24} size="custom" src="/brand/cart-empty.svg" width={24} />
     {state === "empty" && (
       <>
-        <p className="font-medium">{d.shopping.emptyPreview}</p>
-        <p className="text-sm text-fg-secondary">{d.shopping.emptyPreviewDescription}</p>
+        <p className="text-md leading-n1-copy font-medium">{d.shopping.emptyPreview}</p>
+        <p className="text-sm leading-n1-copy text-fg-secondary">
+          {d.shopping.emptyPreviewDescription}
+        </p>
       </>
     )}
     {state === "loading" && <output>{d.shopping.loading}</output>}

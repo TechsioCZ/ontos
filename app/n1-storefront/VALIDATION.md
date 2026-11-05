@@ -1,5 +1,23 @@
 # Kontrola převodu N1 storefrontu
 
+## C38: typografie prázdného mini košíku — 2026-11-05
+
+- Fresh Figma59:1042/body311:2331, text311:2338/2339: heading16/500/22.4,
+  description14/400/19.6. Původní heading dědil14px. Existující nativní odstavce
+  používají canonical text-md/text-sm a již existující leading-n1-copy1.4.
+  Žádný nový token, CSS, změna fontfamily nebo restyling kit komponenty.
+- Skutečný dev browser1440: heading16/22.4/500/#141414, desc14/19.6/400/#555,
+  panel384×190.828, CTA362×28, bez overflow; mobile390 rovněž bez overflow.
+  Prohlédnutý screenshot n1-c38-empty-mini-cart-final.png a nezávislé omezené
+  Figma/source/screenshot region GO. Fontfamily parity celého webu se netvrdí.
+- Aktuální Figma skutečně má fullwidth28 CTA a přibližně190px panel;
+  historický vyšší panel/intrinsic CTA není použita jako aktuální autorita.
+  Samostatný fresh audit potvrdil i existující PDP H1: mobile32/700/48,
+  desktop24/700/36; proto se správná responsive typografie neměnila.
+- Package stepper zůstává následný UX bod: přidat jen step nestačí, protože
+  Zag po decrementu clampuje na minimum (min3/pkg2/qty4→3). Validace odmítne
+  neplatný návrh; tuto edgecase nepovažujeme za dokončenou interakční paritu.
+
 ## C37: jednotka počtu produktů i na mobilu — 2026-11-05
 
 - Fresh Figma31:638/31:639, mobile38:2182: také mobil ukazuje počet včetně
