@@ -1,5 +1,22 @@
 # Kontrola převodu N1 storefrontu
 
+## C37: jednotka počtu produktů i na mobilu — 2026-11-05
+
+- Fresh Figma31:638/31:639, mobile38:2182: také mobil ukazuje počet včetně
+  slova produkty/produktů. Odstraněna pouze responsive hidden třída na existujícím
+  pluralizovaném unit span; EN prefix Found. Owner total/Intl plurály nezměněné.
+- Samostatné Figma/source review GO vůči přesnému dvouřádkovému diffu; následný
+  nezávislý tool read nebyl dostupný (transport closed). Není to nový token/API.
+- Skutečný browser dev3071:390 „Nalezeno20produktů“,1440 „Zobrazeno20produktů“,
+  obě bez overflow. Číslo20 je aktuální owner výsledek, nikoli Figma fixture1451.
+  Prohlédnutý mobilní screenshot n1-c37-category-counter-mobile.png soukromě.
+- Formát PASS. Poslední plná sada540/540 a plný build patří C36. Dva C37 build
+  pokusy byly přerušené; druhý dokončil compile/TypeScript/static pages, ale ne
+  build traces. Dokončený C37 produkční build se netvrdí; po pádu PC byl tento
+  malý layout/copy krok ověřen jediným dev FE bez dalších těžkých procesů.
+- Pozitivní produktový CreateTask QA stále neodeslaný: automatická schvalovací
+  kontrola vyžaduje konkrétní souhlas s jedním Stage WorkTask záznamem.
+
 ## C36: vlastní nativní balení přes detail a košík — 2026-11-05
 
 - Full public owner variantRecords již packageQuantity poskytuje; N1 reader je

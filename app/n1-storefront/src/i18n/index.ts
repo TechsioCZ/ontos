@@ -690,7 +690,7 @@ const en: typeof cs = {
   privacy: "Privacy policy",
   productCode: "Product code",
   productParameters: "PRODUCT PARAMETERS",
-  productsFound: "Products found:",
+  productsFound: "Found",
   productsShown: "Showing",
   productUnavailable: "The product is temporarily unavailable",
   promos: {

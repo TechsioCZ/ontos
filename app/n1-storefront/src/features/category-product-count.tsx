@@ -21,7 +21,7 @@ export const CategoryProductCount = ({
       <span className="md:hidden">{d.productsFound}</span>
       <span className="hidden md:inline">{d.productsShown}</span>{" "}
       <span className="md:font-bold">{countFormats[language].format(total)}</span>{" "}
-      <span className="hidden md:inline">{unit}</span>
+      <span>{unit}</span>
     </p>
   );
 };
