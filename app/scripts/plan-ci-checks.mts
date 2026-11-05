@@ -337,7 +337,9 @@ const cli = Command.make(
         .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(CiTemplatesSchema))));
       const paths = yield* fs.readFileString(pathsFile);
       const packages = yield* readWorkspace.pipe(
-        Effect.tapError(() => Console.log('Workspace impact is unavailable; running the complete suite.')),
+        Effect.tapError((error) =>
+          Console.log(`Workspace impact is unavailable: ${String(error)}. Running the complete suite.`),
+        ),
         Effect.orElseSucceed((): readonly CiWorkspacePackage[] => []),
       );
       const plan = planCiChecks({

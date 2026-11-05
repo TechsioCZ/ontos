@@ -1666,13 +1666,15 @@ it('selects work before gates and starts source checks without waiting for artif
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
   expect(jobs[CI_PLAN_JOB]?.needs).toEqual([QUEUE_PROOF_JOB]);
   for (const gate of ROOT_GATE_JOBS) {
-    expect(jobs[gate]?.needs).toEqual(
-      gate === SERVICE_INTEGRATION_JOB || gate === WORKSPACE_UNIT_JOB
-        ? [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]
-        : [CI_PLAN_JOB],
+    const needsNodeArtifacts = gate === SERVICE_INTEGRATION_JOB || gate === WORKSPACE_UNIT_JOB;
+    expect(jobs[gate]?.needs).toEqual(needsNodeArtifacts ? [CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB] : [CI_PLAN_JOB]);
+    expect(jobs[gate]?.if).toBe(
+      expression(
+        `!cancelled() && needs.ci-plan.result == 'success' && ${
+          needsNodeArtifacts ? "needs.node-artifact-build.result == 'success' && " : ''
+        }fromJSON(needs.ci-plan.outputs.expected)['${gate}'] == 'success'`,
+      ),
     );
-    expect(jobs[gate]?.if).toContain("needs.ci-plan.result == 'success'");
-    expect(jobs[gate]?.if).toContain(`fromJSON(needs.ci-plan.outputs.expected)['${gate}'] == 'success'`);
   }
 });
 
