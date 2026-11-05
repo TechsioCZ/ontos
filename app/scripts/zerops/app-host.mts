@@ -675,7 +675,7 @@ const observeOwners = Effect.fn('AppHost.observeOwners')(function* observeOwners
 /** The release step's result, kept on the container for after-the-fact proof. */
 const recordActionAuthorizationStatus = (
   snapshot: ActiveApplicationCompositionSnapshot,
-  result: Omit<ReleaseActionAuthorizationStatus, 'finishedAt' | 'revision' | 'revoked'>,
+  result: Omit<ReleaseActionAuthorizationStatus, 'finishedAt' | 'revision'>,
 ) =>
   DateTime.now.pipe(
     Effect.flatMap((finishedAt) =>
@@ -683,7 +683,6 @@ const recordActionAuthorizationStatus = (
         ...result,
         finishedAt,
         revision: snapshot.composition.revision,
-        revoked: 0,
       }),
     ),
   );
@@ -781,8 +780,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     }).pipe(observeRuntimeJob('composition-publish'));
   const publish = observeOwners(units, publicOrigin).pipe(Effect.flatMap(publishSnapshot));
   // Every active Tenant and company gets the canonical provisioner's Action edges for this release before it takes the
-  // authority. The step only adds edges (see release-action-authorization.mts). A failure stops this release before
-  // publication, as a failed migration does: the old release stays admitted and the deploy fails visibly.
+  // authority. The step adds missing edges and revokes stale ones (see release-action-authorization.mts). A failure
+  // stops this release before publication, as a failed migration does: the old release stays admitted and the deploy
+  // fails visibly.
   const provisionActionAuthorization = (snapshot: ActiveApplicationCompositionSnapshot) =>
     Effect.gen(function* provisionReleaseSnapshot() {
       // The settings the N1 release grants child receives: owner secrets over the container environment.
@@ -796,7 +796,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       Effect.tap((result) =>
         Effect.andThen(
           Console.log(
-            `[app-host] release Action authorization: tenants=${String(result.tenants)} companies=${String(result.companies)} desired=${String(result.desired)} touched=${String(result.touched)} revoked=0`,
+            `[app-host] release Action authorization: tenants=${String(result.tenants)} companies=${String(result.companies)} desired=${String(result.desired)} touched=${String(result.touched)} revoked=${String(result.revoked)}`,
           ),
           recordActionAuthorizationStatus(snapshot, { ...result, outcome: 'applied' }),
         ),

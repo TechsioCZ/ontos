@@ -217,8 +217,12 @@ export const assertServiceMembershipsCompatible = Effect.fn('Stage.assertService
   },
 );
 
+/** Role policy only: the release step owns every `action` edge and derives it from the installed modules. */
+const withoutActionEdges = <Row extends { readonly resourceType: string }>(rows: readonly Row[]) =>
+  rows.filter(({ resourceType }) => resourceType !== 'action');
+
 export const desiredServiceGrants = (actions: readonly DemoAction[]): readonly v1.Relationship[] => {
-  const source = [
+  const source = withoutActionEdges([
     ...principalRelationships(
       akrosStorefrontPrincipal.principalId,
       eshopDemoRoles.akrosStorefront,
@@ -228,7 +232,7 @@ export const desiredServiceGrants = (actions: readonly DemoAction[]): readonly v
     ...commercePortalRelationships(actions),
     ...privacyConsentAuthorityRelationships(actions),
     ...marketRetirementRelationships(actions),
-  ];
+  ]);
   return [
     ...new Map(
       source.map((item) => {
@@ -549,7 +553,7 @@ const command = Command.make(
           yield* ensureStageVerification(configuration);
         }
         const verification = yield* verificationContext(actions);
-        const verificationGrants = verification.relationships.map((item) =>
+        const verificationGrants = withoutActionEdges(verification.relationships).map((item) =>
           relationshipFrom(
             item.resourceType,
             item.resourceId,

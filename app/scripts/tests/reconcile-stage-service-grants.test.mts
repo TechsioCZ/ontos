@@ -193,7 +193,9 @@ it('bootstraps the dedicated Market service and reconciles its exact policy thro
   expect(serviceGrantMemberships().map((row) => row.subject?.object?.objectId)).toEqual(
     stageServicePrincipals().map(({ principalId }) => principalId),
   );
-  for (const grant of marketGrants) {
+  // The release step owns the Action edges; the service policy carries only the role side.
+  expect(desired.some((row) => row.resource?.objectType === 'action')).toBe(false);
+  for (const grant of marketGrants.filter((row) => row.resource?.objectType !== 'action')) {
     expect(desired).toContainEqual(grant);
   }
   expect(

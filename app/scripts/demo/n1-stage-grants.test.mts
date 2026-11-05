@@ -523,10 +523,7 @@ it.effect(
       expect(expectation(catalogue, `Action ${bindManagedKey} `)).toEqual([false]);
       expect(expectation(catalogue, 'tenant manage_identity')).toEqual([false]);
       expect(expectation(catalogue, 'N1 company people')).toEqual([false]);
-      expect(
-        plan.relationships.some(
-          (row) => row.relation === 'self_credentials' && row.subject?.object?.objectId === N1_TENANT_ID,
-        ),
-      ).toBe(true);
+      // The self-credential edge, like every Action edge, comes from the release step, not the N1 plan.
+      expect(plan.relationships.some((row) => row.resource?.objectType === 'action')).toBe(false);
     }),
 );

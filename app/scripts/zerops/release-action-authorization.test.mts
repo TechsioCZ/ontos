@@ -13,8 +13,9 @@ import {
   deriveReleaseActionAuthorization,
   loadReleaseActionAuthorizationConfiguration,
   recordReleaseActionAuthorization,
+  readLiveActionAuthorization,
+  reconcileActionAuthorization,
   RELEASE_ACTION_AUTHORIZATION_STATUS_FILE,
-  touchMissingActionAuthorization,
 } from './release-action-authorization.mts';
 
 const ACTIVE_TENANT = '11111111-1111-4111-8111-111111111111';
@@ -107,41 +108,63 @@ const fakeRpc = (existing: readonly v1.Relationship[]) => {
   };
   return { rpc, writes };
 };
+const reconcile = (existing: readonly v1.Relationship[], desired: readonly v1.Relationship[]) =>
+  Effect.gen(function* reconcileAgainst() {
+    const { rpc, writes } = fakeRpc(existing);
+    const result = yield* reconcileActionAuthorization(rpc, yield* readLiveActionAuthorization(rpc), desired);
+    return { result, updates: writes.flatMap(({ updates }) => updates), writes };
+  });
 
-it.effect('touches only missing edges and never deletes a present edge, desired or not', () =>
-  Effect.gen(function* touchOnly() {
+it.effect('touches missing edges and revokes every live edge the derivation does not produce', () =>
+  Effect.gen(function* touchAndRevoke() {
     const { relationships } = yield* deriveReleaseActionAuthorization(actions, ['crm'], inventory);
-    const foreign = v1.Relationship.create({
+    // An uninstalled module's scope edge, as a per-tenant script used to write it.
+    const stale = v1.Relationship.create({
       relation: 'company_scope',
-      resource: { objectId: 'ak_owned-by-a-per-tenant-script', objectType: 'action' },
+      resource: { objectId: 'ak_uninstalled-module-action', objectType: 'action' },
       subject: { object: { objectId: 'company', objectType: 'legal_entity' } },
     });
     const [present, ...missing] = relationships;
-    const { rpc, writes } = fakeRpc(present === undefined ? [foreign] : [present, foreign]);
-    const touched = yield* touchMissingActionAuthorization(rpc, relationships);
-    expect(touched).toBe(missing.length);
-    const written = writes.flatMap(({ updates }) => updates);
-    expect(written).toHaveLength(missing.length);
-    expect(written.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(true);
+    const { result, updates } = yield* reconcile(present === undefined ? [stale] : [present, stale], relationships);
+    expect(result).toEqual({ revoked: 1, touched: missing.length });
+    const touched = updates.filter(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH);
+    const deleted = updates.filter(({ operation }) => operation === v1.RelationshipUpdate_Operation.DELETE);
+    expect(touched).toHaveLength(missing.length);
+    expect(deleted.map(({ relationship }) => relationship?.resource?.objectId)).toEqual([
+      'ak_uninstalled-module-action',
+    ]);
     // A rerun against the converged graph writes nothing.
-    const rerun = fakeRpc(relationships);
-    expect(yield* touchMissingActionAuthorization(rerun.rpc, relationships)).toBe(0);
+    const rerun = yield* reconcile(relationships, relationships);
+    expect(rerun.result).toEqual({ revoked: 0, touched: 0 });
     expect(rerun.writes).toHaveLength(0);
   }),
 );
 
+it.effect('an empty derivation fails before any write instead of revoking every Action', () =>
+  Effect.gen(function* emptyDerivation() {
+    const { relationships } = yield* deriveReleaseActionAuthorization(actions, ['crm'], inventory);
+    const { rpc, writes } = fakeRpc(relationships);
+    const exit = yield* Effect.exit(reconcileActionAuthorization(rpc, relationships, []));
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(JSON.stringify(exit)).toContain('nothing was revoked');
+    expect(writes).toHaveLength(0);
+  }),
+);
+
+const tenantScopeEdge = (index: number) =>
+  v1.Relationship.create({
+    relation: 'tenant_scope',
+    resource: { objectId: `ak_${String(index)}`, objectType: 'action' },
+    subject: { object: { objectId: ACTIVE_TENANT, objectType: 'tenant' } },
+  });
+
 it.effect('writes in batches SpiceDB accepts', () =>
   Effect.gen(function* batches() {
-    const desired = Array.from({ length: 1201 }, (_, index) =>
-      v1.Relationship.create({
-        relation: 'tenant_scope',
-        resource: { objectId: `ak_${String(index)}`, objectType: 'action' },
-        subject: { object: { objectId: ACTIVE_TENANT, objectType: 'tenant' } },
-      }),
-    );
-    const { rpc, writes } = fakeRpc([]);
-    expect(yield* touchMissingActionAuthorization(rpc, desired)).toBe(1201);
-    expect(writes.map(({ updates }) => updates.length)).toEqual([500, 500, 201]);
+    const desired = Array.from({ length: 1201 }, (_, index) => tenantScopeEdge(index));
+    const stale = Array.from({ length: 600 }, (_, index) => tenantScopeEdge(2000 + index));
+    const { result, writes } = yield* reconcile(stale, desired);
+    expect(result).toEqual({ revoked: 600, touched: 1201 });
+    expect(writes.map(({ updates }) => updates.length)).toEqual([500, 500, 201, 500, 100]);
   }),
 );
 
@@ -149,11 +172,11 @@ it.effect('a SpiceDB write failure fails the step with a sanitized reason', () =
   Effect.gen(function* writeFailure() {
     const { relationships } = yield* deriveReleaseActionAuthorization(actions, ['crm'], inventory);
     const exit = yield* Effect.exit(
-      touchMissingActionAuthorization(
+      reconcileActionAuthorization(
         {
-          readRelationships: () => Effect.succeed([]),
           writeRelationships: () => Effect.fail(new SpiceDbRpcError({ cause: 'secret detail', code: Option.none() })),
         },
+        [],
         relationships,
       ),
     );
@@ -196,8 +219,13 @@ it('app-host provisions the release before publishing it and does not ignore a f
   expect(openPort).toBeGreaterThan(publish);
   const step = host.slice(host.indexOf('const provisionActionAuthorization'), provision);
   expect(step).not.toContain('Effect.ignore');
+  // The live edges are read before the inventory, so an edge written for a module installed meanwhile is never revoked.
   const source = readFileSync(new URL('release-action-authorization.mts', import.meta.url), 'utf-8');
-  expect(source).not.toContain('RelationshipUpdate_Operation.DELETE');
+  const apply = source.slice(source.indexOf('function* applyRelease'));
+  expect(apply.indexOf('readLiveActionAuthorization(rpc)')).toBeGreaterThan(-1);
+  expect(apply.indexOf('readReleaseActionAuthorizationInventory')).toBeGreaterThan(
+    apply.indexOf('readLiveActionAuthorization(rpc)'),
+  );
 });
 
 it.effect('records the result as a readable status file under the workspace', () =>
