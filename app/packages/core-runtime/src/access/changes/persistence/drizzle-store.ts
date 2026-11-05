@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, lte, or } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
@@ -516,6 +516,7 @@ interface RoleRevisionWrite {
   readonly decidedAt: Date;
   readonly decidedBy: string;
   readonly edit: RoleCellEdit;
+  readonly expectedHolders?: readonly string[];
   readonly tenantId: string;
 }
 
@@ -544,6 +545,31 @@ const recordRevision = Effect.fn('AccessChangesStore.recordRevision')(function* 
       'access_changes_revision_stale',
       `role ${edit.roleId} moved from revision ${edit.sourceRevisionId} to ${current.roleRevisionId}`,
     );
+  }
+  // Under the lock no assignment can join: a holder the delegated envelope never checked refuses the
+  // edit, which the caller re-reads and checks again with that holder in it.
+  const { expectedHolders } = write;
+  if (expectedHolders !== undefined) {
+    const checked = new Set(expectedHolders);
+    const live = yield* transaction
+      .select({ incarnationId: accessAssignments.incarnationId })
+      .from(accessAssignments)
+      .where(
+        and(
+          eq(accessAssignments.tenantId, tenantId),
+          eq(accessAssignments.roleId, edit.roleId),
+          eq(accessAssignments.status, 'active'),
+          lte(accessAssignments.validFrom, decidedAt),
+          or(isNull(accessAssignments.validUntil), gt(accessAssignments.validUntil, decidedAt)),
+        ),
+      );
+    const unchecked = live.find(({ incarnationId }) => !checked.has(incarnationId));
+    if (unchecked !== undefined) {
+      return yield* storeConflict(
+        'access_changes_revision_stale',
+        `role ${edit.roleId} gained holder ${unchecked.incarnationId} after the edit was checked`,
+      );
+    }
   }
   const successorIssue = revisionIssue(current.cellsJson, edit);
   if (successorIssue !== null) {
@@ -1067,15 +1093,20 @@ export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): 
    */
   const recordRoleRevision: AccessChangesStoreService['recordRoleRevision'] = Effect.fn(
     'AccessChangesStore.recordRoleRevision',
-  )(function* recordRoleRevisionEffect({ catalogSnapshotId, decidedAt, edit, scope }: RecordRoleRevisionInput) {
+  )(function* recordRoleRevisionEffect(input: RecordRoleRevisionInput) {
+    const { catalogSnapshotId, decidedAt, edit, scope } = input;
+    const write = {
+      catalogSnapshotId,
+      decidedAt,
+      decidedBy: scope.principalId,
+      edit,
+      tenantId: scope.tenantId,
+    };
     return yield* runScoped(scope, (transaction) =>
-      recordRevision(transaction, {
-        catalogSnapshotId,
-        decidedAt,
-        decidedBy: scope.principalId,
-        edit,
-        tenantId: scope.tenantId,
-      }),
+      recordRevision(
+        transaction,
+        input.expectedHolders === undefined ? write : { ...write, expectedHolders: input.expectedHolders },
+      ),
     );
   });
 

@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Effect, Match, Option, Result, Schema } from 'effect';
+import { Effect, Match, Option, Predicate, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
@@ -712,9 +712,10 @@ export const writeRoleRevision = Effect.fn('RoleRevision.writeRoleRevision')(fun
     const projection = yield* projectionWriter.reconcileTenant({ scope: request.scope });
     return { projection, roleRevisionId: request.edit.targetRevisionId };
   }
+  const assignments = intent.scopes.flatMap((entry) => entry.assignments);
   const authorityProblem = roleRevisionAuthorityIssue({
     actor,
-    assignments: intent.scopes.flatMap(({ assignments }) => assignments),
+    assignments,
     at: request.decidedAt,
     bases,
     catalog: Option.getOrUndefined(release),
@@ -727,12 +728,27 @@ export const writeRoleRevision = Effect.fn('RoleRevision.writeRoleRevision')(fun
   if (authorityProblem !== undefined) {
     return yield* authorityProblem;
   }
-  yield* store.recordRoleRevision({
+  // An edit only a delegation authorizes was checked against the role's holders as they stood; the
+  // store re-checks them under the role's lock so an assignment made meanwhile is never reached.
+  const delegatedOnly = bases.every((basis) => Predicate.isTagged(basis, 'DelegatedManager'));
+  const recordInput = {
     catalogSnapshotId: request.catalogSnapshotId,
     decidedAt: request.decidedAt,
     edit: request.edit,
     scope: request.scope,
-  });
+  };
+  yield* store.recordRoleRevision(
+    delegatedOnly
+      ? {
+          ...recordInput,
+          expectedHolders: assignments.flatMap((assignment) =>
+            assignment.roleId === request.edit.roleId && isActiveAssignment(assignment, request.decidedAt)
+              ? [assignment.incarnationId]
+              : [],
+          ),
+        }
+      : recordInput,
+  );
   const projection = yield* projectionWriter.reconcileTenant({ scope: request.scope });
   return { projection, roleRevisionId: request.edit.targetRevisionId };
 });

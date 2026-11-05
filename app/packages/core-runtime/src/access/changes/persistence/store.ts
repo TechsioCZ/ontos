@@ -3,7 +3,7 @@ import type { Effect, Option } from 'effect';
 
 import type { OperationalScope } from '../../../operations/context.ts';
 import type { CoreTransaction } from '../../../db/types.ts';
-import type { CatalogSnapshotId } from '../../ids.ts';
+import type { AssignmentIncarnationId, CatalogSnapshotId } from '../../ids.ts';
 import type { AccessChangeDecision, AccessChangeItem, CatalogSnapshot, Role, RoleRevision } from '../../model.ts';
 import type { AdoptionPlan, DeclinePlan } from '../adoption.ts';
 import type { ChangeItemPlan } from '../items.ts';
@@ -62,6 +62,12 @@ export interface RecordRoleRevisionInput {
   /** The instant Core records the decision at, never a time the request supplied. */
   readonly decidedAt: Date;
   readonly edit: RoleCellEdit;
+  /**
+   * The live holders a delegated manager's authority was checked against. Under the role's write lock
+   * the store refuses the edit when the role has gained a holder since, because the envelope never
+   * saw that person. Absent when a permanent basis authorized the edit, which reaches anyone.
+   */
+  readonly expectedHolders?: readonly AssignmentIncarnationId[];
   /** The trusted request scope: its tenant is written and its person is the author (O66). */
   readonly scope: OperationalScope;
 }
