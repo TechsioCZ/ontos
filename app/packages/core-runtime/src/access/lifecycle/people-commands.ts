@@ -554,6 +554,26 @@ const managementScopesOf = (request: {
 };
 
 /**
+ * The scopes whose business access ends with an operational path. Every company path starts at the
+ * tenant's, so leaving the tenant closes the access the person holds in each company as well; leaving
+ * a company closes only that company's.
+ */
+const closedScopesOf = (
+  request: Pick<MembershipEndRequest, 'assignments' | 'teams'>,
+  scopeId: AccessScopeId,
+  tenantPath: boolean,
+): readonly AccessScopeId[] =>
+  tenantPath
+    ? [
+        ...new Set([
+          scopeId,
+          ...request.assignments.map((assignment) => assignment.scopeId),
+          ...request.teams.map((team) => team.scopeId),
+        ]),
+      ]
+    : [scopeId];
+
+/**
  * Ends or suspends one membership. Ending a membership ends the authority that stood on it in the
  * SAME plan — its role assignments and its team places — because a membership without them would
  * leave live rows nobody can reach, and a departure that keeps them is not a departure (O65).
@@ -580,7 +600,11 @@ export const planMembershipEnd = (
   if (leaver === undefined) {
     return Effect.fail(peopleRefusal('people_holder_unknown', 'A membership row names no person'));
   }
-  if (!membershipIsLive(ending, request.at)) {
+  // A suspended row is still within its window and may be revoked for good; only a revoked or
+  // out-of-window row has ended. The transition table below decides which status it may take.
+  const withinWindow =
+    ending.validFrom <= request.at && (ending.validUntil === undefined || request.at < ending.validUntil);
+  if (ending.status === 'revoked' || !withinWindow) {
     return Effect.fail(
       peopleRefusal('people_membership_ended', `Membership ${ending.id} is ${ending.status} and never reopens`),
     );
@@ -637,30 +661,30 @@ export const planMembershipEnd = (
     Effect.map((ownershipTransferScopeIds) => {
       // Only the end of the operational path ends the business authority standing on it; giving up
       // an owner or access-admin row keeps the person's assignments and team places.
-      const assignments = endsPath
-        ? liveAssignmentsOf({
-            assignments: request.assignments,
-            at: request.at,
-            holder: leaver,
-            scopeId: ending.scopeId,
-          })
-        : [];
-      const places = endsPath
-        ? teamPlacesOf({ holder: leaver, members: request.teamMembers, scopeId: ending.scopeId, teams: request.teams })
-        : [];
-      // Revoking the path also revokes the management rows that stood on it, so a later rejoin starts
-      // clean instead of silently restoring an administration nobody granted again. A suspension is
-      // temporary and leaves them, because the suspended path already blocks them.
       const tenantPath = ending.scopeId === request.administration.tenantScopeId;
-      const dependentManagement =
+      const closedScopeIds = endsPath ? closedScopesOf(request, ending.scopeId, tenantPath) : [];
+      const assignments = closedScopeIds.flatMap((scopeId) =>
+        liveAssignmentsOf({ assignments: request.assignments, at: request.at, holder: leaver, scopeId }),
+      );
+      const places = closedScopeIds.flatMap((scopeId) =>
+        teamPlacesOf({ holder: leaver, members: request.teamMembers, scopeId, teams: request.teams }),
+      );
+      // Revoking the path also revokes the rows that stood on it, so a later rejoin starts clean instead
+      // of silently restoring an administration, or a company membership, nobody granted again. A
+      // suspension is temporary and leaves them, because the suspended path already blocks them.
+      const dependentRows =
         endsPath && request.nextStatus === 'revoked'
           ? request.memberships.filter(
               (membership) =>
                 membership.id !== ending.id &&
-                (membership.kind === 'owner' || membership.kind === 'access_admin') &&
+                (membership.kind === 'owner' ||
+                  membership.kind === 'access_admin' ||
+                  (tenantPath && membership.kind === 'member')) &&
                 personOf(membership.holder) === leaver &&
                 (tenantPath || membership.scopeId === ending.scopeId) &&
-                membershipIsLive(membership, request.at),
+                membership.status !== 'revoked' &&
+                membership.validFrom <= request.at &&
+                (membership.validUntil === undefined || request.at < membership.validUntil),
             )
           : [];
       // The successor gains the management membership of the scope this row ends, in this plan, so
@@ -687,7 +711,7 @@ export const planMembershipEnd = (
       const writes: readonly PeopleIntentWrite[] = [
         ...transfer,
         { _tag: 'EndMembership', membershipId: ending.id, status: request.nextStatus },
-        ...dependentManagement.map((membership): PeopleIntentWrite => ({
+        ...dependentRows.map((membership): PeopleIntentWrite => ({
           _tag: 'EndMembership',
           membershipId: membership.id,
           status: 'revoked',

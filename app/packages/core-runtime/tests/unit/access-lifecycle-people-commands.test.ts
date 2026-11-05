@@ -964,6 +964,44 @@ it.effect('ending the last owner’s member row needs a transfer, and giving up 
       membershipEndRequest({ ...fixture, administration: shared, membershipId: owner.id }),
     );
     expect(writeTags(resigned)).toEqual(['EndMembership']);
+
+    // Leaving the tenant closes the company access standing on it: the company membership is revoked
+    // and the company assignment ends, so rejoining the tenant restores none of it.
+    const companyMember = membership({ holder: MANAGER, id: 3, scopeId: companyScope });
+    const companyHeld = makeAssignment({
+      holder: holderOf(MANAGER),
+      incarnationId: ids.incarnation(7),
+      scopeId: companyScope,
+    });
+    const leftTenant = yield* planMembershipEnd(
+      membershipEndRequest({
+        ...fixture,
+        administration: shared,
+        assignments: [held, companyHeld],
+        membershipId: member.id,
+        memberships: [...fixture.memberships, companyMember],
+      }),
+    );
+    expect(leftTenant.writes.flatMap((write) => Option.toArray(endedMembershipIn(write)))).toEqual([
+      member.id,
+      owner.id,
+      companyMember.id,
+    ]);
+    expect(writeTags(leftTenant).filter((tag) => tag === 'EndAssignment')).toHaveLength(2);
+
+    // A suspended membership is still revoked for good, without first restoring it.
+    const suspendedMember = membership({ holder: MANAGER, id: 2, status: 'suspended' });
+    const revokedFromSuspension = yield* planMembershipEnd(
+      membershipEndRequest({
+        ...fixture,
+        administration: shared,
+        membershipId: suspendedMember.id,
+        memberships: [owner, memberOf(MEMBER), suspendedMember],
+      }),
+    );
+    expect(revokedFromSuspension.writes.flatMap((write) => Option.toArray(endedMembershipIn(write)))).toContain(
+      suspendedMember.id,
+    );
   }),
 );
 
