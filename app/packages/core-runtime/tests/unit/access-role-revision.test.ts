@@ -63,6 +63,7 @@ import {
   ownerBasis,
   principalHolder,
   roleState,
+  scopeAdminBasis,
   snapshot,
   succeeded,
   tenantScopeRecord,
@@ -829,6 +830,15 @@ it.effect('lets a delegated manager edit a role of their envelope with a capabil
     expect(recorded).toEqual([ROLE]);
     // The delegate's envelope saw exactly this holder, so the store refuses the edit if another joins.
     expect(expectedHolders).toEqual([[fixedId(50)]]);
+
+    // Administering some company does not authorize this tenant role, so the holder check still applies.
+    const alsoAdmin = yield* authorisedWrite({
+      actor: MANAGER,
+      assignments: [assignment({ holder: principalHolder(OTHER_PERSON) }), grantorHolds()],
+      bases: [scopeAdminBasis({ legalEntityIds: [LEGAL_ENTITY] }), managerBasis()],
+      cells: [cell(READ), cell(NOTE)],
+    });
+    expect(alsoAdmin.expectedHolders).toEqual([[fixedId(50)]]);
   }),
 );
 

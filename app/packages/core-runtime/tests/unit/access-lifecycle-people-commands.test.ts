@@ -229,6 +229,22 @@ it.effect('admits one live membership and refuses a duplicate, an agent and a mi
       }),
     );
     expect(suspended.code).toBe('people_membership_already_active');
+    // ... but a suspension whose period has ended is history too, and is retired like any expired row.
+    const lapsedSuspension = membership({
+      holder: MEMBER,
+      id: 17,
+      status: 'suspended',
+      validUntil: dateAt(Date.UTC(2026, 0, 1)),
+    });
+    const afterSuspension = yield* planMembershipGrant({
+      ...facts,
+      administration,
+      holder: holderOf(MEMBER),
+      kind: 'member',
+      membershipId: membershipId(18),
+      memberships: [lapsedSuspension],
+    });
+    expect(writeTags(afterSuspension)).toEqual(['EndMembership', 'RecordMembership']);
 
     // An agent holds no membership in this wave (O67-Q5), management kinds included.
     const agent = yield* Effect.flip(

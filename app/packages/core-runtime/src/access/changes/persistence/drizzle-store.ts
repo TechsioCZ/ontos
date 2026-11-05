@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lte, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, or } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 
@@ -561,7 +561,8 @@ const recordRevision = Effect.fn('AccessChangesStore.recordRevision')(function* 
           eq(accessAssignments.tenantId, tenantId),
           eq(accessAssignments.roleId, edit.roleId),
           eq(accessAssignments.status, 'active'),
-          lte(accessAssignments.validFrom, decidedAt),
+          // Every row the successor update below moves, including one that starts after the decision:
+          // only an assignment that has already ended stays where it is and grants nothing.
           or(isNull(accessAssignments.validUntil), gt(accessAssignments.validUntil, decidedAt)),
         ),
       );
@@ -569,7 +570,7 @@ const recordRevision = Effect.fn('AccessChangesStore.recordRevision')(function* 
     if (unchecked !== undefined) {
       return yield* storeConflict(
         'access_changes_revision_stale',
-        `role ${edit.roleId} gained holder ${unchecked.incarnationId} after the edit was checked`,
+        `role ${edit.roleId} has holder ${unchecked.incarnationId}, which the edit was not checked against`,
       );
     }
   }
