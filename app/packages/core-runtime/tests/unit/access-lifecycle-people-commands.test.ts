@@ -205,6 +205,31 @@ it.effect('admits one live membership and refuses a duplicate, an agent and a mi
     );
     expect(duplicate.code).toBe('people_membership_already_active');
 
+    // An expired row is history: rejoining retires it in the same plan, so the unique slot is free.
+    const lapsed = membership({ holder: MEMBER, id: 13, validUntil: dateAt(Date.UTC(2026, 0, 1)) });
+    const rejoined = yield* planMembershipGrant({
+      ...facts,
+      administration,
+      holder: holderOf(MEMBER),
+      kind: 'member',
+      membershipId: membershipId(14),
+      memberships: [lapsed],
+    });
+    expect(writeTags(rejoined)).toEqual(['EndMembership', 'RecordMembership']);
+    expect(Option.getOrThrow(endedMembershipIn(rejoined.writes[0]))).toBe(lapsed.id);
+    // A suspension is not history: a fresh grant would lift it, so it is refused.
+    const suspended = yield* Effect.flip(
+      planMembershipGrant({
+        ...facts,
+        administration,
+        holder: holderOf(MEMBER),
+        kind: 'member',
+        membershipId: membershipId(15),
+        memberships: [membership({ holder: MEMBER, id: 16, status: 'suspended' })],
+      }),
+    );
+    expect(suspended.code).toBe('people_membership_already_active');
+
     // An agent holds no membership in this wave (O67-Q5), management kinds included.
     const agent = yield* Effect.flip(
       planMembershipGrant({

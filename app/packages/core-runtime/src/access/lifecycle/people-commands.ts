@@ -395,6 +395,27 @@ export const planMembershipGrant = (
       ),
     );
   }
+  // The slot (scope, person, kind) holds one non-revoked row. An expired row is history and is retired
+  // in this same plan so the person can rejoin; a suspended or not-yet-started row is not, because a
+  // fresh grant would lift a suspension or race a membership that is already on its way.
+  const occupying = request.memberships.filter(
+    (row) =>
+      row.scopeId === request.scopeId &&
+      row.kind === request.kind &&
+      row.status !== 'revoked' &&
+      personOf(row.holder) === holder,
+  );
+  const expired = occupying.filter(
+    (row) => row.status === 'active' && row.validUntil !== undefined && row.validUntil <= request.at,
+  );
+  if (expired.length !== occupying.length) {
+    return Effect.fail(
+      peopleRefusal(
+        'people_membership_already_active',
+        `Person ${holder} holds a suspended or not yet started ${request.kind} membership in scope ${request.scopeId}`,
+      ),
+    );
+  }
   const membership: AccessMembership = {
     createdAt: request.at,
     holder: request.holder,
@@ -416,7 +437,14 @@ export const planMembershipGrant = (
       planOf(
         { scopeId: request.scopeId, tenantId: request.tenantId },
         ['people_membership_admitted'],
-        [{ _tag: 'RecordMembership', membership: dated }],
+        [
+          ...expired.map((row): PeopleIntentWrite => ({
+            _tag: 'EndMembership',
+            membershipId: row.id,
+            status: 'revoked',
+          })),
+          { _tag: 'RecordMembership', membership: dated },
+        ],
       ),
     ),
   );
