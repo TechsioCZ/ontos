@@ -126,6 +126,8 @@ interface ServiceFixture {
   /** The acting person's configure bases, as the tenant intent loader answers them. */
   readonly bases?: readonly AccessConfigureBasis[];
   readonly delegations?: readonly Delegation[];
+  /** Roles of the tenant nobody in the fixture holds. */
+  readonly roles?: AccessPeopleIntent['roles'];
   /** Every write the service persists, in order. */
   readonly written?: PeopleIntentWrite[];
 }
@@ -139,6 +141,7 @@ const serviceOver = (holdings: readonly ReturnType<typeof holding>[], fixture: S
       ...holdings.map(({ revision, role }) => ({ revision, role })),
       { revision: roleBRevision, role: roleB },
       { revision: otherRoleBRevision, role: otherRoleB },
+      ...(fixture.roles ?? []),
     ],
     scopes: [
       { scopeId: tenantScope, tenantContextId: tenant },
@@ -238,18 +241,27 @@ it.effect('checks a delegation against the ceiling its grantor holds for each ca
       id: assignment.roleRevisionId,
       roleId: role.id,
     });
-    const service = serviceOver([{ assignment, revision, role }]);
+    // The delegation hands out a company-B role that pays without a ceiling of its own.
+    const payer = makeRole({ id: ids.role(5), legalEntityId: companyB });
+    const payerRevision = makeRoleRevision({
+      cells: [makeCell({ capabilityKey: PAY })],
+      id: ids.roleRevision(97),
+      roleId: payer.id,
+    });
+    const service = serviceOver([{ assignment, revision, role }], {
+      roles: [{ revision: payerRevision, role: payer }],
+    });
+    const payThrough = (currencyCode: string, limitMinor: number): GrantDelegationCommand => ({
+      ...delegationInB(1),
+      amountCeiling: { currency: currencyCode, limitMinor },
+      roleIds: [payer.id],
+    });
 
     // The refund limit is not a pay limit: pay is delegated up to its own 50 000 CZK ...
-    const pay = yield* service.grantDelegation(grantorScope, delegationInB(20_000));
+    const pay = yield* service.grantDelegation(grantorScope, payThrough('CZK', 20_000));
     expect(pay.delegation?.amountCeiling).toEqual(ceilingOf(20_000));
     // ... and pay authority in USD is never borrowed from the refund limit.
-    const borrowed = yield* Effect.flip(
-      service.grantDelegation(grantorScope, {
-        ...delegationInB(100),
-        amountCeiling: { currency: 'USD', limitMinor: 100 },
-      }),
-    );
+    const borrowed = yield* Effect.flip(service.grantDelegation(grantorScope, payThrough('USD', 100)));
     expect(borrowed.code).toBe('delegation_amount_outside_envelope');
   }),
 );

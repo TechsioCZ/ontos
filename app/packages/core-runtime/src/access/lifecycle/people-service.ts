@@ -38,7 +38,7 @@ import type {
 import { AmountCeilingSchema } from '../model.ts';
 import type { ManagerAuthority } from './delegation.ts';
 import type {
-  GrantorCeilings,
+  GrantorAlternative,
   PeopleChangePlan,
   PeopleCommandError,
   PeopleIntentWrite,
@@ -216,19 +216,16 @@ const authorityOf = (
   const delegations = new Map(view.delegations.map((delegation) => [delegation.id, delegation] as const));
   const moneyKeys = new Set(catalog.filter((entry) => entry.amountInput !== undefined).map((entry) => entry.key));
   const capabilityKeys = new Set<CatalogSnapshotEntry['key']>();
-  const ceilings = new Map<CatalogSnapshotEntry['key'], GrantorCeilings>();
-  // Every grant is kept as its own alternative for the capability it bounds: one capability's limit
-  // never caps another's, and a narrow grant never hides a wider one for the same capability.
+  const grants = new Map<CatalogSnapshotEntry['key'], GrantorAlternative[]>();
+  // Every grant is kept as its own alternative, with its mode: one capability's or one mode's limit
+  // never bounds another's, and a narrow grant never hides a wider one.
   const hold = (cell: Cell, cellCeiling: AmountCeiling | undefined) => {
     capabilityKeys.add(cell.capabilityKey);
-    if (!moneyKeys.has(cell.capabilityKey)) {
-      return;
-    }
-    const held = ceilings.get(cell.capabilityKey) ?? [];
-    ceilings.set(
-      cell.capabilityKey,
-      held === 'uncapped' || cellCeiling === undefined ? 'uncapped' : [...held, cellCeiling],
-    );
+    const grant: GrantorAlternative =
+      cellCeiling === undefined || !moneyKeys.has(cell.capabilityKey)
+        ? { mode: cell.mode }
+        : { amountCeiling: cellCeiling, mode: cell.mode };
+    grants.set(cell.capabilityKey, [...(grants.get(cell.capabilityKey) ?? []), grant]);
   };
   for (const assignment of view.assignments) {
     const mine =
@@ -261,7 +258,7 @@ const authorityOf = (
       }
     }
   }
-  return { capabilityKeys: [...capabilityKeys], ceilings };
+  return { capabilityKeys: [...capabilityKeys], grants };
 };
 
 const assignmentOfPlan = (planned: PeopleChangePlan): Option.Option<Assignment> =>
@@ -730,9 +727,12 @@ export const makeAccessPeopleCommands = (dependencies: {
       actor: grantedBy,
       at: view.at,
       catalog: catalog.value.entries,
+      delegatedCells: view.roles.flatMap((entry) =>
+        delegation.roleIds.some((roleId) => roleId === entry.role.id) ? entry.revision.cells : [],
+      ),
       delegation,
+      grantorAuthority: grantor.grants,
       grantorCapabilityKeys: grantor.capabilityKeys,
-      grantorCeilings: grantor.ceilings,
       memberships: view.memberships,
       roles: view.roles.map((entry) => entry.role),
       scope: accessScopeOf(view, command.scopeId, tenantOf(scope)),
