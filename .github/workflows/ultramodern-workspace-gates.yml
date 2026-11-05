@@ -373,12 +373,9 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: mise exec -- pnpm api:check
 
-      # The Commerce Cloudflare build once crashed parsing Catalog's root HttpApi chain because React
-      # Compiler also compiled server code. Production imports only the quantity-preparation client;
-      # this case keeps the whole Catalog client barrel compiling in the Commerce workerd graph. It is
-      # not a delivery artifact, so it runs here, off the build-and-proof path.
+      # Retain the whole-Catalog-client regression guard for workerd, but do not run it for Node delivery.
       - name: Build Commerce for workerd with the whole Catalog client barrel
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        if: ${{ false }}
         working-directory: app
         env:
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
@@ -944,7 +941,8 @@ jobs:
     permissions:
       actions: read
       contents: read
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    # Cloudflare Workers are retired from CI/CD. Keep the job definition, but never run its builds or proofs.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -1180,7 +1178,6 @@ jobs:
         format-and-lint,
         service-integration,
         node-artifact-build,
-        cloudflare-artifact-build,
       ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -2668,7 +2665,8 @@ jobs:
   # creating a deployment (`deployment: false`); only a real edge deploy enters its history.
   edge-deploy-readiness:
     name: Check the Cloudflare edge deploy configuration
-    if: needs.deploy-target.outputs.environment == 'stage'
+    # Keep the retired Workers deploy chain disabled even if old Cloudflare credentials remain configured.
+    if: ${{ false }}
     needs: [deploy-target]
     runs-on: ubuntu-latest
     timeout-minutes: 5

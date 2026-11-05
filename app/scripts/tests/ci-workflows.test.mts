@@ -196,13 +196,11 @@ const runStep = (script: string, environment: Readonly<Record<string, string>>, 
 const readEdgeDeployJobs = () =>
   Schema.decodeUnknownSync(EdgeDeployWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
 
-it('deploys to Cloudflare only when the account, retained artifact origin, backend secrets, and database are configured', () => {
+it('retains configuration checks for the disabled Cloudflare deployment', () => {
   const jobs = readEdgeDeployJobs();
-  // The job runs only with both the account and the token; an unconfigured repository skips it,
-  // so it records no deployment at all and CI stays green.
   const readiness = jobs['edge-deploy-readiness'];
-  // Only stage can target Cloudflare, so only a stage deploy checks the edge.
-  expect(readiness.if).toBe("needs.deploy-target.outputs.environment == 'stage'");
+  // Workers deployment is retired, even if its old account and credentials remain configured.
+  expect(readiness.if).toBe(expression('false'));
   // Reading `stage-edge` secrets for the check must not add an entry to its deployment history.
   expect(readiness.environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
   const check = readiness.steps.find((step) => step.id === 'configuration');
@@ -1120,8 +1118,8 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
     );
     expect(step.run ?? '').not.toContain('--environment stage');
   }
-  // Only stage deploys to the edge, after its migrations and beside its Zerops services.
-  expect(jobs['edge-deploy-readiness'].if).toBe("needs.deploy-target.outputs.environment == 'stage'");
+  // The retired edge deploy chain stays disabled.
+  expect(jobs['edge-deploy-readiness'].if).toBe(expression('false'));
   expect(jobs['deploy-cloudflare'].needs).toEqual([
     DEPLOY_TARGET_JOB,
     INITIAL_CUTOVER_GUARD_JOB,
@@ -1592,7 +1590,6 @@ const ROOT_GATE_JOBS = [
   FORMAT_AND_LINT_JOB,
   'service-integration',
   NODE_ARTIFACT_BUILD_JOB,
-  CLOUDFLARE_ARTIFACT_BUILD_JOB,
 ] as const;
 /** Every gate job; each target's artifact proofs run inside its own build shards. */
 const GATE_JOBS = ROOT_GATE_JOBS;
@@ -1601,6 +1598,30 @@ const GatedJobsSchema = Schema.Struct({
     Schema.String,
     Schema.Struct({ if: Schema.optional(Schema.String), needs: Schema.optional(Schema.Array(Schema.String)) }),
   ),
+});
+
+it('disables retired Cloudflare builds, proofs and deployment without gating Node delivery', () => {
+  const source: unknown = parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'));
+  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
+  expect(jobs[CLOUDFLARE_ARTIFACT_BUILD_JOB]?.if).toBe(expression('false'));
+  expect(jobs[EDGE_READINESS_JOB]?.if).toBe(expression('false'));
+  expect(jobs['workspace-gates']?.needs).not.toContain(CLOUDFLARE_ARTIFACT_BUILD_JOB);
+  const workflow = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Struct({
+        'static-contracts': Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({ if: Schema.optional(Schema.String), name: Schema.optional(Schema.String) }),
+          ),
+        }),
+      }),
+    }),
+  )(source);
+  const workerd = workflow.jobs['static-contracts'].steps.find(
+    ({ name }) => name === 'Build Commerce for workerd with the whole Catalog client barrel',
+  );
+  expect(workerd).toBeDefined();
+  expect(workerd?.if).toBe(expression('false'));
 });
 
 /** Whether a workflow step's script succeeds when Actions runs it with these variables. */
