@@ -638,4 +638,43 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
       }),
     ),
   );
+  suite.effect('refuses an edit a delegated envelope checked before the role gained a holder', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* holderJoinedSinceTheCheck() {
+        const companyScope = legalEntityScopeId(tenant.tenantId, company);
+        const role = yield* tenant.createRole(NOTE_READ);
+        const held = yield* tenant.newIncarnationId;
+        yield* tenant.people
+          .assignRole(tenant.owner, {
+            incarnationId: held,
+            principalId: colleague,
+            roleId: role.roleId,
+            roleRevisionId: role.roleRevisionId,
+            scopeId: companyScope,
+          })
+          .pipe(Effect.orDie);
+        const decidedAt = yield* DateTime.nowAsDate;
+        const edit = (targetRevisionId: string, expectedHolders: readonly AssignmentIncarnationId[]) =>
+          tenant.changes.recordRoleRevision({
+            catalogSnapshotId: tenant.release.id,
+            decidedAt,
+            edit: {
+              addedCells: tenant.cellsOf(NOTE_DELETE),
+              cells: [...tenant.cellsOf(NOTE_READ), ...tenant.cellsOf(NOTE_DELETE)],
+              removedCells: [],
+              roleId: role.roleId,
+              sourceRevisionId: role.roleRevisionId,
+              targetRevisionId: RoleRevisionIdSchema.make(targetRevisionId),
+            },
+            expectedHolders,
+            scope: tenant.owner,
+          });
+        // The edit was checked against nobody, but the colleague holds the role now: refused, nothing moved.
+        const stale = yield* Effect.flip(edit(uid(501), []));
+        expect(stale.code).toBe('access_changes_revision_stale');
+        // Checked against the colleague it is, the same edit commits.
+        yield* edit(uid(502), [held]).pipe(Effect.orDie);
+      }),
+    ),
+  );
 });

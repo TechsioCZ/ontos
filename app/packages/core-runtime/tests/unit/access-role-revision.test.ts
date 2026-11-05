@@ -771,6 +771,7 @@ const authorisedWrite = (input: {
 }) =>
   Effect.gen(function* authorisedWriteEffect() {
     const recorded: string[] = [];
+    const expectedHolders: (readonly string[] | undefined)[] = [];
     const role = input.role ?? headRole([cell(READ)]);
     const plan = yield* editablePlan(role, input.cells);
     const outcome = yield* Effect.result(
@@ -786,6 +787,7 @@ const authorisedWrite = (input: {
             (request) =>
               Effect.sync(() => {
                 recorded.push(request.edit.roleId);
+                expectedHolders.push(request.expectedHolders);
               }),
             [headRole([cell(READ)]), otherRole, input.grantor ?? grantorRole],
           ),
@@ -797,12 +799,12 @@ const authorisedWrite = (input: {
         Effect.provideService(AccessProjectionWriter, reconciled([])),
       ),
     );
-    return { outcome, recorded };
+    return { expectedHolders, outcome, recorded };
   });
 
 it.effect('lets the owner edit any role, including one they hold themselves', () =>
   Effect.gen(function* ownerEdits() {
-    const { outcome, recorded } = yield* authorisedWrite({
+    const { expectedHolders, outcome, recorded } = yield* authorisedWrite({
       actor: PERSON,
       assignments: [assignment({ holder: principalHolder(PERSON) })],
       bases: [ownerBasis()],
@@ -810,12 +812,14 @@ it.effect('lets the owner edit any role, including one they hold themselves', ()
     });
     expect(succeeded(outcome).roleRevisionId).toBe(targetRevisionId);
     expect(recorded).toEqual([ROLE]);
+    // A permanent basis reaches anyone, so the store need not re-check the role's holders.
+    expect(expectedHolders).toEqual([undefined]);
   }),
 );
 
 it.effect('lets a delegated manager edit a role of their envelope with a capability of their envelope', () =>
   Effect.gen(function* delegateWithinEnvelope() {
-    const { outcome, recorded } = yield* authorisedWrite({
+    const { expectedHolders, outcome, recorded } = yield* authorisedWrite({
       actor: MANAGER,
       assignments: [assignment({ holder: principalHolder(OTHER_PERSON) }), grantorHolds()],
       bases: [managerBasis()],
@@ -823,6 +827,8 @@ it.effect('lets a delegated manager edit a role of their envelope with a capabil
     });
     expect(succeeded(outcome).roleRevisionId).toBe(targetRevisionId);
     expect(recorded).toEqual([ROLE]);
+    // The delegate's envelope saw exactly this holder, so the store refuses the edit if another joins.
+    expect(expectedHolders).toEqual([[fixedId(50)]]);
   }),
 );
 
