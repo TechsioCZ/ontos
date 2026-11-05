@@ -712,6 +712,83 @@ it.layer(
     }),
   );
 
+  for (const scenario of [
+    {
+      partyType: 'PERSON',
+      businessName: 'Analytical Engines',
+      beforeDisplayName: 'Analytical Engines',
+      afterDisplayName: 'Ada Lovelace',
+    },
+    {
+      partyType: 'ORGANIZATION',
+      businessName: null,
+      beforeDisplayName: 'Ada Lovelace',
+      afterDisplayName: null,
+    },
+  ] as const) {
+    testIt.effect(`a type-only Update to ${scenario.partyType} recomputes the display from retained names`, () =>
+      Effect.gen(function* verifyTypeOnlyProjection() {
+        const current = partyRow({
+          archivedAt: null,
+          currentType: 'UNRESOLVED',
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          businessName: scenario.businessName,
+          currentDisplayName: scenario.beforeDisplayName,
+        });
+        const harness = transactionHarness(
+          [[current], [], [{ partyId }]],
+          [
+            [
+              {
+                ...current,
+                currentType: scenario.partyType,
+                currentDisplayName: scenario.afterDisplayName,
+                revision: 5,
+              },
+            ],
+          ],
+        );
+        const result = yield* updatePartyIdentityRecord(harness.transaction, tenantId, {
+          actionInvocationId: '66666666-6666-4666-8666-666666666666',
+          expectedRevision: 4,
+          partyId,
+          partyType: scenario.partyType,
+          principalId: '77777777-7777-4777-8777-777777777777',
+          provenanceMethod: 'MANUAL',
+          provenanceSource: 'test',
+          subjectEvidence: [
+            {
+              basis: 'REVIEWED_DOCUMENT',
+              evidenceRef: 'record/type-only',
+              kind: 'ACTOR_ATTESTATION',
+              observedSubject: scenario.partyType,
+              statement: 'Reviewed this concrete external subject',
+              subjectKey: partySubjectKeyFromString('one-subject'),
+            },
+          ],
+          validFrom: '2026-01-01T00:00:00.000Z',
+        });
+        expect(Predicate.isTagged(result, 'found')).toBe(true);
+        expect(harness.updateSets[0]).toEqual({
+          currentType: scenario.partyType,
+          currentDisplayName: scenario.afterDisplayName,
+          revision: 5,
+          updatedAt: expect.any(Date),
+        });
+        expect(harness.insertedValues).toEqual([
+          [expect.objectContaining({ factKind: 'PARTY_TYPE', normalizedValue: scenario.partyType })],
+        ]);
+        if (Predicate.isTagged(result, 'found')) {
+          expect(Option.getOrNull(result.value.firstName)).toBe('Ada');
+          expect(Option.getOrNull(result.value.lastName)).toBe('Lovelace');
+          expect(Option.getOrNull(result.value.businessName)).toBe(scenario.businessName);
+          expect(Option.getOrNull(result.value.displayName)).toBe(scenario.afterDisplayName);
+        }
+      }),
+    );
+  }
+
   testIt.effect('Party type enrichment atomically claims identifiers that newly qualify', () =>
     Effect.gen(function* claimEnrichedIdentifier() {
       const current = partyRow({
