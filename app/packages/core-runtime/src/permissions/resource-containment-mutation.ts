@@ -89,7 +89,6 @@ const validRelationships = (
     targets.some(
       (target) =>
         target.contract !== first.contract ||
-        target.definition !== first.definition ||
         target.scope.tenantId !== first.scope.tenantId ||
         target.scope.kind !== first.scope.kind ||
         (target.scope.kind === 'legal_entity' &&
@@ -116,7 +115,9 @@ const validRelationships = (
       relation === 'containing_catalog' &&
       container.objectType === 'business_permission' &&
       container.objectId !== resource.objectId &&
-      targets.some((candidate) => candidate.objectId === container.objectId) &&
+      targets.some(
+        (candidate) => candidate.objectId === container.objectId && candidate.definition === target.definition,
+      ) &&
       relationships.some(
         (candidate) =>
           candidate.resource.objectId === resource.objectId &&

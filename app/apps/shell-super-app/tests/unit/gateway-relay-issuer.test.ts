@@ -1,5 +1,5 @@
-import type { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
-import { GatewayRelayRequestSchema } from '@app/shared-contracts';
+import type { GatewayContextV2ClaimsSchema } from '@app/shared-contracts';
+import { GatewayRelayRequestSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
 import {
   OperationContextDenied,
   OperationContextUnavailable,
@@ -10,6 +10,10 @@ import {
   TenantModuleStateRecordSchema,
 } from '@app/core-runtime';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
+import {
+  readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayScopeAssertion,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
 import { PgClient } from '@effect/sql-pg';
@@ -48,6 +52,10 @@ import {
 import type { RelayUnitRows } from '../support/gateway-relay-test.ts';
 
 const issuer = 'https://relay-unit.example.test';
+const storefrontPrincipal = Schema.decodeUnknownSync(GatewayTrustedPrincipalContextSchema)({
+  ...relayUnitPrincipal,
+  trustedStorefrontId: 'relay-unit-storefront',
+});
 const relayRoutes = {
   catalogParty: {
     operationKey: 'party.registry.api.party-detail',
@@ -168,10 +176,10 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
   let signingAttempts = 0;
   const ledgerFingerprints: string[] = [];
   const resolvedSourceScopes: {
-    legalEntityId: string | undefined;
     legalEntityScope: string;
-    principalId: string;
-    tenantId: string;
+    principal: typeof GatewayTrustedPrincipalContextSchema.Type;
+    scopeAudience: string | undefined;
+    verifiedCompositionRevision: string | undefined;
   }[] = [];
   const registrar = capturingScopeGrantRegistrar();
   const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
@@ -247,10 +255,10 @@ const relayCase = Effect.fn('RelayIssuerTest.case')(function* relayCase(input: R
       Effect.provideService(OperationalScopeResolver, {
         resolve: (request) => {
           resolvedSourceScopes.push({
-            legalEntityId: request.principal.legalEntityId,
             legalEntityScope: request.legalEntityScope,
-            principalId: request.principal.principalId,
-            tenantId: request.principal.tenantId,
+            principal: request.principal,
+            scopeAudience: readVerifiedGatewayScopeAssertion(request.principal)?.audience,
+            verifiedCompositionRevision: readVerifiedGatewayCompositionRevision(request.principal),
           });
           if (input.contextFailure === 'unavailable') {
             return Effect.fail(
@@ -440,43 +448,75 @@ it.effect('fails closed in the real destination issuer configuration after reser
   }),
 );
 
-it.effect('validates original CCC Legal Entity and projects only its compatibility assertion to tenant scope', () =>
-  Effect.gen(function* tenantOnlyPriceGroupAssertion() {
-    const result = yield* relayCase({ route: 'customerPriceGroup' });
-    expect(Exit.isSuccess(result.result)).toBe(true);
-    if (!Exit.isSuccess(result.result)) {
-      return;
-    }
-    const issued = result.result.value;
-    const verified = yield* Effect.promise(() =>
-      jwtVerify(issued.token, result.publicKey, {
+for (const [label, principal] of [
+  ['Legal Entity only', relayUnitPrincipal],
+  ['Legal Entity and Storefront', storefrontPrincipal],
+] as const) {
+  it.effect(`validates the original CCC ${label} and signs a valid tenant-only compatibility assertion`, () =>
+    Effect.gen(function* tenantOnlyPriceGroupAssertion() {
+      const result = yield* relayCase({ principal, route: 'customerPriceGroup' });
+      expect(Exit.isSuccess(result.result)).toBe(true);
+      if (!Exit.isSuccess(result.result)) {
+        return;
+      }
+      const issued = result.result.value;
+      const verified = yield* Effect.promise(() =>
+        jwtVerify(issued.token, result.publicKey, {
+          audience: 'price-group-catalog',
+          currentDate: new Date(relayUnitNow * 1000),
+          issuer,
+        }),
+      );
+      const { legalEntityId, ...tenantPrincipal } = relayUnitPrincipal;
+      const targetPrincipal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
+        onExcessProperty: 'error',
+      })(verified.payload['principal']);
+      expect(targetPrincipal).toEqual(tenantPrincipal);
+      expect(targetPrincipal).not.toHaveProperty('legalEntityId');
+      expect(targetPrincipal).not.toHaveProperty('trustedStorefrontId');
+      expect(verified.payload.sub).toBe(principal.principalId);
+      expect(verified.payload['compositionRevision']).toBe(result.revision);
+      expect(verified.payload['targetBuildMarker']).toBe('price-group-catalog-build');
+      expect(verified.payload['ver']).toBe(2);
+      expect(verified.payload.exp).toBe(relayUnitNow + 280);
+      expect(verified.payload.iat).toBe(relayUnitNow - 20);
+      expect(result.resolvedSourceScopes).toEqual([
+        {
+          legalEntityScope: 'required',
+          principal,
+          scopeAudience: 'commerce-customer-context',
+          verifiedCompositionRevision: result.revision,
+        },
+      ]);
+      expect(legalEntityId).toBeDefined();
+      expect(result.ledgerClaims).toBe(1);
+      expect(result.signingAttempts).toBe(1);
+      expect(result.registrarInputs).toHaveLength(1);
+      expect(result.registrarInputs[0]).toMatchObject({
         audience: 'price-group-catalog',
-        currentDate: new Date(relayUnitNow * 1000),
-        issuer,
-      }),
-    );
-    const { legalEntityId, ...tenantPrincipal } = relayUnitPrincipal;
-    expect(verified.payload['principal']).toEqual(tenantPrincipal);
-    expect(verified.payload['compositionRevision']).toBe(result.revision);
-    expect(verified.payload.exp).toBe(relayUnitNow + 280);
-    expect(verified.payload.iat).toBe(relayUnitNow - 20);
-    expect(result.resolvedSourceScopes).toEqual([
-      {
-        legalEntityId,
-        legalEntityScope: 'required',
-        principalId: relayUnitPrincipal.principalId,
-        tenantId: relayUnitPrincipal.tenantId,
-      },
-    ]);
-    expect(result.ledgerClaims).toBe(1);
-  }),
-);
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      });
+      expect(result.registrarInputs[0]).not.toHaveProperty('legalEntityId');
+    }),
+  );
+}
 
 it.effect('rejects a tenant-only CCC source before context resolution, exchange reservation or target signing', () =>
   Effect.gen(function* requiredSourceLegalEntityCannotBeOmitted() {
     const { legalEntityId, ...tenantPrincipal } = relayUnitPrincipal;
     expect(legalEntityId).toBeDefined();
     const result = yield* relayCase({ route: 'customerPriceGroup', source: { principal: tenantPrincipal } });
+    assertDenied(result, 'forbidden');
+    expect(result.resolvedSourceScopes).toEqual([]);
+  }),
+);
+
+it.effect('rejects Storefront context without its source Legal Entity before projection can hide it', () =>
+  Effect.gen(function* invalidStorefrontSourceCannotBeProjected() {
+    const { legalEntityId, ...invalidPrincipal } = storefrontPrincipal;
+    expect(legalEntityId).toBeDefined();
+    const result = yield* relayCase({ route: 'customerPriceGroup', source: { principal: invalidPrincipal } });
     assertDenied(result, 'forbidden');
     expect(result.resolvedSourceScopes).toEqual([]);
   }),
@@ -511,6 +551,21 @@ it.effect('fingerprints the full CCC source Legal Entity even though both target
   }),
 );
 
+it.effect('fingerprints the original CCC Storefront even though the tenant-only target omits it', () =>
+  Effect.gen(function* sourceStorefrontFingerprintRemainsDistinct() {
+    const first = yield* relayCase({ principal: storefrontPrincipal, route: 'customerPriceGroup' });
+    const second = yield* relayCase({
+      principal: { ...storefrontPrincipal, trustedStorefrontId: 'another-storefront' },
+      route: 'customerPriceGroup',
+    });
+    expect(Exit.isSuccess(first.result)).toBe(true);
+    expect(Exit.isSuccess(second.result)).toBe(true);
+    expect(first.ledgerFingerprints).toHaveLength(1);
+    expect(second.ledgerFingerprints).toHaveLength(1);
+    expect(first.ledgerFingerprints[0]).not.toBe(second.ledgerFingerprints[0]);
+  }),
+);
+
 it.effect('adds Market subject restrictions with the complete original Principal and no scope projection', () =>
   Effect.gen(function* marketSubjectRetainsOriginalScope() {
     const result = yield* relayCase({ route: 'marketSubject' });
@@ -536,6 +591,8 @@ for (const [label, input, code] of [
   ['source-current-denied', { contextFailure: 'denied' }, 'forbidden'],
   ['source-current-unavailable', { contextFailure: 'unavailable' }, 'unavailable'],
   ['source-binding-revoked', { originalBindingRevoked: true }, 'forbidden'],
+  ['source-key-disabled', { authRows: [[[false, null]]] }, 'forbidden'],
+  ['source-module-suspended', { moduleState: 'suspended' }, 'forbidden'],
   ['provider-missing', { missingDeployment: 'price-group-catalog' }, 'forbidden'],
   ['source-build-mismatch', { source: { targetBuildMarker: 'other-build' } }, 'forbidden'],
   ['source-revision-mismatch', { source: { compositionRevision: 'b'.repeat(64) } }, 'forbidden'],
@@ -548,7 +605,45 @@ for (const [label, input, code] of [
 ] satisfies readonly (readonly [string, RelayCase, GatewayRelayError['code']])[]) {
   it.effect(`keeps CCC projection closed for ${label}`, () =>
     Effect.gen(function* projectedRelayFailure() {
-      assertDenied(yield* relayCase({ ...input, route: 'customerPriceGroup' }), code);
+      assertDenied(yield* relayCase({ principal: storefrontPrincipal, ...input, route: 'customerPriceGroup' }), code);
+    }),
+  );
+}
+
+for (const failure of ['replay', 'unavailable'] as const) {
+  it.effect(`does not sign a Storefront compatibility projection when the ledger reports ${failure}`, () =>
+    Effect.gen(function* projectedRelayLedgerFailure() {
+      assertDenied(
+        yield* relayCase({
+          ledgerFailure: failure,
+          principal: storefrontPrincipal,
+          route: 'customerPriceGroup',
+        }),
+        failure === 'replay' ? 'forbidden' : 'unavailable',
+        1,
+      );
+    }),
+  );
+}
+
+for (const route of ['catalogParty', 'customerParty', 'marketSubject'] as const) {
+  it.effect(`retains the complete Storefront scope and actor for the unrelated ${route} relay`, () =>
+    Effect.gen(function* unrelatedRelayScopeIsUnchanged() {
+      const result = yield* relayCase({ principal: storefrontPrincipal, route });
+      expect(Exit.isSuccess(result.result)).toBe(true);
+      if (!Exit.isSuccess(result.result)) {
+        return;
+      }
+      const issued = result.result.value;
+      const verified = yield* Effect.promise(() =>
+        jwtVerify(issued.token, result.publicKey, {
+          audience: relayRoutes[route].targetAppId,
+          currentDate: new Date(relayUnitNow * 1000),
+          issuer,
+        }),
+      );
+      expect(verified.payload['principal']).toEqual(storefrontPrincipal);
+      expect(result.resolvedSourceScopes[0]?.principal).toEqual(storefrontPrincipal);
     }),
   );
 }

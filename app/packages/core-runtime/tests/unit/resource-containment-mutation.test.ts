@@ -3,8 +3,9 @@ import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
+import { createOwnerPermissionAccessTarget } from '../../src/permissions/context-access.ts';
 import type { OwnerPermissionAccessTarget } from '../../src/permissions/context-access.ts';
-import { historicalOwnerTarget } from '../support/historical-owner-targets.ts';
+import { historicalOwnerContract, historicalOwnerTarget } from '../support/historical-owner-targets.ts';
 import {
   makeResourceContainmentRelationshipMutation,
   ResourceContainmentMutationUnavailable,
@@ -12,6 +13,7 @@ import {
 import type {
   ResourceContainmentRelationship,
   ResourceContainmentRelationshipMutationInput,
+  ResourceContainmentPreparation,
 } from '../../src/permissions/resource-containment-mutation.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -22,6 +24,14 @@ const otherPricingCatalogId = '50000000-0000-4000-8000-000000000002';
 const priceGroupId = '60000000-0000-4000-8000-000000000001';
 
 const declaredPricingTargets = new Map<string, OwnerPermissionAccessTarget>();
+const pricingContract = Object.freeze({
+  ...historicalOwnerContract('pricing.price_group.read'),
+  permissions: Object.freeze(
+    ['read', 'revision.create', 'retire'].flatMap(
+      (operation) => historicalOwnerContract(`pricing.price_group.${operation}`).permissions,
+    ),
+  ),
+});
 
 const permission = (operation: string) =>
   Schema.decodeSync(BusinessPermissionCodeSchema)(`pricing.price_group.${operation}`);
@@ -32,7 +42,10 @@ const permissionObjectId = (
     | Readonly<{ kind: 'pricing_catalog'; pricingCatalogId: string; tenantId: string }>
     | Readonly<{ kind: 'price_group'; priceGroupId: string; pricingCatalogId: string; tenantId: string }>,
 ): string => {
-  const qualified = historicalOwnerTarget(permission(operation), target);
+  const qualified = createOwnerPermissionAccessTarget(
+    pricingContract,
+    historicalOwnerTarget(permission(operation), target),
+  );
   declaredPricingTargets.set(qualified.objectId, qualified);
   return qualified.objectId;
 };
@@ -113,7 +126,7 @@ const preparePricingRelationships = (
   return [...prepared.values()];
 };
 
-const makeHarness = () => {
+const makeHarness = (prepare: ResourceContainmentPreparation = preparePricingRelationships) => {
   const requests: v1.WriteRelationshipsRequest[] = [];
   const service = makeResourceContainmentRelationshipMutation(
     {
@@ -123,7 +136,7 @@ const makeHarness = () => {
           return v1.WriteRelationshipsResponse.create({});
         }),
     },
-    preparePricingRelationships,
+    prepare,
   );
   return { requests, service };
 };
@@ -160,6 +173,27 @@ it.effect('touches an exact Pricing tenant and containment set atomically', () =
   }),
 );
 
+it.effect('touches multiple permissions from one owner contract in one atomic write', () =>
+  Effect.gen(function* touchMultiplePermissions() {
+    const { requests, service } = makeHarness();
+    yield* service.touch({
+      relationships: [
+        tenantRelationship(),
+        containmentRelationship(),
+        tenantRelationship('revision.create'),
+        containmentRelationship('revision.create'),
+        tenantRelationship('retire'),
+        containmentRelationship('retire'),
+      ],
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.updates).toHaveLength(6);
+    expect(requests[0]?.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(
+      true,
+    );
+  }),
+);
+
 it.effect('rejects malformed, duplicate, or unsupported topology before transport', () =>
   Effect.gen(function* rejectInvalidTopology() {
     const { requests, service } = makeHarness();
@@ -174,6 +208,7 @@ it.effect('rejects malformed, duplicate, or unsupported topology before transpor
     Reflect.set(unsupportedPrincipalRelationship, 'relation', 'grantee');
     const failures = [
       yield* Effect.flip(service.touch({ relationships: [duplicate, duplicate] })),
+      yield* Effect.flip(service.touch({ relationships: [containmentRelationship()] })),
       yield* Effect.flip(service.touch({ relationships: [invalidRelation] })),
       yield* Effect.flip(
         service.touch({
@@ -235,7 +270,64 @@ it.effect('rejects a tenant relationship that disagrees with the encoded Pricing
 it.effect('rejects containment between different Pricing permissions', () =>
   Effect.gen(function* rejectPermissionMismatch() {
     const { requests, service } = makeHarness();
-    const failure = yield* Effect.flip(service.touch({ relationships: [containmentRelationship('read', 'revise')] }));
+    const failure = yield* Effect.flip(
+      service.touch({
+        relationships: [tenantRelationship(), containmentRelationship('read', 'revision.create')],
+      }),
+    );
+    expect(failure).toBeInstanceOf(ResourceContainmentMutationUnavailable);
+    expect(requests).toHaveLength(0);
+  }),
+);
+
+it.effect('rejects mixed owner contracts, tenants, and scopes before transport', () =>
+  Effect.gen(function* rejectMixedPreparedTargets() {
+    const tenant = tenantRelationship();
+    const containment = containmentRelationship();
+    const input = { relationships: [tenant, containment] } satisfies ResourceContainmentRelationshipMutationInput;
+    const targets = preparePricingRelationships(input) ?? [];
+    expect(targets).toHaveLength(2);
+    const parent = targets.find((target) => target.objectId === containment.container.objectId);
+    expect(parent).toBeDefined();
+    if (parent === undefined) {
+      return;
+    }
+    const invalidParents = [
+      createOwnerPermissionAccessTarget(
+        Object.freeze({ ...pricingContract, owningModuleKey: 'foreign.owner' }),
+        parent,
+      ),
+      createOwnerPermissionAccessTarget(Object.freeze({ ...pricingContract }), parent),
+      createOwnerPermissionAccessTarget(pricingContract, {
+        ...parent,
+        scope: { kind: 'tenant', tenantId: otherTenantId },
+      }),
+      createOwnerPermissionAccessTarget(pricingContract, {
+        ...parent,
+        scope: { kind: 'legal_entity', legalEntityId, tenantId },
+      }),
+    ];
+    for (const invalidParent of invalidParents) {
+      const { requests, service } = makeHarness(() =>
+        targets.map((target) => (target.objectId === parent.objectId ? invalidParent : target)),
+      );
+      const failure = yield* Effect.flip(service.touch(input));
+      expect(failure).toBeInstanceOf(ResourceContainmentMutationUnavailable);
+      expect(requests).toHaveLength(0);
+    }
+    const { requests, service } = makeHarness(() =>
+      targets.map((target) =>
+        createOwnerPermissionAccessTarget(pricingContract, {
+          ...target,
+          scope: {
+            kind: 'legal_entity',
+            legalEntityId: target.objectId === parent.objectId ? legalEntityId : '20000000-0000-4000-8000-000000000002',
+            tenantId,
+          },
+        }),
+      ),
+    );
+    const failure = yield* Effect.flip(service.touch(input));
     expect(failure).toBeInstanceOf(ResourceContainmentMutationUnavailable);
     expect(requests).toHaveLength(0);
   }),

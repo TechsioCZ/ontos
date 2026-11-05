@@ -1,8 +1,10 @@
 import { priceGroupPermissionIdentity } from '../../src/permissions/authorization.ts';
+import { v1 } from '@authzed/authzed-node';
 import { BusinessPermissionCodeSchema, ScopedRoutineInvocationError } from '@app/core-runtime';
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import {
   OutboxWorkerTenantScope,
+  makeResourceContainmentRelationshipMutation,
   ResourceContainmentMutationUnavailable,
   ResourceContainmentRelationshipMutation,
 } from '@app/core-runtime/outbox/worker';
@@ -19,6 +21,7 @@ import { expect, it } from 'effect-rstest';
 import { PriceGroupContainmentProjectionRequestedPayloadSchema } from '../../shared/actions/create-price-group.ts';
 import { PriceGroupDefinitionRevisionSchema } from '../../shared/domain/price-group.ts';
 import { PriceGroupContainmentProjectionPersistenceUnavailable } from '../../src/persistence/containment-projection-errors.ts';
+import { preparePriceGroupContainment } from '../../src/permissions/containment-preparation.ts';
 import {
   handleReconcilePriceGroupContainmentProjection,
   priceGroupContainmentRelationships,
@@ -156,6 +159,61 @@ it.effect('builds the exact six permission-scoped tenant and catalog containment
   }),
 );
 
+it.effect('rejects foreign-owner, wrong-tenant, and mismatched-permission batches before the Core transport', () =>
+  Effect.gen(function* rejectInvalidPreparedContainment() {
+    const requests: v1.WriteRelationshipsRequest[] = [];
+    const containment = makeResourceContainmentRelationshipMutation(
+      {
+        writeRelationships: (input) =>
+          Effect.sync(() => {
+            requests.push(input);
+            return v1.WriteRelationshipsResponse.create({});
+          }),
+      },
+      preparePriceGroupContainment,
+    );
+    const relationships = yield* priceGroupContainmentRelationships(request);
+    const [first] = relationships;
+    const revisionCatalog = priceGroupPermissionIdentity({
+      permission: 'pricing.price_group.revision.create',
+      target: { kind: 'pricing_catalog', pricingCatalogId: tenantId, tenantId },
+    }).objectId;
+    const foreignCatalog = `ctx_${Buffer.from(
+      JSON.stringify(['foreign.price_group.read', tenantId, 'pricing_catalog', tenantId]),
+      'utf-8',
+    ).toString('base64url')}`;
+    const invalidBatches: ResourceContainmentRelationshipMutationInput[] = [
+      {
+        relationships: [
+          {
+            ...first,
+            container: { objectId: '77777777-7777-4777-8777-777777777777', objectType: 'tenant' },
+            relation: 'tenant',
+          },
+          ...relationships.slice(1),
+        ],
+      },
+      ...[revisionCatalog, foreignCatalog].map((objectId): ResourceContainmentRelationshipMutationInput => ({
+        relationships: [
+          first,
+          {
+            container: { objectId, objectType: 'business_permission' },
+            relation: 'containing_catalog',
+            resource: first.resource,
+          },
+          ...relationships.slice(2),
+        ],
+      })),
+    ];
+    for (const input of invalidBatches) {
+      expect(preparePriceGroupContainment(input)).toBeUndefined();
+      const failure = yield* Effect.flip(containment.touch(input));
+      expect(Predicate.isTagged(failure, 'ResourceContainmentMutationUnavailable')).toBe(true);
+      expect(requests).toHaveLength(0);
+    }
+  }),
+);
+
 const runHandler = (
   touch: ResourceContainmentRelationshipMutationService['touch'],
   observed: ObservedWorkerEffects,
@@ -221,9 +279,38 @@ const runHandler = (
 it.effect('applies one atomic tuple set before finalizing and publishing the terminal created fact', () =>
   Effect.gen(function* reconcileAndPublish() {
     const observed = observeWorkerEffects();
-    yield* runHandler(() => Effect.void, observed);
+    const requests: v1.WriteRelationshipsRequest[] = [];
+    const containment = makeResourceContainmentRelationshipMutation(
+      {
+        writeRelationships: (input) =>
+          Effect.sync(() => {
+            expect(observed.routineNames).toEqual(['read_price_group_containment_projection_intent']);
+            expect(observed.completions).toHaveLength(0);
+            requests.push(input);
+            return v1.WriteRelationshipsResponse.create({});
+          }),
+      },
+      preparePriceGroupContainment,
+    );
+    yield* runHandler(containment.touch, observed);
     expect(observed.touches).toHaveLength(1);
     expect(observed.touches[0]?.relationships).toHaveLength(6);
+    expect(requests).toHaveLength(1);
+    expect(
+      requests[0]?.updates.map(({ operation, relationship }) => ({
+        container: relationship?.subject?.object,
+        operation,
+        relation: relationship?.relation,
+        resource: relationship?.resource,
+      })),
+    ).toEqual(
+      (yield* priceGroupContainmentRelationships(request)).map(({ container, relation, resource }) => ({
+        container: v1.ObjectReference.create(container),
+        operation: v1.RelationshipUpdate_Operation.TOUCH,
+        relation,
+        resource: v1.ObjectReference.create(resource),
+      })),
+    );
     expect(observed.routineNames).toEqual([
       'read_price_group_containment_projection_intent',
       'complete_price_group_containment_projection',
