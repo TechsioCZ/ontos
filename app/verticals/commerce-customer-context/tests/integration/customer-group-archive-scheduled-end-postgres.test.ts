@@ -311,7 +311,6 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
     mode: 'schema-only',
     purpose: 'stabilization-1273-group-archive-scheduled-end',
   });
-  yield* isolated.assertClonedSchema();
   const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const sourceJournal = yield* journalFingerprint(source.admin);
   yield* Effect.addFinalizer(() =>

@@ -33,6 +33,50 @@ import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/databas
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
+// Test the cloner here, not as a repeated precondition of unrelated business scenarios.
+// Structured metadata produces an object-level diff and never reads table data or trust keys.
+const readSchemaCloneCatalog = Effect.fn('SchemaCloneTests.readCatalog')(function* readCatalog(
+  connectionString: string,
+) {
+  const client = yield* makeTestPgClient(connectionString);
+  const database = yield* makeTestDatabaseFromClient(client, coreRelations);
+  return yield* database.transaction(
+    Effect.fn('SchemaCloneTests.catalogSnapshot')(function* catalogSnapshot(transaction) {
+      yield* transaction.execute(sql`select set_config('search_path','pg_catalog',true)`, 'objects');
+      const [row] = yield* transaction.execute<{ readonly catalog: unknown }>(
+        sql`
+select json_build_object(
+  'relations', (select json_agg(row_to_json(r) order by r.schema, r.name) from (
+    select n.nspname as schema, c.relname as name, c.relkind, c.relrowsecurity, c.relforcerowsecurity,
+      array(select a::text from unnest(coalesce(c.relacl,acldefault((case when c.relkind='S' then 's' else 'r' end)::"char",c.relowner))) a order by a::text)::text as acl,pg_get_userbyid(c.relowner) as owner
+    from pg_class c join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'
+      and c.relkind in ('r','p','v','m','S')
+  ) r),
+  'policies', (select json_agg(row_to_json(p) order by p.schemaname,p.tablename,p.policyname)
+    from pg_policies p where p.schemaname not in ('pg_catalog','information_schema')),
+  'constraints', (select json_agg(row_to_json(k) order by k.schema,k.table_name,k.name) from (
+    select n.nspname as schema,c.relname as table_name,k.conname as name,pg_get_constraintdef(k.oid,true) as definition
+    from pg_constraint k join pg_class c on c.oid=k.conrelid join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'
+  ) k),
+  'functions', (select json_agg(row_to_json(f) order by f.schema,f.name,f.arguments) from (
+    select n.nspname as schema,p.proname as name,pg_get_function_identity_arguments(p.oid) as arguments,
+      pg_get_functiondef(p.oid) as definition,array(select a::text from unnest(coalesce(p.proacl,acldefault('f',p.proowner))) a order by a::text)::text as acl,pg_get_userbyid(p.proowner) as owner
+    from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname not in ('pg_catalog','information_schema') and p.prokind in ('f','p')
+  ) f)
+) as catalog`,
+        'objects',
+      );
+      if (row === undefined) {
+        return yield* Effect.die('The clone integration test could not read its schema catalog');
+      }
+      return row.catalog;
+    }),
+  );
+});
+
 it.layer(nativeServices, { excludeTestServices: true })('isolated native database', (suite) => {
   suite.effect(
     'TEST-1258 retains original proof across real replacement and refuses controls or a closed scope',
@@ -511,7 +555,9 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
                 expect(Exit.isSuccess(result)).toBe(true);
               }
             }
-            yield* fixture.assertClonedSchema();
+            expect(yield* readSchemaCloneCatalog(fixture.connections.admin.connectionString)).toEqual(
+              yield* readSchemaCloneCatalog(sourceConnections.admin.connectionString),
+            );
           }),
         );
       }
@@ -542,7 +588,9 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
         purpose: 'stabilization-1267-party-gateway',
         sourceConnections: legacy.connections,
       });
-      yield* fixture.assertClonedSchema();
+      expect(yield* readSchemaCloneCatalog(fixture.connections.admin.connectionString)).toEqual(
+        yield* readSchemaCloneCatalog(legacy.connections.admin.connectionString),
+      );
       const clone = yield* makeTestPgClient(fixture.connections.admin.connectionString);
       expect(yield* clone`select exists(select 1 from pg_namespace where nspname='trust') as present`).toEqual([
         { present: false },
@@ -553,6 +601,7 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
   suite.effect('clones only schema into an owned database and preserves source authority and history', () =>
     Effect.gen(function* cloneSchemaOnly() {
       const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+      const sourceCatalog = yield* readSchemaCloneCatalog(source.admin.connectionString);
       const client = yield* makeTestPgClient(source.admin.connectionString);
       const baseline = yield* client<{
         readonly phase: string;
@@ -569,6 +618,8 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
           expect(fixture.connections.admin.database.startsWith('ontos_test_party_gateway_')).toBe(true);
           expect(fixture.connections.admin.database).not.toBe(source.admin.database);
           const isolated = yield* makeTestPgClient(fixture.connections.admin.connectionString);
+          const cloneCatalog = readSchemaCloneCatalog(fixture.connections.admin.connectionString);
+          expect(yield* cloneCatalog).toEqual(sourceCatalog);
           const [authority] = yield* isolated<{
             readonly revision: string;
           }>`select revision from core.application_composition_authority`;
@@ -583,11 +634,9 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
           const admin = yield* makeTestDatabaseFromClient(isolated, coreRelations);
           const role = sql.identifier(fixture.connections.runtime.user);
           yield* admin.execute(sql`revoke select on table core.tenants from ${role}`, 'objects');
-          expect(
-            Predicate.isTagged(yield* Effect.flip(fixture.assertClonedSchema()), 'IsolatedNativeDatabaseError'),
-          ).toBe(true);
+          expect(yield* cloneCatalog).not.toEqual(sourceCatalog);
           yield* admin.execute(sql`grant select on table core.tenants to ${role}`, 'objects');
-          yield* fixture.assertClonedSchema();
+          expect(yield* cloneCatalog).toEqual(sourceCatalog);
           const [sequence] = yield* isolated<{
             readonly name: string;
             readonly schema: string;
@@ -608,23 +657,19 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
               : sql`grant usage on sequence ${sequenceName} to ${role}`,
             'objects',
           );
-          expect(
-            Predicate.isTagged(yield* Effect.flip(fixture.assertClonedSchema()), 'IsolatedNativeDatabaseError'),
-          ).toBe(true);
+          expect(yield* cloneCatalog).not.toEqual(sourceCatalog);
           yield* admin.execute(
             sequence.usage
               ? sql`grant usage on sequence ${sequenceName} to ${role}`
               : sql`revoke usage on sequence ${sequenceName} from ${role}`,
             'objects',
           );
-          yield* fixture.assertClonedSchema();
+          expect(yield* cloneCatalog).toEqual(sourceCatalog);
           yield* admin.execute(
             sql`alter table core.tenants add constraint isolated_test_name_limit check (char_length(name) < 2000)`,
             'objects',
           );
-          expect(
-            Predicate.isTagged(yield* Effect.flip(fixture.assertClonedSchema()), 'IsolatedNativeDatabaseError'),
-          ).toBe(true);
+          expect(yield* cloneCatalog).not.toEqual(sourceCatalog);
           return fixture.connections.admin.database;
         }),
       );
@@ -632,6 +677,7 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
         readonly exists: boolean;
       }>`select exists(select 1 from pg_database where datname=${databaseName}) as exists`;
       expect(exists?.exists).toBe(false);
+      expect(yield* readSchemaCloneCatalog(source.admin.connectionString)).toEqual(sourceCatalog);
       expect(
         yield* client<{
           readonly phase: string;
@@ -990,7 +1036,9 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
             expect(database).toMatch(/^ontos_test_party_gateway_[a-f0-9]{32}$/u);
             expect(database).not.toBe(source.admin.database);
             const clone = yield* makeTestPgClient(fixture.connections.admin.connectionString);
-            yield* fixture.assertClonedSchema();
+            expect(yield* readSchemaCloneCatalog(fixture.connections.admin.connectionString)).toEqual(
+              yield* readSchemaCloneCatalog(source.admin.connectionString),
+            );
             expect(
               yield* clone`select nspname as name from pg_namespace where nspname not in('pg_catalog','information_schema') and nspname !~ '^pg_' order by nspname`,
             ).toEqual(sourceSchemas);

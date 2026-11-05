@@ -75,7 +75,6 @@ it.live(
         mode: 'schema-only',
         purpose: 'stabilization-1263-optional-configuration',
       });
-      yield* isolated.assertClonedSchema();
       const adminContext = yield* Layer.build(
         PgClient.layer({ url: Redacted.make(isolated.connections.admin.connectionString) }).pipe(
           Layer.provideMerge(Reactivity.layer),

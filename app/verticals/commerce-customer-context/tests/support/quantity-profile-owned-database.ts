@@ -352,7 +352,6 @@ export const makeQuantityProfileOwnedDatabase = Effect.fn('QuantityProfileAdmiss
       mode: 'schema-only',
       purpose: 'stabilization-1266-quantity-profile-admission',
     });
-    yield* isolated.assertClonedSchema();
     const receipts = yield* applyQuantityProfileCurrentMigrations(isolated.connections);
     return { isolated, receipts };
   },

@@ -106,7 +106,6 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       mode: 'schema-only',
       purpose: 'stabilization-1241-guest-evidence',
     });
-    yield* isolated.assertClonedSchema();
     const sourceConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
     const ownerSchema = yield* ChildProcess.make(
       'mise',

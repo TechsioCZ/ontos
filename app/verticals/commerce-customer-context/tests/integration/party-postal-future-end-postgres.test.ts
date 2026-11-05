@@ -134,7 +134,6 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
     mode: 'schema-only',
     purpose: 'stabilization-1251-postal-future-end',
   });
-  yield* isolated.assertClonedSchema();
   const sourceConnections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const ownerSchema = yield* ChildProcess.make(
     'mise',

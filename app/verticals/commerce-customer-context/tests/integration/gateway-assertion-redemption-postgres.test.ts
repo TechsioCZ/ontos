@@ -679,7 +679,6 @@ it.live('retains signed assertion redemption after an actual process exits and a
         audience: 'commerce-customer-context',
         issuer: gateway.issuer,
       });
-      yield* isolated.assertClonedSchema();
     }),
   ).pipe(Effect.provide(restartServices)),
 );

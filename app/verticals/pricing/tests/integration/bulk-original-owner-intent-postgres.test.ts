@@ -418,7 +418,6 @@ const makeOwnedPriceFeeFixture = Effect.fn('test.makeOwnedPriceFeeFixture')(func
     mode: 'schema-only',
     purpose: 'stabilization-1278-bulk-intent',
   });
-  yield* isolated.assertClonedSchema();
   yield* copyOwnerBookkeeping(isolated.connections);
   yield* migrateOwner(isolated.connections);
   yield* verifyAppendOnlyPolicyRoleSets(isolated.connections.runtime);
@@ -1711,7 +1710,6 @@ const makeRegisteredBulkFixture = Effect.fn('BulkOriginalIntent.makeRegisteredFi
       mode: 'schema-only',
       purpose: 'stabilization-1278-bulk-intent',
     });
-    yield* isolated.assertClonedSchema();
     yield* copyOwnerBookkeeping(isolated.connections);
     yield* migrateOwner(isolated.connections);
     yield* verifyAppendOnlyPolicyRoleSets(isolated.connections.runtime);

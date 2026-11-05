@@ -44,7 +44,6 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
       mode: 'schema-only',
       purpose: 'stabilization-1241-guest-evidence',
     });
-    yield* isolated.assertClonedSchema();
     const native = yield* preparePartyReconciliationNative(isolated.connections);
     const gateway = yield* makePartyReconciliationGateway(native, snapshot);
     const fixture = yield* Effect.acquireRelease(

@@ -715,7 +715,6 @@ it.live(
             mode: 'schema-only',
             purpose: 'stabilization-1249-promotion-eligible-subset',
           });
-          yield* isolated.assertClonedSchema();
           const fixture = yield* makeNativeReadTestContext({
             access: 'allowed',
             connections: {
@@ -755,7 +754,6 @@ it.live(
               .pipe(Effect.provideContext(fixtureContext)),
           ).toEqual({ total: '90', values: ['90', '0'] });
           expect(yield* fixture.evidenceCount()).toBe(before + 1);
-          yield* isolated.assertClonedSchema();
         }).pipe(Effect.provideContext(services));
       }),
     ),

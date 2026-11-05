@@ -1761,7 +1761,6 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
       mode: 'schema-only',
       purpose: 'stabilization-1225-whole-candidate',
     });
-    yield* isolated.assertClonedSchema();
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
         actionExecutor: 'manager-only',
@@ -2693,7 +2692,6 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
     yield* Queue.end(commands);
     expect(yield* child.exitCode).toBe(0);
 
-    yield* isolated.assertClonedSchema();
     return yield* Effect.void;
   });
 
