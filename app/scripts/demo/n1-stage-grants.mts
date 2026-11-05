@@ -36,10 +36,7 @@ import {
   buildActionAuthorizationRelationships,
   deriveScopedActionAuthorization,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import {
-  bootstrapRelationshipsFromNative,
-  scopedActionRoleBootstrapRelationships,
-} from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import { bootstrapRelationshipsFromNative } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   OntosDeploymentAppIdSchema,
@@ -48,6 +45,7 @@ import {
 import type { OntosActionContract } from '../../packages/core-runtime/src/modules/manifest.ts';
 import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
+import { ONTOS_SPICEDB_SCHEMA } from '../../packages/core-runtime/src/permissions/schema.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
@@ -63,6 +61,7 @@ import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 import type { DemoAction, DemoRelationship, DemoRole } from './permissions.mts';
 import {
   akrosStorefrontPrincipal,
+  companyCoreModuleStructure,
   companyHumanAccounts,
   demoHumanAccounts,
   principalRelationships,
@@ -80,6 +79,7 @@ const registry = 'commerce.storefront-registry';
 const workTasks = 'work.tasks';
 const managedKeyAction = 'core.identity.bind-managed-api-key';
 const storefrontName = 'n1-storefront';
+const marketAuthorityName = 'n1-market-authority';
 export const n1ManifestSources = [
   { appId: 'merchandise', moduleId: merchandise },
   { appId: 'commerce-market-catalog', moduleId: markets },
@@ -295,17 +295,17 @@ export const n1ServiceDefinitions = (access: N1Access) => [
     tenantId: N1_TENANT_ID,
   },
   {
-    displayName: 'n1-market-authority',
+    displayName: marketAuthorityName,
     legalEntityId: N1_LEGAL_ENTITY_ID,
     principalId: access.services['market-authority'],
     tenantId: N1_TENANT_ID,
   },
 ];
 
-const humanRole: DemoRole = {
-  label: 'N1 tenant and company administration',
-  modules: { [markets]: 'write', [merchandise]: 'write', [registry]: 'write' },
-  tenantRole: 'superadmin',
+/** Company administrator of N1 only: company roles and Core module reach, no tenant-wide superadmin. */
+const administratorRole: DemoRole = {
+  label: 'N1 company administration',
+  modules: { [markets]: 'write', [merchandise]: 'write', [registry]: 'write', [workTasks]: 'write' },
 };
 /**
  * The storefront service runs exactly two Actions: the merchandise apply-command (guest quote and order; the command
@@ -325,6 +325,14 @@ const storefrontWriteAllPermissions = {
   [merchandise]: ['demo.merchandise.write_all'],
   [workTasks]: ['work.tasks.write_all'],
 } as const;
+/** Catalogue manager: writes products and Markets only. Never an administrator of people or roles. */
+const catalogueRole: DemoRole = {
+  label: 'N1 catalogue management',
+  modules: { [markets]: 'write', [merchandise]: 'write' },
+};
+const administratorEmail = 'admin@n1.ontos.demo';
+const companyRoleObject = (roleKey: string) =>
+  toScopedRoleObjectId({ legalEntityId: N1_LEGAL_ENTITY_ID, roleKey, tenantId: N1_TENANT_ID });
 const storefrontRole: DemoRole = {
   actionKeys: storefrontActionKeys,
   contextPermissions: storefrontWriteAllPermissions,
@@ -382,9 +390,29 @@ export const n1GrantRelationships = (access: N1Access, actions: readonly DemoAct
           ),
         ];
         const managed = actions.filter(({ actionKey }) => actionKey === managedKeyAction);
-        for (const { principalId } of access.accounts) {
+        for (const { email, principalId } of access.accounts) {
+          if (email !== administratorEmail) {
+            rows.push(
+              ...principalRelationships(
+                principalId,
+                catalogueRole,
+                actions,
+                N1_LEGAL_ENTITY_ID,
+                N1_TENANT_ID,
+                'n1-catalogue',
+              ),
+            );
+            continue;
+          }
           rows.push(
-            ...principalRelationships(principalId, humanRole, actions, N1_LEGAL_ENTITY_ID, N1_TENANT_ID, 'n1-admin'),
+            ...principalRelationships(
+              principalId,
+              administratorRole,
+              actions,
+              N1_LEGAL_ENTITY_ID,
+              N1_TENANT_ID,
+              'n1-admin',
+            ),
             // Do not use DemoRole.companyRole: that helper also installs unrelated Workforce permissions.
             ...principalRelationships(
               principalId,
@@ -394,25 +422,11 @@ export const n1GrantRelationships = (access: N1Access, actions: readonly DemoAct
               N1_TENANT_ID,
               'admin',
             ),
-            roleRelationship(
-              'legal_entity',
-              companyObject().objectId,
-              'admin',
-              toScopedRoleObjectId({
-                legalEntityId: N1_LEGAL_ENTITY_ID,
-                roleKey: 'admin',
-                tenantId: N1_TENANT_ID,
-              }),
-            ),
+            roleRelationship('legal_entity', companyObject().objectId, 'admin', companyRoleObject('admin')),
+            // Core modules (people, roles) reach the company only through this edge; see companyCoreModuleStructure.
+            ...companyCoreModuleStructure(N1_TENANT_ID, N1_LEGAL_ENTITY_ID),
             ...managed.flatMap((action) =>
               scopedDemoActionRelationships(principalId, action, N1_LEGAL_ENTITY_ID, N1_TENANT_ID, 'n1-admin'),
-            ),
-            ...managed.flatMap((action) =>
-              scopedActionRoleBootstrapRelationships({
-                action,
-                roleKey: 'superadmin',
-                tenantId: N1_TENANT_ID,
-              }),
             ),
           );
         }
@@ -427,7 +441,7 @@ export const n1GrantRelationships = (access: N1Access, actions: readonly DemoAct
             principalId: access.services['market-authority'],
             readers: [markets, registry],
             role: authorityRole,
-            roleKey: 'n1-market-authority',
+            roleKey: marketAuthorityName,
           },
         ];
         for (const { principalId, readers, role, roleKey } of services) {
@@ -465,47 +479,31 @@ export interface N1PermissionCheck {
   readonly resource: { readonly objectId: string; readonly objectType: string };
 }
 
-export const n1PermissionChecks = (access: N1Access, actions: readonly DemoAction[]) => {
-  const checks: N1PermissionCheck[] = [];
-  const add = (
-    principalId: string,
-    expected: boolean,
-    resource: N1PermissionCheck['resource'],
-    permission: string,
-    label: string,
-  ) => checks.push({ expected, label: `${principalId}: ${label}`, permission, principalId, resource });
-  const tenant = { objectId: N1_TENANT_ID, objectType: 'tenant' };
-  for (const { principalId } of access.accounts) {
-    for (const permission of ['access', 'manage_identity', 'select_context']) {
-      add(principalId, true, tenant, permission, `N1 tenant ${permission}`);
-    }
-    for (const permission of ['access', 'write_all']) {
-      add(principalId, true, companyObject(), permission, `N1 company ${permission}`);
-    }
-    for (const { moduleId } of n1ManifestSources) {
-      add(principalId, true, moduleObject(moduleId), 'access', `N1 module ${moduleId}`);
-      add(principalId, true, moduleObject(moduleId), 'write_all', `N1 module write ${moduleId}`);
-    }
-    for (const permission of ['demo.merchandise.read_all', 'demo.merchandise.write_all']) {
-      add(
-        principalId,
-        true,
-        {
-          objectId:
-            toContextPermissionAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, {
-              moduleId: merchandise,
-              permission,
-            }) ?? '',
-          objectType: 'context_permission',
-        },
-        'access',
-        `N1 staff ${permission}`,
-      );
-    }
-    for (const action of actions) {
-      add(principalId, true, actionObject(action), 'execute', `N1 Action ${action.actionKey}`);
-    }
+/**
+ * Actions an account may execute. Administrators reach company-scoped Actions but not tenant-only ones (principal
+ * bindings, people-search rebuild). Catalogue managers execute only their module Actions, never the managed-key Action.
+ */
+const actionGrantedTo = (action: DemoAction, administrator: boolean) => {
+  if (administrator) {
+    return action.legalEntityScope !== 'forbidden';
   }
+  return (
+    (action.owningModuleKey === merchandise || action.owningModuleKey === markets) &&
+    action.actionKey !== managedKeyAction
+  );
+};
+
+type CheckAdder = (
+  principalId: string,
+  expected: boolean,
+  resource: N1PermissionCheck['resource'],
+  permission: string,
+  label: string,
+) => void;
+
+/** Service principals: no staff rights, storefront and authority reads only, exact Actions. */
+const serviceChecks = (access: N1Access, actions: readonly DemoAction[], add: CheckAdder) => {
+  const tenant = { objectId: N1_TENANT_ID, objectType: 'tenant' };
   for (const principalId of Object.values(access.services)) {
     add(principalId, true, tenant, 'access', 'N1 service tenant admission');
     add(principalId, true, companyObject(), 'access', 'N1 service company admission');
@@ -553,6 +551,84 @@ export const n1PermissionChecks = (access: N1Access, actions: readonly DemoActio
       }
     }
   }
+};
+
+export const n1PermissionChecks = (access: N1Access, actions: readonly DemoAction[]) => {
+  const checks: N1PermissionCheck[] = [];
+  const add = (
+    principalId: string,
+    expected: boolean,
+    resource: N1PermissionCheck['resource'],
+    permission: string,
+    label: string,
+  ): void => {
+    checks.push({ expected, label: `${principalId}: ${label}`, permission, principalId, resource });
+  };
+  const tenant = { objectId: N1_TENANT_ID, objectType: 'tenant' };
+  for (const { email, principalId } of access.accounts) {
+    const administrator = email === administratorEmail;
+    // Company administration and Core people/role reach: administrator only. Catalogue manager: no staff rights.
+    add(principalId, true, tenant, 'access', 'N1 tenant access');
+    for (const permission of ['manage_identity', 'select_context']) {
+      add(principalId, false, tenant, permission, `no tenant ${permission}`);
+    }
+    add(principalId, true, companyObject(), 'access', 'N1 company access');
+    add(
+      principalId,
+      administrator,
+      companyObject(),
+      'write_all',
+      `N1 company write_all administrator=${administrator}`,
+    );
+    add(principalId, administrator, companyObject(), 'read_people', `N1 company people administrator=${administrator}`);
+    add(
+      principalId,
+      administrator,
+      moduleObject('core.identity'),
+      'access',
+      `N1 people module administrator=${administrator}`,
+    );
+    for (const { moduleId } of n1ManifestSources) {
+      // The catalogue manager reaches products and Markets only; the administrator covers every N1 module.
+      const reachable = administrator || moduleId === markets || moduleId === merchandise;
+      add(principalId, reachable, moduleObject(moduleId), 'access', `N1 module access ${moduleId}`);
+      // Module-level write_all is company administration; catalogue writes go through the Actions checked below.
+      add(
+        principalId,
+        administrator,
+        moduleObject(moduleId),
+        'write_all',
+        `N1 module write_all administrator=${administrator} ${moduleId}`,
+      );
+    }
+    for (const permission of ['demo.merchandise.read_all', 'demo.merchandise.write_all']) {
+      add(
+        principalId,
+        true,
+        {
+          objectId:
+            toContextPermissionAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, {
+              moduleId: merchandise,
+              permission,
+            }) ?? '',
+          objectType: 'context_permission',
+        },
+        'access',
+        `N1 staff ${permission}`,
+      );
+    }
+    for (const action of actions) {
+      const granted = actionGrantedTo(action, administrator);
+      add(
+        principalId,
+        granted,
+        actionObject(action),
+        'execute',
+        `N1 Action ${action.actionKey} administrator=${administrator}`,
+      );
+    }
+  }
+  serviceChecks(access, actions, add);
   add(access.services.storefront, true, moduleObject(merchandise), 'access', 'N1 public catalog accessor');
   add(
     access.services['market-authority'],
@@ -655,6 +731,89 @@ export const verifyN1Checks = (rpc: Pick<SpiceDbRpc, 'checkPermission'>, checks:
     { concurrency: 4, discard: true },
   );
 
+/** Identity of a native relationship: the same tuple whether desired by the plan or read live. */
+const relationshipIdentity = (relationship: v1.Relationship) =>
+  [
+    relationship.resource?.objectType ?? '',
+    relationship.resource?.objectId ?? '',
+    relationship.relation,
+    relationship.subject?.object?.objectType ?? '',
+    relationship.subject?.object?.objectId ?? '',
+    relationship.subject?.optionalRelation ?? '',
+  ].join('|');
+
+/**
+ * Exact deletes of stale N1 grants: every grant an account or service principal, or a service role, holds that the plan
+ * does not desire. Company and tenant admission (membership, self) belongs to the native installers and is never
+ * touched here. Absent rows are no-ops, so reruns converge.
+ */
+export const revokeRetiredN1Relationships = (
+  rpc: Pick<SpiceDbRpc, 'readRelationships' | 'writeRelationships'>,
+  plan: N1GrantPlan,
+) =>
+  Effect.gen(function* revokeRetired() {
+    const desired = new Set(plan.relationships.map(relationshipIdentity));
+    const admission = new Set(['principal', 'legal_entity', 'tenant']);
+    const types = ONTOS_SPICEDB_SCHEMA.split('\n')
+      .filter((line) => line.startsWith('definition '))
+      .map((line) => line.split(' ')[1] ?? '');
+    const principals = [
+      ...plan.access.accounts.map(({ principalId }) => principalId),
+      ...Object.values(plan.access.services),
+    ];
+    const serviceRoles = [storefrontName, marketAuthorityName].map((roleKey) =>
+      toScopedRoleObjectId({ legalEntityId: N1_LEGAL_ENTITY_ID, roleKey, tenantId: N1_TENANT_ID }),
+    );
+    const filters = [
+      ...principals.flatMap((optionalSubjectId) =>
+        types
+          .filter((resourceType) => !admission.has(resourceType))
+          .map((resourceType) => ({
+            optionalSubjectFilter: { optionalSubjectId, subjectType: 'principal' },
+            resourceType,
+          })),
+      ),
+      ...serviceRoles.flatMap((optionalSubjectId) =>
+        types.map((resourceType) => ({
+          optionalSubjectFilter: { optionalSubjectId, subjectType: 'scoped_role' },
+          resourceType,
+        })),
+      ),
+    ];
+    const live = yield* Effect.forEach(
+      filters,
+      (filter) =>
+        rpc.readRelationships(
+          v1.ReadRelationshipsRequest.create({
+            consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
+            relationshipFilter: filter,
+          }),
+        ),
+      { concurrency: 4 },
+    );
+    const updates = [
+      // The tenant superadmin role is retired for N1: its tenant relation goes with the memberships revoked above.
+      asNative(
+        roleRelationship(
+          'tenant',
+          N1_TENANT_ID,
+          'superadmin',
+          toScopedRoleObjectId({ roleKey: 'superadmin', tenantId: N1_TENANT_ID }),
+        ),
+      ),
+      ...live.flat().flatMap(({ relationship }) => (relationship === undefined ? [] : [relationship])),
+    ]
+      .filter((relationship) => !desired.has(relationshipIdentity(relationship)))
+      .map((relationship) =>
+        v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.DELETE, relationship }),
+      );
+    if (updates.length === 0) {
+      return;
+    }
+    yield* Console.log(`N1 stale grants revoked: ${updates.length}`);
+    yield* rpc.writeRelationships(v1.WriteRelationshipsRequest.create({ updates }));
+  });
+
 /** Injected ports keep the approval-before-install/write ordering independently testable. */
 export const executeN1ReviewedPlan = <E1, R1, E2, R2, E3, R3>(
   mode: 'apply' | 'verify',
@@ -664,6 +823,7 @@ export const executeN1ReviewedPlan = <E1, R1, E2, R2, E3, R3>(
   ports: {
     readonly installServices: Effect.Effect<unknown, E1, R1>;
     readonly reconcile: (mode: 'apply' | 'verify') => Effect.Effect<unknown, E2, R2>;
+    readonly revoke: () => Effect.Effect<unknown, E2, R2>;
     readonly verify: (checks: readonly N1PermissionCheck[]) => Effect.Effect<unknown, E3, R3>;
   },
 ) =>
@@ -671,11 +831,17 @@ export const executeN1ReviewedPlan = <E1, R1, E2, R2, E3, R3>(
     if (saved !== plan.text || reviewed !== plan.fingerprint || n1PlanFingerprint(saved) !== reviewed) {
       return yield* fail('The exact saved N1 plan, current live contracts, and reviewed fingerprint are required');
     }
-    // Detect pre-existing service escalation or cross-tenant leaks before any SQL or authorization write.
-    yield* ports.verify(plan.checks.filter(({ expected }) => !expected));
+    // Cross-tenant leaks of the retired principals are refused before any write. Account and service rights converge
+    // through apply (stale grants are revoked) and are then checked in full below.
+    const converged = new Set([
+      ...plan.access.accounts.map(({ principalId }) => principalId),
+      ...Object.values(plan.access.services),
+    ]);
+    yield* ports.verify(plan.checks.filter(({ expected, principalId }) => !expected && !converged.has(principalId)));
     if (mode === 'apply') {
       yield* ports.installServices;
       yield* ports.reconcile('apply');
+      yield* ports.revoke();
     }
     yield* ports.reconcile('verify');
     return yield* ports.verify(plan.checks);
@@ -732,6 +898,7 @@ const run = (mode: Mode, planPath: string, reviewed: Option.Option<string>) =>
     yield* executeN1ReviewedPlan(mode, plan, saved, Option.getOrUndefined(reviewed), {
       installServices: reconcileStageServicePrincipals(n1ServiceDefinitions(plan.access), provider),
       reconcile: (grantMode) => reconcileServiceGrants(rpc, plan.relationships, grantMode),
+      revoke: () => revokeRetiredN1Relationships(rpc, plan),
       verify: (checks) => verifyN1Checks(rpc, checks),
     });
     return yield* Console.log({ checks: plan.checks.length, failures: 0, fingerprint: plan.fingerprint, mode });

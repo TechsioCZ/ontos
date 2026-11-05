@@ -19,21 +19,21 @@ import {
   n1ManifestSources,
   n1PlanFingerprint,
   n1ServiceDefinitions,
+  revokeRetiredN1Relationships,
   verifyN1Checks,
 } from './n1-stage-grants.mts';
 import type { N1ContractDocument, N1GrantPlan, N1PermissionCheck } from './n1-stage-grants.mts';
 import { akrosPlaygroundTenantId } from './akros-playground-policy.mts';
 import { demoTenantId } from './fixture-ids.mts';
+import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
-import {
-  toSpiceDbActionGrantObjectId,
-  toSpiceDbActionObjectId,
-} from '../../packages/core-runtime/src/permissions/service.ts';
+import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 
 const principal = (suffix: string) => `8a000000-0000-4000-8000-${suffix.padStart(12, '0')}`;
 const ignoredCredential = ['private', 'test', 'sentinel'].join('-');
 const bindManagedKey = 'core.identity.bind-managed-api-key';
 const merchandiseModule = 'demo.merchandise';
+const workTasksModule = 'work.tasks';
 const allAssertions = 'assert-all';
 const deniedAssertions = 'assert-denied';
 const access = () => ({
@@ -236,37 +236,52 @@ it.effect(
     }),
 );
 
-it.effect('humans have company/tenant admin roles and explicit managed-key grants in both valid scopes', () =>
+it.effect('the administrator has company administration and Core reach; the catalogue manager has neither', () =>
   Effect.gen(function* humanGrants() {
     const plan = yield* planFixture();
     const grants = plan.relationships;
-    for (const { principalId } of plan.access.accounts) {
+    const administrator = principal('1');
+    const catalogue = principal('2');
+    const membership = (principalId: string, roleId: string) =>
+      grants.some(
+        (row) =>
+          row.resource?.objectType === 'scoped_role' &&
+          row.resource.objectId === roleId &&
+          row.relation === 'member' &&
+          row.subject?.object?.objectId === principalId,
+      );
+    const companyAdmin = toScopedRoleObjectId({
+      legalEntityId: N1_LEGAL_ENTITY_ID,
+      roleKey: 'admin',
+      tenantId: N1_TENANT_ID,
+    });
+    const tenantSuperadmin = toScopedRoleObjectId({ roleKey: 'superadmin', tenantId: N1_TENANT_ID });
+    expect(membership(administrator, companyAdmin)).toBe(true);
+    expect(membership(administrator, tenantSuperadmin)).toBe(false);
+    expect(membership(catalogue, companyAdmin)).toBe(false);
+    expect(membership(catalogue, tenantSuperadmin)).toBe(false);
+    expect(grants.some((row) => row.resource?.objectType === 'tenant' && row.relation === 'superadmin')).toBe(false);
+    // Core modules (people administration, roles) reach the company only through this edge.
+    const legal = toLegalEntityAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID);
+    for (const moduleId of new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey))) {
       expect(
         grants.some(
           (row) =>
-            row.resource?.objectType === 'scoped_role' &&
-            row.resource.objectId === toScopedRoleObjectId({ roleKey: 'superadmin', tenantId: N1_TENANT_ID }) &&
-            row.subject?.object?.objectId === principalId,
-        ),
-      ).toBe(true);
-      expect(
-        grants.some(
-          (row) =>
-            row.resource?.objectType === 'scoped_role' &&
-            row.resource.objectId ===
-              toScopedRoleObjectId({ legalEntityId: N1_LEGAL_ENTITY_ID, roleKey: 'admin', tenantId: N1_TENANT_ID }) &&
-            row.subject?.object?.objectId === principalId,
+            row.resource?.objectType === 'module_access' &&
+            row.resource.objectId === toModuleAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, moduleId) &&
+            row.relation === 'legal_entity' &&
+            row.subject?.object?.objectId === legal,
         ),
       ).toBe(true);
     }
-    for (const legalEntityId of [undefined, N1_LEGAL_ENTITY_ID]) {
-      const action = { actionKey: bindManagedKey, legalEntityId, tenantId: N1_TENANT_ID };
-      expect(
-        grants.some(
-          (row) => row.resource?.objectId === toSpiceDbActionGrantObjectId(action) && row.relation === 'role',
-        ),
-      ).toBe(true);
-    }
+    expect(
+      grants.some(
+        (row) =>
+          row.resource?.objectType === 'module_access' &&
+          row.resource.objectId === toModuleAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, 'core.identity') &&
+          row.subject?.object?.objectId === catalogue,
+      ),
+    ).toBe(false);
   }),
 );
 
@@ -295,7 +310,7 @@ it.effect(
           permission: 'demo.merchandise.write_all',
         }),
         toContextPermissionAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, {
-          moduleId: 'work.tasks',
+          moduleId: workTasksModule,
           permission: 'work.tasks.write_all',
         }),
       ];
@@ -321,14 +336,14 @@ it.effect(
       expect(hasModuleGrant(authority, 'commerce.market-catalog', 'reader_role')).toBe(true);
       expect(hasModuleGrant(authority, 'commerce.storefront-registry', 'reader_role')).toBe(true);
       expect(hasModuleGrant(authority, merchandiseModule, 'accessor_role')).toBe(false);
-      expect(hasModuleGrant(storefront, 'work.tasks', 'accessor_role')).toBe(true);
-      expect(hasModuleGrant(storefront, 'work.tasks', 'reader_role')).toBe(false);
-      expect(hasModuleGrant(authority, 'work.tasks', 'accessor_role')).toBe(false);
+      expect(hasModuleGrant(storefront, workTasksModule, 'accessor_role')).toBe(true);
+      expect(hasModuleGrant(storefront, workTasksModule, 'reader_role')).toBe(false);
+      expect(hasModuleGrant(authority, workTasksModule, 'accessor_role')).toBe(false);
       const storefrontId = principal('3');
       const storefrontExecutes = plan.checks
         .filter(({ expected, label }) => expected && label.startsWith(`${storefrontId}: N1 service Action `))
         .map(({ label }) => label.slice(`${storefrontId}: N1 service Action `.length))
-        .sort();
+        .toSorted();
       expect(storefrontExecutes).toEqual(['demo.merchandise.apply-command', 'work.tasks.apply-command']);
       expect(
         plan.relationships.filter((row) => row.resource?.objectType === 'resource' && row.relation === 'module'),
@@ -368,6 +383,10 @@ const recordingPorts = (plan: N1GrantPlan) => {
         Effect.sync(() => {
           calls.push(mode);
         }),
+      revoke: () =>
+        Effect.sync(() => {
+          calls.push('revoke');
+        }),
       verify: (checks: readonly N1PermissionCheck[]) =>
         Effect.sync(() => {
           calls.push(checks.length === plan.checks.length ? allAssertions : deniedAssertions);
@@ -398,9 +417,41 @@ it.effect(
       yield* fails(executeN1ReviewedPlan('apply', changedIdentity, plan.text, plan.fingerprint, ports));
       expect(calls).toEqual([]);
       yield* executeN1ReviewedPlan('apply', plan, plan.text, plan.fingerprint, ports);
-      expect(calls).toEqual([deniedAssertions, 'install', 'apply', 'verify', allAssertions]);
+      expect(calls).toEqual([deniedAssertions, 'install', 'apply', 'revoke', 'verify', allAssertions]);
       expect(n1PlanFingerprint(plan.text)).toBe(plan.fingerprint);
     }),
+);
+
+it.effect('revoke deletes only live grants the plan does not desire, never a desired row', () =>
+  Effect.gen(function* revokeOnlyStale() {
+    const plan = yield* planFixture();
+    const [desired] = plan.relationships;
+    const stale = v1.Relationship.create({
+      relation: 'member',
+      resource: { objectId: 'stale-role', objectType: 'scoped_role' },
+      subject: { object: { objectId: principal('99'), objectType: 'principal' }, optionalRelation: '' },
+    });
+    const deleted: string[] = [];
+    const rpc = {
+      readRelationships: () =>
+        Effect.succeed([
+          v1.ReadRelationshipsResponse.create({ relationship: desired }),
+          v1.ReadRelationshipsResponse.create({ relationship: stale }),
+        ]),
+      writeRelationships: (request: v1.WriteRelationshipsRequest) =>
+        Effect.sync(() => {
+          for (const update of request.updates) {
+            if (update.operation === v1.RelationshipUpdate_Operation.DELETE && update.relationship) {
+              deleted.push(v1.Relationship.toJsonString(update.relationship));
+            }
+          }
+          return v1.WriteRelationshipsResponse.create({});
+        }),
+    };
+    yield* revokeRetiredN1Relationships(rpc, plan);
+    expect(deleted).toContain(v1.Relationship.toJsonString(stale));
+    expect(deleted).not.toContain(v1.Relationship.toJsonString(desired));
+  }),
 );
 
 it.effect('verify is read-only and a failed isolation preflight prevents even native service installation', () =>

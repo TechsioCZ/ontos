@@ -190,15 +190,6 @@ export const akrosPlaygroundRelationships = (actions: readonly DemoAction[]): re
           },
         ];
   });
-  // Company-scoped Core modules (people administration, roles) reach the company only through this edge; the demo
-  // topology writes it for every company, and without it a company administrator is denied the people page.
-  const companyStructure: readonly DemoRelationship[] = moduleKeys.map((moduleId) => ({
-    relation: 'legal_entity',
-    resourceId: toModuleAccessObjectId(akrosPlaygroundTenantId, akrosPlaygroundLegalEntityId, moduleId) ?? '',
-    resourceType: 'module_access',
-    subjectId: toLegalEntityAccessObjectId(akrosPlaygroundTenantId, akrosPlaygroundLegalEntityId) ?? '',
-    subjectType: 'legal_entity',
-  }));
   // Resource reads use module->read_all, in addition to the named context permission.
   const [, authority] = akrosPlaygroundServices;
   const authorityRole = policy.find(
@@ -216,7 +207,7 @@ export const akrosPlaygroundRelationships = (actions: readonly DemoAction[]): re
           subjectType: 'scoped_role',
         }));
   const rows = companyMembershipAdmissionRelationships(
-    [...topology, ...policy, ...resources, ...resourceReaders, ...companyStructure],
+    [...topology, ...policy, ...resources, ...resourceReaders],
     akrosPlaygroundAccounts.map(({ principalId }) => ({ principalId, tenantId: akrosPlaygroundTenantId })),
   );
   return [

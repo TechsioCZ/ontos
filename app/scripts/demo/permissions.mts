@@ -426,6 +426,21 @@ const proposalReviewActions = (role: DemoRole, actions: readonly DemoAction[]): 
     : [];
 
 /** Every relationship one principal needs for its role. `actions` is the current discovered Action set. */
+/**
+ * Core modules (people administration, roles, Actions owned by Core) reach a company only through this edge. A company
+ * administrator without it is denied the people pages even though the admin role itself is granted.
+ */
+export const companyCoreModuleStructure = (tenantId: string, legalEntityId: string): readonly DemoRelationship[] => {
+  const coreModuleKeys = [...new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey))];
+  return coreModuleKeys.map((moduleId) => ({
+    relation: 'legal_entity',
+    resourceId: toModuleAccessObjectId(tenantId, legalEntityId, moduleId) ?? '',
+    resourceType: 'module_access',
+    subjectId: toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
+    subjectType: 'legal_entity',
+  }));
+};
+
 export const principalRelationships = (
   principalId: string,
   role: DemoRole,
@@ -522,6 +537,7 @@ export const principalRelationships = (
     result.push(
       roleRelationship('legal_entity', legal, 'admin', adminRole),
       ...companyAdministratorWorkforceRelationships(legalEntityId, tenantId),
+      ...companyCoreModuleStructure(tenantId, legalEntityId),
     );
   }
   if (role.tenantRole !== undefined) {
