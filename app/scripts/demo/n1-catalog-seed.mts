@@ -20,7 +20,7 @@ import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/mer
 import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
-import { VERIFIED_COLOUR_NAMES, colourOf, productTitle } from './n1-presentation.mts';
+import { colourNameOf, productTitle } from './n1-presentation.mts';
 
 const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const ExternalId = Text.pipe(Schema.brand('N1SourceExternalId'));
@@ -204,17 +204,9 @@ export const mapN1Dataset = (dataset: typeof N1DatasetSchema.Type, origin: strin
         name: productTitle(product.name, product.sku),
         parameters: [
           { label: 'Značka', unit: '', value: product.brand },
-          ...(colourOf(product.sku) !== undefined && VERIFIED_COLOUR_NAMES[colourOf(product.sku)!.code] !== undefined
-            ? [
-                {
-                  label: 'Barva',
-                  unit: '',
-                  value:
-                    VERIFIED_COLOUR_NAMES[colourOf(product.sku)!.code] +
-                    (colourOf(product.sku)!.variant ? ' ' + colourOf(product.sku)!.variant : ''),
-                },
-              ]
-            : []),
+          ...(colourNameOf(product.sku) === undefined
+            ? []
+            : [{ label: 'Barva', unit: '', value: colourNameOf(product.sku) }]),
         ],
         priceMinor: yield* czkNetMinor(product.price.amount),
         published: true,
