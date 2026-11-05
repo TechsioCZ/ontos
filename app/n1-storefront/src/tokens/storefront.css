@@ -96,11 +96,16 @@
   @apply token-icon-minus;
 }
 
-/* Desktop PDP219:2876/223:2174 uses a neutral strip and dark indicator.
- * Bind existing Tabs roles on its native wrapper; account/mobile keep theirs. */
+/* PDP39:2543/223:2174 uses a dark active underline on both viewports.
+ * Scope the existing indicator role to product information; account Tabs
+ * retain their canonical primary indicator. No primitive N1 token changes. */
+@utility n1-product-information {
+  --color-tabs-indicator-bg: var(--color-fg-primary);
+}
+
+/* Desktop PDP219:2876 uses a neutral strip and compact controls. */
 @utility n1-product-tabs {
   --color-tabs-list-bg: var(--color-neutral-200);
-  --color-tabs-indicator-bg: var(--color-base-dark);
   /* Kit0.57 Tabs uses the shared height role inside this list only. */
   --height-form-control-md: var(--dimension-36);
   --padding-tabs-trigger-md: var(--padding-tabs-trigger-sm);

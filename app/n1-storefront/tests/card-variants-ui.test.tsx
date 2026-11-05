@@ -23,16 +23,33 @@ const product: ProductCardModel = {
   ],
 };
 describe("Figma card preview", () => {
-  it("keeps three real labels plus N and real generic detail links before interaction", () => {
+  it("keeps three real labels plus N and links each size to its actual owner variant", () => {
     const html = renderToStaticMarkup(createElement(CardVariants, { locale: "cs", product }));
     expect(html).toContain("8,5 - ML");
     expect(html).toContain("6,5 - XS");
     expect(html).toContain("7 - S");
     expect(html).toContain("+5");
-    expect(html.match(/href="\/cs\/produkt\/owner"/gu)).toHaveLength(3);
+    for (const variant of product.variantPreview ?? []) {
+      expect(html).toContain(`/cs/produkt/owner?variantId=${variant.id}`);
+    }
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('role="dialog"');
     expect(html).not.toContain("?variant=");
+  });
+  it("encodes genuine variant IDs without changing locale or interpreting query characters", () => {
+    const html = renderToStaticMarkup(
+      createElement(CardVariants, {
+        locale: "en",
+        product: {
+          ...product,
+          slug: "owner / product",
+          variantPreview: [{ id: "size + &?/#", name: "M" }],
+        },
+      }),
+    );
+    expect(html).toContain(
+      'href="/en/produkt/owner%20%2F%20product?variantId=size+%2B+%26%3F%2F%23"',
+    );
   });
   it("does not offer expansion or fabricate labels if native preview is absent", () => {
     const html = renderToStaticMarkup(

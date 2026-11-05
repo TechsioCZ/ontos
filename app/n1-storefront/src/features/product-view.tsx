@@ -23,14 +23,23 @@ import { useDesktopProduct } from "./product-viewport";
 
 type Parameter = ProductDetailModel["parameters"][number];
 const emptyCategories: CatalogModel["categories"] = [];
-const parameterColumns = (d: Dictionary): ColumnDef<Parameter>[] => [
-  { accessorKey: "label", header: d.parameterName, id: "label" },
-  {
+const parameterColumns = (d: Dictionary, desktop = false): ColumnDef<Parameter>[] => {
+  const label: ColumnDef<Parameter> = {
+    accessorKey: "label",
+    header: d.parameterName,
+    id: "label",
+  };
+  const value: ColumnDef<Parameter> = {
     accessorFn: (row) => (row.unit.length > 0 ? `${row.value} ${row.unit}` : row.value),
     header: d.parameterValue,
     id: "value",
-  },
-];
+  };
+  if (desktop) {
+    label.meta = { width: "55%" };
+    value.meta = { width: "45%" };
+  }
+  return [label, value];
+};
 
 const productStockLabel = (
   { current, selectionRequired }: ReturnType<typeof selectProductDetail>,
@@ -243,8 +252,10 @@ export const ProductView = ({
             />
           </div>
           <div aria-hidden="true" className="order-7 hidden h-px bg-border-primary md:block" />
-          <div className="order-8 hidden items-center gap-2 md:mt-4 md:flex">
-            <Icon color="secondary" icon="icon-[mdi--help-circle-outline]" size="md" />
+          <div className="order-8 flex items-center gap-2 md:mt-4">
+            <div className="hidden md:block">
+              <Icon color="secondary" icon="icon-[mdi--help-circle-outline]" size="md" />
+            </div>
             <Link
               as={NextLink}
               href={`/${locale}/kontakty?${questionSearch}#contact-form-heading`}
@@ -255,12 +266,14 @@ export const ProductView = ({
           </div>
         </div>
       </div>
-      <div className="mt-8 md:mt-1">
-        <Tabs defaultValue="parameters" size="md" variant="line">
+      <div className="n1-product-information mt-8 md:mt-1">
+        <Tabs defaultValue="parameters" fitted={!desktop} size="md" variant="line">
           <div className="overflow-x-auto md:n1-product-tabs">
             <Tabs.List>
-              <Tabs.Trigger value="parameters">{d.productParameters}</Tabs.Trigger>
-              <Tabs.Trigger value="sizes">{d.sizeGuide}</Tabs.Trigger>
+              <Tabs.Trigger value="parameters">
+                {desktop ? d.productParameters : d.productParametersTitle}
+              </Tabs.Trigger>
+              <Tabs.Trigger value="sizes">{desktop ? d.sizeGuide : d.sizeGuideTitle}</Tabs.Trigger>
               <Tabs.Indicator />
             </Tabs.List>
           </div>
@@ -291,7 +304,7 @@ export const ProductView = ({
                   </div>
                   <div className="n1-product-parameters hidden md:block">
                     <DataTable
-                      columns={parameterColumns(d)}
+                      columns={parameterColumns(d, true)}
                       data={[...parameters]}
                       enableSorting={false}
                       hideHeader

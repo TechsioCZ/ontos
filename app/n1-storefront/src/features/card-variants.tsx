@@ -126,7 +126,7 @@ export const CardVariants = ({
       <LinkButton
         as={NextLink}
         density="compact"
-        href={href}
+        href={`${href}?${new URLSearchParams({ variantId: variant.id })}`}
         key={variant.id}
         prefetch={false}
         size="sm"

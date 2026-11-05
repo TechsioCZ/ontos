@@ -19,8 +19,20 @@ export const selectProductDetail = (product: ProductDetailModel, variantId: stri
         unit: variant.unit,
       }
     : product;
+  // A size adds its own parameters; it does not erase product-level material,
+  // brand or colour. Only an exact label/unit match is replaced by owner data.
   const parameters =
-    variant && variant.parameters.length > 0 ? variant.parameters : product.parameters;
+    variant && variant.parameters.length > 0
+      ? [
+          ...product.parameters.filter(
+            (parameter) =>
+              !variant.parameters.some(
+                (own) => own.label === parameter.label && own.unit === parameter.unit,
+              ),
+          ),
+          ...variant.parameters,
+        ]
+      : product.parameters;
   const variantImage = variant?.image ?? null;
   const images =
     variantImage === null

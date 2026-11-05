@@ -48,6 +48,64 @@ const {
 );
 
 describe("real product variant presentation", () => {
+  it("keeps product parameters when a size contributes its own values without mutating either source", () => {
+    const shared = [
+      { label: "Značka", unit: "", value: "Spyder" },
+      { label: "Barva", unit: "", value: "černá" },
+      { label: "Velikost", unit: "", value: "skupina" },
+    ];
+    const own = [{ label: "Velikost", unit: "", value: "L/XL" }];
+    const grouped = {
+      ...product,
+      parameters: shared,
+      variants: [{ ...product.variants[0], parameters: own }],
+    };
+    expect(selectProductDetail(grouped, "variant").parameters).toEqual([
+      shared[0],
+      shared[1],
+      own[0],
+    ]);
+    expect(shared).toHaveLength(3);
+    expect(shared[2].value).toBe("skupina");
+    expect(own).toHaveLength(1);
+    for (const variantId of [undefined, "missing"]) {
+      expect(selectProductDetail(grouped, variantId).parameters).toEqual(shared);
+    }
+  });
+  it("preserves variant-only parameters and distinguishes units and exact labels", () => {
+    const shared = [
+      { label: "Délka", unit: "cm", value: "10" },
+      { label: "Materiál", unit: "", value: "bavlna" },
+    ];
+    const own = [
+      { label: "Délka", unit: "m", value: "1" },
+      { label: "materiál", unit: "", value: "vlna" },
+      { label: "Velikost", unit: "", value: "M" },
+    ];
+    expect(
+      selectProductDetail(
+        { ...product, parameters: shared, variants: [{ ...product.variants[0], parameters: own }] },
+        "variant",
+      ).parameters,
+    ).toEqual([...shared, ...own]);
+  });
+  it("retains repeated owner facts rather than silently deduplicating their labels", () => {
+    const shared = [
+      { label: "Materiál", unit: "", value: "bavlna" },
+      { label: "Materiál", unit: "", value: "polyester" },
+      { label: "Velikost", unit: "", value: "M" },
+    ];
+    const own = [
+      { label: "Velikost", unit: "", value: "L" },
+      { label: "Velikost", unit: "", value: "XL" },
+    ];
+    expect(
+      selectProductDetail(
+        { ...product, parameters: shared, variants: [{ ...product.variants[0], parameters: own }] },
+        "variant",
+      ).parameters,
+    ).toEqual([...shared.slice(0, 2), ...own]);
+  });
   it("uses only the selected variant's own package rule", () => {
     const parent = { ...product, packageQuantity: 10 };
     const own = { ...parent, variants: [{ ...product.variants[0], packageQuantity: 2 }] };
