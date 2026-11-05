@@ -143,7 +143,8 @@ export const issueRelayedGatewayContextAssertion = Effect.fn('GatewayRelay.issue
       ),
     );
   const issuer = yield* GatewayIssuer;
-  const { legalEntityId, ...tenantPrincipal } = source.principal;
+  // Storefront scope requires its Legal Entity; neither belongs in the tenant-only target.
+  const { legalEntityId, trustedStorefrontId: _trustedStorefrontId, ...tenantPrincipal } = source.principal;
   return yield* issuer.issue({
     audience: payload.audience,
     compositionRevision: payload.compositionRevision,
