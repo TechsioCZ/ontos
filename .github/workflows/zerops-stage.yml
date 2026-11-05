@@ -336,6 +336,19 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_APP_SERVICE_ID" SMTP_PASSWORD SMTP_PASSWORD
 
+      # ŠroubShop runs as its own storefront application `sroubshop-storefront` with its own managed key (the pseudonym
+      # cutover in app/scripts/demo/pseudonymize-akros-demo.md). The key is a stage-edge secret written once by the
+      # operator; both values are service variables of the shop service and take effect with the shop push below.
+      - name: Sync the ŠroubShop storefront identity to the shop service
+        if: needs.plan.outputs.shop == 'true'
+        env:
+          SHOP_STOREFRONT_API_KEY: ${{ secrets.SHOP_STOREFRONT_API_KEY }}
+          SHOP_STOREFRONT_APP_ID: sroubshop-storefront
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" ONTOS_AKROS_STOREFRONT_API_KEY SHOP_STOREFRONT_API_KEY
+          bash app/scripts/zerops/sync-service-secret.sh "$ZEROPS_SHOP_STOREFRONT_SERVICE_ID" ONTOS_STOREFRONT_APP_ID SHOP_STOREFRONT_APP_ID
+
       # The N1 storefront key is a stage-edge secret, written once by the operator, and a sensitive service variable of the
       # n1 service. It is never in Git or a log. A missing secret fails the deploy before any push.
       - name: Sync the N1 storefront key to the n1 service

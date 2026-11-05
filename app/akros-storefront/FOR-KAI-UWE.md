@@ -283,6 +283,10 @@ renders exactly as before (AKROS).
 `ONTOS_AKROS_STOREFRONT_API_KEY` and `ONTOS_SHELL_URL` are unchanged. Both identities come from `getConfig()`, and
 `storefrontMarkets()` / `hasMarketData()` take `{ appId, legalEntityId }`.
 
+On stage the ŠroubShop instance (`shop`) runs as its own Storefront Application `sroubshop-storefront` with its own
+managed key and the SROUB-\* markets; the AKROS instance keeps `akros-storefront` in the AKROS tenant. Your code does
+not change for this: only the two service variables differ, and the deploy writes them.
+
 ### The brand module (`src/brand/`)
 
 - `types.ts`: the `Brand` shape (name, legal name, logo or `null`, contacts, metadata, per-language copy, home

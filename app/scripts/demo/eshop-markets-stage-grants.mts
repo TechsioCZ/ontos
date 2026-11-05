@@ -66,7 +66,7 @@ const modes = ['plan', 'apply', 'verify'] as const;
 
 /** Registered storefront applications and the company whose module scope holds each registration. */
 export const eshopStorefronts = [
-  { appId: 'akros-storefront', legalEntityId: akrosDemoLegalEntityId },
+  { appId: 'sroubshop-storefront', legalEntityId: akrosDemoLegalEntityId },
   { appId: 'kavarna-doma-eshop', legalEntityId: eshopDemoLegalEntityId },
 ] as const;
 

@@ -876,11 +876,12 @@ export const storefrontPrincipal = {
   role: 'storefront',
 } as const;
 
+/** ŠroubShop's storefront BFF (the pseudonym cutover moved it off the legacy `akros-storefront` identity). */
 export const akrosStorefrontPrincipal = {
-  displayName: 'akros-storefront',
+  displayName: 'sroubshop-storefront',
   kind: 'service',
   legalEntityId: akrosDemoLegalEntityId,
-  principalId: demoId(principalResource, 'akros-storefront'),
+  principalId: demoId(principalResource, 'sroubshop-storefront'),
   role: 'akrosStorefront',
 } as const;
 
