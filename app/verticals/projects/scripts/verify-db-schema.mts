@@ -21,11 +21,11 @@ const verification = Effect.scoped(
     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'projects' and c.relkind in ('r', 'p') order by c.relname
   `;
+    const businessTable = catalog.find((table) => table.table_name === 'projects');
     if (
-      catalog.length !== PROJECTS_TABLE_INVENTORY.length ||
-      catalog[0]?.table_name !== PROJECTS_TABLE_INVENTORY[0] ||
-      !catalog[0].forced ||
-      !catalog[0].enabled
+      catalog.map((table) => table.table_name).join(',') !== PROJECTS_TABLE_INVENTORY.join(',') ||
+      businessTable?.forced !== true ||
+      !businessTable.enabled
     ) {
       yield* new ProjectsSchemaVerificationError({ reason: 'Projects table inventory or forced RLS mismatch' });
     }
