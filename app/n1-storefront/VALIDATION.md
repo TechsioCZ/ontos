@@ -1,5 +1,21 @@
 # Kontrola převodu N1 storefrontu
 
+## C39: mobilní podkategorie po dvojicích — 2026-11-05
+
+- Fresh Figma mobile38:2149/2150 má řádky po2 s gap8/24; předchozí volný
+  wrap mohl dát3. Nemutující slice zachovává všechny skutečné children a jejich
+  pořadí. Jen nativní row wrappery; md:contents ponechá stejné jediné odkazy
+  desktopovému4col gridu. Žádná změna LinkButton props nebo datového filtru.
+- Actual390:10ownerchildren v5dvojicích, kontrola44px a gap24; screenshot
+  n1-c39-category-rows-mobile.png prohlédnut rootem i nezávislým reviewerem.
+  Actual1440:10odkazů/10uniquehref,4cols275.25/gap4, wrappers contents;
+  oba viewporty bez overflow. Nezávislé source+layout region GO.
+- Lint/TSRS a formát PASS. Žádný další plný build po OOM; poslední plná sada
+  540testů patří C36, tento krok je čisté responzivní rozložení existujícíchodkazů.
+- Desktop Figma šedá/lightborder je odlišná od aktuální kit outlined varianty;
+  light naopak nemá okraj. Props-only přesná varianta chybí, bez appearanceCSS
+  hacku nebo globálního Button override. Paint parity se tímto krokem netvrdí.
+
 ## C38: typografie prázdného mini košíku — 2026-11-05
 
 - Fresh Figma59:1042/body311:2331, text311:2338/2339: heading16/500/22.4,

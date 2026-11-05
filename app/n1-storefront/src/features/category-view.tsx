@@ -36,6 +36,10 @@ export const CategoryView = ({
   const current = trail.at(-1);
   const title = current?.name ?? d.catalog;
   const children = catalog.categories.filter((item) => item.parentId === current?.id);
+  const childRows: (typeof children)[] = [];
+  for (let offset = 0; offset < children.length; offset += 2) {
+    childRows.push(children.slice(offset, offset + 2));
+  }
   const nodes = categoryTree(catalog.categories);
   const treeRoot = nodes.find((node) => node.id === trail[0]?.id);
   const browseNodes =
@@ -130,19 +134,26 @@ export const CategoryView = ({
             </div>
           )}
           {children.length > 0 && (
-            <div className="mb-6 flex flex-wrap gap-x-2 gap-y-6 md:mb-3 md:grid md:grid-cols-4 md:gap-1">
-              {children.map((category) => (
-                <div className="max-w-full md:min-w-0" key={category.id}>
-                  <LinkButton
-                    as={NextLink}
-                    block
-                    href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
-                    size="md"
-                    theme="outlined"
-                    variant="secondary"
-                  >
-                    {category.name}
-                  </LinkButton>
+            <div className="mb-6 flex flex-col gap-6 md:mb-3 md:grid md:grid-cols-4 md:gap-1">
+              {childRows.map((row) => (
+                <div
+                  className="flex flex-wrap gap-x-2 gap-y-6 md:contents"
+                  key={row.map(({ id }) => id).join("|")}
+                >
+                  {row.map((category) => (
+                    <div className="max-w-full md:min-w-0" key={category.id}>
+                      <LinkButton
+                        as={NextLink}
+                        block
+                        href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
+                        size="md"
+                        theme="outlined"
+                        variant="secondary"
+                      >
+                        {category.name}
+                      </LinkButton>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
