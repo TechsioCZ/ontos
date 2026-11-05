@@ -90,4 +90,69 @@ describe("product purchase feedback", () => {
       expect(html).not.toContain('id="purchase-unavailable"');
     });
   }
+
+  it("names the product and leaves the size out of the cart toast", () => {
+    const {
+      details: [sized],
+    } = projectCatalog(
+      {
+        market: { configured: true, currency: "CZK", marketId: "market" },
+        products: [
+          {
+            availability: "IN_STOCK",
+            currency: "CZK",
+            grossPriceMinor: 10_000,
+            id: "p2",
+            minimumQuantity: 1,
+            name: "Owner hoodie – černá",
+            slug: "hoodie",
+            stockOnHand: 2,
+            stockTracked: true,
+            unit: "ks",
+            variantRecords: [
+              {
+                active: true,
+                attributes: "M",
+                availability: "IN_STOCK",
+                grossPriceMinor: 10_000,
+                id: "size-m",
+                minimumQuantity: 1,
+                name: "M",
+                sku: "H-M",
+                stockOnHand: 2,
+                unit: "ks",
+              },
+            ],
+          },
+        ],
+      },
+      [],
+    );
+    const add = rs.fn(() => true);
+    rs.mocked(useCart).mockReturnValue({
+      acceptPrice: () => false,
+      add,
+      clear: () => {},
+      clearSubmitted: () => false,
+      entries: [],
+      error: false,
+      imageHosts: [],
+      loaded: true,
+      remove: () => false,
+      scope: { currency: "CZK", legalEntityId: "legal", marketId: "market", tenantId: "tenant" },
+      update: () => false,
+    });
+    renderToStaticMarkup(
+      <ProductPurchase
+        dictionary={getDictionary("cs")}
+        locale="cs"
+        product={sized}
+        selection={selectProductDetail(sized, "size-m")}
+      />,
+    );
+    feedback.actions[0]?.();
+    expect(feedback.create).toHaveBeenCalledWith(
+      expect.objectContaining({ description: "1 × Owner hoodie – černá" }),
+    );
+  });
 });

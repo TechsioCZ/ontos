@@ -72,9 +72,8 @@ export const ProductPurchase = ({
     if (added) {
       setDraft({ key: selectionKey, value: String(current.minimumQuantity) });
     }
-    const variantLabel = variant === undefined ? "" : ` – ${variant.name}`;
     toaster.create({
-      description: added ? `${parsedQuantity} × ${product.name}${variantLabel}` : undefined,
+      description: added ? `${parsedQuantity} × ${product.name}` : undefined,
       duration: 10_000,
       title: added ? d.shopping.added : d.shopping.addFailed,
       type: added ? "success" : "error",

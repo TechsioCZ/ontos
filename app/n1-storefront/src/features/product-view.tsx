@@ -161,37 +161,25 @@ export const ProductView = ({
             <fieldset className="order-1 md:mb-5">
               <legend className="mb-6 font-semibold md:mb-2 md:font-bold">{d.selectVariant}</legend>
               <div className="flex flex-wrap gap-2">
-                {product.variants.map((item) => (
-                  <div key={item.id}>
-                    <div className="hidden md:block">
+                {product.variants.map((item) => {
+                  const selected = item.id === variant?.id;
+                  return (
+                    <div key={item.id}>
                       <LinkButton
-                        aria-current={item.id === variant?.id ? "true" : undefined}
-                        as={NextLink}
-                        href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
-                        prefetch={false}
-                        size="sm"
-                        theme="outlined"
-                        variant="secondary"
-                      >
-                        {item.name}
-                      </LinkButton>
-                    </div>
-                    <div className="md:hidden">
-                      <LinkButton
-                        aria-current={item.id === variant?.id ? "true" : undefined}
+                        aria-current={selected ? "true" : undefined}
                         as={NextLink}
                         href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
                         prefetch={false}
                         size="md"
-                        theme={item.id === variant?.id ? "solid" : "outlined"}
-                        variant={item.id === variant?.id ? "primary" : "secondary"}
+                        theme={selected ? "solid" : "outlined"}
+                        variant={selected ? "primary" : "secondary"}
                       >
                         {item.name}
-                        {item.id === variant?.id && ` · ${d.selectedOption}`}
+                        {selected && <span className="md:hidden">{` · ${d.selectedOption}`}</span>}
                       </LinkButton>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </fieldset>
           )}

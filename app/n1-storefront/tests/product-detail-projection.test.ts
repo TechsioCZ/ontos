@@ -77,8 +77,10 @@ describe("owner-backed PDP amounts and stock", () => {
     const unselected = renderToStaticMarkup(
       createElement(ProductView, { dictionary, locale, product }),
     );
-    expect(selected).toContain(`M · ${dictionary.selectedOption}`);
-    expect(selected).not.toContain(`L · ${dictionary.selectedOption}`);
+    expect(selected).toContain(`>M<span class="md:hidden"> · ${dictionary.selectedOption}</span>`);
+    expect(selected).not.toContain(
+      `L<span class="md:hidden"> · ${dictionary.selectedOption}</span>`,
+    );
     expect(unselected).not.toContain(` · ${dictionary.selectedOption}`);
   });
   it.each([

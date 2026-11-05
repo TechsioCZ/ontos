@@ -142,4 +142,55 @@ describe("real product variant presentation", () => {
     ]);
     expect(selected.selectionRequired).toBe(false);
   });
+
+  it("lists each size exactly once on the product page", () => {
+    const sizes = ["S", "M", "L", "XL", "XXL", "XXXL"];
+    const {
+      details: [hoodie],
+    } = projectCatalog(
+      {
+        market: { configured: true, currency: "CZK", marketId: "owner-market" },
+        products: [
+          {
+            availability: "IN_STOCK",
+            currency: "CZK",
+            gallery: ["https://media.example/front.png"],
+            grossPriceMinor: 90_000,
+            id: "hoodie",
+            minimumQuantity: 1,
+            name: "Owner hoodie",
+            slug: "hoodie",
+            stockTracked: true,
+            unit: "piece",
+            variantRecords: sizes.map((size) => ({
+              active: true,
+              attributes: size,
+              availability: "IN_STOCK",
+              grossPriceMinor: 90_000,
+              id: `size-${size}`,
+              imageSrc: "https://media.example/front.png",
+              minimumQuantity: 1,
+              name: size,
+              sku: `H-${size}`,
+              stockOnHand: 3,
+              unit: "piece",
+            })),
+            variantSummary: { count: sizes.length, minGrossPriceMinor: 90_000, stockOnHand: 3 },
+          },
+        ],
+      },
+      ["media.example"],
+    );
+    const html = renderToStaticMarkup(
+      createElement(ProductView, {
+        dictionary: getDictionary("cs"),
+        locale: "cs",
+        product: hoodie,
+        variantId: "size-M",
+      }),
+    );
+    for (const size of sizes) {
+      expect(html.split(`variantId=size-${size}"`)).toHaveLength(2);
+    }
+  });
 });
