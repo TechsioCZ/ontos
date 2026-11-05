@@ -9,7 +9,8 @@ import type { AccessScopeId, PrincipalId } from '../../src/access/ids.ts';
 import { AccessMembershipIdSchema, AccessMembershipSchema } from '../../src/access/intent/memberships.ts';
 import type { AccessMembership } from '../../src/access/intent/memberships.ts';
 import type { AccessPeopleIntent } from '../../src/access/intent/people-store.ts';
-import { makeAccessPeopleCommands } from '../../src/access/lifecycle/people-service.ts';
+import { administrationOf, makeAccessPeopleCommands } from '../../src/access/lifecycle/people-service.ts';
+import { isSoleAdministrator } from '../../src/access/lifecycle/owners.ts';
 import type { AssignRoleCommand, GrantDelegationCommand } from '../../src/access/lifecycle/people-service.ts';
 import type { PeopleIntentWrite } from '../../src/access/lifecycle/people-commands.ts';
 import { CatalogSnapshotSchema } from '../../src/access/model.ts';
@@ -451,5 +452,36 @@ it.effect('never lets a delegated manager grant or revoke a delegation', () =>
     );
     expect(transferred.code).toBe('people_authority_missing');
     expect(written).toEqual([]);
+  }),
+);
+
+it.effect('counts an owner as an administrator only over a live, unsuspended membership path', () =>
+  Effect.gen(function* administrationNeedsThePath() {
+    yield* TestClock.setTime(AT.getTime());
+    const ownerRow = (holder: PrincipalId, n: number): AccessMembership => ({
+      ...membership(holder, tenantScope, n),
+      kind: 'owner',
+    });
+    // Two owners, but the manager's own tenant membership has ended: only the grantor administers.
+    const administration = administrationOf(
+      [ownerRow(GRANTOR, 21), membership(GRANTOR, tenantScope, 22), ownerRow(MANAGER, 23)],
+      tenantScope,
+      AT,
+    );
+    expect(isSoleAdministrator({ administration, at: AT, principalId: GRANTOR, scopeId: tenantScope })).toBe(true);
+    // With the manager back as a member, the grantor no longer administers alone.
+    const restored = administrationOf(
+      [
+        ownerRow(GRANTOR, 21),
+        membership(GRANTOR, tenantScope, 22),
+        ownerRow(MANAGER, 23),
+        membership(MANAGER, tenantScope, 24),
+      ],
+      tenantScope,
+      AT,
+    );
+    expect(isSoleAdministrator({ administration: restored, at: AT, principalId: GRANTOR, scopeId: tenantScope })).toBe(
+      false,
+    );
   }),
 );

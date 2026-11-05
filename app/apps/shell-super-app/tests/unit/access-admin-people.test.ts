@@ -156,7 +156,7 @@ const memberships: readonly AccessMembership[] = [
 ];
 
 const view: AccessPeopleView = {
-  administration: administrationOf(memberships, AccessScopeIdSchema.make(TENANT_SCOPE)),
+  administration: administrationOf(memberships, AccessScopeIdSchema.make(TENANT_SCOPE), NOW),
   assignments: [
     assignment(ALICE_ASSIGNMENT, ALICE, ROLE_A, ROLE_A_REVISION, A_SCOPE),
     assignment(BOB_ASSIGNMENT, BOB, ROLE_B, ROLE_B_REVISION, B_SCOPE),

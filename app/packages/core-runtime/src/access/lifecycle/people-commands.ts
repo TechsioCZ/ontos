@@ -241,6 +241,35 @@ const liveMembershipOf = (request: {
       membershipIsLive(membership, request.at),
   );
 
+/**
+ * Whether a person's operational membership path to a scope is live, as the graph reads it
+ * (`access = member - suspended`): an active member row of the tenant and, for a company, of the
+ * company too, with no live suspension on either. Administration stands on this path, so a
+ * successor must hold it and an administrator without it administers nothing.
+ */
+export const hasLiveMembershipPath = (request: {
+  readonly at: Date;
+  readonly holder: PrincipalId;
+  readonly memberships: readonly AccessMembership[];
+  readonly scopeId: AccessScopeId;
+  readonly tenantScopeId: AccessScopeId;
+}): boolean => {
+  const path = request.scopeId === request.tenantScopeId ? [request.scopeId] : [request.tenantScopeId, request.scopeId];
+  return path.every((scopeId) => {
+    const rows = request.memberships.filter(
+      (membership) =>
+        membership.scopeId === scopeId &&
+        personOf(membership.holder) === request.holder &&
+        membership.validFrom <= request.at &&
+        (membership.validUntil === undefined || request.at < membership.validUntil),
+    );
+    return (
+      !rows.some((membership) => membership.status === 'suspended') &&
+      rows.some((membership) => membership.kind === 'member' && membership.status === 'active')
+    );
+  });
+};
+
 const liveAssignmentsOf = (request: {
   readonly assignments: readonly Assignment[];
   readonly at: Date;
@@ -455,13 +484,13 @@ const successorIssue = (request: {
   }
   const notAMember = unadministered.find(
     (scopeId) =>
-      liveMembershipOf({
+      !hasLiveMembershipPath({
         at: request.at,
         holder: successor.principalId,
-        kind: 'member',
         memberships: request.memberships,
         scopeId,
-      }) === undefined,
+        tenantScopeId: request.administration.tenantScopeId,
+      }),
   );
   return notAMember === undefined
     ? Effect.succeed(unadministered)
@@ -1343,19 +1372,19 @@ export const planOwnershipTransfer = (
   }
   const notAMember = request.scopeIds.find(
     (scopeId) =>
-      liveMembershipOf({
+      !hasLiveMembershipPath({
         at: request.at,
         holder: request.successor,
-        kind: 'member',
         memberships: request.memberships,
         scopeId,
-      }) === undefined,
+        tenantScopeId: request.administration.tenantScopeId,
+      }),
   );
   if (notAMember !== undefined) {
     return Effect.fail(
       peopleRefusal(
         'people_successor_not_a_member',
-        `Person ${request.successor} is not a live member of scope ${notAMember}`,
+        `Person ${request.successor} holds no live, unsuspended membership path to scope ${notAMember}`,
         [notAMember],
       ),
     );

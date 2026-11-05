@@ -45,6 +45,7 @@ import type {
   RoleAssignmentRequest,
 } from './people-commands.ts';
 import {
+  hasLiveMembershipPath,
   membershipIsLive,
   peopleRefusal,
   planDelegationGrant,
@@ -134,6 +135,7 @@ const principalOf = (holder: Holder): Option.Option<PrincipalId> =>
 export const administrationOf = (
   memberships: readonly AccessMembership[],
   tenantScopeId: AccessScopeId,
+  at: Date,
 ): ScopeAdministration => {
   const tenantOwners: OwnerRecord[] = [];
   const byScope = new Map<AccessScopeId, OwnerRecord[]>();
@@ -141,7 +143,18 @@ export const administrationOf = (
     const principalId = Option.getOrUndefined(principalOf(membership.holder));
     const manages = membership.kind !== 'member' && membership.status !== 'revoked' && principalId !== undefined;
     if (manages && principalId !== undefined) {
-      const status = membership.status === 'suspended' ? ('suspended' as const) : ('active' as const);
+      // A management row administers only over a live, unsuspended membership path; without it the
+      // person counts as unable to administer, exactly as a decision reads them.
+      const usable =
+        membership.status === 'active' &&
+        hasLiveMembershipPath({
+          at,
+          holder: principalId,
+          memberships,
+          scopeId: membership.kind === 'owner' ? tenantScopeId : membership.scopeId,
+          tenantScopeId,
+        });
+      const status = usable ? ('active' as const) : ('suspended' as const);
       const record: OwnerRecord =
         membership.validUntil === undefined
           ? { principalId, status }
@@ -570,10 +583,11 @@ export const makeAccessPeopleCommands = (dependencies: {
     scope: OperationalScope,
   ): Effect.fn.Return<AccessPeopleView, PeopleCommandFailure> {
     const loaded = yield* loadIntent(scope);
+    const at = yield* DateTime.nowAsDate;
     return {
-      administration: administrationOf(loaded.memberships, loaded.tenantScopeId),
+      administration: administrationOf(loaded.memberships, loaded.tenantScopeId, at),
       assignments: loaded.intent.assignments,
-      at: yield* DateTime.nowAsDate,
+      at,
       delegations: loaded.intent.delegations,
       memberships: loaded.memberships,
       revision: revisionOf({

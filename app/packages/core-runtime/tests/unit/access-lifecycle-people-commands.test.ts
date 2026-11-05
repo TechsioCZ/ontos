@@ -982,7 +982,8 @@ it.effect('a company administrator who alone administers the company transfers i
         memberships: [
           companyAdmin,
           membership({ holder: MANAGER, id: 2, scopeId: companyScope }),
-          memberOf(MEMBER, companyScope),
+          membership({ holder: MEMBER, id: 7, scopeId: companyScope }),
+          membership({ holder: MEMBER, id: 8 }),
         ],
         nextStatus: 'revoked',
       },
@@ -991,6 +992,26 @@ it.effect('a company administrator who alone administers the company transfers i
     const blocked = yield* Effect.flip(planMembershipEnd(request));
     expect(blocked.code).toBe('ownership_transfer_required');
     expect(blocked.scopeIds).toEqual([companyScope]);
+
+    // A successor administers only over a live, unsuspended path: the company's membership alone,
+    // without the tenant's, or a path with a suspension on it, is no successor at all.
+    const successor = { membershipId: membershipId(45), principalId: MEMBER };
+    const companyOnly = yield* Effect.flip(
+      planMembershipEnd({
+        ...request,
+        memberships: request.memberships.filter(({ id }) => id !== membershipId(8)),
+        successor,
+      }),
+    );
+    expect(companyOnly.code).toBe('people_successor_not_a_member');
+    const suspended = yield* Effect.flip(
+      planMembershipEnd({
+        ...request,
+        memberships: [...request.memberships, membership({ holder: MEMBER, id: 9, status: 'suspended' })],
+        successor,
+      }),
+    );
+    expect(suspended.code).toBe('people_successor_not_a_member');
 
     const transferred = yield* planMembershipEnd({
       ...request,
