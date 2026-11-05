@@ -112,9 +112,16 @@ export const assessAuthorityLoss = (proposal: Proposal, loss: AuthorityLoss): La
       : retain('Another module was uninstalled');
   }
   if (loss.authorityLoss === 'parent_record_read_lost') {
-    return proposal.witnesses.some((witness) => witness.purpose === 'parent_record_read')
+    // Only the person whose parent read the mandate is bound to: another approver's loss leaves it.
+    const boundToLoser = proposal.witnesses.some(
+      (witness) =>
+        witness.purpose === 'parent_record_read' &&
+        Predicate.isTagged(witness.holderId, 'Principal') &&
+        witness.holderId.principalId === loss.principalId,
+    );
+    return boundToLoser
       ? lapse('parent_record_read_lost', 'The approver lost the read of the parent record')
-      : retain('The command reads no parent record');
+      : retain('The mandate reads its parent record through somebody else');
   }
   if (loss.authorityLoss === 'connection_lost' && loss.agentId !== undefined) {
     const { requester } = proposal;
