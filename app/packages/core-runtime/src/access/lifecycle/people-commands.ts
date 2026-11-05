@@ -370,6 +370,37 @@ export interface MembershipGrantRequest extends PeopleCommandFacts {
  * Admits one holder to one scope. A live row of the same kind is never widened in place: extending
  * access is a fresh membership, so a deadline something already relied on never moves silently.
  */
+/**
+ * The rows occupying one membership slot (scope, person, kind), which holds a single non-revoked row.
+ * An expired row is history and is retired in the same plan that records the new one; a live row, a
+ * live suspension or a row not yet started blocks it, because a new row would duplicate it, lift the
+ * suspension or race a membership already on its way.
+ */
+const membershipSlotOf = (request: {
+  readonly at: Date;
+  readonly holder: PrincipalId;
+  readonly kind: MembershipKind;
+  readonly memberships: readonly AccessMembership[];
+  readonly scopeId: AccessScopeId;
+}) => {
+  const occupying = request.memberships.filter(
+    (row) =>
+      row.scopeId === request.scopeId &&
+      row.kind === request.kind &&
+      row.status !== 'revoked' &&
+      personOf(row.holder) === request.holder,
+  );
+  const expired = occupying.filter((row) => row.validUntil !== undefined && row.validUntil <= request.at);
+  return {
+    blocked: expired.length !== occupying.length,
+    retirements: expired.map((row): PeopleIntentWrite => ({
+      _tag: 'EndMembership',
+      membershipId: row.id,
+      status: 'revoked',
+    })),
+  };
+};
+
 export const planMembershipGrant = (
   request: MembershipGrantRequest,
 ): Effect.Effect<PeopleChangePlan, PeopleCommandError> => {
@@ -400,19 +431,14 @@ export const planMembershipGrant = (
       ),
     );
   }
-  // The slot (scope, person, kind) holds one non-revoked row. An expired row is history and is retired
-  // in this same plan so the person can rejoin; a live suspension or a not-yet-started row is not,
-  // because a fresh grant would lift the suspension or race a membership that is already on its way.
-  const occupying = request.memberships.filter(
-    (row) =>
-      row.scopeId === request.scopeId &&
-      row.kind === request.kind &&
-      row.status !== 'revoked' &&
-      personOf(row.holder) === holder,
-  );
-  // An expired row is history whether it ended active or suspended; a live suspension still refuses.
-  const expired = occupying.filter((row) => row.validUntil !== undefined && row.validUntil <= request.at);
-  if (expired.length !== occupying.length) {
+  const slot = membershipSlotOf({
+    at: request.at,
+    holder,
+    kind: request.kind,
+    memberships: request.memberships,
+    scopeId: request.scopeId,
+  });
+  if (slot.blocked) {
     return Effect.fail(
       peopleRefusal(
         'people_membership_already_active',
@@ -441,14 +467,7 @@ export const planMembershipGrant = (
       planOf(
         { scopeId: request.scopeId, tenantId: request.tenantId },
         ['people_membership_admitted'],
-        [
-          ...expired.map((row): PeopleIntentWrite => ({
-            _tag: 'EndMembership',
-            membershipId: row.id,
-            status: 'revoked',
-          })),
-          { _tag: 'RecordMembership', membership: dated },
-        ],
+        [...slot.retirements, { _tag: 'RecordMembership', membership: dated }],
       ),
     ),
   );
@@ -678,6 +697,17 @@ export const planMembershipEnd = (
     scopeIds: managementScopeIds,
   };
   const successorRequest = request.successor === undefined ? issue : { ...issue, successor: request.successor };
+  const successorSlot =
+    request.successor === undefined
+      ? undefined
+      : membershipSlotOf({
+          at: request.at,
+          holder: request.successor.principalId,
+          kind: ending.kind === 'owner' ? 'owner' : 'access_admin',
+          memberships: request.memberships,
+          scopeId: ending.scopeId,
+        });
+
   return successorIssue(successorRequest).pipe(
     Effect.flatMap((ownershipTransferScopeIds) =>
       // A successor named for a membership that is not the last administration of its scope is a
@@ -687,6 +717,18 @@ export const planMembershipEnd = (
             peopleRefusal(
               'ownership_transfer_not_required',
               `Membership ${ending.id} is not the last administration of scope ${ending.scopeId}, so it needs no successor`,
+              [ending.scopeId],
+            ),
+          )
+        : Effect.succeed(ownershipTransferScopeIds),
+    ),
+    // Checked once the successor rules admitted them, so a self-transfer still hears its own refusal.
+    Effect.flatMap((ownershipTransferScopeIds) =>
+      successorSlot?.blocked === true
+        ? Effect.fail(
+            peopleRefusal(
+              'people_membership_already_active',
+              `The successor already holds a live, suspended or pending management membership in scope ${ending.scopeId}`,
               [ending.scopeId],
             ),
           )
@@ -727,6 +769,7 @@ export const planMembershipEnd = (
         request.successor === undefined
           ? []
           : [
+              ...(successorSlot?.retirements ?? []),
               {
                 _tag: 'RecordMembership',
                 membership: {
@@ -1470,6 +1513,26 @@ export const planOwnershipTransfer = (
   }
   const successorKind = (scopeId: AccessScopeId): MembershipKind =>
     scopeId === request.administration.tenantScopeId ? 'owner' : 'access_admin';
+  const slots = request.scopeIds.map((scopeId) =>
+    membershipSlotOf({
+      at: request.at,
+      holder: request.successor,
+      kind: successorKind(scopeId),
+      memberships: request.memberships,
+      scopeId,
+    }),
+  );
+  const blockedScope = request.scopeIds.find((_scopeId, index) => slots[index]?.blocked === true);
+  if (blockedScope !== undefined) {
+    return Effect.fail(
+      peopleRefusal(
+        'people_membership_already_active',
+        `Person ${request.successor} already holds a live, suspended or pending management membership in scope ${blockedScope}`,
+        [blockedScope],
+      ),
+    );
+  }
+  const retired = slots.flatMap(({ retirements }) => retirements);
   const granted: readonly PeopleIntentWrite[] = request.scopeIds.map((scopeId, index) => ({
     _tag: 'RecordMembership' as const,
     membership: {
@@ -1513,7 +1576,7 @@ export const planOwnershipTransfer = (
         'people_ownership_transfer_complete',
         'people_ownership_scope_never_unadministered',
       ],
-      [...granted, ...ended, ...assignmentEnds],
+      [...retired, ...granted, ...ended, ...assignmentEnds],
     ),
   );
 };
