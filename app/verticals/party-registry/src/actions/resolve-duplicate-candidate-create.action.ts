@@ -82,7 +82,7 @@ export const resolveDuplicateCandidateCreateAction = defineAction(
       modes: ['run', 'propose', 'approve'],
       placement: { group: 'identity-review', level: 'manage' },
       risk: 'sensitive',
-      selectors: ['all', 'assigned'],
+      selectors: ['all'],
     },
     accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.caseRef.resourceId }),
     accessEvidencePolicy: {

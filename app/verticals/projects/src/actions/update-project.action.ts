@@ -78,7 +78,7 @@ export const updateProjectAction = defineAction(
       modes: ['run', 'propose', 'approve'],
       placement: { group: 'projects', level: 'extended' },
       risk: 'sensitive',
-      selectors: ['all', 'assigned'],
+      selectors: ['all'],
     },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',

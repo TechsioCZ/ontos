@@ -179,7 +179,7 @@ const personRead = (input: {
     withOptional(
       withOptional(
         {
-          accessDeclaration: declarationOf(PERSON_KEY, { risk: 'sensitive', selectors: ['assigned'] }),
+          accessDeclaration: declarationOf(PERSON_KEY, { risk: 'sensitive', selectors: ['all'] }),
           accessKind: 'detail' as const,
           accessTarget: () => ({ moduleKey: RECORD_MODULE, recordKey: RECORD_KEY }),
           entrypoint: entrypointFor(PERSON_KEY),
@@ -425,7 +425,7 @@ it.effect('projects out the fields of a field group the caller lacks, keeping th
     const granted = yield* makeRuntime(
       liveGate({
         cells: [
-          cell({ capability: PERSON_KEY, selector: { _tag: 'assigned' } }),
+          cell({ capability: PERSON_KEY, selector: { _tag: 'all' } }),
           cell({ capability: SALARY_KEY, selector: { _tag: 'all' } }),
         ],
       }),
@@ -435,7 +435,7 @@ it.effect('projects out the fields of a field group the caller lacks, keeping th
 
     const redactedEvidence = evidenceCapture();
     const redacted = yield* makeRuntime(
-      liveGate({ cells: [cell({ capability: PERSON_KEY, selector: { _tag: 'assigned' } })] }),
+      liveGate({ cells: [cell({ capability: PERSON_KEY, selector: { _tag: 'all' } })] }),
       redactedEvidence,
     );
     expect(yield* runRead(redacted, personRead({ withFieldGroup: true }))).toEqual({ name: 'Ada' });
@@ -482,7 +482,7 @@ it.effect('hands the handler the gate\u2019s own field answer, never the request
     // A caller without the salary group: its handler learns exactly which declared result path is
     // denied, so the owner query it builds can stop matching, ordering and reporting on that surface.
     const denied = yield* makeRuntime(
-      liveGate({ cells: [cell({ capability: PERSON_KEY, selector: { _tag: 'assigned' } })] }),
+      liveGate({ cells: [cell({ capability: PERSON_KEY, selector: { _tag: 'all' } })] }),
       evidenceCapture(),
     );
     expect(yield* runRead(denied, personRead({ onHandlerContext: capture, withFieldGroup: true }))).toEqual({
@@ -493,7 +493,7 @@ it.effect('hands the handler the gate\u2019s own field answer, never the request
     const grantedRuntime = yield* makeRuntime(
       liveGate({
         cells: [
-          cell({ capability: PERSON_KEY, selector: { _tag: 'assigned' } }),
+          cell({ capability: PERSON_KEY, selector: { _tag: 'all' } }),
           cell({ capability: SALARY_KEY, selector: { _tag: 'all' } }),
         ],
       }),
@@ -544,7 +544,7 @@ it.effect('projects a governed field out of a payload that carries typed values 
     // the field it may not read (the reported defect: the whole read answered 503 instead).
     const typedRead = defineRead(
       {
-        accessDeclaration: declarationOf(PERSON_KEY, { risk: 'sensitive', selectors: ['assigned'] }),
+        accessDeclaration: declarationOf(PERSON_KEY, { risk: 'sensitive', selectors: ['all'] }),
         accessFieldGroups: [salaryGroup()],
         accessKind: 'detail',
         accessTarget: () => ({ moduleKey: RECORD_MODULE, recordKey: RECORD_KEY }),
@@ -618,7 +618,7 @@ it.effect('decides a relayed identity read\u2019s field group on the subject\u20
     const granted = yield* makeRuntime(
       liveGate({
         cells: [
-          cell({ capability: PERSON_KEY, selector: { _tag: 'assigned' } }),
+          cell({ capability: PERSON_KEY, selector: { _tag: 'all' } }),
           cell({ capability: SALARY_KEY, selector: { _tag: 'all' } }),
         ],
       }),
@@ -633,7 +633,7 @@ it.effect('keeps a relayed rights read deciding its field group on the subject\u
   Effect.gen(function* relayedRightsFieldGroup() {
     const read = personRead({ accessActor: relayActor('rights'), withFieldGroup: true });
     const redacted = yield* makeRuntime(
-      liveGate({ cells: [cell({ capability: PERSON_KEY, selector: { _tag: 'assigned' } })] }),
+      liveGate({ cells: [cell({ capability: PERSON_KEY, selector: { _tag: 'all' } })] }),
       evidenceCapture(),
       relayedScope,
     );
@@ -642,7 +642,7 @@ it.effect('keeps a relayed rights read deciding its field group on the subject\u
     const granted = yield* makeRuntime(
       liveGate({
         cells: [
-          cell({ capability: PERSON_KEY, selector: { _tag: 'assigned' } }),
+          cell({ capability: PERSON_KEY, selector: { _tag: 'all' } }),
           cell({ capability: SALARY_KEY, selector: { _tag: 'all' } }),
         ],
       }),

@@ -113,13 +113,13 @@ it('carries a field group on a scope-wide read without naming a record (O74)', (
   expect(registration.descriptor.accessTarget).toBeUndefined();
 
   // The record-scoped control: the same group still demands the one record it is decided with.
-  expect(() => groupedRead({ declaration: readDeclaration(['assigned']), groups: [salariesGroup()] })).toThrow(
+  expect(() => groupedRead({ declaration: readDeclaration(['all']), groups: [salariesGroup()] })).toThrow(
     /must declare its accessTarget when its declaration is record-scoped/u,
   );
   // And with the record named it is accepted, exactly as before O74.
   expect(() =>
     groupedRead({
-      declaration: readDeclaration(['assigned']),
+      declaration: readDeclaration(['all']),
       groups: [salariesGroup()],
       target: (input) => ({ moduleKey: 'core.shell', recordKey: input.recordKey }),
     }),

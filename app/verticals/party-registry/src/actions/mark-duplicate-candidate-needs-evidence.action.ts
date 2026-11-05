@@ -21,7 +21,7 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
       modes: ['run', 'propose', 'approve'],
       placement: { group: 'identity-review', level: 'extended' },
       risk: 'sensitive',
-      selectors: ['all', 'assigned'],
+      selectors: ['all'],
     },
     accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.caseRef.resourceId }),
     accessEvidencePolicy: {

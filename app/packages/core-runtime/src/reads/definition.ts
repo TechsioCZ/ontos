@@ -598,6 +598,12 @@ const validateReadAccessBinding = (
       'Read accessTarget requires a record-scoped declaration: a scope-wide read returns no single record (Q2)',
     );
   }
+  // See the action rule: a single record is never checked against a holder-relative selector (R5a-7).
+  if (declaration.selectors.some((selector) => selector !== 'all')) {
+    return failReadDefinition(
+      'Read accessTarget decides one record, which no holder-relative selector (assigned, entrusted, team) can be checked against yet (R5a-7)',
+    );
+  }
   if (descriptor.accessKind !== undefined && ROW_SCOPED_READ_ACCESS_KINDS.has(descriptor.accessKind)) {
     return failReadDefinition(
       'A list, search or report read resolves one record per row inside the owner query and declares no single accessTarget (O25)',

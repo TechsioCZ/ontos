@@ -127,7 +127,7 @@ export const decidePurchaseApprovalRequestAction = defineAction(
       modes: ['run', 'propose'],
       placement: { group: 'purchasing-approval', level: 'manage' },
       risk: 'critical',
-      selectors: ['all', 'assigned'],
+      selectors: ['all'],
     },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',

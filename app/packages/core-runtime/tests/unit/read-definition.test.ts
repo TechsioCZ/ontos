@@ -626,7 +626,7 @@ it('binds an accessTarget to the record-scoped declaration it serves (O9, O25, Q
   const registration = defineRead(
     {
       ...declaredReadWithoutDeclaration(),
-      accessDeclaration: { ...fixtureReadAccess('core.shell'), selectors: ['assigned'] },
+      accessDeclaration: { ...fixtureReadAccess('core.shell'), selectors: ['all'] },
       accessKind: 'detail',
       accessTarget: recordTarget,
       resultSchema: Schema.Array(Schema.String),
@@ -641,7 +641,7 @@ it('binds an accessTarget to the record-scoped declaration it serves (O9, O25, Q
   const validate = (overrides: Partial<ReadDescriptorValidationInput>) => () =>
     validateReadDescriptorInput({
       ...declaredReadWithoutDeclaration(),
-      accessDeclaration: { ...fixtureReadAccess('core.shell'), selectors: ['assigned'] },
+      accessDeclaration: { ...fixtureReadAccess('core.shell'), selectors: ['all'] },
       accessKind: 'detail',
       accessTarget: recordTarget,
       ...overrides,
@@ -651,6 +651,11 @@ it('binds an accessTarget to the record-scoped declaration it serves (O9, O25, Q
     [
       validate({ accessDeclaration: { ...fixtureReadAccess('core.shell'), selectors: [] } }),
       /accessTarget requires a record-scoped declaration/u,
+    ],
+    // One record is never checked against a holder-relative selector until owners project it (R5a-7).
+    [
+      validate({ accessDeclaration: { ...fixtureReadAccess('core.shell'), selectors: ['all', 'assigned'] } }),
+      /holder-relative selector/u,
     ],
     // A row-scoped read resolves its rows inside the owner query (O25).
     [validate({ accessKind: 'search' }), /declares no single accessTarget/u],

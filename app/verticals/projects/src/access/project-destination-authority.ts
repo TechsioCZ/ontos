@@ -61,7 +61,7 @@ const decideRecord = (gate: BoundAccessGate, input: OwnerAuthorizationInput, rec
           modes: ['run', 'propose', 'approve'],
           placement: { group: 'projects', level: 'manage' },
           risk: 'sensitive',
-          selectors: ['all', 'assigned'],
+          selectors: ['all'],
         },
       },
       legalEntityScope: 'optional',

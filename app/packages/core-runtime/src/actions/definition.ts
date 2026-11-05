@@ -560,6 +560,13 @@ const derivedAmountInputPrefix = 'derived.';
  * only for a record-scoped capability (Q2), and a derived amount only where the declaration names a
  * server-derived total (O18). Both are authoring mistakes worth failing at definition time (O5).
  */
+/*
+ * A record-scoped decision is answered by the graph, which holds no holder-relative record relation:
+ * `assigned`, `entrusted` and `team` are decided from the owner's row projection, which only a list
+ * read hands Core today. A single-record capability that offered one would let a role grant it and
+ * then deny it on every record, so it is an authoring mistake until owners project their records into
+ * the decision (R5a-7).
+ */
 const validateActionAccessBinding = <Policy>(
   descriptor: ActionDescriptorValidationInput<Policy>,
   declaration: AccessDeclaration | undefined,
@@ -598,6 +605,11 @@ const validateActionAccessBinding = <Policy>(
     if (declaration.selectors.length === 0) {
       return failActionDefinition(
         'Action accessTarget requires a record-scoped declaration: a scope-wide capability acts on no single record (Q2)',
+      );
+    }
+    if (declaration.selectors.some((selector) => selector !== 'all')) {
+      return failActionDefinition(
+        'Action accessTarget decides one record, which no holder-relative selector (assigned, entrusted, team) can be checked against yet (R5a-7)',
       );
     }
   }
