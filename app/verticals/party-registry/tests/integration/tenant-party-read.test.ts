@@ -22,6 +22,7 @@ import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
+import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { partyDetailRead } from '../../src/api/party-detail.read.ts';
 import { counterpartyReadRead } from '../../src/api/counterparty-read.read.ts';
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
@@ -51,7 +52,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         );
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
-            actionKeys: [createPartyAction.descriptor.actionKey],
+            actionKeys: [
+              createPartyAction.descriptor.actionKey,
+              resolveDuplicateCandidateCreateAction.descriptor.actionKey,
+            ],
             adminConnectionString: Redacted.make(connections.admin.connectionString),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: snapshot.composition.revision,
@@ -133,7 +137,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           expect(verified.legalEntityId).toBe(actor.legalEntityId);
           return verified;
         });
-        const created = yield* runAction({
+        const opened = yield* runAction({
           registration: createPartyAction,
           payload: {
             candidate: {
@@ -162,11 +166,29 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             targetModuleKey: 'party.registry',
           },
         }).pipe(Effect.provideContext(context));
-        expect(created.outcome).toBe('CREATED');
-        if (created.outcome !== 'CREATED') {
-          return yield* Effect.die('Expected a newly created Party');
+        expect(opened.outcome).toBe('AMBIGUOUS');
+        if (opened.outcome !== 'AMBIGUOUS') {
+          return yield* Effect.die('Expected a Party identity review case');
         }
-        const { partyRef } = created;
+        const reviewed = yield* runAction({
+          registration: resolveDuplicateCandidateCreateAction,
+          payload: {
+            caseRef: opened.caseRef,
+            expectedRevision: 1,
+            reason: 'Reviewed the concrete external organization for the tenant Party read',
+          },
+          principal: yield* verifyPrincipal(principal),
+          transport: {
+            correlationId: yield* crypto.randomUUIDv4(),
+            idempotencyKey: yield* crypto.randomUUIDv4(),
+            targetModuleKey: 'party.registry',
+          },
+        }).pipe(Effect.provideContext(context));
+        expect(reviewed.outcome).toBe('CREATE_NEW');
+        if (reviewed.outcome !== 'CREATE_NEW' || reviewed.partyRef === null) {
+          return yield* Effect.die('Expected a newly created Party from explicit review');
+        }
+        const { partyRef } = reviewed;
         const read = (reader: typeof principal, includeFactHistory = false) =>
           verifyPrincipal(reader).pipe(
             Effect.flatMap((verified) =>

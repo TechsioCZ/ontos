@@ -211,7 +211,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       const reused = yield* runAction({
         registration: addPartyOfficialIdentifierAction,
         payload: {
-          identifier: { identifierType: 'ICO', value: '01000004', verification: 'UNVERIFIED' },
+          identifier: { identifierType: 'ICO', value: '01000004' },
           partyRef,
           provenanceMethod: 'MANUAL',
           provenanceSource: 'post-migration-intake',

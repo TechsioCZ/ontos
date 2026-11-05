@@ -6158,11 +6158,19 @@ it.live(
                 row.subjectResourceId === created.result.profileRef.resourceId,
             );
             expect(events).toHaveLength(1);
-            const providerReads = evidence.accesses.filter(
+            const partyReads = evidence.accesses.filter(
               (row) => row.servingModuleKey === PARTY_MODULE_KEY && row.outcomeCode === 'read_allowed',
             );
+            const providerReads = partyReads.filter(
+              (row) => row.evidencePolicyKey === 'party.registry.api.party-detail.evidence.v1',
+            );
+            const seedReads = partyReads.filter(
+              (row) => row.evidencePolicyKey === 'party.registry.api.duplicate-candidate-detail.evidence.v1',
+            );
+            expect(partyReads).toHaveLength(3);
             expect(providerReads).toHaveLength(2);
-            for (const read of providerReads) {
+            expect(seedReads).toHaveLength(1);
+            for (const read of partyReads) {
               expect(read.principalId).toBe(fixture.core.manager.principalId);
               expect(read.principalId === serviceId).toBe(false);
               expect(read.authBindingId).toBe(personalKey.authBindingId);

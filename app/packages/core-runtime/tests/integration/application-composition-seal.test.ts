@@ -26,6 +26,7 @@ import {
   resumeApplicationCompositionDurableAdmission,
   sealApplicationCompositionAuthority,
 } from '../../src/modules/application-composition-authority.ts';
+import { publishTestApplicationCompositionAuthority } from '../../src/testing/owner-evidence.ts';
 import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
@@ -58,7 +59,7 @@ const fixture = (drain = true) =>
           .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
       }).pipe(Effect.orDie),
     );
-    yield* adminDatabase.transaction((transaction) => publishApplicationCompositionAuthority(transaction, snapshot));
+    yield* publishTestApplicationCompositionAuthority(adminDatabase, snapshot);
     yield* adminDatabase.insert(tenants).values({
       defaultLocale: 'en',
       name: 'Before worker completion',
