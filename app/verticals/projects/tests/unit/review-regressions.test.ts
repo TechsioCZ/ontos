@@ -1,20 +1,20 @@
 import { ProjectLifecycleConflict } from '../../shared/domain/project-lifecycle-conflict.ts';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { makeProjectOwnerEligibilityService } from '../../src/services/project-owner-eligibility.service.ts';
+import {
+  makeProjectOwnerAuthorization,
+  preparedProjectOwnerEligibility,
+} from '../../src/services/project-owner-eligibility.service.ts';
 import { requireProjectHierarchyAllowed } from '../../src/services/project-lifecycle-guard.service.ts';
 
 const principalId = '30000000-0000-4000-8000-000000000001';
 const candidate = { displayName: 'Eligible user', principalId };
-const principals = {
-  find: () => Effect.succeed(candidate),
-  search: () => Effect.succeed([candidate]),
-};
+const activePrincipals = { find: () => Effect.succeed(candidate) };
 
 it.effect('checks the exact immutable Project identity instead of tenant access', () =>
   Effect.gen(function* ownerEligibility() {
     const requested: string[] = [];
-    const service = makeProjectOwnerEligibilityService({
+    const authorize = makeProjectOwnerAuthorization({
       access: {
         tenantResources: ({ permission, resources }) => {
           expect(permission).toBe('assign');
@@ -29,52 +29,55 @@ it.effect('checks the exact immutable Project identity instead of tenant access'
           );
         },
       },
-      principals,
       tenantId: 'tenant',
     });
-    expect(yield* service.check('one', principalId)).toBe('allowed');
-    expect(yield* service.check('two', principalId)).toBe('denied');
+    expect(yield* authorize('one', principalId)).toBe('allowed');
+    expect(yield* authorize('two', principalId)).toBe('denied');
     expect(requested).toEqual(['ONE', 'TWO']);
   }),
 );
 
-it.effect('rejects missing, inactive, non-human and foreign-tenant candidates before authorization', () =>
-  Effect.gen(function* rejectCandidates() {
-    let checks = 0;
-    const service = makeProjectOwnerEligibilityService({
-      access: {
-        tenantResources: () => {
-          checks += 1;
-          return Effect.succeed([]);
-        },
+it.effect('answers only the prepared Owner and prefix, and rechecks that the Owner is still active', () =>
+  Effect.gen(function* preparedDecision() {
+    const allowedOwner = { decision: 'allowed' as const, prefix: 'ONE', principalId };
+    const prepared = Option.some(allowedOwner);
+    expect(yield* preparedProjectOwnerEligibility(activePrincipals, prepared)('one', principalId)).toBe('allowed');
+    expect(yield* preparedProjectOwnerEligibility(activePrincipals, prepared)('TWO', principalId)).toBe('unavailable');
+    expect(yield* preparedProjectOwnerEligibility(activePrincipals, prepared)('ONE', 'other')).toBe('unavailable');
+    expect(yield* preparedProjectOwnerEligibility(activePrincipals, Option.none())('ONE', principalId)).toBe(
+      'unavailable',
+    );
+    const departed = { find: () => Effect.sync(() => [candidate].find(() => false)) };
+    expect(yield* preparedProjectOwnerEligibility(departed, prepared)('ONE', principalId)).toBe('denied');
+    let lookups = 0;
+    const counted = {
+      find: () => {
+        lookups += 1;
+        return Effect.succeed(candidate);
       },
-      principals: {
-        ...principals,
-        find: () => principals.search().pipe(Effect.map((candidates) => candidates.find(() => false))),
-      },
-      tenantId: 'tenant',
-    });
-    expect(yield* service.check('ONE', principalId)).toBe('denied');
-    expect(checks).toBe(0);
+    };
+    expect(
+      yield* preparedProjectOwnerEligibility(counted, Option.some({ ...allowedOwner, decision: 'denied' as const }))(
+        'ONE',
+        principalId,
+      ),
+    ).toBe('denied');
+    expect(lookups).toBe(0);
   }),
 );
 
 it.effect('fails closed without an assignment adapter or with mismatched authorization evidence', () =>
   Effect.gen(function* failClosed() {
+    expect(yield* makeProjectOwnerAuthorization({ access: {}, tenantId: 'tenant' })('ONE', principalId)).toBe(
+      'unavailable',
+    );
     expect(
-      yield* makeProjectOwnerEligibilityService({ access: {}, principals, tenantId: 'tenant' }).check(
-        'ONE',
-        principalId,
-      ),
-    ).toBe('unavailable');
-    expect(
-      yield* makeProjectOwnerEligibilityService({
+      yield* makeProjectOwnerAuthorization({
         access: {
           tenantResources: () => Effect.succeed([{ decision: 'allowed', key: 'wrong-project' }]),
         },
-        principals,
         tenantId: 'tenant',
-      }).check('ONE', principalId),
+      })('ONE', principalId),
     ).toBe('unavailable');
   }),
 );

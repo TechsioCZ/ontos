@@ -18,10 +18,6 @@ import {
   CreateProjectResultSchema,
 } from '../../verticals/projects/shared/actions/create-project.ts';
 import {
-  ProjectOwnerCandidatesRequestSchema,
-  ProjectOwnerCandidatesResponseSchema,
-} from '../../verticals/projects/shared/apis/project-owner-candidates.ts';
-import {
   ProjectsProviderRequestSchema,
   ProjectsProviderResponseSchema,
 } from '../../verticals/projects/shared/apis/projects-search.ts';
@@ -33,7 +29,7 @@ import type { SeedClient } from './seed-client.mts';
 const audience = 'projects';
 const writerEmail = 'obchod@demo.ontos';
 
-interface ProjectSpec {
+export interface ProjectSpec {
   readonly name: string;
   /** Login e-mail of the Project Owner (must be an eligible owner in the tenant). */
   readonly owner: string;
@@ -43,7 +39,7 @@ interface ProjectSpec {
 }
 
 /** Parents come before their sub-projects. */
-const projectSpecs: readonly ProjectSpec[] = [
+export const projectSpecs: readonly ProjectSpec[] = [
   {
     name: 'Rekonstrukce domu Vinohradská 12',
     owner: 'management@najempark.demo',
@@ -117,26 +113,13 @@ const existingProjects = Effect.fn('SeedProjects.existingProjects')(function* ex
   return found;
 });
 
-const ownerPrincipalId = Effect.fn('SeedProjects.ownerPrincipalId')(function* ownerPrincipalId(
-  client: SeedClient,
-  spec: ProjectSpec,
-) {
+/** Eligibility itself is the create Action's server-side decision (`projects-owner-eligibility-stage.mts`). */
+const ownerPrincipalId = (spec: ProjectSpec) => {
   const principalId = personaPrincipalIds.get(spec.owner);
-  if (principalId === undefined) {
-    return yield* new DemoSeedError({ reason: `Persona ${spec.owner} is unknown; run the people seed first.` });
-  }
-  const { candidates } = yield* client.call(
-    audience,
-    '/reads/project-owner-candidates',
-    ProjectOwnerCandidatesRequestSchema,
-    { prefix: spec.prefix, query: '' },
-    ProjectOwnerCandidatesResponseSchema,
-  );
-  if (!candidates.some((candidate) => candidate.principalId === principalId)) {
-    return yield* new DemoSeedError({ reason: `${spec.owner} is not an eligible Project Owner in the demo tenant.` });
-  }
-  return principalId;
-});
+  return principalId === undefined
+    ? Effect.fail(new DemoSeedError({ reason: `Persona ${spec.owner} is unknown; run the people seed first.` }))
+    : Effect.succeed(principalId);
+};
 
 const seedProjects = Effect.fn('SeedProjects.seed')(function* seedProjects(
   shellUrl: string,
@@ -150,7 +133,7 @@ const seedProjects = Effect.fn('SeedProjects.seed')(function* seedProjects(
   const projectIds = yield* existingProjects(client);
   const pending = projectSpecs.filter((spec) => !projectIds.has(spec.prefix));
   // Owners are resolved before the first write, so a preflight run checks them too.
-  const owners = yield* Effect.forEach(pending, (spec) => ownerPrincipalId(client, spec), { concurrency: 1 });
+  const owners = yield* Effect.forEach(pending, ownerPrincipalId, { concurrency: 1 });
   for (const [index, spec] of (apply ? pending : []).entries()) {
     const parentProjectId = spec.parent === undefined ? undefined : projectIds.get(spec.parent);
     if (spec.parent !== undefined && parentProjectId === undefined) {

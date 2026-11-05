@@ -3,6 +3,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { ContextAccess, ReadHandlerNotFound, ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
 import type { ContextAccessService } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import { OpenDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { expect, it } from 'effect-rstest';
 import { CreateProjectPayloadSchema } from '../../shared/actions/create-project.ts';
 import { ProjectPersistenceUnavailable } from '../../shared/domain/project-persistence-unavailable.ts';
@@ -80,11 +81,21 @@ const readScope = {
 } as const;
 const operationTime = new Date('2026-10-27T00:00:00.000Z');
 const readTransport = { correlationId: readScope.correlationId };
+/** SpiceDB is remote I/O: a check that runs inside the read's database transaction is a defect. */
+const outsideTransaction =
+  (tenantResources: ContextAccessService['tenantResources']): ContextAccessService['tenantResources'] =>
+  (request) =>
+    Effect.service(OpenDatabaseTransaction).pipe(
+      Effect.flatMap((open) => {
+        expect(Option.isNone(open)).toBe(true);
+        return tenantResources === undefined ? Effect.succeed([]) : tenantResources(request);
+      }),
+    );
 const candidateAccess = (tenantResources: ContextAccessService['tenantResources']): ContextAccessService => ({
   legalEntities: () => Effect.succeed([]),
   modules: () => Effect.succeed([]),
   resources: () => Effect.succeed([]),
-  tenantResources,
+  tenantResources: outsideTransaction(tenantResources),
   tenants: () => Effect.succeed([]),
 });
 

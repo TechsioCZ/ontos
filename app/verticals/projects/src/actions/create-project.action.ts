@@ -9,11 +9,20 @@ import {
   ProjectPersistenceUnavailable,
   ProjectPrefixConflict,
 } from '../../shared/domain/project.ts';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint, humanPrincipalCandidatesForTransaction } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServiceFactory,
+  ActionServicePreflight,
+  ContextAccess,
+} from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import type { Project } from '../../shared/domain/project.ts';
-import { projectOwnerEligibilityService } from '../services/project-owner-eligibility.service.ts';
+import {
+  prepareProjectOwnerDecision,
+  preparedProjectOwnerEligibility,
+} from '../services/project-owner-eligibility.service.ts';
+import type { PreparedProjectOwnerDecision } from '../services/project-owner-eligibility.service.ts';
 import { makeProjectPersistenceService } from '../services/project-persistence.service.ts';
 import type { ProjectPersistenceError } from '../services/project-persistence.service.ts';
 import { CreateProjectPayloadSchema, CreateProjectResultSchema } from '../../shared/actions/create-project.ts';
@@ -47,7 +56,7 @@ const ProjectCreatedEventSchema = Schema.Struct({
   projectId: uuid,
 });
 const domainEvents = { 'projects.project.created.v1': ProjectCreatedEventSchema } as const;
-interface Services {
+export interface CreateProjectServices {
   readonly create: (
     payload: CreateProjectPayload,
     createdByPrincipalId: string,
@@ -57,7 +66,7 @@ interface Services {
     ownerPrincipalId: string,
   ) => Effect.Effect<'allowed' | 'denied' | 'unavailable'>;
 }
-export const makeCreateProjectHandler = (services: Services, createdByPrincipalId: string) =>
+export const makeCreateProjectHandler = (services: CreateProjectServices, createdByPrincipalId: string) =>
   Effect.fn('CreateProject.handle')(function* createProject(payload: CreateProjectPayload) {
     const decision = yield* services.ownerEligibility(payload.prefix, payload.ownerPrincipalId);
     if (decision === 'unavailable') {
@@ -76,7 +85,7 @@ export const makeCreateProjectHandler = (services: Services, createdByPrincipalI
   });
 export const handleCreateProject = Effect.fn('CreateProject.record')(function* createProject(
   payload: CreateProjectPayload,
-  context: ActionHandlerContext<typeof domainEvents, Services>,
+  context: ActionHandlerContext<typeof domainEvents, CreateProjectServices>,
 ) {
   const project = yield* makeCreateProjectHandler(context.services, context.scope.principalId)(payload);
   yield* context.recordDataAccess({
@@ -120,6 +129,38 @@ export const handleCreateProject = Effect.fn('CreateProject.record')(function* c
   );
   return project;
 });
+const createProjectServices =
+  (owner: Option.Option<PreparedProjectOwnerDecision>): ActionServiceFactory<CreateProjectServices> =>
+  (transaction, scope) => {
+    const persistence = makeProjectPersistenceService(transaction, {
+      operationId: scope.principalId,
+      tenantId: scope.tenantId,
+    });
+    return Effect.succeed({
+      create: (payload: CreateProjectPayload, createdByPrincipalId: string) =>
+        persistence.create({
+          createdByPrincipalId,
+          name: payload.name,
+          owner: { eligibilityChecked: true, principalId: payload.ownerPrincipalId },
+          parentProjectId: Option.getOrNull(payload.parentProjectId ?? Option.none()),
+          prefix: payload.prefix,
+          shortText: Option.getOrNull(payload.shortText ?? Option.none()),
+        }),
+      ownerEligibility: preparedProjectOwnerEligibility(humanPrincipalCandidatesForTransaction(transaction), owner),
+    });
+  };
+
+/** Owner eligibility is a SpiceDB decision, so it is made here, before the business transaction opens. */
+const prepareCreateProjectServices: ActionServicePreflight<
+  CreateProjectPayload,
+  CreateProjectServices,
+  never,
+  ContextAccess
+> = Effect.fn('CreateProject.prepareServices')(function* prepareServices(payload, context) {
+  const owner = yield* prepareProjectOwnerDecision(context, payload.prefix, payload.ownerPrincipalId);
+  return createProjectServices(Option.some(owner));
+});
+
 export const createProjectAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -146,25 +187,8 @@ export const createProjectAction = defineAction(
     schemaVersion: '1',
   },
   handleCreateProject,
-  Effect.fn('CreateProject.services')(function* services(transaction, scope) {
-    const ownerEligibility = yield* projectOwnerEligibilityService(transaction, scope);
-    const persistence = makeProjectPersistenceService(transaction, {
-      operationId: scope.principalId,
-      tenantId: scope.tenantId,
-    });
-    return {
-      create: (payload: CreateProjectPayload, createdByPrincipalId: string) =>
-        persistence.create({
-          createdByPrincipalId,
-          name: payload.name,
-          owner: { eligibilityChecked: true, principalId: payload.ownerPrincipalId },
-          parentProjectId: Option.getOrNull(payload.parentProjectId ?? Option.none()),
-          prefix: payload.prefix,
-          shortText: Option.getOrNull(payload.shortText ?? Option.none()),
-        }),
-      ownerEligibility: ownerEligibility.check,
-    };
-  }),
+  createProjectServices(Option.none()),
+  { prepareServices: prepareCreateProjectServices },
 );
 // <generated-outbox-message-exports>
 export { createCreateProjectProjectsCoreSearchRefreshRequestedV1OutboxMessage } from './create-project-projects-core-search-refresh-requested-v1.outbox-message.ts';
