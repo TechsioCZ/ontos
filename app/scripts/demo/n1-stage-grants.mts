@@ -491,12 +491,12 @@ export interface N1PermissionCheck {
 }
 
 /**
- * Actions an account may execute. Administrators reach company-scoped Actions but not tenant-only ones (principal
- * bindings, people-search rebuild). Catalogue managers execute only their module Actions, never the managed-key Action.
+ * Actions an account may execute. The administrator is company administrator and tenant superadmin, so every Action of
+ * the N1 tenant. Catalogue managers execute only their module Actions, never the managed-key Action.
  */
 const actionGrantedTo = (action: DemoAction, administrator: boolean) => {
   if (administrator) {
-    return action.legalEntityScope !== 'forbidden';
+    return true;
   }
   return (
     (action.owningModuleKey === merchandise || action.owningModuleKey === markets) &&
