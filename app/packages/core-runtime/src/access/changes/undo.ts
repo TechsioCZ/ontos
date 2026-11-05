@@ -491,6 +491,7 @@ export const planUndo = (request: UndoRequest): Result.Result<UndoPlan, AccessCh
     authority: request.authority,
     capabilityKeys: uniqueCells(ordered.flatMap(({ restore }) => restore)).map(({ capabilityKey }) => capabilityKey),
     grantedCells: grantedCells(request, ordered),
+    grantorIntent: { assignments: request.assignments, revisions: request.roles.map(({ revision }) => revision) },
     roles: touchedRoles(request, ordered),
     tenantId: request.tenantId,
   });

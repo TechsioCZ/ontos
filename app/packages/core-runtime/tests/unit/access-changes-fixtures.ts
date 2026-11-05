@@ -239,6 +239,30 @@ export const assignment = (
   return decodeWith('assignment', AssignmentSchema, value);
 };
 
+/**
+ * What the grantor of every fixture delegation (`PERSON`) holds, as a role of its own: by default
+ * every given capability in every mode, on every record and uncapped, so a test that is not about the
+ * grantor's bound never trips it.
+ */
+export const grantorHolding = (capabilityKeys: readonly string[], cells?: readonly Cell[]) => {
+  const held = roleState({
+    cells:
+      cells ??
+      capabilityKeys.flatMap((capabilityKey) => ['run', 'propose', 'approve'].map((mode) => cell(capabilityKey, mode))),
+    revisionId: fixedId(120),
+    roleId: fixedId(121),
+  });
+  return {
+    assignment: assignment({
+      holder: principalHolder(PERSON),
+      incarnationId: fixedId(122),
+      roleId: held.role.id,
+      roleRevisionId: held.revision.id,
+    }),
+    role: held,
+  };
+};
+
 export const delegation = (
   input: {
     readonly amountCeiling?: { readonly currency: string; readonly limitMinor: number };

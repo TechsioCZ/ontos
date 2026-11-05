@@ -10,31 +10,32 @@ import type { AccessChangeItemId } from '../../src/access/ids.ts';
 import type { Assignment, CatalogSnapshotEntry, Cell, Holder, RoleRevision } from '../../src/access/model.ts';
 import { CellSchema, cellSlotKey } from '../../src/access/model.ts';
 import {
-  BATCH,
-  LEGAL_ENTITY,
-  MANAGER,
-  PERSON,
-  ROLE,
-  ROLE_ID,
-  TENANT,
   agentHolder,
   assignment,
+  BATCH,
   cell,
   changeItem,
   decision,
   decodeWith,
-  entry,
   delegatedBasis,
   delegation,
+  entry,
   failureOf,
   fixedId,
+  grantorHolding,
   instant,
+  LEGAL_ENTITY,
   legalEntityScopeRecord,
+  MANAGER,
   ownerBasis,
+  PERSON,
   principalHolder,
+  ROLE,
   role,
+  ROLE_ID,
   roleRevision,
   succeeded,
+  TENANT,
 } from './access-changes-fixtures.ts';
 
 const X = 'test.party.add-note';
@@ -79,19 +80,21 @@ interface UndoInput {
 
 const undoRequest = (input: UndoInput): UndoRequest => {
   const assignments = input.assignments ?? [];
+  const entries = input.entries ?? [entry({ key: X }), entry({ key: Y })];
+  const grantor = grantorHolding(entries.map(({ key }) => key));
   return {
     actor: input.actor ?? principalHolder(),
-    assignments,
+    assignments: [...assignments, grantor.assignment],
     authority: input.authority ?? ownerBasis(),
     batchId: BATCH,
     decidedAt: instant(6),
     decisionIds: new Map(input.selections.map(({ item }, index) => [item.id, fixedId(85 + index)] as const)),
-    entries: input.entries ?? [entry({ key: X }), entry({ key: Y })],
+    entries,
     newRevisionIds: input.newRevisionIds ?? new Map([[ROLE, fixedId(43)]]),
     preview: input.preview ?? freshPreview(assignments, input.selections.at(0)?.item.id ?? addedItem.id),
     revisions: input.revisions,
     revocations: input.revocations ?? [],
-    roles: input.roles,
+    roles: [...input.roles, grantor.role],
     selections: input.selections,
     tenantId: TENANT,
   };

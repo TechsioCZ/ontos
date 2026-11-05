@@ -458,6 +458,7 @@ export const planAdoption = (request: AdoptionRequest): Result.Result<AdoptionPl
     authority: request.authority,
     capabilityKeys: resolved.map(({ item }) => item.capabilityKey),
     grantedCells: grantedCells(resolved),
+    grantorIntent: { assignments: request.assignments, revisions: request.roles.map(({ revision }) => revision) },
     roles: targetedRoles(request, resolved),
     tenantId: request.tenantId,
   });

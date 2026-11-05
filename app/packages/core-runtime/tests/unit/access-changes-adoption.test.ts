@@ -7,20 +7,12 @@ import type { AdoptionPreview } from '../../src/access/changes/preview.ts';
 import { previewAdoption } from '../../src/access/changes/preview.ts';
 import type { RoleWithRevision } from '../../src/access/changes/role-edits.ts';
 import { capabilityEffectLabel } from '../../src/access/changes/targets.ts';
-import type { AccessChangeItem, Assignment, CatalogSnapshotEntry, Holder } from '../../src/access/model.ts';
+import type { AccessChangeItem, Assignment, CatalogSnapshotEntry, Cell, Holder } from '../../src/access/model.ts';
 import {
-  BATCH,
-  LEGAL_ENTITY,
-  MANAGER,
-  OTHER_LEGAL_ENTITY,
-  OTHER_PERSON,
-  PERSON,
-  ROLE,
-  ROLE_ID,
-  TENANT,
   adoptionTarget,
   agentHolder,
   assignment,
+  BATCH,
   cell,
   changeItem,
   decision,
@@ -29,14 +21,23 @@ import {
   entry,
   failureOf,
   fixedId,
+  grantorHolding,
   instant,
+  LEGAL_ENTITY,
   legalEntityScopeRecord,
+  MANAGER,
+  OTHER_LEGAL_ENTITY,
+  OTHER_PERSON,
   ownerBasis,
+  PERSON,
   principalHolder,
+  ROLE,
+  ROLE_ID,
   roleState,
   scopeAdminBasis,
   selection,
   succeeded,
+  TENANT,
 } from './access-changes-fixtures.ts';
 
 const NOTE = 'test.party.add-note';
@@ -66,6 +67,8 @@ interface RequestInput {
   readonly authority?: AccessConfigureBasis;
   readonly decisionIds?: ReadonlyMap<string, string>;
   readonly entries?: readonly CatalogSnapshotEntry[];
+  /** The cells the delegation's grantor holds; by default every entry in every mode, uncapped. */
+  readonly grantorCells?: readonly Cell[];
   readonly items?: readonly AccessChangeItem[];
   readonly namedEffects?: ReadonlyMap<string, string>;
   readonly newRevisionIds?: ReadonlyMap<string, string>;
@@ -82,9 +85,13 @@ const adoptionRequest = (input: RequestInput): AdoptionRequest => {
     at: instant(3),
     items: selections.map(({ itemId, targets }) => ({ itemId, roleIds: targets.map(({ roleId }) => roleId) })),
   });
+  const grantor = grantorHolding(
+    (input.entries ?? entries).map(({ key }) => key),
+    input.grantorCells,
+  );
   return {
     actor: input.actor ?? principalHolder(),
-    assignments,
+    assignments: [...assignments, grantor.assignment],
     authority: input.authority ?? ownerBasis(),
     batchId: BATCH,
     decidedAt: instant(3),
@@ -94,7 +101,7 @@ const adoptionRequest = (input: RequestInput): AdoptionRequest => {
     namedEffects: input.namedEffects ?? new Map<string, string>(),
     newRevisionIds: input.newRevisionIds ?? new Map([[ROLE, fixedId(41)]]),
     preview: input.preview ?? fresh,
-    roles: input.roles ?? [roleState({})],
+    roles: [...(input.roles ?? [roleState({})]), grantor.role],
     selections,
     tenantId: TENANT,
   };
@@ -295,6 +302,25 @@ it('bounds a delegated manager to the exact envelope', () => {
       ),
     ).code,
   ).toBe('access_changes_delegation_out_of_envelope');
+});
+
+it('bounds a delegated adoption by what the grantor holds now, mode by mode', () => {
+  const envelope = delegation({ capabilityKeys: [NOTE], people: [PERSON], roleIds: [ROLE] });
+  const adoptWith = (grantorCells: readonly Cell[]) =>
+    planAdoption(
+      adoptionRequest({
+        actor: principalHolder(MANAGER),
+        assignments: [activePerson()],
+        authority: delegatedBasis(envelope),
+        grantorCells,
+        selections: [selection(note.id, [adoptionTarget({})])],
+      }),
+    );
+  // A grantor who runs notes on every record lets the delegate adopt running them ...
+  expect(succeeded(adoptWith([cell(NOTE)])).items[0]?.status).toBe('adopted');
+  // ... one who only proposes them, or reaches only their own assigned records, does not.
+  expect(failureOf(adoptWith([cell(NOTE, 'propose')])).code).toBe('access_changes_delegation_out_of_envelope');
+  expect(failureOf(adoptWith([cell(NOTE, 'run', 'assigned')])).code).toBe('access_changes_delegation_out_of_envelope');
 });
 
 it('bounds scope administration to the context it administers', () => {

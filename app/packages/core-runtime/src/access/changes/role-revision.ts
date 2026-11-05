@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Effect, Match, Option, Predicate, Result, Schema } from 'effect';
+import { Effect, Match, Option, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
@@ -32,7 +32,6 @@ import type {
   CatalogSnapshotEntry,
   Cell,
   CellSelector,
-  Delegation,
   RecordSelector,
   Role,
   RoleRevision,
@@ -47,7 +46,6 @@ import {
 } from '../model.ts';
 import type { AccessConfigureBasis, GrantedCell } from './authority.ts';
 import { configureAuthorityIssue } from './authority.ts';
-import { ceilingCovers, selectorCovers } from '../lifecycle/delegation.ts';
 import { cellsWith, cellsWithout, toSortedCells } from './cells.ts';
 import { compareText } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
@@ -598,41 +596,6 @@ const principalOf = (holder: Assignment['holder']): readonly PrincipalId[] =>
   );
 
 /**
- * The first cell a delegated manager adds that reaches more than the delegation's grantor holds now,
- * if any. The delegation names capabilities, roles and a money ceiling, never the mode, records and
- * limit of each grant, so every added cell is checked against the grantor's own live, direct grants in
- * the delegation's scope: the same capability and mode, every record the cell reaches, and for money,
- * a ceiling covering the one the cell spends under. Authority the grantor holds only through a
- * delegation of their own never counts here, so the check fails closed.
- */
-const beyondGrantorCell = (
-  check: RoleRevisionAuthorityCheck,
-  grantedCells: readonly GrantedCell[],
-  delegation: Delegation,
-): Cell | undefined => {
-  const revisions = new Map(check.roles.map((role) => [role.revision.id, role.revision] as const));
-  const held = check.assignments.flatMap((assignment) =>
-    assignment.scopeId === delegation.scopeId &&
-    assignment.delegated === undefined &&
-    isActiveAssignment(assignment, check.at) &&
-    principalOf(assignment.holder).some((principalId) => principalId === delegation.grantedBy)
-      ? (revisions.get(assignment.roleRevisionId)?.cells ?? [])
-      : [],
-  );
-  return grantedCells.find(
-    ({ cell, entry }) =>
-      !held.some(
-        (grant) =>
-          grant.capabilityKey === cell.capabilityKey &&
-          grant.mode === cell.mode &&
-          selectorCovers(grant.selector, cell.selector) &&
-          (entry.amountInput === undefined ||
-            ceilingCovers(grant.amountCeiling, cell.amountCeiling ?? delegation.amountCeiling)),
-      ),
-  )?.cell;
-};
-
-/**
  * Whether the author may record this edit: the role must be inside one of their configure bases and,
  * for a delegated manager, every added cell, every live holder of the role and its assignment scopes
  * inside the exact envelope, never the manager themselves (P8, D10). Each basis is tried like an
@@ -678,23 +641,14 @@ const roleRevisionAuthorityIssue = (check: RoleRevisionAuthorityCheck): AccessCh
       authority,
       capabilityKeys: [...new Set(grantedCells.map(({ cell }) => cell.capabilityKey))],
       grantedCells,
+      grantorIntent: { assignments: check.assignments, revisions: check.roles.map(({ revision }) => revision) },
       roles: [role.role],
       tenantId: check.tenantId,
     });
-    // Checked once the envelope admits the edit, so an edit outside it hears that rule first.
-    const delegation = Predicate.isTagged(authority, 'DelegatedManager') ? authority.delegation : undefined;
-    const beyondGrantor =
-      issue === undefined && delegation !== undefined ? beyondGrantorCell(check, grantedCells, delegation) : undefined;
-    if (issue === undefined && delegation !== undefined && beyondGrantor !== undefined) {
-      refused ??= accessChangesError(
-        'access_changes_delegation_out_of_envelope',
-        `${beyondGrantor.capabilityKey} ${beyondGrantor.mode} reaches more than grantor ${delegation.grantedBy} holds`,
-      );
-    } else if (issue === undefined) {
+    if (issue === undefined) {
       return undefined;
-    } else {
-      refused ??= issue;
     }
+    refused ??= issue;
   }
   return (
     refused ?? accessChangesError('access_changes_authority_missing', 'this person configures no role of this tenant')
