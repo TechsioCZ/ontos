@@ -566,13 +566,17 @@ const selectedRun = (flags: {
   if (Option.isNone(flags.keyFile)) {
     return Effect.fail(fail('--workload requires --key-file'));
   }
-  if (Option.isSome(flags.bundle) && Option.isSome(flags.bundleOut)) {
-    return persistTenantBundle(name, flags.keyFile.value, flags.bundle.value, flags.bundleOut.value);
-  }
   return Option.isNone(flags.bundle) && Option.isNone(flags.bundleOut)
     ? persistWorkloadKey(name, flags.keyFile.value)
     : Effect.fail(fail('--bundle and --bundle-out go together'));
 };
+
+const failureReport = (failure: { readonly _tag: string }) =>
+  Console.error(
+    Schema.is(CommercePortalError)(failure)
+      ? `Commerce portal identity failed: ${failure.reason}`
+      : `Commerce portal identity failed (${failure._tag}); secrets withheld`,
+  );
 
 const command = Command.make(
   commercePortalPrincipal.apiKeyName,
@@ -584,19 +588,18 @@ const command = Command.make(
     workload: Flag.Literals('workload', workloadNames).pipe(Flag.optional),
   },
   (flags) =>
-    Layer.build(
-      Layer.effectDiscard(selectedRun(flags).pipe(Effect.scoped)).pipe(Layer.provide(commercePortalServicesLive)),
-    ).pipe(
-      Effect.scoped,
-      Effect.asVoid,
-      Effect.tapError((failure) =>
-        Console.error(
-          Schema.is(CommercePortalError)(failure)
-            ? `Commerce portal identity failed: ${failure.reason}`
-            : 'Commerce portal identity failed; see the error above',
-        ),
-      ),
-    ),
+    // The bundle step is file-only: it runs on the operator's machine without the database or the Shell.
+    Option.isSome(flags.workload) &&
+    Option.isSome(flags.keyFile) &&
+    Option.isSome(flags.bundle) &&
+    Option.isSome(flags.bundleOut)
+      ? persistTenantBundle(flags.workload.value, flags.keyFile.value, flags.bundle.value, flags.bundleOut.value).pipe(
+          Effect.asVoid,
+          Effect.tapError(failureReport),
+        )
+      : Layer.build(
+          Layer.effectDiscard(selectedRun(flags).pipe(Effect.scoped)).pipe(Layer.provide(commercePortalServicesLive)),
+        ).pipe(Effect.scoped, Effect.asVoid, Effect.tapError(failureReport)),
 );
 if (import.meta.main) {
   const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
