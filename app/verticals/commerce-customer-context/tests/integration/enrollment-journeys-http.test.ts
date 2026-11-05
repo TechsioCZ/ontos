@@ -160,6 +160,8 @@ import {
 import { makeCapturingCounterpartyInvitationProofDelivery } from '../support/counterparty-invitation-proof-capture.ts';
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
+const TEST_STOREFRONT_ORIGIN = 'https://storefront.example.test';
+
 /**
  * The enrollment start path through the deployed composition, on real PostgreSQL.
  *
@@ -358,6 +360,7 @@ it.live('installs the two-party account-creation capability, not a fail-closed l
           ownerInvocationId: randomUUID(),
           password: Redacted.make('P'.repeat(24)),
           tenantId: randomUUID(),
+          verificationOrigin: TEST_STOREFRONT_ORIGIN,
         }),
       );
 
@@ -2725,6 +2728,7 @@ it.live(
                 ownerInvocationId: claim.ownerInvocationId,
                 password: startInput.password,
                 tenantId,
+                verificationOrigin: TEST_STOREFRONT_ORIGIN,
               }),
             ),
           ),
@@ -2896,6 +2900,7 @@ it.live(
             ownerInvocationId: claim.ownerInvocationId,
             password: startInput.password,
             tenantId,
+            verificationOrigin: TEST_STOREFRONT_ORIGIN,
           }),
         );
         expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(firstCreationFailure)).toBe(true);

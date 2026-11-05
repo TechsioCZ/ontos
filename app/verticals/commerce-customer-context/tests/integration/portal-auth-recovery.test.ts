@@ -476,7 +476,12 @@ it.live(
         // cannot accidentally recreate the just-expired fixture's token in the same second.
         yield* Effect.sleep('1100 millis');
         const resentAt = yield* DateTime.nowAsDate;
-        expect(yield* fixture.recovery.requestEmailVerification({ email: fixture.email })).toStrictEqual({
+        expect(
+          yield* fixture.recovery.requestEmailVerification(
+            { email: fixture.email },
+            new URL('https://storefront.example.test'),
+          ),
+        ).toStrictEqual({
           outcome: 'EMAIL_VERIFICATION_STARTED',
         });
         const freshToken = yield* Effect.fromNullishOr(fixture.verificationTokens.at(-1));

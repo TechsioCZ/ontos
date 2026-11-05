@@ -340,7 +340,7 @@ it.effect('rejects caller-supplied provider identity before verification deliver
   };
   const input = { email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT };
   return runWithRecovery(provider, makeMemoryRecoveryStore().store, (service) =>
-    service.requestEmailVerification(input).pipe(
+    service.requestEmailVerification(input, new URL('https://storefront.example.test')).pipe(
       Effect.result,
       Effect.tap((result) =>
         Effect.sync(() => {
@@ -365,7 +365,10 @@ it.effect('consumes a verification token once after binding it to the provider c
   const fixture = makeMemoryRecoveryStore();
   return runWithRecovery(provider, fixture.store, (service) =>
     Effect.gen(function* verificationLifecycle() {
-      const requested = yield* service.requestEmailVerification({ email: EMAIL });
+      const requested = yield* service.requestEmailVerification(
+        { email: EMAIL },
+        new URL('https://storefront.example.test'),
+      );
       expect(requested.outcome).toBe('EMAIL_VERIFICATION_STARTED');
       expect(providerCalls).toBe(1);
 
@@ -1653,14 +1656,16 @@ it.effect('resends only by normalized email with no subject, session or account 
   return runWithRecovery(provider, store, (service) =>
     Effect.gen(function* anonymousResend() {
       for (const email of [EMAIL.toUpperCase(), 'unknown@example.test', 'verified@example.test']) {
-        expect(yield* service.requestEmailVerification({ email })).toStrictEqual({
+        expect(
+          yield* service.requestEmailVerification({ email }, new URL('https://storefront.example.test')),
+        ).toStrictEqual({
           outcome: 'EMAIL_VERIFICATION_STARTED',
         });
       }
       expect(inputs).toStrictEqual([
-        { body: { email: EMAIL } },
-        { body: { email: 'unknown@example.test' } },
-        { body: { email: 'verified@example.test' } },
+        { body: { callbackURL: 'https://storefront.example.test/', email: EMAIL } },
+        { body: { callbackURL: 'https://storefront.example.test/', email: 'unknown@example.test' } },
+        { body: { callbackURL: 'https://storefront.example.test/', email: 'verified@example.test' } },
       ]);
     }),
   );

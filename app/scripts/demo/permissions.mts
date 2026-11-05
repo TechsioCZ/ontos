@@ -718,10 +718,24 @@ export const crmDemoRoles = {
   },
 } as const satisfies Readonly<Record<string, DemoRole>>;
 
+/**
+ * Staff operator Actions over customer portal enrollment and portal bindings. Nothing but a company administrator runs
+ * them (the storefront and Commerce workloads hold only their own journey Actions), so every e-shop administrator
+ * preset carries them: a right no role can be granted is a defect.
+ */
+export const commerceEnrollmentOperatorActionKeys: readonly string[] = [
+  'commerce.customer-context.terminate-portal-enrollment',
+  'commerce.customer-context.open-profile-reconciliation',
+  'commerce.customer-context.resolve-profile-reconciliation',
+  'commerce.customer-context.recover-retail-portal-profile-binding',
+  'commerce.customer-context.revoke-retail-portal-profile-binding',
+];
+
 /** E-shop company „Kavárna Doma s.r.o.“ (0023). */
 export const eshopDemoRoles = {
   akrosAdmin: {
     actionKeys: {
+      [commerceModule]: commerceEnrollmentOperatorActionKeys,
       'privacy.core': ['privacy.core.create-processing-purpose', 'privacy.core.create-notice-version'],
     },
     companyRole: 'admin',
@@ -768,6 +782,7 @@ export const eshopDemoRoles = {
     restrictedModules: [commerceModule],
   },
   eshopAdmin: {
+    actionKeys: { [commerceModule]: commerceEnrollmentOperatorActionKeys },
     companyRole: 'admin',
     // Market retirement impact summary (commerce-customer-context market-affected-use-assessment).
     contextPermissions: { [commerceModule]: [marketCatalogRead] },

@@ -93,12 +93,21 @@ const eshopSlice = (role: DemoRole): DemoRole => {
     }
   }
   const impact = role.contextPermissions?.[customerContextModule]?.includes(marketImpactPermission) === true;
-  if (!impact || role.modules[customerContextModule] === undefined) {
+  // Enrollment operator Actions of the company administrator (`commerceEnrollmentOperatorActionKeys`).
+  const operatorActions = role.actionKeys?.[customerContextModule];
+  if ((!impact && operatorActions === undefined) || role.modules[customerContextModule] === undefined) {
     return { label: role.label, modules };
   }
   // The market retirement impact summary reads commerce-customer-context; the role already opens it read-only.
   modules[customerContextModule] = 'read';
-  return { contextPermissions: { [customerContextModule]: [marketImpactPermission] }, label: role.label, modules };
+  const slice: { -readonly [Key in keyof DemoRole]: DemoRole[Key] } = { label: role.label, modules };
+  if (operatorActions !== undefined) {
+    slice.actionKeys = { [customerContextModule]: operatorActions };
+  }
+  if (impact) {
+    slice.contextPermissions = { [customerContextModule]: [marketImpactPermission] };
+  }
+  return slice;
 };
 
 /** Identity and membership edges belong to the account installers, never to this additive policy. */

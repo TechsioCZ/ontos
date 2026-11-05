@@ -18,6 +18,7 @@ import { CommercePortalAuthAccountCreationUnavailable } from './account-creation
 import { CommercePortalAuthAccountCreationProviderService } from './account-creation-provider-service.ts';
 import { CommercePortalAuthAccountLookupService } from './account-lookup-service.ts';
 import { CommercePortalAuthAccountCreationGatewayService } from './account-creation-gateway-service.ts';
+import { storefrontVerificationCallback } from './storefront-verification-link.ts';
 
 export { CommercePortalAuthAccountCreationInvalidRequest } from './account-creation-invalid-request.ts';
 export { CommercePortalAuthAccountCreationRejected } from './account-creation-rejected.ts';
@@ -35,6 +36,17 @@ const email = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(3), Sch
 const ownerInvocationId = uuid.pipe(Schema.brand('ActionInvocationId'));
 const password = Schema.Redacted(Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(128)));
 const tenantId = uuid.pipe(Schema.brand('TenantId'));
+/** The trusted origin of the storefront the customer registered on; the verification mail links back to it. */
+const verificationOrigin = Schema.URLFromString.check(
+  Schema.makeFilter((url) =>
+    (url.protocol === 'https:' || url.protocol === 'http:') &&
+    url.pathname === '/' &&
+    url.search === '' &&
+    url.hash === ''
+      ? undefined
+      : 'The registering storefront must be a bare HTTP(S) origin',
+  ),
+);
 /** Provider failure codes are bounded diagnostic text; an oversized or empty code is unusable. */
 const providerCode = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
 const BetterAuthAccountCreateResponseSchema = Schema.Struct({
@@ -52,6 +64,7 @@ export const CommercePortalAccountCreateInputSchema = Schema.Struct({
   ownerInvocationId,
   password,
   tenantId,
+  verificationOrigin,
 });
 export type CommercePortalAccountCreateInput = typeof CommercePortalAccountCreateInputSchema.Type;
 export type CommercePortalAccountCreateInputBoundary = Schema.Codec.Encoded<
@@ -203,16 +216,18 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
     const auth = yield* CommercePortalAuthAccountCreationProviderService;
     const accountLookup = yield* CommercePortalAuthAccountLookupService;
     // Shared by the initial send and the correlated-replay reissue; only the failure reason differs.
-    const sendAccountVerificationEmail = (verificationEmail: string, reason: string) =>
+    const sendAccountVerificationEmail = (verificationEmail: string, storefront: URL, reason: string) =>
       auth.api
-        .sendVerificationEmail({ body: { email: verificationEmail } })
+        .sendVerificationEmail({
+          body: { callbackURL: storefrontVerificationCallback(storefront), email: verificationEmail },
+        })
         .pipe(
           Effect.mapError((cause) => withCause(new CommercePortalAuthAccountCreationUnavailable({ reason }), cause)),
         );
     const create = Effect.fn('CommercePortalAuthAccountCreationGateway.create')(function* createAccount(
       input: Pick<
         CommercePortalAccountCreateInput,
-        'email' | 'enrollmentAttemptId' | 'name' | 'ownerInvocationId' | 'password' | 'tenantId'
+        'email' | 'enrollmentAttemptId' | 'name' | 'ownerInvocationId' | 'password' | 'tenantId' | 'verificationOrigin'
       >,
     ): Effect.fn.Return<
       CommercePortalAuthCreatedAccount,
@@ -236,6 +251,7 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
         // failure keeps the Attempt retryable instead of quietly completing without a usable link.
         yield* sendAccountVerificationEmail(
           normalizedEmail,
+          input.verificationOrigin,
           'Commerce portal account creation could not reissue the verification email',
         );
         return { providerSubjectId: correlatedSubject.value };
@@ -324,6 +340,7 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
       // unavailability rather than CREATED: the correlated replay above is what completes it.
       yield* sendAccountVerificationEmail(
         normalizedEmail,
+        input.verificationOrigin,
         'Commerce portal account creation could not send the verification email',
       );
       // `response.token` is deliberately never read or copied into the result.
@@ -412,6 +429,7 @@ export const makeCommercePortalAuthAccountCreationService = Effect.fn('CommerceP
         ownerInvocationId: request.ownerInvocationId,
         password: request.password,
         tenantId: request.tenantId,
+        verificationOrigin: request.verificationOrigin,
       });
       return {
         enrollmentAttemptId: request.enrollmentAttemptId,

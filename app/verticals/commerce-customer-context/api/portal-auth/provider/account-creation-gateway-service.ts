@@ -14,7 +14,7 @@ export interface CommercePortalAuthAccountCreationGateway {
   readonly create: (
     input: Pick<
       CommercePortalAccountCreateInput,
-      'email' | 'enrollmentAttemptId' | 'name' | 'ownerInvocationId' | 'password' | 'tenantId'
+      'email' | 'enrollmentAttemptId' | 'name' | 'ownerInvocationId' | 'password' | 'tenantId' | 'verificationOrigin'
     >,
   ) => Effect.Effect<
     CommercePortalAuthCreatedAccount,

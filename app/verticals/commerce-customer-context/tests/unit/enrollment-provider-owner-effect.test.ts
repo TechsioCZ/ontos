@@ -33,6 +33,8 @@ import {
   EnrollmentTenantIdSchema,
 } from '../../shared/enrollment-contracts.ts';
 
+const TEST_STOREFRONT_ORIGIN = 'https://storefront.example.test';
+
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000001');
 const attemptId = Schema.decodeSync(EnrollmentAttemptIdSchema)('20000000-0000-4000-8000-000000000001');
 const ownerInvocationId = Schema.decodeSync(EnrollmentActionInvocationIdSchema)('30000000-0000-4000-8000-000000000001');
@@ -52,16 +54,19 @@ const transition: CommerceEnrollmentOwnerTransition = Schema.decodeSync(Commerce
   transitionKey: 'provider.account.create',
 });
 
-const accountInput: CommercePortalAccountCreateInputBoundary = Schema.decodeUnknownSync(
+const accountInput: CommercePortalAccountCreateInputBoundary = Schema.encodeSync(
   CommercePortalAccountCreateInputSchema,
-)({
-  email: 'new-user@example.com',
-  enrollmentAttemptId: attemptId,
-  name: 'New User',
-  ownerInvocationId,
-  password: Redacted.make('P'.repeat(24)),
-  tenantId,
-});
+)(
+  Schema.decodeUnknownSync(CommercePortalAccountCreateInputSchema)({
+    email: 'new-user@example.com',
+    enrollmentAttemptId: attemptId,
+    name: 'New User',
+    ownerInvocationId,
+    password: Redacted.make('P'.repeat(24)),
+    tenantId,
+    verificationOrigin: TEST_STOREFRONT_ORIGIN,
+  }),
+);
 
 const accountResult = (
   overrides: Partial<CommercePortalAccountCreateResult> = {},

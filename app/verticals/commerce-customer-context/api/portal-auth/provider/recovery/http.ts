@@ -223,7 +223,11 @@ const requestEmailVerification = Effect.fn('CommercePortalAuthRecoveryHttp.reque
       { concurrency: 1, discard: true },
     );
     const recovery = yield* CommercePortalAuthRecoveryService;
-    return yield* recovery.requestEmailVerification(payload).pipe(Effect.mapError(recoveryProblem));
+    // Admitted by requireTrustedOrigin above: the requesting storefront, where the mailed link returns.
+    const storefrontOrigin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(request.headers['origin']).pipe(
+      Effect.catchTag('SchemaError', () => Effect.fail(untrustedOrigin())),
+    );
+    return yield* recovery.requestEmailVerification(payload, storefrontOrigin).pipe(Effect.mapError(recoveryProblem));
   },
 );
 

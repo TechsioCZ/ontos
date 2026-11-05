@@ -71,6 +71,8 @@ import {
   EnrollmentTenantIdSchema,
 } from '../../shared/enrollment-contracts.ts';
 
+const TEST_STOREFRONT_ORIGIN = 'https://storefront.example.test';
+
 const tenantId = Schema.decodeUnknownSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000001');
 const nonce = '20000000-0000-4000-8000-000000000002';
 const enrollmentAttemptId = Schema.decodeUnknownSync(EnrollmentAttemptIdSchema)('30000000-0000-4000-8000-000000000003');
@@ -145,7 +147,7 @@ const runGatewayCreate = (
   accountLookup: CommercePortalAuthAccountLookup,
   input: Pick<
     CommercePortalAccountCreateInput,
-    'email' | 'enrollmentAttemptId' | 'name' | 'ownerInvocationId' | 'password' | 'tenantId'
+    'email' | 'enrollmentAttemptId' | 'name' | 'ownerInvocationId' | 'password' | 'tenantId' | 'verificationOrigin'
   >,
 ) => makeAccountGateway(auth, accountLookup).pipe(Effect.flatMap((gateway) => gateway.create(input)));
 
@@ -315,6 +317,7 @@ it.effect('authorizes the exact create invocation before invoking Better Auth', 
     ownerInvocationId,
     password: testPassword,
     tenantId,
+    verificationOrigin: TEST_STOREFRONT_ORIGIN,
   };
   return makeCommercePortalAuthAccountCreationService().pipe(
     Effect.provideService(CommerceEnrollmentProofService, proof),
@@ -365,6 +368,7 @@ it.effect('does not invoke Better Auth when the owner rejects the create invocat
           ownerInvocationId,
           password: testPassword,
           tenantId,
+          verificationOrigin: TEST_STOREFRONT_ORIGIN,
         }),
       ),
     ),
@@ -402,6 +406,7 @@ it.effect('projects a Better Auth create response double without returning its t
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       }),
     ),
     Effect.tap((result) =>
@@ -455,6 +460,7 @@ it.effect('awaits the verification send after sign-up commits before returning t
       ownerInvocationId,
       password: testPassword,
       tenantId,
+      verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
     },
   ).pipe(
     Effect.tap((account) =>
@@ -495,6 +501,7 @@ it.effect('reports unavailable, not created, when the verification send fails af
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       },
     ),
   ).pipe(
@@ -530,6 +537,7 @@ it.effect('does not treat Better Auth generic duplicate responses as created acc
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       },
     ),
   ).pipe(
@@ -573,6 +581,7 @@ it.effect('maps a definitive Better Auth validation failure to rejected', () => 
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       },
     ),
   ).pipe(
@@ -608,6 +617,7 @@ const failureFor = (body: { readonly code?: string; readonly message?: string })
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       },
     ),
   );
@@ -652,6 +662,7 @@ it.effect('rejects an existing email before invoking Better Auth', () => {
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       },
     ),
   ).pipe(
@@ -696,6 +707,7 @@ it.effect('replays a correlated owner invocation to its committed subject instea
       ownerInvocationId,
       password: testPassword,
       tenantId,
+      verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
     },
   ).pipe(
     Effect.tap((account) =>
@@ -730,6 +742,7 @@ it.effect('maps a malformed Better Auth success response to unavailable', () => 
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       },
     ),
   ).pipe(
@@ -768,6 +781,7 @@ it.effect('maps an indeterminate Better Auth provider failure to unavailable wit
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       },
     ),
   ).pipe(
@@ -812,6 +826,7 @@ it.effect('maps a wrapped Better Auth storage failure to unavailable after one p
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       },
     ),
   ).pipe(
@@ -849,6 +864,7 @@ it.effect('rejects raw password and missing owner invocation before any gateway 
     ownerInvocationId,
     password: 'a'.repeat(24),
     tenantId,
+    verificationOrigin: TEST_STOREFRONT_ORIGIN,
   };
   const missingInvocationPassword = Redacted.make('a'.repeat(24));
   const missingInvocationInput = {
@@ -857,6 +873,7 @@ it.effect('rejects raw password and missing owner invocation before any gateway 
     name: 'Buyer',
     password: missingInvocationPassword,
     tenantId,
+    verificationOrigin: TEST_STOREFRONT_ORIGIN,
   };
   return makeAccountGateway(auth, accountLookup).pipe(
     Effect.flatMap((providerGateway) =>
@@ -1146,6 +1163,7 @@ it.effect('normalizes the address once before the duplicate guard, the provider 
         ownerInvocationId,
         password: testPassword,
         tenantId,
+        verificationOrigin: new URL(TEST_STOREFRONT_ORIGIN),
       }),
     ),
     Effect.tap(() =>

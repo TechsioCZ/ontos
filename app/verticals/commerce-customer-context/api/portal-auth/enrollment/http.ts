@@ -1042,6 +1042,8 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       // it itself, so nothing here ever holds the plain value.
       password: input.password,
       tenantId: claimedState.attempt.tenantId,
+      // Admitted by requireTrustedOrigin above: the storefront this customer registered on.
+      verificationOrigin: request.headers['origin'] ?? '',
     })
     .pipe(
       // A definitive rejection is terminal for the claimed transition: recorded here, or the lease

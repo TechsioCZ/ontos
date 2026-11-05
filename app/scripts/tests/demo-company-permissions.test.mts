@@ -31,6 +31,8 @@ import {
   demoCompanyMemberships,
   demoPrincipalRoleKey,
   principalRelationships,
+  commerceEnrollmentOperatorActionKeys,
+  eshopDemoRoles,
   reviewedHumanActionAddonRelationships,
   ReviewedDemoActionMissing,
   privacyMarketingOperator,
@@ -991,6 +993,32 @@ it('installs scoped Action/grant links, never blanket tenant membership Action g
           row.subjectId === toSpiceDbActionGrantObjectId(identity),
       ),
     ).toBe(true);
+  }
+});
+
+it('lets every e-shop company administrator run the enrollment operator Actions, and only those', () => {
+  const operatorActions = commerceEnrollmentOperatorActionKeys.map((key) =>
+    actionDescriptor(
+      key,
+      commerceModule,
+      key === 'commerce.customer-context.terminate-portal-enrollment' ? 'forbidden' : 'required',
+    ),
+  );
+  const published = [...operatorActions, ...commerceActions];
+  for (const role of [eshopDemoRoles.akrosAdmin, eshopDemoRoles.eshopAdmin]) {
+    const rows = principalRelationships(administrator.principalId, role, published, akrosDemoLegalEntityId);
+    const granted = (action: DemoAction) =>
+      rows.some(
+        (row) =>
+          row.resourceType === 'action' &&
+          row.resourceId === toSpiceDbActionObjectId(actionScope(action, akrosDemoLegalEntityId)) &&
+          row.relation === 'grant',
+      );
+    expect(operatorActions.filter((action) => !granted(action)).map(({ actionKey }) => actionKey)).toEqual([]);
+    // The workload journey Actions stay with the storefront and Commerce workloads.
+    expect(commerceActions.filter(granted)).toEqual([]);
+    // Terminate is Tenant-scoped: the administrator may select the Tenant context to run it.
+    expect(rows.some((row) => row.resourceType === 'tenant' && row.relation === 'context_role')).toBe(true);
   }
 });
 
