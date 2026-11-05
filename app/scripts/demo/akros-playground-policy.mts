@@ -51,7 +51,7 @@ export const akrosPlaygroundAccounts = [
 
 /**
  * AKROS's own Commerce portal workload: customer self-enrollment for this Tenant reserves and activates bindings, and
- * runs the Party, Privacy and Commerce owner Actions, as this Principal. Its key is the AKROS entry of
+ * runs the Party and Commerce owner Actions, as this Principal. Its key is the AKROS entry of
  * `COMMERCE_TENANT_CREDENTIALS`; the Shell and Commerce verification grants name it for this Tenant only.
  */
 export const akrosPlaygroundCommercePortal: CommercePortalWorkload = {
