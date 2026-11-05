@@ -92,7 +92,7 @@ it('keeps durable owner work keyed by owner, original release, and work identity
   expect(config.policies[0]?.to).toBe('ontos_runtime');
   expect(config.policies[0]?.withCheck).toBeUndefined();
 });
-it('supports pre-authentication Action Invocation rows and indeterminate outcomes', () => {
+it('supports pre-authentication Action Invocation rows, proposal receipts and indeterminate outcomes', () => {
   expect(getColumn('principal_id').notNull).toBe(false);
   expect(getColumn('auth_binding_id').notNull).toBe(false);
   expect(getColumn('auth_context_ref').notNull).toBe(false);
@@ -102,6 +102,7 @@ it('supports pre-authentication Action Invocation rows and indeterminate outcome
 
   expect(ACTION_INVOCATION_STATUSES).toEqual([
     'received',
+    'proposed',
     'rejected',
     'running',
     'succeeded',

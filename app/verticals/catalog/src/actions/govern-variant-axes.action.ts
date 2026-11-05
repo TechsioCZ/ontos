@@ -3,7 +3,7 @@
 // @ontos-action-slug govern-variant-axes
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Option } from 'effect';
 import type { Crypto } from 'effect';
 
 import {
@@ -11,7 +11,7 @@ import {
   GovernVariantAxesResultSchema,
 } from '../../shared/actions/govern-variant-axes.ts';
 import type { GovernVariantAxesPayload } from '../../shared/actions/govern-variant-axes.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import { decideVariantUseChange } from '../../shared/domain/variant-use-change.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-variant-axes-changed-v1.ts';
@@ -143,6 +143,14 @@ export const handleGovernVariantAxes = Effect.fn('GovernVariantAxesAction.handle
 
 export const governVariantAxesAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.variant-axes.govern',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.catalog.govern-variant-axes.access.v1' },
     actionKey,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
@@ -151,7 +159,7 @@ export const governVariantAxesAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.govern-variant-axes',
       moduleKey: 'commerce.catalog',
       role: 'action',
@@ -166,7 +174,7 @@ export const governVariantAxesAction = defineAction(
   },
   handleGovernVariantAxes,
   Effect.fn('GovernVariantAxesAction.services')(function* makeGovernVariantAxesServices(transaction, scope) {
-    const openSelections = yield* cartOpenSelectionPopulationFromEnvironment;
+    const openSelections = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     return {
       ...variantAxisPersistenceForScope(transaction, scope),
       assessOpenSelectionImpact: catalogOpenSelectionImpactForScope(transaction, scope, openSelections).assess,

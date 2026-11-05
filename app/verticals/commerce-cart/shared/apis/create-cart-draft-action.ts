@@ -2,12 +2,12 @@
 // @ontos-action-http-owner commerce.cart
 // @ontos-action-http-slug create-cart-draft
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreateCartDraftPayloadSchema, CreateCartDraftResultSchema } from '../actions/create-cart-draft.ts';
 
 export { CreateCartDraftPayloadSchema } from '../actions/create-cart-draft.ts';
-
 export const CreateCartDraftActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateCartDraftActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const CreateCartDraftActionForbiddenProblemSchema = makeProblemDetailsSch
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -144,7 +145,7 @@ export const createCartDraftActionGroupDefinition = HttpApiGroup.make('createCar
     HttpApiEndpoint.post('execute', '/commerce-cart/actions/create-cart-draft', {
       error: actionErrors,
       payload: Schema.toEncoded(CreateCartDraftPayloadSchema),
-      success: CreateCartDraftResultSchema,
+      success: [ActionProposalAcceptedSchema, CreateCartDraftResultSchema],
     }),
   )
   .middleware(CreateCartDraftActionSchemaErrorMiddleware);

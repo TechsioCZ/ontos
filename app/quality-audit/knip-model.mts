@@ -3976,6 +3976,9 @@ const mergeRuntimeEvidence = (
   }
 };
 
+// Knip's oxc parser aborts on one generated consumer file of about 1.14 MB, so consumers are split into entries.
+const CONSUMER_CHUNK_LENGTH = 256 * 1024;
+
 /** Static adapters never evaluate application or configuration modules. */
 export const buildKnipModel = Effect.fn('QualityAudit.buildKnipModel')(function* buildModel(
   appRoot: string,
@@ -4042,7 +4045,8 @@ export const buildKnipModel = Effect.fn('QualityAudit.buildKnipModel')(function*
     }
     bindingsByFile.set(resolved, bindings);
   }
-  const bindingConsumers = [...bindingsByFile].flatMap(([file, bindings], group) => {
+  // Each group is one unit so its import, void, and type alias stay in the same chunk.
+  const bindingConsumers = [...bindingsByFile].map(([file, bindings], group) => {
     const specifiers = [...bindings.values, ...bindings.types.map((binding) => `type ${binding}`)];
     const statements = [`import { ${specifiers.join(', ')} } from ${JSON.stringify(file)};`];
     if (bindings.values.length > 0) {
@@ -4057,14 +4061,35 @@ export const buildKnipModel = Effect.fn('QualityAudit.buildKnipModel')(function*
           .join(', ')}];`,
       );
     }
-    return statements;
+    return statements.join('\n');
   });
-  const consumerSource = [...directConsumers, ...bindingConsumers].join('\n');
-  if (consumerPath !== undefined && reflected.length > 0 && workspaces['.'] !== undefined) {
+  const consumerChunks: string[] = [];
+  let chunk: string[] = [];
+  let chunkLength = 0;
+  for (const unit of [...directConsumers, ...bindingConsumers]) {
+    if (chunk.length > 0 && chunkLength + unit.length > CONSUMER_CHUNK_LENGTH) {
+      consumerChunks.push(chunk.join('\n'));
+      chunk = [];
+      chunkLength = 0;
+    }
+    chunk.push(unit);
+    chunkLength += unit.length + 1;
+  }
+  if (chunk.length > 0) {
+    consumerChunks.push(chunk.join('\n'));
+  }
+  const consumerFiles =
+    consumerPath === undefined
+      ? []
+      : consumerChunks.map((source, index) => ({
+          path: consumerPath.replace(/\.mts$/u, `-${index}.mts`),
+          source,
+        }));
+  if (consumerFiles.length > 0 && workspaces['.'] !== undefined) {
     workspaces['.'] = {
       ...workspaces['.'],
-      entry: [...(workspaces['.'].entry ?? []), consumerPath],
+      entry: [...(workspaces['.'].entry ?? []), ...consumerFiles.map((file) => file.path)],
     };
   }
-  return { config: { ...baseConfig, workspaces }, consumerSource, evidence };
+  return { config: { ...baseConfig, workspaces }, consumerFiles, evidence };
 });

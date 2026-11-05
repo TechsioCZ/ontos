@@ -2,7 +2,7 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug configure-payment-term-source-authority
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Predicate, Schema } from 'effect';
 import {
   ConfigurePaymentTermSourceAuthorityPayloadSchema,
@@ -65,6 +65,14 @@ export const handleConfigurePaymentTermSourceAuthority = Effect.fn('ConfigurePay
 );
 export const configurePaymentTermSourceAuthorityAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'payment.term-catalog.source-authority.configure',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'payment-terms', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'payment.term-catalog.configure-payment-term-source-authority.access.v1',
@@ -76,7 +84,7 @@ export const configurePaymentTermSourceAuthorityAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'payment.term-catalog.configure-payment-term-source-authority',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -86,16 +94,6 @@ export const configurePaymentTermSourceAuthorityAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: ConfigurePaymentTermSourceAuthorityPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ConfigurePaymentTermSourceAuthorityPayload>(
-      (_payload, scope) => ({
-        permission: 'write',
-        resource: {
-          moduleId: MODULE_KEY,
-          resourceId: scope.legalEntityId ?? '',
-          resourceType: ROOT_RESOURCE_TYPE,
-        },
-      }),
-    ),
     resultSchema: ConfigurePaymentTermSourceAuthorityResultSchema,
     schemaVersion: '1',
   },

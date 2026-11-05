@@ -1,10 +1,8 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as EffectArray,
-  Clock,
   Console,
   Config,
-  DateTime,
   Effect,
   FileSystem,
   Layer,
@@ -20,18 +18,9 @@ import { parse as parseYaml } from 'yaml';
 
 import { ApplicationMigrationPlanSchema } from './application-migration-plan.mts';
 import type { ApplicationMigrationPlan } from './application-migration-plan.mts';
-import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
-import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
-import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
-import type {
-  AuthorizationNegativeSmokeEvidence,
-  AuthorizationReadinessEvidence,
-} from './check-authorization-readiness.mts';
-import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
 import { readOutboxWorkerReleaseMembership } from './generate-outbox-worker-deployment.mjs';
 import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
-import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
 
 export const DeploymentPhaseKindSchema = Schema.Literals(['infrastructure', 'provider', 'shell', 'worker']);
 export type DeploymentPhaseKind = typeof DeploymentPhaseKindSchema.Type;
@@ -148,34 +137,8 @@ const CLOUDFLARE_DEPLOY_INPUT_PATHS: ReadonlySet<string> = new Set([
   '.github/workflows/ultramodern-workspace-gates.yml',
 ]);
 
-const AuthorizationEnvironmentSchema = Schema.Literals(['development', 'production', 'stage']);
-const AuthorizationModeSchema = Schema.Literals(['enforced', 'report_only']);
-const AuthorizationCredentialSchema = Schema.Literals(['api_key', 'session']);
-const AuthorizationSurfaceSchema = Schema.Literals(['action', 'capability_issuance', 'route', 'worker']);
-const EntrypointKeySchema = Schema.String.pipe(Schema.brand('EntrypointKey'));
-const CanonicalTimestampStringSchema = Schema.String.check(
-  Schema.makeFilter((value) => {
-    const parsed = DateTime.make(value);
-    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value
-      ? undefined
-      : 'timestamp must use canonical UTC ISO 8601 encoding';
-  }),
-);
-const CanonicalTimestampCodec = CanonicalTimestampStringSchema.pipe(Schema.decodeTo(Schema.DateTimeUtcFromString));
-const CanonicalTimestampWireSchema = Schema.toEncoded(CanonicalTimestampCodec);
-
 export interface DeploymentImpactPlan {
   readonly any: boolean;
-  readonly authorization?: {
-    readonly environment: 'development' | 'production' | 'stage';
-    readonly mode: 'enforced' | 'report_only';
-    /**
-     * `observing`: report-only window. `ready`: enforced with matching promotion evidence.
-     * `enforced`: a non-production environment enforcing with an empty compatibility baseline, so no
-     * allowance is withdrawn and there is nothing for promotion evidence to prove.
-     */
-    readonly status: 'enforced' | 'observing' | 'ready';
-  };
   readonly changedPaths: readonly string[];
   readonly comparison: {
     readonly baseRevision?: string;
@@ -205,7 +168,6 @@ export interface DeploymentImpactPlan {
 }
 
 export interface PlanDeploymentImpactOptions {
-  readonly authorizationPromotion?: AuthorizationPromotionGateInput;
   readonly baseRevision?: string;
   readonly changedPaths?: readonly string[];
   readonly headRevision?: string;
@@ -226,137 +188,6 @@ export interface PlanDeploymentImpactOptions {
   readonly rootDirectory?: string;
 }
 
-export interface AuthorizationPromotionGateInput {
-  readonly environment: 'development' | 'production' | 'stage';
-  readonly impact?: AuthorizationImpactReport | undefined;
-  readonly inventory: ProtectedEntrypointInventory;
-  readonly negativeSmoke?: AuthorizationNegativeSmokeEvidence | undefined;
-  readonly nowEpochMs: number;
-  readonly readiness?: AuthorizationReadinessEvidence | undefined;
-  readonly rollout: AuthorizationRolloutContract;
-}
-
-const InventoryAuthorizationSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal('public') }),
-  Schema.Struct({ kind: Schema.Literal('authenticated_principal') }),
-  Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
-  Schema.Struct({
-    kind: Schema.Literal('context_permission'),
-    permission: Schema.String,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal('action_execution'),
-    provisioning: Schema.Literals(['explicit', 'tenant_membership_default']),
-  }),
-  Schema.Struct({
-    credential: AuthorizationCredentialSchema,
-    kind: Schema.Literal('capability_issuance'),
-  }),
-]);
-
-const ProtectedEntrypointInventorySchema = Schema.Struct({
-  businessPermissions: Schema.Array(
-    Schema.Struct({
-      key: Schema.String,
-      owner: Schema.String,
-    }),
-  ),
-  entries: Schema.Array(
-    Schema.Struct({
-      authorization: InventoryAuthorizationSchema,
-      deployment: Schema.String,
-      entrypointKey: EntrypointKeySchema,
-      owner: Schema.String,
-      surface: AuthorizationSurfaceSchema,
-    }),
-  ),
-  inventoryHash: Schema.String,
-  schemaVersion: Schema.Literal(2),
-  sourceRevision: Schema.String,
-});
-
-const AuthorizationRolloutContractSchema = Schema.Struct({
-  activatedAt: CanonicalTimestampWireSchema,
-  baselineInventoryHash: Schema.String,
-  baselineSourceRevision: Schema.String,
-  compatibilityEligibleEntrypoints: Schema.Array(Schema.String),
-  decisionReference: Schema.String,
-  expiresAt: CanonicalTimestampWireSchema,
-  mode: AuthorizationModeSchema,
-  schemaVersion: Schema.Literal(1),
-});
-
-const AuthorizationImpactReportSchema = Schema.Struct({
-  aggregates: Schema.Array(
-    Schema.Struct({
-      count: Schema.Number,
-      denialReason: Schema.Literals([
-        'cross_tenant',
-        'expired_credential',
-        'infrastructure_unavailable',
-        'malformed_credential',
-        'missing_policy',
-        'module_disabled',
-        'replayed_credential',
-        'wrong_audience',
-      ]),
-      entrypointKey: EntrypointKeySchema,
-      policyClass: Schema.Literals([
-        'action_execution',
-        'authenticated_principal',
-        'capability_issuance',
-        'context_permission',
-        'owner_local_background',
-        'public',
-      ]),
-      surface: AuthorizationSurfaceSchema,
-    }),
-  ),
-  inventoryHash: Schema.String,
-  observation: Schema.Struct({
-    endedAt: CanonicalTimestampWireSchema,
-    startedAt: CanonicalTimestampWireSchema,
-  }),
-  schemaVersion: Schema.Literal(1),
-  sourceRevision: Schema.String,
-  totalWouldDeny: Schema.Number,
-});
-
-const AuthorizationNegativeSmokeEvidenceSchema = Schema.Struct({
-  environment: AuthorizationEnvironmentSchema,
-  inventoryHash: Schema.String,
-  scenarios: Schema.Array(
-    Schema.Struct({
-      credential: AuthorizationCredentialSchema,
-      outcome: Schema.Literal('denied'),
-      scenario: Schema.String,
-    }),
-  ),
-  schemaVersion: Schema.Literal(1),
-  sourceRevision: Schema.String,
-});
-
-const AuthorizationReadinessEvidenceSchema = Schema.Struct({
-  approvalReference: Schema.String,
-  environment: AuthorizationEnvironmentSchema,
-  fixedContextHash: Schema.String,
-  impactReportHash: Schema.String,
-  inventoryHash: Schema.String,
-  moduleStateVersion: Schema.String,
-  negativeSmokeHash: Schema.String,
-  observation: Schema.Struct({
-    endedAt: CanonicalTimestampWireSchema,
-    startedAt: CanonicalTimestampWireSchema,
-  }),
-  policyDataVersion: Schema.String,
-  replayMigrationHash: Schema.String,
-  schemaVersion: Schema.Literal(1),
-  sourceRevision: Schema.String,
-  spiceDbSchemaHash: Schema.String,
-  status: Schema.Literal('ready'),
-  workerOwnershipVersion: Schema.String,
-});
-
 const DeploymentPhaseSchema = Schema.Struct({
   id: Schema.String,
   kind: DeploymentPhaseKindSchema,
@@ -366,13 +197,6 @@ const DeploymentPhaseSchema = Schema.Struct({
 
 const DeploymentImpactPlanSchema = Schema.Struct({
   any: Schema.Boolean,
-  authorization: Schema.optional(
-    Schema.Struct({
-      environment: AuthorizationEnvironmentSchema,
-      mode: AuthorizationModeSchema,
-      status: Schema.Literals(['enforced', 'observing', 'ready']),
-    }),
-  ),
   changedPaths: Schema.Array(Schema.String),
   comparison: Schema.Struct({
     baseRevision: Schema.optional(Schema.String),
@@ -411,91 +235,6 @@ const fail = (message: string): never =>
       }),
     ),
   );
-
-const requireAuthorizationEvidence = (
-  input: AuthorizationPromotionGateInput,
-): Required<Pick<AuthorizationPromotionGateInput, 'impact' | 'negativeSmoke' | 'readiness'>> => {
-  const { impact, negativeSmoke, readiness } = input;
-  if (impact === undefined || negativeSmoke === undefined || readiness === undefined) {
-    return fail('enforced authorization promotion requires impact, readiness, and negative-smoke evidence');
-  }
-  return { impact, negativeSmoke, readiness };
-};
-
-type PromotionEvidence = Required<Pick<AuthorizationPromotionGateInput, 'impact' | 'negativeSmoke' | 'readiness'>>;
-
-const evidenceHasInventoryIdentity = (
-  inventory: ProtectedEntrypointInventory,
-  evidence: {
-    readonly inventoryHash: string;
-    readonly schemaVersion: number;
-    readonly sourceRevision: string;
-  },
-): boolean =>
-  evidence.schemaVersion === 1 &&
-  evidence.sourceRevision === inventory.sourceRevision &&
-  evidence.inventoryHash === inventory.inventoryHash;
-
-const readinessMatchesPromotion = (input: AuthorizationPromotionGateInput, evidence: PromotionEvidence): boolean => {
-  const { impact, negativeSmoke, readiness } = evidence;
-  return (
-    readiness.status === 'ready' &&
-    readiness.environment === input.environment &&
-    readiness.impactReportHash === hashAuthorizationEvidence(impact) &&
-    readiness.negativeSmokeHash === hashAuthorizationEvidence(negativeSmoke) &&
-    readiness.approvalReference === input.rollout.decisionReference
-  );
-};
-
-const authorizationEvidenceMatches = (input: AuthorizationPromotionGateInput, evidence: PromotionEvidence): boolean =>
-  [evidence.impact, evidence.negativeSmoke, evidence.readiness].every((item) =>
-    evidenceHasInventoryIdentity(input.inventory, item),
-  ) &&
-  evidence.impact.totalWouldDeny === 0 &&
-  evidence.negativeSmoke.environment === input.environment &&
-  readinessMatchesPromotion(input, evidence);
-
-export const validateAuthorizationPromotionGate = (
-  input: AuthorizationPromotionGateInput,
-): NonNullable<DeploymentImpactPlan['authorization']> => {
-  const { inventory, rollout } = input;
-  validateAuthorizationRolloutContract(rollout, {
-    entrypointKeys: new Set(inventory.entries.map(({ entrypointKey }) => entrypointKey)),
-    inventoryHash: inventory.inventoryHash,
-    nowEpochMs: input.nowEpochMs,
-  });
-  if (rollout.mode === 'report_only') {
-    if (input.environment === 'production') {
-      fail('production authorization promotion rejects report-only configuration');
-    }
-    return {
-      environment: input.environment,
-      mode: rollout.mode,
-      status: 'observing',
-    };
-  }
-  if (
-    input.environment !== 'production' &&
-    rollout.compatibilityEligibleEntrypoints.length === 0 &&
-    input.impact === undefined &&
-    input.negativeSmoke === undefined &&
-    input.readiness === undefined
-  ) {
-    return {
-      environment: input.environment,
-      mode: rollout.mode,
-      status: 'enforced',
-    };
-  }
-  if (!authorizationEvidenceMatches(input, requireAuthorizationEvidence(input))) {
-    fail('authorization promotion evidence is missing, stale, mismatched, or unresolved');
-  }
-  return {
-    environment: input.environment,
-    mode: rollout.mode,
-    status: 'ready',
-  };
-};
 
 const INFRASTRUCTURE_PHASES = {
   migrator: {
@@ -1270,15 +1009,11 @@ const isSpiceDbChange = (changedPath: string): boolean =>
   changedPath === 'scripts/run-zerops-spicedb.sh' ||
   changedPath === 'scripts/spicedb-datastore-uri.sh';
 
-const isAuthorizationRolloutChange = (changedPath: string): boolean =>
+const isAuthorizationChange = (changedPath: string): boolean =>
   changedPath.startsWith('packages/core-runtime/src/authorization/') ||
   changedPath.startsWith('packages/core-runtime/src/auth/gateway-assertion-redemption') ||
   changedPath.startsWith('scripts/authorization/') ||
-  changedPath === 'scripts/check-authorization-readiness.mts' ||
-  changedPath === 'scripts/check-module-entrypoint-boundaries.mts' ||
-  changedPath === 'scripts/provision-current-action-authorization.mts' ||
-  changedPath === 'scripts/report-fail-closed-authorization-impact.mts' ||
-  changedPath === 'topology/authorization-rollout.json';
+  changedPath === 'scripts/check-module-entrypoint-boundaries.mts';
 
 /**
  * Root-level inputs outside every owned delivery unit whose change reaches every build: the
@@ -1327,7 +1062,9 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',
   'scripts/generate-outbox-worker-deployment.mjs',
+  'scripts/generate-zerops-provider-deployment.mts',
   'scripts/ops/database-identity-secrets.mts',
+  'scripts/ops/owner-runtime-configuration.mts',
   'scripts/topology-development-ports.mjs',
   'scripts/materialize-outbox-worker.mjs',
   'scripts/materialize-zerops-environment.mts',
@@ -1452,7 +1189,7 @@ const applyChangedPathImpact = (
     state.spicedb = true;
     addAllUnits(state.impacted, orderedUnits);
   }
-  if (isAuthorizationRolloutChange(changedPath)) {
+  if (isAuthorizationChange(changedPath)) {
     state.migrator = true;
     state.spicedb = true;
     addAllUnits(state.impacted, orderedUnits);
@@ -1610,10 +1347,6 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         : yield* Schema.decodeUnknownEffect(ApplicationMigrationPlanSchema, { onExcessProperty: 'error' })(
             options.migrationPlan,
           );
-    const authorization =
-      options.authorizationPromotion === undefined
-        ? undefined
-        : validateAuthorizationPromotionGate(options.authorizationPromotion);
     const pathService = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
     const rootDirectory = options.rootDirectory ?? (yield* Config.String('PWD').pipe(Effect.orElseSucceed(() => '.')));
@@ -1740,54 +1473,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         workers: phases.filter((phase) => phase.kind === 'worker').map((phase) => phase.id),
       },
     };
-    const observedPlan = migrationPlan === undefined ? plan : { ...plan, migrationPlan };
-    return authorization === undefined ? observedPlan : { ...observedPlan, authorization };
-  });
-
-const loadAuthorizationPromotionGate = (
-  rootDirectory: string,
-  environment: AuthorizationPromotionGateInput['environment'],
-  nowEpochMs: number,
-) =>
-  Effect.gen(function* loadAuthorizationPromotionGateEffect() {
-    const pathService = yield* Path.Path;
-    const reportDirectory = pathService.join(rootDirectory, '.codex/reports/authorization');
-    const rollout = yield* readJson(
-      AuthorizationRolloutContractSchema,
-      pathService.join(rootDirectory, 'topology/authorization-rollout.json'),
-    );
-    const inventory = yield* readJson(
-      ProtectedEntrypointInventorySchema,
-      pathService.join(reportDirectory, 'protected-entrypoints.json'),
-    );
-    if (rollout.mode === 'report_only') {
-      return { environment, inventory, nowEpochMs, rollout };
-    }
-    const fileSystem = yield* FileSystem.FileSystem;
-    const readEvidence = <EvidenceSchema extends Schema.ConstraintDecoder<unknown>>(
-      schema: EvidenceSchema,
-      fileName: string,
-    ) =>
-      Effect.gen(function* readEvidenceEffect() {
-        const evidencePath = pathService.join(reportDirectory, fileName);
-        return (yield* fileSystem.exists(evidencePath)) ? yield* readJson(schema, evidencePath) : undefined;
-      });
-    // Absent evidence is decided by the promotion gate: production always requires all of it.
-    const [impact, negativeSmoke, readiness] = yield* Effect.all([
-      readEvidence(AuthorizationImpactReportSchema, 'fail-closed-impact.json'),
-      readEvidence(AuthorizationNegativeSmokeEvidenceSchema, `negative-smoke.${environment}.json`),
-      readEvidence(AuthorizationReadinessEvidenceSchema, 'readiness.json'),
-    ]);
-    const gate: AuthorizationPromotionGateInput = {
-      environment,
-      impact,
-      inventory,
-      negativeSmoke,
-      nowEpochMs,
-      readiness,
-      rollout,
-    };
-    return gate;
+    return migrationPlan === undefined ? plan : { ...plan, migrationPlan };
   });
 
 const PlanJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema);
@@ -1824,16 +1510,9 @@ const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string) =>
     yield* fileSystem.writeFileString(outputPath, output, { flag: 'a' });
   });
 
-const parseAuthorizationNow = (value: string) =>
-  Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(value).pipe(Effect.map(DateTime.toEpochMillis));
-
 const deploymentImpactCommand = Command.make(
   'plan-deployment-impact',
   {
-    authorizationEnvironment: Flag.Literals('authorization-environment', ['development', 'production', 'stage']).pipe(
-      Flag.optional,
-    ),
-    authorizationNow: Flag.String('authorization-now').pipe(Flag.optional),
     baseRevision: Flag.String('base').pipe(Flag.optional),
     changedPaths: Flag.String('changed-path').pipe(Flag.atLeast(0)),
     headRevision: Flag.String('head').pipe(Flag.optional),
@@ -1842,26 +1521,9 @@ const deploymentImpactCommand = Command.make(
     placementBaseRevision: Flag.String('placement-base').pipe(Flag.optional),
     reconcileWorkers: Flag.Boolean('reconcile-workers').pipe(Flag.withDefault(false)),
   },
-  ({
-    authorizationEnvironment,
-    authorizationNow,
-    baseRevision,
-    changedPaths,
-    headRevision,
-    outboxWorkerMode,
-    placementBaseRevision,
-    reconcileWorkers,
-  }) =>
+  ({ baseRevision, changedPaths, headRevision, outboxWorkerMode, placementBaseRevision, reconcileWorkers }) =>
     Effect.gen(function* deploymentImpactCommandEffect() {
       const rootDirectory = yield* Config.String('PWD').pipe(Effect.orElseSucceed(() => '.'));
-      const environment = Option.getOrUndefined(authorizationEnvironment);
-      let authorizationPromotion: AuthorizationPromotionGateInput | undefined;
-      if (environment !== undefined) {
-        const configuredNow = Option.getOrUndefined(authorizationNow);
-        const nowEpochMs =
-          configuredNow === undefined ? yield* Clock.currentTimeMillis : yield* parseAuthorizationNow(configuredNow);
-        authorizationPromotion = yield* loadAuthorizationPromotionGate(rootDirectory, environment, nowEpochMs);
-      }
       const options: PlanDeploymentImpactOptions = {
         baseRevision: Option.getOrUndefined(baseRevision),
         changedPaths: changedPaths.length === 0 ? undefined : changedPaths,
@@ -1871,10 +1533,7 @@ const deploymentImpactCommand = Command.make(
         reconcileWorkers,
         rootDirectory,
       };
-      const plan =
-        authorizationPromotion === undefined
-          ? yield* planDeploymentImpact(options)
-          : yield* planDeploymentImpact({ ...options, authorizationPromotion });
+      const plan = yield* planDeploymentImpact(options);
       const planJson = yield* Schema.encodeEffect(PlanJsonSchema)(plan);
       yield* Console.log(planJson);
       const outputPath = yield* Config.option(Config.String('GITHUB_OUTPUT'));

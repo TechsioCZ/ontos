@@ -1,13 +1,8 @@
 // Frozen corrected baseline da150f3b. Expected literals never call implementation helpers.
 const baselineCustomerContextModuleId = 'commerce.customer-context';
 const baselineProfileId = 'profile:one/á';
-const baselineLiteral4 = 'legal_entity';
 const baselineRetailProfileObjectId =
   'ctx_WyJyZXRhaWwucHJvZmlsZS5yZWFkIiwiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAyIiwicmV0YWlsX3Byb2ZpbGUiLCJwcm9maWxlOm9uZS_DoSJd';
-const baselineBusinessPermissionObjectType = 'business_permission';
-const baselineLegalEntityObjectId =
-  'ctx_WyIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ';
-const baselineMutationPrincipalId = '40000000-0000-4000-8000-000000000001';
 const baselineLiteral13 = '070576900fba7f56d344f18e4a4fa6b8c93a19a2ac5d6b56f9bf48105037dbce';
 const baselineTenantId = '00000000-0000-4000-8000-000000000001';
 const baselineLegalEntityId = '00000000-0000-4000-8000-000000000002';
@@ -30,7 +25,6 @@ const baselineInventoryResourceObjectId =
   'ctx_WyJpbnZlbnRvcnkuc3RvY2suY29ycmVjdCIsIjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsImludmVudG9yeV9yZXNvdXJjZSIsImNvbW1lcmNlLmludmVudG9yeSIsImNvbW1lcmNlLmludmVudG9yeS5zdG9jay1wb3NpdGlvbiIsIjcwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSJd';
 const baselineTaxSellingLegalEntityObjectId =
   'ctx_WyJ0YXgucnVsZS5tYW5hZ2UiLCIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ0YXhfc2VsbGluZ19sZWdhbF9lbnRpdHkiXQ';
-const baselineLiteral72 = 'containing_catalog';
 
 export const remainingPermissionBaselines = [
   {
@@ -40,24 +34,6 @@ export const remainingPermissionBaselines = [
       targetResourceId: baselineProfileId,
       targetResourceType: 'retail_profile:retail.profile.read',
     },
-    grantRelationships: [
-      {
-        operation: 2,
-        relation: baselineLiteral4,
-        resourceId: baselineRetailProfileObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineLegalEntityObjectId,
-        subjectType: baselineLiteral4,
-      },
-      {
-        operation: 2,
-        relation: 'grantee',
-        resourceId: baselineRetailProfileObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     key: 'retail.profile.read:00000000-0000-4000-8000-000000000001:00000000-0000-4000-8000-000000000002:retail_profile:profile:one/á',
     objectId: baselineRetailProfileObjectId,
     owner: baselineCustomerContextModuleId,
@@ -68,16 +44,6 @@ export const remainingPermissionBaselines = [
       resourceId: baselineProfileId,
       resourceType: 'retail_profile',
     },
-    revokeRelationships: [
-      {
-        operation: 3,
-        relation: 'grantee',
-        resourceId: baselineRetailProfileObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     target: {
       kind: 'retail_profile',
       legalEntityId: baselineLegalEntityId,
@@ -95,24 +61,6 @@ export const remainingPermissionBaselines = [
       targetResourceId: baselineCounterpartyId,
       targetResourceType: 'counterparty:counterparty.purchase.submit',
     },
-    grantRelationships: [
-      {
-        operation: 2,
-        relation: baselineLiteral4,
-        resourceId: baselineCounterpartyObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineLegalEntityObjectId,
-        subjectType: baselineLiteral4,
-      },
-      {
-        operation: 2,
-        relation: 'grantee',
-        resourceId: baselineCounterpartyObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     key: 'counterparty.purchase.submit:00000000-0000-4000-8000-000000000001:00000000-0000-4000-8000-000000000002:counterparty:counterparty:one',
     objectId: baselineCounterpartyObjectId,
     owner: baselineCustomerContextModuleId,
@@ -123,16 +71,6 @@ export const remainingPermissionBaselines = [
       resourceId: baselineCounterpartyId,
       resourceType: 'counterparty',
     },
-    revokeRelationships: [
-      {
-        operation: 3,
-        relation: 'grantee',
-        resourceId: baselineCounterpartyObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     target: {
       counterpartyId: baselineCounterpartyId,
       kind: 'counterparty',
@@ -150,24 +88,6 @@ export const remainingPermissionBaselines = [
       targetResourceId: 'counterparty:one:storefront-a',
       targetResourceType: 'counterparty_storefront:counterparty.purchase.submit',
     },
-    grantRelationships: [
-      {
-        operation: 2,
-        relation: baselineLiteral4,
-        resourceId: baselineCounterpartyStorefrontObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineLegalEntityObjectId,
-        subjectType: baselineLiteral4,
-      },
-      {
-        operation: 2,
-        relation: 'grantee',
-        resourceId: baselineCounterpartyStorefrontObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     key: 'counterparty.purchase.submit:00000000-0000-4000-8000-000000000001:00000000-0000-4000-8000-000000000002:counterparty_storefront:counterparty:one:storefront-a',
     objectId: baselineCounterpartyStorefrontObjectId,
     owner: baselineCustomerContextModuleId,
@@ -178,16 +98,6 @@ export const remainingPermissionBaselines = [
       resourceId: 'counterparty:one:storefront-a',
       resourceType: 'counterparty_storefront',
     },
-    revokeRelationships: [
-      {
-        operation: 3,
-        relation: 'grantee',
-        resourceId: baselineCounterpartyStorefrontObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     target: {
       counterpartyId: baselineCounterpartyId,
       kind: 'counterparty_storefront',
@@ -206,24 +116,6 @@ export const remainingPermissionBaselines = [
       targetResourceId: baselinePricingCatalogId,
       targetResourceType: 'pricing_catalog:pricing.price_group.create',
     },
-    grantRelationships: [
-      {
-        operation: 2,
-        relation: 'tenant',
-        resourceId: baselinePricingCatalogObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineTenantId,
-        subjectType: 'tenant',
-      },
-      {
-        operation: 2,
-        relation: 'grantee',
-        resourceId: baselinePricingCatalogObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     key: 'pricing.price_group.create:00000000-0000-4000-8000-000000000001:pricing_catalog:50000000-0000-4000-8000-000000000001',
     objectId: baselinePricingCatalogObjectId,
     owner: baselinePriceGroupModuleId,
@@ -234,16 +126,6 @@ export const remainingPermissionBaselines = [
       resourceId: baselinePricingCatalogId,
       resourceType: 'pricing_catalog',
     },
-    revokeRelationships: [
-      {
-        operation: 3,
-        relation: 'grantee',
-        resourceId: baselinePricingCatalogObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     target: {
       kind: 'pricing_catalog',
       pricingCatalogId: baselinePricingCatalogId,
@@ -260,24 +142,6 @@ export const remainingPermissionBaselines = [
       targetResourceId: '50000000-0000-4000-8000-000000000001:60000000-0000-4000-8000-000000000001',
       targetResourceType: 'price_group:pricing.price_group.read',
     },
-    grantRelationships: [
-      {
-        operation: 2,
-        relation: 'tenant',
-        resourceId: baselinePriceGroupObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineTenantId,
-        subjectType: 'tenant',
-      },
-      {
-        operation: 2,
-        relation: 'grantee',
-        resourceId: baselinePriceGroupObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     key: 'pricing.price_group.read:00000000-0000-4000-8000-000000000001:price_group:50000000-0000-4000-8000-000000000001:60000000-0000-4000-8000-000000000001',
     objectId: baselinePriceGroupObjectId,
     owner: baselinePriceGroupModuleId,
@@ -288,16 +152,6 @@ export const remainingPermissionBaselines = [
       resourceId: '50000000-0000-4000-8000-000000000001:60000000-0000-4000-8000-000000000001',
       resourceType: 'price_group',
     },
-    revokeRelationships: [
-      {
-        operation: 3,
-        relation: 'grantee',
-        resourceId: baselinePriceGroupObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     target: {
       kind: 'price_group',
       priceGroupId: '60000000-0000-4000-8000-000000000001',
@@ -315,24 +169,6 @@ export const remainingPermissionBaselines = [
       targetResourceId: baselineInventoryResourceId,
       targetResourceType: baselineInventoryResourceType,
     },
-    grantRelationships: [
-      {
-        operation: 2,
-        relation: 'tenant',
-        resourceId: baselineInventoryResourceObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineTenantId,
-        subjectType: 'tenant',
-      },
-      {
-        operation: 2,
-        relation: 'grantee',
-        resourceId: baselineInventoryResourceObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     key: 'inventory.stock.correct:00000000-0000-4000-8000-000000000001:inventory_resource:commerce.inventory:commerce.inventory.stock-position:70000000-0000-4000-8000-000000000001',
     objectId: baselineInventoryResourceObjectId,
     owner: baselineInventoryModuleId,
@@ -343,16 +179,6 @@ export const remainingPermissionBaselines = [
       resourceId: baselineInventoryResourceId,
       resourceType: baselineInventoryResourceType,
     },
-    revokeRelationships: [
-      {
-        operation: 3,
-        relation: 'grantee',
-        resourceId: baselineInventoryResourceObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     target: {
       kind: 'inventory_resource',
       resource: {
@@ -373,24 +199,6 @@ export const remainingPermissionBaselines = [
       targetResourceId: baselineLegalEntityId,
       targetResourceType: 'tax_selling_legal_entity:tax.rule.manage',
     },
-    grantRelationships: [
-      {
-        operation: 2,
-        relation: baselineLiteral4,
-        resourceId: baselineTaxSellingLegalEntityObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineLegalEntityObjectId,
-        subjectType: baselineLiteral4,
-      },
-      {
-        operation: 2,
-        relation: 'grantee',
-        resourceId: baselineTaxSellingLegalEntityObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     key: 'tax.rule.manage:00000000-0000-4000-8000-000000000001:00000000-0000-4000-8000-000000000002:tax_selling_legal_entity',
     objectId: baselineTaxSellingLegalEntityObjectId,
     owner: 'commerce.tax',
@@ -401,16 +209,6 @@ export const remainingPermissionBaselines = [
       resourceId: baselineLegalEntityId,
       resourceType: 'tax_selling_legal_entity',
     },
-    revokeRelationships: [
-      {
-        operation: 3,
-        relation: 'grantee',
-        resourceId: baselineTaxSellingLegalEntityObjectId,
-        resourceType: baselineBusinessPermissionObjectType,
-        subjectId: baselineMutationPrincipalId,
-        subjectType: 'principal',
-      },
-    ],
     target: {
       kind: 'tax_selling_legal_entity',
       legalEntityId: baselineLegalEntityId,
@@ -419,96 +217,5 @@ export const remainingPermissionBaselines = [
     tenantOnly: false,
     unknownKey:
       'undeclared.permission:00000000-0000-4000-8000-000000000001:00000000-0000-4000-8000-000000000002:tax_selling_legal_entity',
-  },
-] as const;
-
-export const remainingPriceGroupContainmentBaselines = [
-  {
-    operation: 'read',
-    relationships: [
-      {
-        container: {
-          objectId: baselineTenantId,
-          objectType: 'tenant',
-        },
-        relation: 'tenant',
-        resource: {
-          objectId: baselinePriceGroupObjectId,
-          objectType: baselineBusinessPermissionObjectType,
-        },
-      },
-      {
-        container: {
-          objectId:
-            'ctx_WyJwcmljaW5nLnByaWNlX2dyb3VwLnJlYWQiLCIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJwcmljaW5nX2NhdGFsb2ciLCI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ',
-          objectType: baselineBusinessPermissionObjectType,
-        },
-        relation: baselineLiteral72,
-        resource: {
-          objectId: baselinePriceGroupObjectId,
-          objectType: baselineBusinessPermissionObjectType,
-        },
-      },
-    ],
-  },
-  {
-    operation: 'revision.create',
-    relationships: [
-      {
-        container: {
-          objectId: baselineTenantId,
-          objectType: 'tenant',
-        },
-        relation: 'tenant',
-        resource: {
-          objectId:
-            'ctx_WyJwcmljaW5nLnByaWNlX2dyb3VwLnJldmlzaW9uLmNyZWF0ZSIsIjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsInByaWNlX2dyb3VwIiwiNTAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwiNjAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIl0',
-          objectType: baselineBusinessPermissionObjectType,
-        },
-      },
-      {
-        container: {
-          objectId:
-            'ctx_WyJwcmljaW5nLnByaWNlX2dyb3VwLnJldmlzaW9uLmNyZWF0ZSIsIjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsInByaWNpbmdfY2F0YWxvZyIsIjUwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSJd',
-          objectType: baselineBusinessPermissionObjectType,
-        },
-        relation: baselineLiteral72,
-        resource: {
-          objectId:
-            'ctx_WyJwcmljaW5nLnByaWNlX2dyb3VwLnJldmlzaW9uLmNyZWF0ZSIsIjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsInByaWNlX2dyb3VwIiwiNTAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwiNjAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIl0',
-          objectType: baselineBusinessPermissionObjectType,
-        },
-      },
-    ],
-  },
-  {
-    operation: 'retire',
-    relationships: [
-      {
-        container: {
-          objectId: baselineTenantId,
-          objectType: 'tenant',
-        },
-        relation: 'tenant',
-        resource: {
-          objectId:
-            'ctx_WyJwcmljaW5nLnByaWNlX2dyb3VwLnJldGlyZSIsIjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsInByaWNlX2dyb3VwIiwiNTAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwiNjAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIl0',
-          objectType: baselineBusinessPermissionObjectType,
-        },
-      },
-      {
-        container: {
-          objectId:
-            'ctx_WyJwcmljaW5nLnByaWNlX2dyb3VwLnJldGlyZSIsIjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsInByaWNpbmdfY2F0YWxvZyIsIjUwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSJd',
-          objectType: baselineBusinessPermissionObjectType,
-        },
-        relation: baselineLiteral72,
-        resource: {
-          objectId:
-            'ctx_WyJwcmljaW5nLnByaWNlX2dyb3VwLnJldGlyZSIsIjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsInByaWNlX2dyb3VwIiwiNTAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwiNjAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIl0',
-          objectType: baselineBusinessPermissionObjectType,
-        },
-      },
-    ],
   },
 ] as const;

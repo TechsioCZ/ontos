@@ -118,23 +118,27 @@ it.layer(marketRevisionNativeServices, { excludeTestServices: true })((suite) =>
         expect(crossScopeAssociation).toMatchObject({ failure: { status: expect.any(Number) } });
         expect(yield* observeMarket('after-incompatible-association')).toEqual(beforeBoundaryProbes);
 
-        const deniedResource = yield* admit('native-ungranted-market-suspend');
-        const ungrantedMarketRef = { ...owner.marketRef, resourceId: yield* crypto.randomUUIDv4() };
-        const deniedSuspension = yield* executeSuspendMarketWithAuthorization(
+        // v2 Market capabilities have no record selectors: the owner's company-wide grant admits a suspension of
+        // any Market, so the owner itself refuses a basis that belongs to another Market, without effect.
+        const foreignBasis = yield* admit('native-foreign-basis-market-suspend');
+        const otherMarketRef = { ...owner.marketRef, resourceId: yield* crypto.randomUUIDv4() };
+        const foreignBasisSuspension = yield* executeSuspendMarketWithAuthorization(
           {
             effectiveAt: owner.now,
             expectedCurrentDefinitionRevisionRef: created.definitionRevisionRef,
             expectedRevision: created.revision,
-            marketRef: ungrantedMarketRef,
-            reason: 'Reject a real actor without the exact resource write grant',
+            marketRef: otherMarketRef,
+            reason: 'Reject a basis that belongs to another Market',
           },
-          deniedResource.authorization,
-          deniedResource.requestCorrelation,
-          deniedResource.options,
+          foreignBasis.authorization,
+          foreignBasis.requestCorrelation,
+          foreignBasis.options,
         ).pipe(Effect.result);
-        expect(Result.isFailure(deniedSuspension)).toBe(true);
-        expect(deniedSuspension).toMatchObject({ failure: { status: 403 } });
-        expect(yield* observeMarket('after-ungranted-resource')).toEqual(beforeBoundaryProbes);
+        expect(Result.isFailure(foreignBasisSuspension)).toBe(true);
+        expect(foreignBasisSuspension).toMatchObject({
+          failure: { code: 'cross_tenant_reference', status: 422 },
+        });
+        expect(yield* observeMarket('after-foreign-basis')).toEqual(beforeBoundaryProbes);
 
         const association = yield* admit('native-associate');
         const associated = yield* executeAssociateStorefrontWithAuthorization(

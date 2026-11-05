@@ -1,7 +1,5 @@
-import { priceGroupOwnerPermissionTarget } from '@app/price-group-catalog/testing/server-owner-native';
 import {
   describePriceGroupTemporalOwner as describeOwner,
-  customerOwnerPermissionTarget,
   openPriceGroupTemporalChannel,
   makePriceGroupTemporalComposition,
   preparePriceGroupTemporalRetailAccess,
@@ -19,8 +17,6 @@ import {
   loadDatabaseConnectionPair,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
 } from '@app/core-runtime';
 import type { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -50,9 +46,14 @@ import {
   PriceGroupInterpretationBasisSchema,
   NonePriceGroupInterpretationSchema,
 } from '@app/pricing-contracts/domain/price-group-interpretation';
-import { CommercePriceGroupResolutionGatewayCredentialService } from '../../shared/domain/commerce-price-group-resolution-gateway-credential.ts';
-import { PriceGroupOwnerGatewayUnavailable } from '../../shared/domain/price-group-owner-gateway-unavailable.ts';
-import { commercePriceGroupResolutionPortFromEnvironment } from '../../src/integrations/commerce-price-group-resolution.ts';
+import { requireExecutedAction } from '../support/action-execution-result.ts';
+import {
+  executeAuthorizedCommerceResolution,
+  makeCommerceResolutionPort,
+} from '../../src/integrations/commerce-price-group-resolution.ts';
+import { OwnerGatewayConnectionError } from '../../src/integrations/owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from '../../src/integrations/owner-gateway-connection.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 import { makePriceGroupInterpretationService } from '../../src/services/price-group-interpretation.service.ts';
 
 class TemporalNativeFailure extends Schema.TaggedError<TemporalNativeFailure>()('TemporalNativeFailure', {
@@ -517,6 +518,8 @@ const makeTemporalNative = Effect.fn('TemporalNative.make')(function* makeTempor
   const bootstrap = yield* Schema.decodeUnknownEffect(Schema.toType(PriceGroupTemporalBootstrapSchema))({
     actor,
     artifacts: { catalog: catalog.prepared, party: party.prepared },
+    // Every declared Catalog capability is granted: this consumer proves Pricing's read, not the executor control.
+    catalogDeniedCapabilityKeys: [],
     composition: snapshot,
     database: owned.certificate,
     identities,
@@ -555,16 +558,7 @@ const temporalCaseLayer = Layer.effect(
 
 const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* actualConsumer() {
   const native = yield* TemporalCaseInfrastructure;
-  const context = yield* Layer.build(BusinessPermissionRelationshipMutationLive);
-  const business = Context.get(context, BusinessPermissionRelationshipMutation);
   const principal = { principalId: native.actor.principalId, tenantId: native.actor.tenantId };
-  const grant = Effect.fn('PricingTemporal.grantOwnedPermission')(function* grantOwnedPermission(
-    target: Parameters<typeof business.mutate>[0]['target'],
-  ) {
-    const input = { principal, target };
-    yield* business.mutate({ ...input, operation: 'grant' });
-    yield* Effect.addFinalizer(() => Effect.orDie(business.mutate({ ...input, operation: 'revoke' })));
-  });
   const resource = Effect.fn('PricingTemporal.grantOwnedResource')(function* grantOwnedResource(reference: {
     readonly moduleId: string;
     readonly resourceId: string;
@@ -577,19 +571,6 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
       );
     }
   });
-  yield* grant(
-    priceGroupOwnerPermissionTarget(
-      {
-        permission: 'pricing.price_group.create',
-        target: {
-          kind: 'pricing_catalog',
-          pricingCatalogId: principal.tenantId,
-          tenantId: principal.tenantId,
-        },
-      },
-      'action',
-    ),
-  );
   const create = Effect.fn('PricingTemporal.createPublishedCatalogGroup')(function* createPublishedCatalogGroup(
     type: 'CREATE_G1' | 'CREATE_G2',
   ) {
@@ -598,20 +579,6 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
       return yield* fail('catalog-create-order');
     }
     const { result } = response;
-    yield* grant(
-      priceGroupOwnerPermissionTarget(
-        {
-          permission: 'pricing.price_group.read',
-          target: {
-            kind: 'price_group',
-            priceGroupId: result.identity.priceGroupRef.resourceId,
-            pricingCatalogId: principal.tenantId,
-            tenantId: principal.tenantId,
-          },
-        },
-        'action',
-      ),
-    );
     return result;
   });
   const first = yield* create('CREATE_G1');
@@ -621,44 +588,34 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
     return yield* fail('party-create-order');
   }
   yield* resource(party.partyRef);
-  const profile = yield* executeEnsureRetailCustomerProfileWithAuthorization(
-    {
-      effectiveAt: DateTime.formatIso(yield* DateTime.now),
-      subject: {
-        kind: 'RETAIL',
-        partyRef: party.partyRef,
-        sellingLegalEntityRef: {
-          moduleId: 'core.identity',
-          resourceId: native.fixture.legalEntityId,
-          resourceType: 'core.identity.legal-entity',
-          tenantId: principal.tenantId,
-        },
-      },
-      trigger: 'ENSURE_BEFORE_ORDER_ACCEPTANCE',
-    },
-    yield* native.credential(),
-    yield* nextId,
-    yield* native.options(),
-  );
-  yield* resource(profile.profileRef);
-  yield* grant(
-    customerOwnerPermissionTarget(
+  const profile = yield* requireExecutedAction(
+    () => fail('retail-profile-parked-proposal'),
+    executeEnsureRetailCustomerProfileWithAuthorization(
       {
-        permission: 'retail.profile.read',
-        target: {
-          kind: 'retail_profile',
-          legalEntityId: native.fixture.legalEntityId,
-          profileId: profile.profileRef.resourceId,
-          tenantId: principal.tenantId,
+        effectiveAt: DateTime.formatIso(yield* DateTime.now),
+        subject: {
+          kind: 'RETAIL',
+          partyRef: party.partyRef,
+          sellingLegalEntityRef: {
+            moduleId: 'core.identity',
+            resourceId: native.fixture.legalEntityId,
+            resourceType: 'core.identity.legal-entity',
+            tenantId: principal.tenantId,
+          },
         },
+        trigger: 'ENSURE_BEFORE_ORDER_ACCEPTANCE',
       },
-      'action',
+      yield* native.credential(),
+      yield* nextId,
+      yield* native.options(),
     ),
   );
+  yield* resource(profile.profileRef);
   yield* preparePriceGroupTemporalRetailAccess({
     certificate: native.owned.certificate,
     effectiveAt: DateTime.formatIso(yield* DateTime.now),
     fixture: native.fixture,
+    mode: native.bootstrap.mode,
     profileRef: profile.profileRef,
   });
   const latestStart = Math.max(
@@ -679,47 +636,55 @@ const temporalConsumer = Effect.fn('PricingTemporal.actualConsumer')(function* a
     priceGroupRef: typeof first.identity.priceGroupRef,
     effectiveFrom: string,
   ) {
-    return yield* executeAssignCustomerPriceGroupWithAuthorization(
-      {
-        effectiveFrom,
-        effectiveTo: end,
-        expectedProfileRevision: profile.revision,
-        priceGroupRef,
-        profile: target,
-        reason: 'Actual Pricing temporal consumer proof',
-      },
-      yield* native.credential(),
-      yield* nextId,
-      yield* native.options(),
+    return yield* requireExecutedAction(
+      () => fail('price-group-assignment-parked-proposal'),
+      executeAssignCustomerPriceGroupWithAuthorization(
+        {
+          effectiveFrom,
+          effectiveTo: end,
+          expectedProfileRevision: profile.revision,
+          priceGroupRef,
+          profile: target,
+          reason: 'Actual Pricing temporal consumer proof',
+        },
+        yield* native.credential(),
+        yield* nextId,
+        yield* native.options(),
+      ),
     );
   });
   const initial = yield* assign(first.identity.priceGroupRef, start);
   const replacement = yield* assign(second.identity.priceGroupRef, transition);
-  const issuer = CommercePriceGroupResolutionGatewayCredentialService.of({
-    issue: (input) =>
-      Effect.gen(function* issueExactCommerceCredential() {
-        if (
-          input.audience !== 'commerce-customer-context' ||
-          input.compositionRevision !== native.snapshot.composition.revision ||
-          input.legalEntityId !== native.fixture.legalEntityId
-        ) {
-          return yield* new PriceGroupOwnerGatewayUnavailable({
-            owner: 'COMMERCE_ASSIGNMENT',
-            reason: 'Outside the captured temporal test receiver',
-          });
-        }
-        return {
-          baseUrl: new URL(native.receiver.baseUrl),
-          credential: Redacted.make(yield* Effect.orDie(native.credential())),
-        };
+  // The owner connection is the only Shell-issued boundary; the receiver stands in for it here.
+  const acquire: OwnerGatewayConnectionAcquire = (input) =>
+    input.audience !== 'commerce-customer-context' ||
+    input.compositionRevision !== native.snapshot.composition.revision ||
+    input.legalEntityScope !== 'subject'
+      ? Effect.fail(new OwnerGatewayConnectionError({ reason: 'Outside the captured temporal test receiver' }))
+      : native.credential().pipe(
+          Effect.orDie,
+          Effect.map((credential) => ({
+            baseUrl: new URL(native.receiver.baseUrl),
+            credential: Redacted.make(credential),
+          })),
+        );
+  const requestCorrelation = yield* nextId;
+  const port = makeCommerceResolutionPort({
+    acquire,
+    context: {
+      compositionRevision: native.snapshot.composition.revision,
+      legalEntityId: native.fixture.legalEntityId,
+      requestCorrelation,
+      scope: verifiedTestScope({
+        correlationId: requestCorrelation,
+        legalEntityId: native.fixture.legalEntityId,
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
       }),
+      tenantId: principal.tenantId,
+    },
+    execute: executeAuthorizedCommerceResolution,
   });
-  const port = yield* commercePriceGroupResolutionPortFromEnvironment({
-    compositionRevision: native.snapshot.composition.revision,
-    legalEntityId: native.fixture.legalEntityId,
-    requestCorrelation: yield* nextId,
-    tenantId: principal.tenantId,
-  }).pipe(Effect.provideService(CommercePriceGroupResolutionGatewayCredentialService, issuer));
   const resolve = (effectiveAt: string) =>
     port.resolve({
       request: { authorizationSubject: { kind: 'RETAIL' }, effectiveAt, profile: target },

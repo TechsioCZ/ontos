@@ -34,6 +34,14 @@ const handleAssignDsrResolver = Effect.fn('AssignDsrResolverAction.handle')(func
 });
 export const assignDsrResolverAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-resolver.assign',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'privacy.core.assign-dsr-resolver.access.v1' },
     actionKey: 'privacy.core.assign-dsr-resolver',
     auditEvidenceSchema: PrivacyActionAuditEvidenceSchema,
@@ -42,7 +50,7 @@ export const assignDsrResolverAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.assign-dsr-resolver',
       moduleKey: 'privacy.core',
       role: 'action',

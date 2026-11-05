@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { PricingInstantSchema } from '@app/pricing-contracts/domain/currency-support';
 import {
   PricingOwnerMaterialEvidenceFenceGatewayRequestSchema,
@@ -53,6 +54,8 @@ export class PricingOwnerMaterialEvidenceFenceGatewayUnavailable extends Schema.
 export interface PricingOwnerMaterialEvidenceFenceGatewayRequest {
   readonly candidateRef: string;
   readonly compositionRevision: string;
+  /** The verified request scope: the subject the owner call acts for (DESIGN D2). */
+  readonly scope: OperationalScope;
   /**
    * The owner verifies every opaque reference and reads every corresponding Current predicate in
    * one owner-private coherent snapshot. Pricing never receives or imports owner persistence.
@@ -83,6 +86,8 @@ export interface PricingOwnerMaterialEvidenceGenerationFenceRequest {
   readonly compositionRevision: string;
   /** Phase-one observations, with their actual owner timestamps unchanged. */
   readonly observations: readonly PricingMaterialEvidenceFenceSourceObservation[];
+  /** The verified request scope: the subject the owner call acts for (DESIGN D2). */
+  readonly scope: OperationalScope;
   /**
    * The owner must prove from its private generation history that every observed generation stayed
    * unchanged through this already-known aggregate completion instant.
@@ -384,6 +389,7 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
   verifyImmediatelyBeforePublication: Effect.fn('PricingMaterialEvidenceOwnerFinalFence.verify')(
     function* verifyImmediatelyBeforePublication({
       candidateRef,
+      scope,
       sources,
       verificationRequest,
     }: PricingMaterialEvidenceOwnerFenceRequest): Effect.fn.Return<
@@ -450,10 +456,11 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
           }
           const gatewayRequest: PricingOwnerMaterialEvidenceFenceGatewayRequest =
             verificationRequest === undefined
-              ? { candidateRef, compositionRevision, sources: ownerSources }
+              ? { candidateRef, compositionRevision, scope, sources: ownerSources }
               : {
                   candidateRef,
                   compositionRevision,
+                  scope,
                   sources: ownerSources,
                   typedSources,
                   verificationContext: {
@@ -504,11 +511,12 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
           const [ownerExpectation] = ownerSources;
           const generationRequest: PricingOwnerMaterialEvidenceGenerationFenceRequest =
             verificationRequest === undefined
-              ? { candidateRef, compositionRevision, observations: result.observations, through: completedAt }
+              ? { candidateRef, compositionRevision, observations: result.observations, scope, through: completedAt }
               : {
                   candidateRef,
                   compositionRevision,
                   observations: result.observations,
+                  scope,
                   through: completedAt,
                   typedSources,
                   verificationContext: {

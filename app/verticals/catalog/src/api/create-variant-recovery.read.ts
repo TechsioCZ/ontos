@@ -44,7 +44,7 @@ export const recoverCreateVariant = Effect.fn('CreateVariantRecoveryRead.recover
 
 const createVariantRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.create-variant-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.create-variant-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -52,6 +52,14 @@ const createVariantRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const createVariantRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.create-variant-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: createVariantRecoveryEntrypoint,
     evidencePolicy: {
@@ -61,7 +69,6 @@ export const createVariantRecoveryRead = defineRead(
     inputSchema: CreateVariantRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.create-variant-recovery',
     resultSchema: CreateVariantRecoveryResponseSchema,
@@ -70,5 +77,4 @@ export const createVariantRecoveryRead = defineRead(
   (input, context: ReadHandlerContext<VariantPersistence>) =>
     recoverCreateVariant(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) => Effect.succeed(variantPersistenceForScope(transaction, scope)),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

@@ -176,28 +176,6 @@ const permissionSources = (readSource = permissionImport, wrapperSource = permis
 const acceptsPermission = (sources: ReadonlyMap<string, string>, candidate = ownerPermissionInvocation) =>
   hasReadOwnerPermissionDeclaration(sources, readFile, ownerPath, candidate);
 
-for (const name of ['configuration', 'decision-explanation']) {
-  it(`accepts the actual Assortment ${name} Read's genuine owner declaration`, () => {
-    const assortmentOwner = 'verticals/assortment';
-    const actualRead = `${assortmentOwner}/src/api/${name}.read.ts`;
-    const actualPermission = `${assortmentOwner}/src/permissions/authorization.ts`;
-    const sources = new Map(
-      [actualRead, actualPermission].map((file): readonly [string, string] => [
-        file,
-        readFileSync(new URL(`../../${file}`, import.meta.url), 'utf-8'),
-      ]),
-    );
-    expect(
-      hasReadOwnerPermissionDeclaration(
-        sources,
-        actualRead,
-        assortmentOwner,
-        'defineAssortmentReadPermission<Input>(resolve)',
-      ),
-    ).toBe(true);
-  });
-}
-
 it('accepts the genuine direct Core owner permission declaration and its native import rename', () => {
   expect(acceptsPermission(permissionSources(corePermissionImport), corePermissionInvocation)).toBe(true);
   expect(

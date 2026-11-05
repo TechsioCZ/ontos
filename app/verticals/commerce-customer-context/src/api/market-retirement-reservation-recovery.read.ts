@@ -4,7 +4,6 @@ import {
   ReadHandlerUnavailable,
   ReadPermissionDenied,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
@@ -24,7 +23,7 @@ const moduleKey = 'commerce.customer-context';
 
 const marketRetirementReservationRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'market.catalog.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.market-retirement-reservation-recovery',
   moduleKey,
   role: 'api',
@@ -67,6 +66,19 @@ export const handleMarketRetirementReservationRecovery = (
 
 export const marketRetirementReservationRecoveryRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-market-catalog'],
+      reason: "Commerce Market Catalog retirement recovery is relayed under the retiring user's rights.",
+      subject: 'rights',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.market-retirement.recover',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'commerce-policy', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: marketRetirementReservationRecoveryEntrypoint,
     evidencePolicy: {
@@ -76,13 +88,8 @@ export const marketRetirementReservationRecoveryRead = defineRead(
     inputSchema: MarketRetirementReservationRecoveryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.market-retirement-reservation-recovery',
-    resourcePermission: defineReadResourcePermission<MarketRetirementReservationRecoveryRequest>(({ marketRef }) => ({
-      permission: 'read',
-      resource: marketRef,
-    })),
     resultSchema: MarketRetirementReservationRecoveryResponseSchema,
     schemaVersion: '1',
   },
@@ -96,5 +103,4 @@ export const marketRetirementReservationRecoveryRead = defineRead(
           }),
         )
       : Effect.succeed(marketRetirementReservationRecoveryForInvoker(transaction, scope.principalId)),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

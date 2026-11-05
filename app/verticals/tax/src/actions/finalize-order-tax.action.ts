@@ -58,6 +58,19 @@ export const handleFinalizeOrderTax = Effect.fn('FinalizeOrderTaxAction.handle')
 
 export const finalizeOrderTaxAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'Commerce Order finalizes order tax for a verified originating buyer.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.tax.order-tax.finalize',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'order-tax', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.tax.finalize-order-tax.access.v1',
@@ -69,7 +82,7 @@ export const finalizeOrderTaxAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.tax.finalize-order-tax',
       moduleKey: 'commerce.tax',
       role: 'action',

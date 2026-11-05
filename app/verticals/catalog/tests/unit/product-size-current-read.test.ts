@@ -28,15 +28,19 @@ const measurement = {
 };
 
 describe('Product Size Current governed read', () => {
-  it('requires a Product target and resource read authorization', () => {
+  it('requires a Product-shaped request and one protected read capability', () => {
     expect(Schema.is(ProductSizeCurrentRequestSchema)({ productRef })).toBe(true);
     expect(
       Schema.is(ProductSizeCurrentRequestSchema)({
         productRef: { ...productRef, resourceType: 'commerce.catalog.variant' },
       }),
     ).toBe(false);
-    expect(productSizeCurrentRead.descriptor.resourcePermission).toBeDefined();
-    expect(productSizeCurrentRead.descriptor.permissionTarget).toBe('module');
+    expect(productSizeCurrentRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(productSizeCurrentRead.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.catalog.product-size-current.read',
+      kind: 'read',
+      selectors: [],
+    });
     expect(productSizeCurrentRead.descriptor.legalEntityScope).toBe('required');
   });
 

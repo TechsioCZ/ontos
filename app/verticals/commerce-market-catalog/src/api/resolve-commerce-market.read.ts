@@ -36,7 +36,7 @@ const commerceMarketCatalogModuleKey = 'commerce.market-catalog';
 
 const resolveCommerceMarketEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.market-catalog.api.resolve-commerce-market',
   moduleKey: commerceMarketCatalogModuleKey,
   role: 'api',
@@ -142,6 +142,19 @@ export const handleResolveCommerceMarket = Effect.fn('ResolveCommerceMarketRead.
 
 export const resolveCommerceMarketRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: "Commerce Customer Context resolves the Market for the buyer it relays, under that buyer's own rights.",
+      subject: 'rights',
+    },
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market.resolve',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'markets', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: resolveCommerceMarketEntrypoint,
     evidencePolicy: {
@@ -151,45 +164,39 @@ export const resolveCommerceMarketRead = defineRead(
     inputSchema: ResolveCommerceMarketRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: commerceMarketCatalogModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.market-catalog.api.resolve-commerce-market',
     resultSchema: ResolveCommerceMarketResponseSchema,
     schemaVersion: '1',
   },
   handleResolveCommerceMarket,
-  (transaction, scope, compositionRevision) =>
-    Effect.all(
-      {
-        crypto: Crypto.Crypto,
-        persistence: marketResolutionPersistenceForScope(transaction, scope, compositionRevision),
-      },
-      { concurrency: 2 },
-    ).pipe(
-      Effect.map(({ crypto, persistence }) => {
-        const reader = makeServerMarketSubjectRestrictionsReader({
-          compositionRevision,
-          crypto,
-          scope,
-        });
-        return {
-          ...persistence,
-          current: (...parameters: Parameters<MarketSubjectRestrictionsReader['current']>) =>
-            requireModuleOperation('commerce.market-catalog.requirement.resolve-commerce-market-subject').pipe(
-              Effect.mapError((cause) =>
-                Object.defineProperty(
-                  new MarketSubjectRestrictionsUnavailable({
-                    code: 'market_subject_restrictions_unavailable',
-                    reason: 'Current subject restrictions contract is unavailable',
-                  }),
-                  'cause',
-                  { configurable: true, value: cause },
-                ),
+  Effect.fn('ResolveCommerceMarketRead.serviceFactory')(
+    function* marketReadServiceFactory(transaction, scope, compositionRevision, listAccess) {
+      const persistence = yield* marketResolutionPersistenceForScope(
+        transaction,
+        scope,
+        compositionRevision,
+        listAccess,
+      );
+      const crypto = yield* Crypto.Crypto;
+      const reader = makeServerMarketSubjectRestrictionsReader({ compositionRevision, crypto, scope });
+      return {
+        ...persistence,
+        current: (...parameters: Parameters<MarketSubjectRestrictionsReader['current']>) =>
+          requireModuleOperation('commerce.market-catalog.requirement.resolve-commerce-market-subject').pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new MarketSubjectRestrictionsUnavailable({
+                  code: 'market_subject_restrictions_unavailable',
+                  reason: 'Current subject restrictions contract is unavailable',
+                }),
+                'cause',
+                { configurable: true, value: cause },
               ),
-              Effect.andThen(reader.current(...parameters)),
             ),
-        };
-      }),
-    ),
-  () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
+            Effect.andThen(reader.current(...parameters)),
+          ),
+      };
+    },
+  ),
 );

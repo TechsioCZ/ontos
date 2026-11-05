@@ -93,7 +93,7 @@ const proofIsCurrent = (
 
 const verifyMarketEligibilityV1Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: verifyMarketEligibilityReadKey,
   moduleKey: commerceMarketCatalogModuleKey,
   role: 'api',
@@ -130,6 +130,14 @@ export const handleVerifyMarketEligibilityV1 = Effect.fn('VerifyMarketEligibilit
 
 export const verifyMarketEligibilityV1Read = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market-eligibility.verify',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'markets', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: verifyMarketEligibilityV1Entrypoint,
     evidencePolicy: {
@@ -139,45 +147,39 @@ export const verifyMarketEligibilityV1Read = defineRead(
     inputSchema: VerifyMarketEligibilityV1RequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: commerceMarketCatalogModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: verifyMarketEligibilityReadKey,
     resultSchema: VerifyMarketEligibilityV1ResponseSchema,
     schemaVersion: '1',
   },
   handleVerifyMarketEligibilityV1,
-  (transaction, scope, compositionRevision) =>
-    Effect.all(
-      {
-        crypto: Crypto.Crypto,
-        persistence: marketResolutionPersistenceForScope(transaction, scope, compositionRevision),
-      },
-      { concurrency: 2 },
-    ).pipe(
-      Effect.map(({ crypto, persistence }) => {
-        const reader = makeServerMarketSubjectRestrictionsReader({
-          compositionRevision,
-          crypto,
-          scope,
-        });
-        return {
-          ...persistence,
-          current: (...parameters: Parameters<MarketSubjectRestrictionsReader['current']>) =>
-            requireModuleOperation('commerce.market-catalog.requirement.verify-market-eligibility-v1-subject').pipe(
-              Effect.mapError((cause) =>
-                Object.defineProperty(
-                  new MarketSubjectRestrictionsUnavailable({
-                    code: 'market_subject_restrictions_unavailable',
-                    reason: 'Current subject restrictions contract is unavailable',
-                  }),
-                  'cause',
-                  { configurable: true, value: cause },
-                ),
+  Effect.fn('VerifyMarketEligibilityV1Read.serviceFactory')(
+    function* marketReadServiceFactory(transaction, scope, compositionRevision, listAccess) {
+      const persistence = yield* marketResolutionPersistenceForScope(
+        transaction,
+        scope,
+        compositionRevision,
+        listAccess,
+      );
+      const crypto = yield* Crypto.Crypto;
+      const reader = makeServerMarketSubjectRestrictionsReader({ compositionRevision, crypto, scope });
+      return {
+        ...persistence,
+        current: (...parameters: Parameters<MarketSubjectRestrictionsReader['current']>) =>
+          requireModuleOperation('commerce.market-catalog.requirement.verify-market-eligibility-v1-subject').pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new MarketSubjectRestrictionsUnavailable({
+                  code: 'market_subject_restrictions_unavailable',
+                  reason: 'Current subject restrictions contract is unavailable',
+                }),
+                'cause',
+                { configurable: true, value: cause },
               ),
-              Effect.andThen(reader.current(...parameters)),
             ),
-        };
-      }),
-    ),
-  () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
+            Effect.andThen(reader.current(...parameters)),
+          ),
+      };
+    },
+  ),
 );

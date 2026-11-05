@@ -16,7 +16,7 @@ const MODULE_KEY = 'privacy.core' as const;
 
 const processingPurposesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.processing_catalog.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.processing-purposes',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -83,6 +83,14 @@ export const readProcessingPurposes = Effect.fn('ProcessingPurposesRead.read')(f
 
 export const processingPurposesRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.processing-purpose.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'processing-governance', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: processingPurposesEntrypoint,
     evidencePolicy: {
@@ -92,7 +100,6 @@ export const processingPurposesRead = defineRead(
     inputSchema: ProcessingPurposesRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.processing-purposes',
     resultSchema: ProcessingPurposesResponseSchema,
@@ -108,5 +115,4 @@ export const processingPurposesRead = defineRead(
     );
   },
   (transaction, scope) => processingPurposesServicesForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

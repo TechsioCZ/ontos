@@ -22,6 +22,7 @@ import { reserveMarketRetirementAction } from '../../src/actions/reserve-market-
 import {
   handleMarketAffectedUseAssessment,
   makeMarketAffectedUseAssessmentServices,
+  marketAffectedUseAssessmentRead,
 } from '../../src/api/market-affected-use-assessment.read.ts';
 import type {
   MarketAffectedUseAssessmentServices,
@@ -629,7 +630,7 @@ it.effect('maps reassessment failures to governed Action conflict and unavailabl
         execute: () => Effect.fail(scenario.failure),
       };
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         ownerRegistration: commerceCustomerContextRegistration,
         services: [bindActionTestServices(reserveMarketRetirementAction, service)],
       });
@@ -712,7 +713,7 @@ it.effect('runs RESERVE, COMMIT, and RELEASE through the governed owner Action r
       },
     };
     const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
+      access: 'allowed',
       ownerRegistration: commerceCustomerContextRegistration,
       services: [bindActionTestServices(reserveMarketRetirementAction, service)],
     });
@@ -760,7 +761,7 @@ it.effect('rejects a cross-Tenant reservation before invoking owner persistence'
       },
     };
     const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
+      access: 'allowed',
       ownerRegistration: commerceCustomerContextRegistration,
       services: [bindActionTestServices(reserveMarketRetirementAction, service)],
     });
@@ -798,3 +799,9 @@ it.effect('rejects a cross-Tenant reservation before invoking owner persistence'
     expect(harness.snapshot().committed).toHaveLength(0);
   }),
 );
+
+it('declares the Commerce Market Catalog reserve and affected-use callers under the retiring user rights', () => {
+  for (const carrier of [reserveMarketRetirementAction, marketAffectedUseAssessmentRead]) {
+    expect(carrier.descriptor.accessActor).toMatchObject({ callers: ['commerce-market-catalog'], subject: 'rights' });
+  }
+});

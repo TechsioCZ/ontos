@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Schema } from 'effect';
 
-import { ONTOS_SPICEDB_SCHEMA } from '../permissions/schema.ts';
+import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 
 /** Environment variable naming the operator-provided stage accounts file (JSON, mode 600, outside the repo). */
 export const STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY = 'ONTOS_STAGE_ACCOUNTS_FILE';
@@ -13,23 +13,26 @@ const ModuleStateIdSchema = uuid.pipe(Schema.brand('ModuleStateId'));
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const AuthBindingIdSchema = uuid.pipe(Schema.brand('AuthBindingId'));
 const SlugSchema = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u));
-const ActionKeySchema = Schema.String.check(Schema.isPattern(/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/u)).pipe(
-  Schema.brand('ActionKey'),
-);
-const RelationNameSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_]*$/u));
+/**
+ * The roles one stage account holds, as data. `full_access` is the tenant's own "Plný přístup" role,
+ * which the bootstrap compiles from the release; role templates arrive with the role editor and extend
+ * this list, so the closed literal is the whole vocabulary an operator may name today (O67-Q6).
+ */
+const StageAccountRoleSchema = Schema.Literal('full_access');
 const AccountEmailSchema = Schema.Trim.check(
   Schema.isNonEmpty(),
   Schema.makeFilter((value) => (/^[^\s@]+@[^\s@]+$/u.test(value) ? undefined : 'must be an email address')),
 );
 
 /**
- * The SpiceDB grants one stage account holds, as data. `tenantRelations` are Principal relations on
- * the account's own Tenant; `explicitActions` lists the `explicit` Action keys the account executes,
- * or `"all"` for every current `explicit` Action. Nothing in code assigns rights by account kind.
+ * The v2 authority one stage account holds, as data (CUTOVER-PLAN §3.5). `owner` names the one account
+ * that owns the tenant — it is the principal `bootstrapTenantAccess` creates the tenant's scopes,
+ * memberships and "Plný přístup" assignment for. `roles` lists what a further account holds beside its
+ * membership; nothing in code assigns rights by account kind.
  */
 const StageAccountGrantsSchema = Schema.Struct({
-  explicitActions: Schema.Union([Schema.Literal('all'), Schema.Array(ActionKeySchema)]),
-  tenantRelations: Schema.Array(RelationNameSchema),
+  owner: Schema.Boolean,
+  roles: Schema.Array(StageAccountRoleSchema),
 });
 
 const StageAccountSchema = Schema.Struct({
@@ -40,6 +43,20 @@ const StageAccountSchema = Schema.Struct({
   password: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(8))),
   principalId: PrincipalIdSchema,
 });
+
+/**
+ * The machine workloads a carrier declares with `accessWorkload`: external integrations only. Module-to-module
+ * calls register no workload; the receiving carrier declares the calling module with `accessActor` instead.
+ */
+export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
+  'commerce.storefront-client',
+  'core.identity-provider',
+]);
+const StageWorkloadKeySchema = WorkloadKeySchema.check(
+  Schema.makeFilter((key) =>
+    STAGE_DECLARED_WORKLOAD_KEYS.has(key) ? undefined : 'names no workload a carrier declares',
+  ),
+);
 
 const StageTenantSchema = Schema.Struct({
   accounts: Schema.NonEmptyArray(StageAccountSchema),
@@ -54,12 +71,27 @@ const StageTenantSchema = Schema.Struct({
   moduleStateId: ModuleStateIdSchema,
   slug: SlugSchema,
   tenantId: TenantIdSchema,
+  /**
+   * The trusted machine workloads this tenant registers, as operator data (O73). Each names a
+   * principal of the tenant and one `<module>.<workload-name>` key the principal may run; the stage
+   * bootstrap writes the binding through Core's own registry, so a workload Action admits exactly
+   * the principals the operator declared and nothing else.
+   */
+  workloads: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        principalId: PrincipalIdSchema,
+        workloadKey: StageWorkloadKeySchema,
+      }),
+    ),
+  ),
 });
 
-/** A former stage Tenant whose bootstrap relationships are deleted and whose Core rows are archived. */
+/** A former stage Tenant whose authority ends and whose Core rows are archived. */
 const StageRetiredTenantSchema = Schema.Struct({
   legalEntityId: LegalEntityIdSchema,
-  principalIds: Schema.Array(PrincipalIdSchema),
+  /** Non-empty: the retired tenant is reconciled under the scope of a principal that is leaving it. */
+  principalIds: Schema.NonEmptyArray(PrincipalIdSchema),
   tenantId: TenantIdSchema,
 });
 
@@ -78,6 +110,7 @@ export type StageAccountsFile = typeof StageAccountsFileSchema.Type;
 export type StageTenant = StageAccountsFile['tenants'][number];
 export type StageAccount = StageTenant['accounts'][number];
 export type StageRetiredTenant = StageAccountsFile['retiredTenants'][number];
+export type StageAccountRole = StageAccount['grants']['roles'][number];
 
 /** The accounts file as read by the operator runtime: its text and POSIX permission bits. */
 export interface StageAccountsFileContents {
@@ -95,25 +128,6 @@ const invalid = (reason: string, cause?: unknown): StageAccountsFileError =>
 
 /** The low six permission bits are the group and other read/write/execute flags. */
 const GROUP_AND_OTHER_PERMISSION_RANGE = 0o100;
-
-const TENANT_DEFINITION_PATTERN = /definition tenant \{(?<body>[^}]*)\}/u;
-const PRINCIPAL_RELATION_PATTERN = /relation (?<name>[a-z_]+): principal\b/gu;
-
-/**
- * Principal relations the SpiceDB schema defines on `tenant`, except `member`, which the bootstrap
- * writes for every account. Grant data may name only these relations.
- */
-export const STAGE_GRANTABLE_TENANT_RELATIONS: readonly string[] = Object.freeze(
-  [
-    ...(TENANT_DEFINITION_PATTERN.exec(ONTOS_SPICEDB_SCHEMA)?.groups?.['body'] ?? '').matchAll(
-      PRINCIPAL_RELATION_PATTERN,
-    ),
-  ].flatMap((match) => {
-    const relation = match.groups?.['name'];
-    return relation === undefined || relation === 'member' ? [] : [relation];
-  }),
-);
-const GRANTABLE_TENANT_RELATION_SET: ReadonlySet<string> = new Set(STAGE_GRANTABLE_TENANT_RELATIONS);
 
 const hasDuplicates = (values: readonly string[]): boolean =>
   new Set(values.map((value) => value.toLowerCase())).size !== values.length;
@@ -157,15 +171,34 @@ export const parseStageAccountsFile = Effect.fn('StageAccountsFile.parse')(funct
   if (activeEmails.size !== accounts.length) {
     return yield* invalid('Every stage account needs its own email');
   }
+  if (accounts.some(({ grants }) => hasDuplicates(grants.roles))) {
+    return yield* invalid('Stage account roles must be unique');
+  }
+  const tenantWorkloads = file.tenants.flatMap(({ workloads }) => workloads ?? []);
+  if (tenantWorkloads.some(({ principalId }) => !activePrincipalIdSet.has(principalId))) {
+    return yield* invalid('Every registered workload needs a principal of its own tenant');
+  }
   if (
-    accounts.some(
-      ({ grants }) =>
-        hasDuplicates(grants.tenantRelations) ||
-        grants.tenantRelations.some((relation) => !GRANTABLE_TENANT_RELATION_SET.has(relation)) ||
-        (grants.explicitActions !== 'all' && hasDuplicates(grants.explicitActions)),
+    file.tenants.some(({ workloads }) =>
+      workloads === undefined
+        ? false
+        : new Set(workloads.map(({ principalId, workloadKey }) => `${principalId}:${workloadKey}`)).size !==
+          workloads.length,
     )
   ) {
-    return yield* invalid('Stage account grants must name unique Tenant relations defined by the SpiceDB schema');
+    return yield* invalid('A tenant may register each workload key for a principal only once');
+  }
+  if (
+    file.tenants.some(
+      ({ accounts: tenantAccounts }) => tenantAccounts.filter(({ grants }) => grants.owner).length === 0,
+    )
+  ) {
+    return yield* invalid('Every stage Tenant needs exactly one owner account');
+  }
+  if (
+    file.tenants.some(({ accounts: tenantAccounts }) => tenantAccounts.filter(({ grants }) => grants.owner).length > 1)
+  ) {
+    return yield* invalid('Every stage Tenant needs exactly one owner account');
   }
   const retiredEmails = file.retiredAccountEmails.map((email) => email.toLowerCase());
   if (hasDuplicates(retiredEmails) || retiredEmails.some((email) => activeEmails.has(email))) {

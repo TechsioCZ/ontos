@@ -72,6 +72,15 @@ const handle = Effect.fn('ArchivePartyAction.handle')(function* archiveParty(
 });
 export const archivePartyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.party.archive',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'party-identity', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.partyRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.archive-party.access.v1',
@@ -82,10 +91,7 @@ export const archivePartyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.archive-party',
       moduleKey: 'party.registry',
       role: 'action',
@@ -97,7 +103,6 @@ export const archivePartyAction = defineAction(
     policies: [],
     resultSchema: ArchivePartyResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handle,
   (transaction, scope) =>

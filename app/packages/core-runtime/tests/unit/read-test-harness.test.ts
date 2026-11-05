@@ -68,6 +68,50 @@ const registration = defineRead(
   makeServices,
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );
+/**
+ * The same owner read, decided by the v2 gate instead of a legacy permission target. `makeReadTestHarness`
+ * used to derive the *scope* admission from the legacy `permissionDecision`, so a v2 suite that scripted
+ * only `access` was refused before it reached the gate (`OperationContextDenied`, empty selectable
+ * companies). These two cases pin the split: the gate answer admits the scope, and `scopeAccess` alone
+ * can still refuse it.
+ */
+const protectedRegistration = defineRead(
+  {
+    accessDeclaration: {
+      key: 'test.read-harness.read-harness.protected',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'inventory', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
+    accessKind: 'detail',
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'read',
+      authorization: { kind: 'protected' },
+      entrypointKey: 'test.read-harness.read-harness-protected',
+      moduleKey: 'test.read-harness',
+      role: 'api',
+    }),
+    evidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.read-harness.read-harness-protected.evidence' },
+    inputSchema: Schema.Struct({}),
+    legalEntityScope: 'forbidden',
+    owningModuleKey: 'test.read-harness',
+    policies: [],
+    readKey: 'test.read-harness.read-harness-protected',
+    resultSchema: Schema.Array(Schema.String),
+    schemaVersion: '1',
+  },
+  (_input, context: ReadHandlerContext<Services>) =>
+    context.services.read.pipe(Effect.map((result) => ({ evidence: { resultCount: result.length }, result }))),
+  makeServices,
+);
+const protectedInvocation = {
+  input: {},
+  principal: scope,
+  registration: protectedRegistration,
+  transport: { correlationId: scope.correlationId },
+};
 /** This scripted SQL probe is a synthetic owner, not the production Inventory module. */
 const ownerBase = makeModuleContractFixture({ appId: 'read-harness-test', moduleId: 'test.read-harness' }).manifest;
 const ownerRegistration = defineVerticalRuntimeRegistration({
@@ -77,7 +121,7 @@ const ownerRegistration = defineVerticalRuntimeRegistration({
     publicSurface: { ...ownerBase.publicSurface, actions: [], api: {}, components: {} },
   }),
   outboxWorkers: [],
-  reads: [registration],
+  reads: [registration, protectedRegistration],
 });
 const invocation = { input: {}, principal: scope, registration, transport: { correlationId: scope.correlationId } };
 
@@ -153,6 +197,55 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
       expect(harness.snapshot().evidenceWrites).toBe(0);
       expect(harness.snapshot().statements.at(-1)).toBe('ROLLBACK');
+    }),
+  );
+
+  suite.effect('admits the scope of a v2 harness that scripts only the gate answer', () =>
+    Effect.gen(function* v2ScopeAdmission() {
+      const harness = yield* makeReadTestHarness({
+        access: 'allowed',
+        executeOwnerQuery: () => Effect.succeed([{ tenantId: scope.tenantId }]),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        ownerRegistration,
+        scope,
+      });
+      expect(yield* harness.runtime.runRead(protectedInvocation)).toEqual([scope.tenantId]);
+      expect(harness.snapshot().stages).toContain('scope_installed');
+    }),
+  );
+
+  suite.effect('answers the scope from the v2 script even when a legacy answer disagrees', () =>
+    Effect.gen(function* v2WinsOverLegacy() {
+      const harness = yield* makeReadTestHarness({
+        access: 'allowed',
+        executeOwnerQuery: () => Effect.succeed([{ tenantId: scope.tenantId }]),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        // A stale legacy answer must not be able to deny the scope any more: the v2 script is the
+        // authority, and the codemod deleting this key cannot change what the read does.
+        ownerRegistration,
+        permissionDecision: 'denied',
+        scope,
+      });
+      expect(yield* harness.runtime.runRead(protectedInvocation)).toEqual([scope.tenantId]);
+      expect(harness.snapshot().stages).toContain('scope_installed');
+    }),
+  );
+
+  suite.effect('keeps the legacy permissionDecision answer for a bag that has not migrated', () =>
+    Effect.gen(function* legacyScopeAdmission() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: () => Effect.succeed([{ tenantId: scope.tenantId }]),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        ownerRegistration,
+        permissionDecision: 'allowed',
+        scope,
+      });
+      // The transitional harness keeps working: no bag changes meaning while the migration runs.
+      expect(yield* harness.runtime.runRead(protectedInvocation)).toEqual([scope.tenantId]);
+      expect(harness.snapshot().stages).toContain('scope_installed');
     }),
   );
 });

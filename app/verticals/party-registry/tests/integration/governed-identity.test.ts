@@ -11,6 +11,7 @@ import {
   runAction,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import {
   addTestGatewayScopeGrantCleanup,
@@ -133,6 +134,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ].map(({ descriptor }) => descriptor.actionKey);
           const fixture = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
+              access: 'allowed',
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
@@ -144,6 +146,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           const other = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
+              access: 'allowed',
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
@@ -163,7 +166,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             ).pipe(Effect.orDie),
           );
           yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId, other.tenantId]);
-          const fixtureContext = yield* Layer.build(fixture.layer);
+          const deniedAccess = makePartyDeniedAccess();
+          const fixtureContext = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
           const otherContext = yield* Layer.build(other.layer);
           // Each principal carries a registered gateway grant for its own tenant and Legal Entity, as a
           // redeemed Shell assertion would.
@@ -188,6 +192,14 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const managerPrincipal = yield* withGatewayScope(fixture.manager);
           const deniedPrincipal = yield* withGatewayScope(fixture.denied);
           const legalEntityOnlyPrincipal = yield* withGatewayScope(fixture.legalEntityOnly);
+          // v2: the one access gate decides every protected Action and Read (O62). The fixture
+          // scripts its gate per capability, so the principals it does not admit are refused on the
+          // fixture's own per-request owner seam (the removed SpiceDB executor/module tuples no
+          // longer refuse anyone). The company-only actor keeps its counterparty authority.
+          deniedAccess.deny(deniedPrincipal.principalId, 'party.registry.party.read');
+          deniedAccess.deny(legalEntityOnlyPrincipal.principalId, 'party.registry.party.create');
+          deniedAccess.deny(legalEntityOnlyPrincipal.principalId, 'party.registry.party.read');
+          deniedAccess.deny(legalEntityOnlyPrincipal.principalId, 'party.registry.party.search');
           const managerReadPrincipal = yield* withGatewayScope({
             ...fixture.manager,
             legalEntityId: fixture.legalEntityId,
@@ -537,11 +549,14 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 ),
               ),
             );
-          // Owning a business Counterparty does not itself grant resource permission.
+          // Owning a business Counterparty does not itself grant resource permission (O67-Q1): the
+          // owner seam refuses the record-scoped read until the counterparty grant is made.
+          deniedAccess.deny(legalEntityOnlyPrincipal.principalId, 'party.registry.counterparty.read');
           const forbiddenCounterpartyRead = yield* Effect.exit(readCounterparty());
           assert.isOk(Exit.isFailure(forbiddenCounterpartyRead));
 
           yield* fixture.grantResourceAccess(counterpartyRef, legalEntityOnlyPrincipal.principalId);
+          deniedAccess.allow(legalEntityOnlyPrincipal.principalId, 'party.registry.counterparty.read');
           const projection = yield* readCounterparty();
           expect(Object.keys(projection.party).toSorted()).toEqual([
             'archived',

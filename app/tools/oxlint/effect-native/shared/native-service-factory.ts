@@ -36,24 +36,34 @@ const importedName = (context: Context, identifier: ESTree.Node, source: string,
   return specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
 };
 
-const nativeFactoryAnnotation = (context: Context, annotation: ESTree.Node | null | undefined): boolean => {
+const nativeFactoryAnnotation = (context: Context, annotation: ESTree.Node | null | undefined): string | null => {
   let node = asNode(annotation);
   if (node?.type === 'TSTypeAnnotation') {
     node = asNode(node.typeAnnotation);
   }
   if (node?.type !== 'TSTypeReference') {
-    return false;
+    return null;
   }
   const name = asNode(node.typeName);
   if (name?.type === 'Identifier') {
     const imported = importedName(context, name, nativeRuntimeModule);
-    return imported !== null && nativeFactories.has(imported);
+    return imported !== null && nativeFactories.has(imported) ? imported : null;
   }
   if (name?.type !== 'TSQualifiedName' || name.left.type !== 'Identifier') {
-    return false;
+    return null;
   }
-  return importedName(context, name.left, nativeRuntimeModule) === '*' && nativeFactories.has(name.right.name);
+  return importedName(context, name.left, nativeRuntimeModule) === '*' && nativeFactories.has(name.right.name)
+    ? name.right.name
+    : null;
 };
+
+/**
+ * The runtime arguments a native factory receives: an Action factory takes transaction, scope and
+ * composition revision; a read factory also takes the list-access predicate the runtime derives
+ * for a selector-bearing read.
+ */
+const nativeFactoryArity = (factory: string): number =>
+  factory === 'ReadServiceFactory' || factory === 'defineRead' ? 4 : 3;
 
 const effectMethod = (context: Context, expression: ESTree.Node): string | null => {
   const node = unwrap(expression);
@@ -89,17 +99,18 @@ const nativeDefinition = (context: Context, expression: ESTree.Node): string | n
     : null;
 };
 
-const nativeDefinitionArgument = (context: Context, node: ESTree.Node, parent: Syntax | null): boolean => {
+const nativeDefinitionArgument = (context: Context, node: ESTree.Node, parent: Syntax | null): string | null => {
   if (parent?.type !== 'CallExpression' || parent.arguments[2] !== node) {
-    return false;
+    return null;
   }
   const definition = nativeDefinition(context, parent.callee);
   if (definition === null || parent.arguments.some((argument: ESTree.Node) => argument.type === 'SpreadElement')) {
-    return false;
+    return null;
   }
-  const minimum = definition === 'defineRead' ? 4 : 3;
+  // A v2 read carries only descriptor, handler and service factory; its legacy target resolvers are optional.
+  const minimum = 3;
   const maximum = definition === 'defineRead' ? 6 : 5;
-  return parent.arguments.length >= minimum && parent.arguments.length <= maximum;
+  return parent.arguments.length >= minimum && parent.arguments.length <= maximum ? definition : null;
 };
 
 const wrappedFactory = (context: Context, fn: ESTree.Node): Syntax | null => {
@@ -122,25 +133,27 @@ const wrappedFactory = (context: Context, fn: ESTree.Node): Syntax | null => {
   return staticString(builder.arguments[0], { templates: false }) === null ? null : call;
 };
 
-/** The three runtime arguments belong to the native transaction/scope/revision contract. */
+/** The runtime arguments belong to the native transaction/scope/revision (and, for reads, list-access) contract. */
 export const isNativeServiceFactoryCallback = (context: Context, node: ESTree.Node): boolean => {
   if (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression') {
     return false;
   }
-  if (node.params.length > 3 || node.params.some((parameter) => parameter.type !== 'Identifier')) {
+  if (node.params.some((parameter) => parameter.type !== 'Identifier')) {
     return false;
   }
   const wrapped = wrappedFactory(context, node);
   const held = skipWrappers(wrapped ?? node, transparentWrappers);
   const declaration = held.parent;
-  if (nativeDefinitionArgument(context, held.node, declaration)) {
-    return true;
+  const definition = nativeDefinitionArgument(context, held.node, declaration);
+  if (definition !== null) {
+    return node.params.length <= nativeFactoryArity(definition);
   }
   if (declaration?.type !== 'VariableDeclarator' || declaration.init !== held.node) {
     return false;
   }
   const binding = asNode(declaration.id);
-  if (binding?.type !== 'Identifier' || !nativeFactoryAnnotation(context, binding.typeAnnotation)) {
+  const factory = binding?.type === 'Identifier' ? nativeFactoryAnnotation(context, binding.typeAnnotation) : null;
+  if (binding?.type !== 'Identifier' || factory === null || node.params.length > nativeFactoryArity(factory)) {
     return false;
   }
   const statement = parentOf(declaration);

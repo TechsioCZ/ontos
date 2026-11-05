@@ -5,14 +5,10 @@ import { PgClient } from '@effect/sql-pg';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import {
-  makeContextPermissionRelationshipMutationLive,
-  ReadRuntime,
-  runAction,
-  TrustedPrincipalContextSchema,
-} from '@app/core-runtime';
+import { ReadRuntime, runAction, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
 import { Crypto, Effect, Layer, Redacted, Result, Schema } from 'effect';
@@ -62,6 +58,7 @@ const makeNoticeContext = Effect.fn('NoticeInstants.makeContext')(function* make
 ) {
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionKeys: provisionExecution ? [createNoticeVersionAction.descriptor.actionKey] : [],
       adminConnectionString: Redacted.make(isolation.isolated.connections.admin.connectionString),
       applicationComposition: { load: Effect.succeed(isolation.snapshot) },
@@ -80,22 +77,30 @@ const makeNoticeContext = Effect.fn('NoticeInstants.makeContext')(function* make
     ),
   );
   const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(coreEvidenceServices));
-  const context = yield* Layer.build(fixture.layer);
+  // The one access gate this suite scripts (the native database carries no v2 access intent and
+  // reaches no engine), plus the per-principal refusals it names (see `live-access-authority`).
+  const deniedAccess = createPrivacyDeniedAccess();
+  const context = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
   const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
     ...fixture.manager,
     legalEntityId: fixture.legalEntityId,
   });
-  const permissions = yield* makeContextPermissionRelationshipMutationLive();
-  const target = { moduleId: 'privacy.core', permission: 'privacy.notice.read' };
+  // v2: one access gate decides every protected read (O62); the removed legacy permission tuples
+  // no longer refuse anyone, so "grant"/"revoke" flip the gate answer.
+  const readCapabilityKey = 'privacy.core.notice-version.read';
   const setReadPermission = (operation: 'grant' | 'revoke') =>
-    permissions.mutate({
-      legalEntityId: fixture.legalEntityId,
-      operation,
-      principal,
-      target,
-      tenantId: fixture.tenantId,
+    Effect.sync(() => {
+      if (operation === 'grant') {
+        deniedAccess.allow(principal.principalId, readCapabilityKey);
+      } else {
+        deniedAccess.deny(principal.principalId, readCapabilityKey);
+      }
     });
-  yield* Effect.addFinalizer(() => setReadPermission('revoke').pipe(Effect.orDie));
+  if (!provisionExecution) {
+    // The unconfigured context owns no create capability; the gate refuses it exactly as a live
+    // database without the assignment would.
+    deniedAccess.deny(principal.principalId, 'privacy.core.notice-version.create');
+  }
   const create = Effect.fn('NoticeInstants.create')(function* createNotice(
     input: CreatePrivacyNoticeVersionInput,
     noticeId?: string,
@@ -133,12 +138,7 @@ const makeNoticeContext = Effect.fn('NoticeInstants.makeContext')(function* make
       )
       .pipe(Effect.provideContext(context));
   });
-  const enableRead = Effect.fn('NoticeInstants.enableRead')(function* enableRead(resource: {
-    readonly moduleId: string;
-    readonly resourceId: string;
-    readonly resourceType: string;
-  }) {
-    yield* fixture.grantResourceAccess(resource, principal.principalId, 'reader');
+  const enableRead = Effect.fn('NoticeInstants.enableRead')(function* enableRead() {
     yield* setReadPermission('grant');
   });
   return { context, coreEvidenceExecutor, create, enableRead, fixture, principal, raw, read, setReadPermission };
@@ -155,7 +155,7 @@ it.live(
         effectiveFrom: '2026-10-17T10:00:00Z',
         effectiveTo: '2026-10-17T11:00:00Z',
       });
-      yield* owner.enableRead(started.noticeRef);
+      yield* owner.enableRead();
       const ended = yield* owner.create({
         ...baseInput,
         effectiveFrom: '2026-10-17T09:00:00Z',
@@ -324,14 +324,16 @@ it.live('retains Notice scope, explicit execution and read permission boundaries
     const notice = yield* owner.create({ ...baseInput, effectiveFrom: '2026-10-17T10:00:00Z' });
     const other = yield* foreign.create({ ...baseInput, effectiveFrom: '2026-10-17T10:00:00Z' });
     const query = { asOf: '2026-10-17T10:00:00Z', languages: [], noticeRefs: [] };
-    yield* owner.setReadPermission('grant');
+    // v2: without the read capability the gate refuses this read (the module/context tuple split is
+    // gone, O62), and the same request succeeds once the capability is granted below.
+    yield* owner.setReadPermission('revoke');
     const noModule = yield* owner.read(query).pipe(Effect.result);
     expect(Result.isFailure(noModule)).toBe(true);
     if (Result.isFailure(noModule)) {
       expect(noModule.failure).toMatchObject({ code: 'read_permission_denied' });
     }
-    yield* owner.enableRead(notice.noticeRef);
-    yield* foreign.enableRead(other.noticeRef);
+    yield* owner.enableRead();
+    yield* foreign.enableRead();
     expect((yield* owner.read(query)).items).toEqual([notice]);
     expect((yield* foreign.read(query)).items).toEqual([other]);
     expect((yield* owner.read({ ...query, noticeRefs: [other.noticeRef.resourceId] })).items).toEqual([]);

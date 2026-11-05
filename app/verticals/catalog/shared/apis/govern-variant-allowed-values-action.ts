@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug govern-variant-allowed-values
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/govern-variant-allowed-values.ts';
 
 export { GovernVariantAllowedValuesPayloadSchema } from '../actions/govern-variant-allowed-values.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const GovernVariantAllowedValuesActionInvalidProblemSchema = makeProblemDetailsSchema(
   'GovernVariantAllowedValuesActionInvalidProblem',
@@ -24,6 +26,7 @@ export const GovernVariantAllowedValuesActionForbiddenProblemSchema = makeProble
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -134,7 +137,7 @@ export const GovernVariantAllowedValuesActionApi = HttpApi.make('GovernVariantAl
       HttpApiEndpoint.post('execute', '/catalog/actions/govern-variant-allowed-values', {
         error: actionErrors,
         payload: Schema.toEncoded(GovernVariantAllowedValuesPayloadSchema),
-        success: GovernVariantAllowedValuesResultSchema,
+        success: [ActionProposalAcceptedSchema, GovernVariantAllowedValuesResultSchema],
       }),
     )
     .middleware(GovernVariantAllowedValuesActionSchemaErrorMiddleware),

@@ -2,11 +2,13 @@
 /* jscpd:ignore-start -- Owner-local protocol code intentionally mirrors its peer owner while preserving separate deployment and persistence authority. */
 import { executeRecordOwnerExecutionOutcomeWithAuthorization } from '@app/privacy/api/client';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import type { Option, Redacted } from 'effect';
-import { Config, Context, Effect, Layer, Schema } from 'effect';
+import { OwnerExecutionOutcomeSchema } from '@app/privacy/domain/privacy-measure-handoff';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import type { Option } from 'effect';
+import { Config, Context, Crypto, Effect, Layer, Schema } from 'effect';
 
 import { executeExecutePrivacyMeasureWithAuthorization } from '../api/execute-privacy-measure-action-client.ts';
+import { ExecutePrivacyMeasureResultSchema } from '../../shared/actions/execute-privacy-measure.ts';
 import { executePrivacyMeasureExecutionWithAuthorization } from '../api/privacy-measure-execution-client.ts';
 import type { PrivacyMeasureExecutionReceipt } from '../services/privacy-measure-execution.service.ts';
 import { ExecutePrivacyMeasureWorkerRejected } from './execute-privacy-measure-worker-rejected.ts';
@@ -25,30 +27,34 @@ const httpUrl = Schema.URLFromString.check(
   ),
 );
 const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_PRIVACY_MEASURE_WORKER_API_KEY'),
   ownerBaseUrl: Config.schema(httpUrl, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL'),
   privacyBaseUrl: Config.schema(httpUrl, 'ONTOS_PRIVACY_API_BASE_URL'),
-  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
+
+/** The outbox invocation whose work this is: the privacy measure's subject is the principal that invoked it (DESIGN D7). */
+export interface PrivacyMeasureOriginator {
+  readonly actionInvocationId: string;
+  readonly tenantId: string;
+}
 
 export interface PrivacyMeasureOwnerGatewayService {
   readonly execute: (
     handoff: PrivacyMeasureHandoff,
-    legalEntityId: string,
     requestCorrelation: string,
     compositionRevision: string,
+    originator: PrivacyMeasureOriginator,
   ) => Effect.Effect<OwnerExecutionOutcome, ExecutePrivacyMeasureWorkerRejected>;
   readonly load: (
     handoff: PrivacyMeasureHandoff,
-    legalEntityId: string,
     requestCorrelation: string,
     compositionRevision: string,
+    originator: PrivacyMeasureOriginator,
   ) => Effect.Effect<Option.Option<PrivacyMeasureExecutionReceipt>, ExecutePrivacyMeasureWorkerRejected>;
   readonly report: (
     outcome: OwnerExecutionOutcome,
-    legalEntityId: string,
     requestCorrelation: string,
     compositionRevision: string,
+    originator: PrivacyMeasureOriginator,
   ) => Effect.Effect<void, ExecutePrivacyMeasureWorkerRejected>;
 }
 
@@ -82,28 +88,39 @@ const reportIdempotencyKey = (outcome: OwnerExecutionOutcome) =>
   `owner-outcome:${outcome.measureId}:${outcome.attempt}`.slice(0, 200);
 const isAlreadyRecorded = Schema.is(AlreadyRecordedFailureSchema);
 
-const makeGateway = (configured: {
-  readonly apiKey: Redacted.Redacted;
-  readonly ownerBaseUrl: URL;
-  readonly privacyBaseUrl: URL;
-  readonly shellBaseUrl: URL;
-}): PrivacyMeasureOwnerGatewayService => {
+const makeGateway = (
+  configured: {
+    readonly ownerBaseUrl: URL;
+    readonly privacyBaseUrl: URL;
+  },
+  crypto: Crypto.Crypto,
+): PrivacyMeasureOwnerGatewayService => {
   const credential = (
     audience: 'commerce-customer-context' | 'privacy',
-    legalEntityId: string,
     correlation: string,
     compositionRevision: string,
+    originator: PrivacyMeasureOriginator,
   ) =>
-    issueApiKeyGatewayContext(
-      { audience, compositionRevision, legalEntityId },
-      { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: correlation },
+    acquireDelegatedGatewayContext(
+      {
+        audience,
+        legalEntityScope: 'subject',
+        requestCorrelation: correlation,
+        subject: {
+          _tag: 'Originator',
+          actionInvocationId: originator.actionInvocationId,
+          compositionRevision,
+          tenantId: originator.tenantId,
+        },
+      },
+      crypto,
     ).pipe(
-      Effect.map(({ token }) => `Bearer ${token}`),
+      Effect.map(({ authorization }) => authorization),
       Effect.mapError((cause) => workerFailure(cause, 'Credential issuance')),
     );
   return {
-    execute: (handoff, legalEntityId, correlation, compositionRevision) =>
-      credential('commerce-customer-context', legalEntityId, correlation, compositionRevision).pipe(
+    execute: (handoff, correlation, compositionRevision, originator) =>
+      credential('commerce-customer-context', correlation, compositionRevision, originator).pipe(
         Effect.flatMap((authorization) =>
           executeExecutePrivacyMeasureWithAuthorization({ handoff }, authorization, correlation, {
             baseUrl: configured.ownerBaseUrl,
@@ -111,10 +128,13 @@ const makeGateway = (configured: {
             idempotencyKey: handoff.idempotencyKey,
           }),
         ),
+        // O85: a parked proposal is a public 202 success body, never an owner execution outcome. This
+        // worker requires execution, so the Action's own result schema decides the seam.
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(ExecutePrivacyMeasureResultSchema))),
         Effect.mapError((cause) => workerFailure(cause, 'Commerce Privacy Measure Action')),
       ),
-    load: (handoff, legalEntityId, correlation, compositionRevision) =>
-      credential('commerce-customer-context', legalEntityId, correlation, compositionRevision).pipe(
+    load: (handoff, correlation, compositionRevision, originator) =>
+      credential('commerce-customer-context', correlation, compositionRevision, originator).pipe(
         Effect.flatMap((authorization) =>
           executePrivacyMeasureExecutionWithAuthorization(
             { idempotencyKey: handoff.idempotencyKey },
@@ -125,8 +145,8 @@ const makeGateway = (configured: {
         ),
         Effect.mapError((cause) => workerFailure(cause, 'Commerce receipt read')),
       ),
-    report: (outcome, legalEntityId, correlation, compositionRevision) =>
-      credential('privacy', legalEntityId, correlation, compositionRevision).pipe(
+    report: (outcome, correlation, compositionRevision, originator) =>
+      credential('privacy', correlation, compositionRevision, originator).pipe(
         Effect.flatMap((authorization) =>
           executeRecordOwnerExecutionOutcomeWithAuthorization(
             { request: { attempt: outcome.attempt, measureId: outcome.measureId, taskId: outcome.taskId } },
@@ -139,6 +159,8 @@ const makeGateway = (configured: {
             },
           ),
         ),
+        // A proposal to record the outcome is not a durable report and cannot acknowledge delivery.
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(OwnerExecutionOutcomeSchema))),
         Effect.asVoid,
         Effect.catchIf(isAlreadyRecorded, () => Effect.void),
         Effect.mapError((cause) => workerFailure(cause, 'Privacy owner-outcome recording')),
@@ -157,6 +179,11 @@ const unavailableGateway = (cause: unknown): PrivacyMeasureOwnerGatewayService =
 
 export const PrivacyMeasureOwnerGatewayLive = Layer.effect(
   PrivacyMeasureOwnerGateway,
-  configuration.pipe(Effect.match({ onFailure: unavailableGateway, onSuccess: makeGateway })),
+  Effect.gen(function* privacyMeasureOwnerGatewayLayer() {
+    const crypto = yield* Crypto.Crypto;
+    return yield* configuration.pipe(
+      Effect.match({ onFailure: unavailableGateway, onSuccess: (value) => makeGateway(value, crypto) }),
+    );
+  }),
 );
 /* jscpd:ignore-end */

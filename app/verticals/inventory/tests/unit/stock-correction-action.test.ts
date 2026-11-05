@@ -183,9 +183,12 @@ describe('Correct Stock Position Action', () => {
       legalEntityScope: 'forbidden',
       owningModuleKey: 'commerce.inventory',
     });
-    expect(correctStockPositionAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
+    expect(correctStockPositionAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(correctStockPositionAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.inventory.stock-position.correct',
+      kind: 'action',
+      risk: 'critical',
+      selectors: [],
     });
     expect(Object.keys(correctStockPositionAction.descriptor.domainEvents)).toEqual([
       'commerce.inventory.stock-position-corrected.v1',

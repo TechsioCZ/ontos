@@ -84,6 +84,15 @@ const handleUpdatePartyRelationship = Effect.fn('UpdatePartyRelationshipAction.h
 
 export const updatePartyRelationshipAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.party-relationship.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'contact-data', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.relationshipRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.update-party-relationship.access.v1',
@@ -97,10 +106,7 @@ export const updatePartyRelationshipAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.update-party-relationship',
       moduleKey: 'party.registry',
       role: 'action',
@@ -112,7 +118,6 @@ export const updatePartyRelationshipAction = defineAction(
     policies: [],
     resultSchema: ChangePartyRelationshipResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_relationships',
   },
   handleUpdatePartyRelationship,
   (transaction, scope) =>

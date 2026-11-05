@@ -2000,20 +2000,21 @@ const topLevelCallObject = (
 // This is a source contract, not an executable import from a deployment. Accept only
 // the owner-local factory's complete declaration, including its imported constructors.
 const engagementLifecycleRegistrationContract = `
-import { defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { OrganizationEngagementLifecyclePayload, PersonEngagementLifecyclePayload } from '../../shared/domain/engagement-profile.ts';
 import { EngagementLifecycleErrorSchema } from './engagement-lifecycle-handler.ts';
 type EngagementLifecyclePayload = | OrganizationEngagementLifecyclePayload | PersonEngagementLifecyclePayload;
 type EngagementLifecycleActionKey = \`party.registry.\${'archive' | 'unarchive'}-\${'person' | 'organization'}-engagement\`;
 export const engagementLifecycleRegistration = <Payload extends EngagementLifecyclePayload>(actionKey: EngagementLifecycleActionKey) => ({
   accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: \`\${actionKey}.access.v1\` },
+  accessTarget: (payload: Payload) => ({ moduleKey: 'party.registry', recordKey: payload.profileRef.resourceId }),
   actionKey,
   auditProfile: 'standard',
   domainErrorSchema: EngagementLifecycleErrorSchema,
   domainEvents: {},
   entrypoint: defineTenantModuleEntrypoint({
     access: 'write',
-    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    authorization: { kind: 'protected' },
     entrypointKey: actionKey,
     moduleKey: 'party.registry',
     role: 'action',
@@ -2022,14 +2023,6 @@ export const engagementLifecycleRegistration = <Payload extends EngagementLifecy
   legalEntityScope: 'required',
   owningModuleKey: 'party.registry',
   policies: [],
-  resourcePermission: defineActionResourcePermission<Payload>((payload) => ({
-    permission: 'write',
-    resource: {
-      moduleId: payload.profileRef.moduleId,
-      resourceId: payload.profileRef.resourceId,
-      resourceType: payload.profileRef.resourceType,
-    },
-  })),
   schemaVersion: '1',
 }) as const;
 `;
@@ -2104,6 +2097,33 @@ const hasExactSourceTokensAllowingEngagementLifecycleUnionPipe = (
   );
 };
 
+/**
+ * Authorization v2 (#1343) lets an Action carry one optional, Core-validated `accessDeclaration`
+ * object literal as its first property. It is catalog metadata only, so the exact registration
+ * shape is compared without it. Any other extra property still fails the exact match.
+ */
+const withoutLeadingAccessDeclaration = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+): readonly GovernedClientToken[] => {
+  const objectTokens = tokens.slice(open, close + 1);
+  const valueOpen = open + 3;
+  if (
+    tokenKind(tokens, open + 1) !== SyntaxKind.Identifier ||
+    tokenValue(tokens, open + 1) !== 'accessDeclaration' ||
+    tokenKind(tokens, open + 2) !== SyntaxKind.ColonToken ||
+    tokenKind(tokens, valueOpen) !== SyntaxKind.OpenBraceToken
+  ) {
+    return objectTokens;
+  }
+  const valueClose = findClosingBrace(tokens, valueOpen);
+  if (valueClose === undefined || valueClose >= close || tokenKind(tokens, valueClose + 1) !== SyntaxKind.CommaToken) {
+    return objectTokens;
+  }
+  return [...tokens.slice(open, open + 1), ...tokens.slice(valueClose + 2, close + 1)];
+};
+
 export const hasEngagementLifecycleRegistrationContract = (
   source: string,
   registrationSource: string,
@@ -2147,7 +2167,7 @@ export const hasEngagementLifecycleRegistrationContract = (
     `,
     ) &&
     hasExactSourceTokens(
-      tokens.slice(open, close + 1),
+      withoutLeadingAccessDeclaration(tokens, open, close),
       `{
       ...engagementLifecycleRegistration<${payload}>('party.registry.${action}'),
       payloadSchema: ${payload}Schema,
@@ -2226,8 +2246,7 @@ const objectReferencesEntrypoint = (
   ]);
 
 export interface GeneratedReadAuthorization {
-  readonly kind: 'authenticated_principal' | 'context_permission' | 'public';
-  readonly permission?: string;
+  readonly kind: 'authenticated_principal' | 'protected' | 'public';
 }
 
 const objectStringProperty = (
@@ -2242,194 +2261,6 @@ const objectStringProperty = (
     : undefined;
 };
 
-/** Locate declaration context through balanced expressions/generic constraints.
- * A value initializer or statement boundary ends this proof.
- */
-const permissionDeclarationPrefixKind = (
-  tokens: readonly GovernedClientToken[],
-  opening: number,
-): SyntaxKind | undefined => {
-  const depth = new DelimiterDepth();
-  const reverseDelimiter = new Map([
-    ['}', '{'],
-    [')', '('],
-    [']', '['],
-    ['{', '}'],
-    ['(', ')'],
-    ['[', ']'],
-  ]);
-  for (let cursor = opening - 1; cursor >= 0; cursor -= 1) {
-    const kind = tokenKind(tokens, cursor);
-    const delimiter = kind === undefined ? undefined : tokenDelimiter.get(kind);
-    depth.update(delimiter === undefined ? undefined : reverseDelimiter.get(delimiter));
-    if (depth.hasUnmatchedClose()) {
-      return undefined;
-    }
-    if (
-      depth.isTopLevel() &&
-      [
-        SyntaxKind.FunctionKeyword,
-        SyntaxKind.ClassKeyword,
-        SyntaxKind.InterfaceKeyword,
-        SyntaxKind.EqualsToken,
-        SyntaxKind.SemicolonToken,
-      ].includes(kind ?? SyntaxKind.Unknown)
-    ) {
-      return kind;
-    }
-  }
-  return undefined;
-};
-
-const permissionContainerIsBinding = (
-  tokens: readonly GovernedClientToken[],
-  opening: number,
-  closing: number,
-  delimiter: string,
-  parentBrace: number | undefined,
-): boolean => {
-  const after = tokenKind(tokens, closing + 1);
-  const before = tokenKind(tokens, opening - 1);
-  // Targets may be arbitrarily nested arrays, objects or groups. Typed targets
-  // and assertion/non-null suffixes remain unproven rather than bypassing validation.
-  if (
-    [
-      SyntaxKind.EqualsToken,
-      SyntaxKind.InKeyword,
-      SyntaxKind.OfKeyword,
-      SyntaxKind.ColonToken,
-      SyntaxKind.AsKeyword,
-      SyntaxKind.SatisfiesKeyword,
-      SyntaxKind.ExclamationToken,
-    ].includes(after ?? SyntaxKind.Unknown) ||
-    [SyntaxKind.ConstKeyword, SyntaxKind.LetKeyword, SyntaxKind.VarKeyword].includes(before ?? SyntaxKind.Unknown)
-  ) {
-    return true;
-  }
-  if (delimiter !== '(') {
-    return false;
-  }
-  // Function, arrow, method and catch parameters are bindings. Defaults are
-  // deliberately unproven; bodyless function signatures still introduce bindings.
-  if ([SyntaxKind.OpenBraceToken, SyntaxKind.EqualsGreaterThanToken].includes(after ?? SyntaxKind.Unknown)) {
-    return true;
-  }
-  const prefix = permissionDeclarationPrefixKind(tokens, opening);
-  return (
-    prefix === SyntaxKind.FunctionKeyword ||
-    (prefix !== SyntaxKind.EqualsToken &&
-      parentBrace !== undefined &&
-      [SyntaxKind.ClassKeyword, SyntaxKind.InterfaceKeyword].includes(
-        permissionDeclarationPrefixKind(tokens, parentBrace) ?? SyntaxKind.Unknown,
-      ))
-  );
-};
-
-/** Every enclosing container participates: a property-shaped token in any nested
- * binding/assignment target is not a read. Malformed structure fails closed.
- */
-const permissionAliasIsObjectRead = (tokens: readonly GovernedClientToken[], index: number): boolean => {
-  const containers: { readonly delimiter: string; readonly opening: number }[] = [];
-  const openingForClose = new Map([
-    ['}', '{'],
-    [')', '('],
-    [']', '['],
-  ]);
-  for (let cursor = 0; cursor < tokens.length; cursor += 1) {
-    const kind = tokenKind(tokens, cursor);
-    const delimiter = kind === undefined ? undefined : tokenDelimiter.get(kind);
-    if (delimiter !== undefined) {
-      const expectedOpening = openingForClose.get(delimiter);
-      if (expectedOpening === undefined) {
-        containers.push({ delimiter, opening: cursor });
-      } else {
-        const container = containers.pop();
-        if (container === undefined || container.delimiter !== expectedOpening) {
-          return false;
-        }
-        let parentBrace: number | undefined;
-        for (let parent = containers.length - 1; parent >= 0; parent -= 1) {
-          const candidate = containers[parent];
-          if (candidate?.delimiter === '{') {
-            parentBrace = candidate.opening;
-            break;
-          }
-        }
-        if (
-          container.opening < index &&
-          cursor > index &&
-          permissionContainerIsBinding(tokens, container.opening, cursor, container.delimiter, parentBrace)
-        ) {
-          return false;
-        }
-      }
-    }
-  }
-  return containers.length === 0;
-};
-
-/** Permission aliases are closed literal bindings, never executable expressions or ambient names. */
-const immutablePermissionAlias = (
-  tokens: readonly GovernedClientToken[],
-  open: number,
-  close: number,
-): string | undefined => {
-  const valueStart = findObjectPropertyValue(tokens, open, close, 'permission');
-  const alias = valueStart === undefined ? undefined : tokenValue(tokens, valueStart);
-  if (
-    alias === undefined ||
-    valueStart === undefined ||
-    tokenKind(tokens, valueStart) !== SyntaxKind.Identifier ||
-    !hasExactObjectPropertyValue(tokens, valueStart, [[SyntaxKind.Identifier, alias]])
-  ) {
-    return undefined;
-  }
-  const declaration = [
-    [SyntaxKind.ConstKeyword],
-    [SyntaxKind.Identifier, alias],
-    [SyntaxKind.EqualsToken],
-    [SyntaxKind.StringLiteral],
-  ] satisfies readonly ExpectedToken[];
-  const start = findSequenceAtBraceDepth(tokens, declaration, 0, tokens.length, 0);
-  if (
-    start === undefined ||
-    sequenceOccurrencesAtBraceDepth(tokens, declaration, 0) !== 1 ||
-    !(
-      tokenKind(tokens, start + 4) === SyntaxKind.SemicolonToken ||
-      matchesSequence(tokens, start + 4, [
-        [SyntaxKind.AsKeyword],
-        [SyntaxKind.ConstKeyword],
-        [SyntaxKind.SemicolonToken],
-      ])
-    )
-  ) {
-    return undefined;
-  }
-  const declarationDepth = new DelimiterDepth();
-  for (let index = 0; index < start; index += 1) {
-    const kind = tokenKind(tokens, index);
-    declarationDepth.update(kind === undefined ? undefined : tokenDelimiter.get(kind));
-  }
-  if (!declarationDepth.isTopLevel() || declarationDepth.hasUnmatchedClose()) {
-    return undefined;
-  }
-  // Admit only the one declaration and direct permission property reads. Any rebinding,
-  // shadowing, shorthand, mutation, or use inside an expression remains unproven.
-  const safeUses = tokens.every(
-    (token, index) =>
-      token.kind !== SyntaxKind.Identifier ||
-      token.value !== alias ||
-      index === start + 1 ||
-      (permissionAliasIsObjectRead(tokens, index) &&
-        tokenValue(tokens, index - 2) === 'permission' &&
-        tokenKind(tokens, index - 1) === SyntaxKind.ColonToken &&
-        [SyntaxKind.CommaToken, SyntaxKind.CloseBraceToken].includes(
-          tokenKind(tokens, index + 1) ?? SyntaxKind.Unknown,
-        )),
-  );
-  return safeUses ? tokenValue(tokens, start + 3) : undefined;
-};
-
 const authorizationObject = (
   tokens: readonly GovernedClientToken[],
   open: number,
@@ -2437,16 +2268,7 @@ const authorizationObject = (
 ): GeneratedReadAuthorization | undefined => {
   const kind = objectStringProperty(tokens, open, close, 'kind');
   const properties = directObjectPropertyNames(tokens, open, close);
-  if (kind === 'context_permission') {
-    const permission =
-      objectStringProperty(tokens, open, close, 'permission') ?? immutablePermissionAlias(tokens, open, close);
-    return permission !== undefined &&
-      /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(permission) &&
-      hasExactProperties(properties, new Set(['kind', 'permission']))
-      ? { kind, permission }
-      : undefined;
-  }
-  if (kind !== 'authenticated_principal' && kind !== 'public') {
+  if (kind !== 'authenticated_principal' && kind !== 'protected' && kind !== 'public') {
     return undefined;
   }
   return hasExactProperties(properties, new Set(['kind'])) ? { kind } : undefined;
@@ -2483,9 +2305,7 @@ export const readGeneratedReadAuthorization = (
 const matchesGeneratedReadAuthorization = (
   actual: GeneratedReadAuthorization | undefined,
   expected: GeneratedReadAuthorization | undefined,
-): boolean =>
-  actual !== undefined &&
-  (expected === undefined || (actual.kind === expected.kind && actual.permission === expected.permission));
+): boolean => actual !== undefined && (expected === undefined || actual.kind === expected.kind);
 
 const hasGeneratedReadContract = (
   source: string,
@@ -2561,6 +2381,60 @@ const enclosingBraceRange = (
   const start = openBraces.at(-1);
   const end = start === undefined ? undefined : findClosingBrace(tokens, start);
   return start === undefined || end === undefined ? undefined : [start, end];
+};
+
+/** The `legalEntityScope` a generated read descriptor declares. */
+const generatedReadLegalEntityScope = (source: string, name: string): string | undefined => {
+  const tokens = tokenizeGovernedClient(source);
+  const read = topLevelCallObject(tokens, `${toCamelCase(name)}Read`, 'defineRead');
+  return read === undefined ? undefined : objectStringProperty(tokens, read[0], read[1], 'legalEntityScope');
+};
+
+/** The one depth-1 object literal of a generated manifest slot whose own `key` is `key`. */
+const generatedSlotEntry = (slot: string, key: string): readonly [number, number] | undefined => {
+  const tokens = tokenizeGovernedClient(slot);
+  let depth = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const kind = tokenKind(tokens, index);
+    if (kind === SyntaxKind.OpenBraceToken) {
+      if (depth === 0) {
+        const close = findClosingBrace(tokens, index);
+        if (close !== undefined && objectStringProperty(tokens, index, close, 'key') === key) {
+          return [index, close];
+        }
+      }
+      depth += 1;
+    } else if (kind === SyntaxKind.CloseBraceToken) {
+      depth -= 1;
+    }
+  }
+  return undefined;
+};
+
+/**
+ * O78: a search or report descriptor must name the scope its own provider read is decided in, so the
+ * manifest can never drift from the declaration the gate evaluates. `legalEntityScope` is transitional
+ * while `accessFiltering` still exists: an absent value is allowed until C03b makes it required, a
+ * value that disagrees with the read is always an error.
+ */
+export const hasMatchingProviderLegalEntityScope = (
+  providerSource: string,
+  manifest: string,
+  moduleId: string,
+  name: string,
+  kind: 'report' | 'search',
+): boolean => {
+  const slot = generatedSlotSource(manifest, kind === 'report' ? MANIFEST_REPORT_SLOT : MANIFEST_SEARCH_SLOT);
+  const declared = generatedReadLegalEntityScope(providerSource, name);
+  if (slot === undefined || declared === undefined) {
+    return false;
+  }
+  const entry = generatedSlotEntry(slot, `${moduleId}.${name}`);
+  if (entry === undefined) {
+    return false;
+  }
+  const descriptorScope = objectStringProperty(tokenizeGovernedClient(slot), entry[0], entry[1], 'legalEntityScope');
+  return descriptorScope === undefined || descriptorScope === declared;
 };
 
 export const hasMatchingGeneratedProviderAuthorization = (
@@ -2660,12 +2534,17 @@ const hasGeneratedModuleApiReadDefinition = (
   moduleId: string,
   name: string,
   connectedShorthand = false,
+  /** A v2 `protected` read decides its own record and declares no legacy permission target (O62). */
+  v2ProtectedRead = false,
 ): boolean =>
   directObjectHasNoSpread(tokens, read[0], read[1]) &&
   (objectReferencesEntrypoint(tokens, read[0], read[1], entrypointName) || connectedShorthand) &&
-  ['legalEntityScope', 'permissionTarget', 'policies'].every(
+  ['legalEntityScope', 'policies'].every(
     (property) => directObjectPropertyOccurrences(tokens, read[0], read[1], property) === 1,
   ) &&
+  (v2ProtectedRead
+    ? directObjectPropertyOccurrences(tokens, read[0], read[1], 'permissionTarget') <= 1
+    : directObjectPropertyOccurrences(tokens, read[0], read[1], 'permissionTarget') === 1) &&
   objectHasExactStringsOrConstAliases(tokens, read[0], read[1], {
     owningModuleKey: moduleId,
     readKey: `${moduleId}.api.${name}`,
@@ -2830,6 +2709,7 @@ export const hasGeneratedModuleApiReadContract = (
   if (entrypoint === undefined || read === undefined) {
     return false;
   }
+  const entrypointAuthorization = readGeneratedReadAuthorization(entrypointTokens, entrypoint[0], entrypoint[1]);
   return (
     hasGeneratedModuleApiEntrypointContract(
       entrypointTokens,
@@ -2845,6 +2725,7 @@ export const hasGeneratedModuleApiReadContract = (
       moduleId,
       name,
       connected.shorthand || connected.initializer !== undefined,
+      entrypointAuthorization?.kind === 'protected',
     )
   );
 };

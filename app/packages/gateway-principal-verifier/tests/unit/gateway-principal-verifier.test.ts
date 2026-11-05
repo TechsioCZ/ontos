@@ -3,6 +3,7 @@ import {
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
   isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
 } from '@app/core-runtime';
@@ -11,7 +12,11 @@ import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import {
+  DELEGATED_GATEWAY_ASSERTION_VERSION,
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  GATEWAY_ASSERTION_VERSION,
+} from '@app/shared-contracts';
 
 import {
   ActionPrincipalConfigurationErrorSchema,
@@ -70,6 +75,7 @@ const makeFixture = (
   version: number = GATEWAY_ASSERTION_VERSION,
   fixturePrincipal: FixturePrincipal = principal,
   releaseClaims: {
+    readonly act?: { readonly appId: string; readonly buildMarker: string; readonly principalId: string };
     readonly compositionRevision?: string;
     readonly targetBuildMarker?: string;
   } = {},
@@ -85,6 +91,7 @@ const makeFixture = (
     };
     const token = yield* Effect.promise(() =>
       new SignJWT({
+        act: releaseClaims.act,
         compositionRevision: releaseClaims.compositionRevision ?? snapshot.composition.revision,
         principal: fixturePrincipal,
         targetBuildMarker: releaseClaims.targetBuildMarker ?? GATEWAY_FIXTURE_BUILD_MARKER,
@@ -386,6 +393,82 @@ it.effect('accepts v2 principals from arbitrary namespaces for Core registry adm
   }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
+const calledBy = {
+  appId: 'billing',
+  buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+  principalId: '80000000-0000-4000-8000-000000000001',
+};
+
+it.effect('accepts a delegated v3 assertion and exposes the calling module as the verified actor', () =>
+  Effect.gen(function* verifyDelegatedActor() {
+    const fixture = yield* makeFixture('party-registry', DELEGATED_GATEWAY_ASSERTION_VERSION, thirdPartyPrincipal, {
+      act: calledBy,
+    });
+    const verifier = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    const verificationOptions = {
+      currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+      environment: fixture.environment,
+    } as const;
+    const subject = yield* verifier.verify(Redacted.make(`Bearer ${fixture.token}`), verificationOptions);
+    expect(subject).toEqual(thirdPartyPrincipal);
+    expect(readVerifiedGatewayActor(subject)).toBeUndefined();
+
+    const redeemed = yield* verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+      ...verificationOptions,
+      redemption: { consume: () => Effect.void },
+    });
+    expect(redeemed).toEqual(thirdPartyPrincipal);
+    expect(readVerifiedGatewayActor(redeemed)).toEqual(calledBy);
+    expect(readVerifiedGatewayActor({ ...redeemed })).toBeUndefined();
+    expect(readVerifiedGatewayScopeAssertion(redeemed)?.audience).toBe('party-registry');
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+it.effect('refuses a delegated assertion whose calling module is unknown or on another build', () =>
+  Effect.gen(function* refuseUnapprovedActor() {
+    const verifier = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    const unknownApp = yield* makeFixture('party-registry', DELEGATED_GATEWAY_ASSERTION_VERSION, thirdPartyPrincipal, {
+      act: { ...calledBy, appId: 'not-installed-app' },
+    });
+    const wrongBuild = yield* makeFixture('party-registry', DELEGATED_GATEWAY_ASSERTION_VERSION, thirdPartyPrincipal, {
+      act: { ...calledBy, buildMarker: 'some-other-build' },
+    });
+    for (const fixture of [unknownApp, wrongBuild]) {
+      const failure = yield* Effect.flip(
+        verifier.verify(Redacted.make(`Bearer ${fixture.token}`), {
+          currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+          environment: fixture.environment,
+        }),
+      );
+      expect(isScopeError(failure)).toBe(true);
+    }
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+it.effect('refuses a v2 assertion that carries a calling module claim', () =>
+  Effect.gen(function* refuseActorOnV2() {
+    const fixture = yield* makeFixture('party-registry', EXTERNAL_GATEWAY_ASSERTION_VERSION, thirdPartyPrincipal, {
+      act: calledBy,
+    });
+    const failure = yield* Effect.flip(
+      bindGatewayPrincipalVerifier('party-registry', {
+        appId: 'party-registry',
+        buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+      }).verify(Redacted.make(`Bearer ${fixture.token}`), {
+        currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+        environment: fixture.environment,
+      }),
+    );
+    expect(isInvalidError(failure)).toBe(true);
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
 it.effect('rejects v2 claims with a missing namespace while preserving unknown values for Core', () =>
   Effect.gen(function* rejectMissingV2Namespace() {
     const verifier = bindGatewayPrincipalVerifier('party-registry', {
@@ -575,7 +658,7 @@ it.effect('redemption failures remain sanitized and distinguish replay from unav
 
 it.effect('unsupported assertion versions and unexpected verifier failures fail closed', () =>
   Effect.gen(function* rejectUnsupportedAndUnexpectedFailures() {
-    const unsupportedVersion = yield* makeFixture('party-registry', 3);
+    const unsupportedVersion = yield* makeFixture('party-registry', 4);
     const verifier = bindGatewayPrincipalVerifier('party-registry', {
       appId: 'party-registry',
       buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,

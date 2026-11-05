@@ -4,7 +4,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { PartySearchQuerySchema, PartySearchResultSchema } from '../domain/search-result.ts';
+import { PartySearchQuerySchema, PartySearchResultViewSchema } from '../domain/search-result.ts';
 
 export const PartiesProviderRequestSchema = Schema.Struct({
   includeArchived: Schema.optionalKey(Schema.Boolean),
@@ -12,7 +12,7 @@ export const PartiesProviderRequestSchema = Schema.Struct({
 });
 export type PartiesProviderRequest = typeof PartiesProviderRequestSchema.Type;
 
-export const PartiesProviderResponseSchema = Schema.Array(PartySearchResultSchema);
+export const PartiesProviderResponseSchema = Schema.Array(PartySearchResultViewSchema);
 export type PartiesProviderResponse = typeof PartiesProviderResponseSchema.Type;
 
 export const PartiesProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(

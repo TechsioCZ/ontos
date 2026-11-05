@@ -25,7 +25,6 @@ const partyRef = (resourceId: string, refTenantId = tenantId) => ({
 const response = (overrides: Partial<PartyDetailResponse> = {}) =>
   Schema.decodeUnknownSync(PartyDetailResponseSchema)({
     currentFactAssertions: [],
-    factHistory: null,
     party: {
       archivedAt: null,
       businessName: null,

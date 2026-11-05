@@ -1,14 +1,14 @@
-import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import type { PartyRef } from '@app/party-registry/resources/party';
-import { Config, DateTime, Effect, Redacted, Schema } from 'effect';
-import { Base64Url } from 'effect/encoding';
+import { DateTime, Effect, Redacted, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import { BindRetailPortalProfilePayloadSchema } from '../../../shared/actions/bind-retail-portal-profile.ts';
 import type { RetailPortalBindingResult } from '../../../shared/actions/bind-retail-portal-profile.ts';
-import { EnsureRetailCustomerProfilePayloadSchema } from '../../../shared/actions/ensure-retail-customer-profile.ts';
+import {
+  EnsureRetailCustomerProfilePayloadSchema,
+  EnsureRetailCustomerProfileResultSchema,
+} from '../../../shared/actions/ensure-retail-customer-profile.ts';
 import type { EnsureRetailCustomerProfileResult } from '../../../shared/actions/ensure-retail-customer-profile.ts';
-import { RETAIL_PORTAL_SELF_SERVICE_BASELINE } from '../../../shared/domain/profile-contracts.ts';
 import type { SellingLegalEntityRefSchema } from '../../../shared/domain/profile-contracts.ts';
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import type { RetailCustomerProfileRefSchema } from '../../../shared/resources/retail-customer-profile.ts';
@@ -36,15 +36,17 @@ import {
   RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
   retailSelfEnrollmentEvidenceReference,
 } from './retail-self-enrollment-contracts.ts';
+import { acquireRetailOwnerCredential } from './retail-owner-gateway-credential.ts';
+import type { RetailEnrollmentOriginator } from './retail-owner-gateway-credential.ts';
 
 /**
  * The two Commerce-owned Retail self-enrollment transitions: ensure the Retail Customer Profile,
  * then activate the Retail Portal Profile Binding.
  *
- * This vertical has no separate retail grant Action, so the binding Action's staged Permission
- * mutations are the retail grant path: a binding whose required baseline is not yet Current
- * is a partially completed grant, recorded as `retail_portal_grants_incomplete` so the
- * journey halts rather than reporting portal access that does not exist.
+ * This vertical has no separate retail grant Action: the binding Action grants the reviewed
+ * baseline in its own transaction. A binding whose baseline is not Current is recorded as
+ * `retail_portal_grants_incomplete` so the journey halts rather than reporting portal access that
+ * does not exist.
  *
  * Both dispatch under the immutable owner invocation as idempotency key; a timeout after commit
  * reconciles through the Action commit resolution port, never through a second dispatch.
@@ -81,8 +83,10 @@ export type CommerceActionCommitResolution<Result> = (
 
 export interface RetailCustomerProfileOwnerInput {
   readonly compositionRevision: string;
+  readonly crypto: Crypto.Crypto;
   /** Stable for the Attempt, so an equivalent retry produces an identical Action payload. */
   readonly effectiveAt: DateTime.Utc;
+  readonly originator: RetailEnrollmentOriginator;
   readonly partyRef: PartyRef;
   readonly requestCorrelation: string;
   readonly sellingLegalEntityRef: typeof SellingLegalEntityRefSchema.Type;
@@ -99,9 +103,11 @@ export interface RetailCustomerProfileOwnerExecutors {
 
 export interface RetailPortalBindingOwnerInput {
   readonly compositionRevision: string;
+  readonly crypto: Crypto.Crypto;
   readonly effectiveAt: DateTime.Utc;
   /** Opaque, non-secret reference to the Attempt evidence the binding Action re-verifies. */
   readonly enrollmentEvidenceRef: string;
+  readonly originator: RetailEnrollmentOriginator;
   readonly principalRef: typeof RetailPortalPrincipalRefSchema.Type;
   readonly profileRef: typeof RetailCustomerProfileRefSchema.Type;
   readonly reason: string;
@@ -227,25 +233,9 @@ const ensureVerdict = (result: EnsureRetailCustomerProfileResult): CommerceOwner
         reason: `The Commerce Retail Customer Profile is ${result.state} and cannot carry portal access`,
       };
 
-/** Staging is progress; only terminal authorization can qualify for a Current access observation. */
-export const retailPortalGrantsAreComplete = (result: RetailPortalBindingResult): boolean => {
-  if (result.authorizationOperation !== 'grant' || result.authorizationState !== 'ACTIVE') {
-    return false;
-  }
-  const { permissionMutations } = result;
-  // Recovery reads the aggregate authorization that the owner finalizes from its exact intent set.
-  if (permissionMutations === undefined) {
-    return true;
-  }
-  const permissions: readonly string[] = permissionMutations.map(({ permission }) => permission);
-  const expected = new Set<string>(RETAIL_PORTAL_SELF_SERVICE_BASELINE);
-  return (
-    permissions.length === expected.size &&
-    new Set(permissions).size === permissions.length &&
-    permissions.every((permission) => expected.has(permission)) &&
-    permissionMutations.every(({ operation, staged }) => staged && operation === 'grant')
-  );
-};
+/** The binding is written with its final authorization, so an ACTIVE grant carries the reviewed baseline. */
+export const retailPortalGrantsAreComplete = (result: RetailPortalBindingResult): boolean =>
+  result.authorizationOperation === 'grant' && result.authorizationState === 'ACTIVE';
 
 const bindingVerdictFor = (result: RetailPortalBindingResult, currentBaseline: boolean): CommerceOwnerVerdict => {
   if (result.outcome !== 'BINDING_ACTIVATED' || result.state !== 'ACTIVE') {
@@ -387,64 +377,31 @@ export const retailPortalBindingOwnerEffect = (
   return Object.freeze({ dispatch, reconcile });
 };
 
-const enrollmentShellUrl = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username === '' &&
-    url.password === '' &&
-    url.search === '' &&
-    url.hash === ''
-      ? undefined
-      : 'Enrollment Shell URL must be HTTP(S) without credentials, query or fragment',
-  ),
-);
-
-const enrollmentGatewayConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
-  baseUrl: Config.schema(enrollmentShellUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
-
 interface RetailOwnerInvocationAuthority {
   readonly compositionRevision: string;
+  readonly crypto: Crypto.Crypto;
   readonly legalEntityId: string;
+  readonly originator: RetailEnrollmentOriginator;
   readonly requestCorrelation: string;
   readonly tenantId: string;
 }
 
+/** The owner call acts for the Attempt's originator; the verified actor is this Commerce module. */
 const issueRetailOwnerConnection = Effect.fn('RetailEnrollment.issueOwnerConnection')(
   function* issueRetailOwnerConnectionEffect(input: RetailOwnerInvocationAuthority) {
-    const configured = yield* enrollmentGatewayConfiguration;
-    const response = yield* issueApiKeyGatewayContext(
-      {
-        audience: 'commerce-customer-context',
-        compositionRevision: input.compositionRevision,
-        legalEntityId: input.legalEntityId,
-      },
-      { ...configured, requestCorrelation: input.requestCorrelation },
-    );
-    if (response.compositionRevision !== input.compositionRevision) {
-      return yield* unavailable('The issued credential does not match the enrollment composition revision');
-    }
-    // The response came from the authenticated Shell issuer. These claims are checked only for
-    // scope coherence; the receiving owner still verifies the signed assertion cryptographically.
-    const [, encodedClaims] = yield* Schema.decodeUnknownEffect(
-      Schema.Tuple([Schema.String, Schema.String, Schema.String]),
-    )(response.token.split('.'));
-    const claimsText = yield* Effect.fromResult(Base64Url.decodeString(encodedClaims));
-    const claims = yield* Schema.decodeEffect(Schema.fromJsonString(SupportedGatewayContextClaimsSchema))(claimsText);
     if (
-      claims.aud !== 'commerce-customer-context' ||
-      claims.compositionRevision !== input.compositionRevision ||
-      claims.principal.tenantId !== input.tenantId ||
-      claims.principal.legalEntityId !== input.legalEntityId ||
-      claims.principal.authMethod !== 'api_key'
+      input.originator.tenantId !== input.tenantId ||
+      input.originator.compositionRevision !== input.compositionRevision
     ) {
-      return yield* unavailable('The issued service credential does not match the enrollment scope');
+      return yield* unavailable('The enrollment originator does not match the Attempt scope');
     }
-    return {
-      baseUrl: new URL(response.apiBaseUrl, configured.baseUrl),
-      credential: Redacted.make(`Bearer ${response.token}`),
-    };
+    return yield* acquireRetailOwnerCredential({
+      audience: 'commerce-customer-context',
+      crypto: input.crypto,
+      legalEntityId: input.legalEntityId,
+      originator: input.originator,
+      requestCorrelation: input.requestCorrelation,
+    }).pipe(Effect.mapError((cause) => unavailable('The Retail owner credential is unavailable', cause)));
   },
 );
 
@@ -454,7 +411,9 @@ export const retailCustomerProfileActionExecutor = (
 ): RetailCustomerProfileOwnerExecutors['ensureProfile'] => {
   const authority: RetailOwnerInvocationAuthority = Object.freeze({
     compositionRevision: input.compositionRevision,
+    crypto: input.crypto,
     legalEntityId: input.sellingLegalEntityRef.resourceId,
+    originator: input.originator,
     requestCorrelation: input.requestCorrelation,
     tenantId: input.partyRef.tenantId,
   });
@@ -466,7 +425,7 @@ export const retailCustomerProfileActionExecutor = (
     const connection = yield* issueRetailOwnerConnection(authority).pipe(
       Effect.mapError((cause) => unavailable('The Retail Customer Profile owner credential is unavailable', cause)),
     );
-    return yield* executeEnsureRetailCustomerProfileWithAuthorization(
+    const answered = yield* executeEnsureRetailCustomerProfileWithAuthorization(
       payload,
       Redacted.value(connection.credential),
       authority.requestCorrelation,
@@ -476,6 +435,11 @@ export const retailCustomerProfileActionExecutor = (
         idempotencyKey: options.idempotencyKey,
       },
     );
+    // O85: a parked proposal is a public 202 success body, never a created Retail profile. This executor
+    // requires execution, so the Action's own result schema decides the seam.
+    return yield* Schema.decodeUnknownEffect(Schema.toType(EnsureRetailCustomerProfileResultSchema))(answered).pipe(
+      Effect.mapError((cause) => unavailable('The Retail Customer Profile owner did not execute the request', cause)),
+    );
   });
 };
 
@@ -484,7 +448,9 @@ export const retailPortalBindingActionExecutor = (
 ): RetailPortalBindingOwnerExecutors['bindProfile'] => {
   const authority: RetailOwnerInvocationAuthority = Object.freeze({
     compositionRevision: input.compositionRevision,
+    crypto: input.crypto,
     legalEntityId: input.sellingLegalEntityRef.resourceId,
+    originator: input.originator,
     requestCorrelation: input.requestCorrelation,
     tenantId: input.profileRef.tenantId,
   });

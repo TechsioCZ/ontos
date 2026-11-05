@@ -2,14 +2,16 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistryEffect,
 } from '@app/core-runtime/auth/external-identity-admission';
-import { relayUnavailable } from './auth/gateway-relay-errors.ts';
-import { GatewayRelayVerificationLive } from './auth/gateway-relay-verification.ts';
+import { delegationUnavailable } from './auth/gateway-delegation-errors.ts';
+import { GatewayDelegationVerificationLive } from './auth/gateway-delegation-verification.ts';
 import {
   staffAuthenticationNamespaceRegistration,
   STAFF_AUTHENTICATION_NAMESPACE_ID,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { GatewayRelayExchangeLedgerLive } from './auth/gateway-relay-exchanges.service.ts';
-import { issueRelayedGatewayContextAssertion } from './auth/gateway-relay-issuer.ts';
+import { GatewayDelegationExchangeLedgerLive } from './auth/gateway-delegation-exchanges.service.ts';
+import { issueDelegatedGatewayContextAssertion } from './auth/gateway-delegation-issuer.ts';
+import { admitIntegrationCredential, loadGatewayModuleBindings } from './auth/gateway-delegation-policy.ts';
+import { GatewayOriginatorEvidenceLive } from './auth/gateway-originator-evidence.service.ts';
 import {
   ActiveApplicationCompositionConfigLive,
   InstalledModuleCatalogServiceLive,
@@ -31,6 +33,7 @@ import {
   ActiveApplicationCompositionUnavailableError,
   makeReadRuntimeLive,
   ContextAccessLive,
+  OperationalScopeResolver,
   CorePersistenceLive,
   DatabaseConfigLive,
   DatabaseConfig,
@@ -50,18 +53,24 @@ import {
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type { GatewayContextProblem } from '@app/shared-contracts';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import {
   Cause,
+  Clock,
+  DateTime,
   Effect,
   Exit,
   Logger,
@@ -74,7 +83,53 @@ import {
   Schema,
   Tracer,
 } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpServerRequest } from 'effect/http';
+import { AccessChangesCommandsLive } from '@app/core-runtime/access/changes/commands';
+import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
+import {
+  makeAccessProjectionCompiler,
+  makeAccessProjectionTransport,
+} from '@app/core-runtime/access/compiler/spice-db-compiler';
+import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
+import { AccessChangesStoreLive } from '@app/core-runtime/access/changes/persistence/drizzle-store';
+import { AccessMembershipStoreLive } from '@app/core-runtime/access/intent/memberships';
+import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
+import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
+import { ApprovalStoreLive } from '@app/core-runtime/access/approvals/drizzle-store';
+import { FrozenCommandsLive } from '@app/core-runtime/access/approvals/frozen-command-drizzle-store';
+import { AccessApprovalsInboxLive } from '@app/core-runtime/access/approvals/inbox';
+import { AccessPeopleDirectoryLive } from '@app/core-runtime/access/intent/people-directory';
+import { AccessPeopleStoreLive } from '@app/core-runtime/access/intent/people-store';
+import { AccessTeamStoreLive } from '@app/core-runtime/access/intent/teams';
+import { AccessPeopleCommandsLive } from '@app/core-runtime/access/lifecycle/people-service';
+import { AccessApprovalsLive, accessApprovalActionsLayer } from './access-admin/approvals-live.ts';
+import {
+  AccessApprovalsBffLive,
+  accessAdminApprovalsGroupLive,
+  accessApprovalsDeclarations,
+} from './access-admin/approvals.ts';
+import { AccessAdminClock } from './access-admin/clock.ts';
+import {
+  AccessChangesBff,
+  AccessChangesBffLive,
+  AccessChangesWritesClosedLive,
+  accessChangesDeclarations,
+} from './access-admin/changes.ts';
+import {
+  AccessExplainBffWithMembershipsLive,
+  accessAdminExplainGroupLive,
+  accessExplainDeclarations,
+} from './access-admin/explain.ts';
+import { AccessPeopleBffLive, accessAdminPeopleGroupLive, accessPeopleDeclarations } from './access-admin/people.ts';
+import { AccessAdminRolesBffLive, accessAdminRolesGroupLive, accessRolesDeclarations } from './access-admin/roles.ts';
+import {
+  AccessAdminSession,
+  accessAdminAuthenticationRequiredProblem,
+  accessAdminForbiddenProblem,
+  accessAdminInternalProblem,
+  accessAdminUnavailableProblem,
+  accessAdminUnprocessableProblem,
+} from './access-admin/session.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { ModuleApiTransportLive } from '../src/module-api/transport.ts';
 
@@ -1048,6 +1103,99 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
     ),
 );
 
+const accessAdminSessionLive = Layer.effect(
+  AccessAdminSession,
+  Effect.gen(function* accessAdminSessionLayer() {
+    const authentication = yield* AuthenticationService;
+    const resolver = yield* OperationalScopeResolver;
+    const gate = yield* AccessDecisionGate;
+    return {
+      requireTenantContext: Effect.fn('ShellApi.accessAdminTenantContext')(function* accessAdminTenantContext(
+        headers: Headers,
+      ) {
+        const responseRequest = yield* Effect.serviceOption(HttpServerRequest.HttpServerRequest);
+        if (Option.isSome(responseRequest)) {
+          yield* noStore.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, responseRequest.value));
+        }
+        const session = yield* authentication.resolveTenantContext(headers).pipe(
+          Effect.provideService(AccessDecisionGate, gate),
+          Effect.mapError((error) =>
+            Match.value(error).pipe(
+              Match.tag('AuthenticationUnavailableError', accessAdminUnavailableProblem),
+              Match.tag('AuthenticationInternalError', () => accessAdminInternalProblem('Session resolution failed.')),
+              Match.tag('InvalidCredentialsError', accessAdminAuthenticationRequiredProblem),
+              Match.tag('OntosIdentityForbiddenError', () =>
+                accessAdminForbiddenProblem('The authenticated identity cannot access this tenant.'),
+              ),
+              Match.exhaustive,
+            ),
+          ),
+        );
+        if (Option.isSome(responseRequest)) {
+          yield* forwardSetCookieHeaders(session.setCookieHeaders).pipe(
+            Effect.provideService(HttpServerRequest.HttpServerRequest, responseRequest.value),
+          );
+        }
+        if (session.state === 'anonymous') {
+          return yield* Effect.fail(accessAdminAuthenticationRequiredProblem());
+        }
+        return yield* resolver
+          .resolve({
+            correlationId: headers.get('x-correlation-id') ?? 'missing',
+            legalEntityScope: 'optional',
+            principal: session.principal,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              Match.value(error).pipe(
+                Match.tag('OperationAuthenticationRequired', accessAdminAuthenticationRequiredProblem),
+                Match.tag('OperationContextDenied', () =>
+                  accessAdminForbiddenProblem('The tenant context could not be admitted.'),
+                ),
+                Match.tag('OperationContextInvalid', () =>
+                  accessAdminUnprocessableProblem('The tenant context is invalid.'),
+                ),
+                Match.tag('OperationContextUnavailable', accessAdminUnavailableProblem),
+                Match.exhaustive,
+              ),
+            ),
+          );
+      }),
+    };
+  }),
+);
+
+/** The Shell module's declared administration capabilities, alongside the live BFF groups. */
+export const shellAccessAdminDeclarations = Object.freeze({
+  approvals: accessApprovalsDeclarations,
+  changes: accessChangesDeclarations,
+  explain: accessExplainDeclarations,
+  people: accessPeopleDeclarations,
+  roles: accessRolesDeclarations,
+});
+
+const accessAdminChangesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'accessAdminChanges', (handlers) =>
+  handlers
+    .handle('listAccessChanges', ({ payload, request }) =>
+      noStore.pipe(
+        Effect.andThen(AccessChangesBff),
+        Effect.flatMap((bff) => bff.list(requestHeaders(request.headers), payload)),
+      ),
+    )
+    .handle('previewAccessChanges', ({ payload, request }) =>
+      noStore.pipe(
+        Effect.andThen(AccessChangesBff),
+        Effect.flatMap((bff) => bff.preview(requestHeaders(request.headers), payload)),
+      ),
+    )
+    .handle('decideAccessChanges', ({ payload, request }) =>
+      noStore.pipe(
+        Effect.andThen(AccessChangesBff),
+        Effect.flatMap((bff) => bff.decide(requestHeaders(request.headers), payload)),
+      ),
+    ),
+);
+
 const requireShellSession = Effect.fn('ShellApi.requireShellSession')(function* requireShellSession(
   headers: RequestHeaders,
 ) {
@@ -1378,8 +1526,11 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           const items = yield* Effect.forEach(
             result.items,
-            (binding) =>
-              resolver
+            (binding) => {
+              if (binding.authBindingId === undefined) {
+                return Effect.succeed({});
+              }
+              return resolver
                 .loadApiKeyBindingForAdministration({
                   authBindingId: binding.authBindingId,
                   principalId: resolved.principal.principalId,
@@ -1391,16 +1542,31 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                       .metadata(bindingState.providerSubjectId)
                       .pipe(Effect.map((metadata) => ({ bindingState, metadata }))),
                   ),
-                  Effect.map(({ bindingState, metadata }) => {
-                    const { providerKeyId: _providerKeyId, ...publicKeyMetadata } = metadata;
-                    return {
-                      ...publicKeyMetadata,
-                      authBindingId: binding.authBindingId,
-                      cleanupPending: metadata.enabled !== (bindingState.status === 'active'),
-                    };
-                  }),
+                  Effect.map(({ bindingState, metadata }) =>
+                    withOptionalProperty(
+                      withOptionalProperty(
+                        {
+                          authBindingId: binding.authBindingId,
+                          expiresAt: metadata.expiresAt,
+                          name: metadata.name,
+                          start: metadata.start,
+                        },
+                        binding.createdAt !== undefined,
+                        'createdAt',
+                        metadata.createdAt,
+                        {},
+                      ),
+                      binding.status !== undefined,
+                      'enabled',
+                      metadata.enabled,
+                      binding.status === undefined
+                        ? {}
+                        : { cleanupPending: metadata.enabled !== (bindingState.status === 'active') },
+                    ),
+                  ),
                   Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
-                ),
+                );
+            },
             { concurrency: 1 },
           );
           return yield* decodeResponse(
@@ -1454,16 +1620,15 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
           const items = yield* Effect.forEach(
             result.items,
             Effect.fn(function* loadManagedApiKey(item) {
-              const authBindingId = Option.getOrNull(item.authBindingId);
+              const authBindingId = item.authBindingId === undefined ? null : Option.getOrNull(item.authBindingId);
               if (authBindingId === null) {
-                const withoutKey = {
-                  displayName: item.displayName,
-                  key: null,
-                  kind: item.kind,
-                  principalId: item.principalId,
-                  principalStatus: item.principalStatus,
-                };
-                return withoutKey;
+                return withOptionalProperty(
+                  { key: null, kind: item.kind, principalId: item.principalId, principalStatus: item.principalStatus },
+                  item.displayName !== undefined,
+                  'displayName',
+                  item.displayName,
+                  {},
+                );
               }
               return yield* resolver
                 .loadApiKeyBindingForAdministration({
@@ -1477,21 +1642,39 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                       .metadata(bindingState.providerSubjectId)
                       .pipe(Effect.map((metadata) => ({ bindingState, metadata }))),
                   ),
-                  Effect.map(({ bindingState, metadata }) => ({
-                    displayName: item.displayName,
-                    key: {
-                      authBindingId,
-                      cleanupPending: metadata.enabled !== (bindingState.status === 'active'),
-                      createdAt: metadata.createdAt,
-                      enabled: metadata.enabled,
-                      expiresAt: metadata.expiresAt,
-                      name: metadata.name,
-                      start: metadata.start,
-                    },
-                    kind: item.kind,
-                    principalId: item.principalId,
-                    principalStatus: item.principalStatus,
-                  })),
+                  Effect.map(({ bindingState, metadata }) =>
+                    withOptionalProperty(
+                      {
+                        key: withOptionalProperty(
+                          withOptionalProperty(
+                            {
+                              authBindingId,
+                              expiresAt: metadata.expiresAt,
+                              name: metadata.name,
+                              start: metadata.start,
+                            },
+                            item.bindingCreatedAt !== undefined,
+                            'createdAt',
+                            metadata.createdAt,
+                            {},
+                          ),
+                          item.bindingStatus !== undefined,
+                          'enabled',
+                          metadata.enabled,
+                          item.bindingStatus === undefined
+                            ? {}
+                            : { cleanupPending: metadata.enabled !== (bindingState.status === 'active') },
+                        ),
+                        kind: item.kind,
+                        principalId: item.principalId,
+                        principalStatus: item.principalStatus,
+                      },
+                      item.displayName !== undefined,
+                      'displayName',
+                      item.displayName,
+                      {},
+                    ),
+                  ),
                   Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
                 );
             }),
@@ -1668,6 +1851,16 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
   return catalog.composition.revision;
 });
 
+/** The staff namespace is registered for exactly the source apps the module credentials are enrolled for. */
+const delegationNamespaceRegistryEffect = loadGatewayModuleBindings.pipe(
+  Effect.flatMap((bindings) =>
+    staffAuthenticationNamespaceRegistration([...new Set(bindings.map((binding) => binding.sourceAppId))]).pipe(
+      Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),
+    ),
+  ),
+  Effect.mapError(delegationUnavailable),
+);
+
 const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
   handlers
     .handle('issueGatewayContext', ({ payload, request }) =>
@@ -1711,15 +1904,31 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         const verified = yield* keys
           .verify(rawKey)
           .pipe(Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))));
+        // A module credential acts only through the delegated endpoint, which names the subject it acts for.
+        yield* admitIntegrationCredential(verified.providerKeyId).pipe(
+          Effect.catchTag('GatewayDelegationError', (error) =>
+            failApiKeyGatewayProblem(
+              error.code === 'forbidden' ? gatewayForbiddenProblem() : gatewayAuthenticationUnavailableProblem(),
+            ),
+          ),
+        );
         const identity = yield* resolver
           .resolveBetterAuthApiKey(verified.providerKeyId)
           .pipe(Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)));
         let legalEntityId: string | undefined;
+        const apiKeyContextRef = `better-auth-api-key:${verified.providerKeyId}`;
         if (payload.legalEntityId !== undefined) {
           const selected = yield* validateAuthorizedLegalEntity({
             legalEntityId: payload.legalEntityId,
-            principalId: identity.principalId,
-            tenantId: identity.tenantId,
+            scope: {
+              authBindingId: identity.authBindingId,
+              authContextRef: apiKeyContextRef,
+              authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+              authMethod: 'api_key',
+              correlationId: correlationFromRequest(request),
+              principalId: identity.principalId,
+              tenantId: identity.tenantId,
+            },
           }).pipe(
             Effect.catch((error) =>
               failApiKeyGatewayProblem(
@@ -1734,7 +1943,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         const principal = withOptionalProperty(
           {
             authBindingId: identity.authBindingId,
-            authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+            authContextRef: apiKeyContextRef,
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             authMethod: 'api_key' as const,
             principalId: identity.principalId,
@@ -1759,11 +1968,10 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         ),
       ),
     )
-    .handle('issueRelayedGatewayContext', ({ headers, payload, request }) =>
-      Effect.gen(function* issueRelayGatewayContextHandler() {
+    .handle('issueDelegatedGatewayContext', ({ headers, payload, request }) =>
+      Effect.gen(function* issueDelegatedGatewayContextHandler() {
         yield* requireGatewayRelease(payload.compositionRevision);
         const keys = yield* ApiKeyService;
-        const resolver = yield* PrincipalResolver;
         const rawKey = headers['x-api-key'];
         if (rawKey === undefined || rawKey.trim().length === 0) {
           return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
@@ -1771,30 +1979,19 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         const verified = yield* keys
           .verify(rawKey)
           .pipe(Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))));
-        // Current binding authenticates the workload; its Principal never substitutes for the source actor.
-        yield* resolver
-          .resolveBetterAuthApiKey(verified.providerKeyId)
-          .pipe(Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)));
-        const sourceNamespaceRegistry = yield* staffAuthenticationNamespaceRegistration([
-          'catalog',
-          'commerce-customer-context',
-          'commerce-market-catalog',
-        ]).pipe(
-          Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),
-          Effect.mapError(relayUnavailable),
-          Effect.catchTag('GatewayRelayError', () =>
+        const delegationNamespaceRegistry = yield* delegationNamespaceRegistryEffect.pipe(
+          Effect.catchTag('GatewayDelegationError', () =>
             failApiKeyGatewayProblem(gatewayAuthenticationUnavailableProblem()),
           ),
         );
-        return yield* issueRelayedGatewayContextAssertion({
+        return yield* issueDelegatedGatewayContextAssertion({
           payload,
           requestCorrelation: correlationFromRequest(request),
           verifiedProviderKeyId: verified.providerKeyId,
         }).pipe(
-          Effect.provideService(AuthenticationNamespaceRegistry, sourceNamespaceRegistry),
+          Effect.provideService(AuthenticationNamespaceRegistry, delegationNamespaceRegistry),
           Effect.catchTags({
-            GatewayIssuerError: (error) => pipe(error, gatewayIssuerProblem, failApiKeyGatewayProblem),
-            GatewayRelayError: (error) =>
+            GatewayDelegationError: (error) =>
               Match.value(error.code).pipe(
                 Match.when('authentication_required', () =>
                   failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem()),
@@ -1815,10 +2012,11 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
                 ),
                 Match.exhaustive,
               ),
+            GatewayIssuerError: (error) => pipe(error, gatewayIssuerProblem, failApiKeyGatewayProblem),
           }),
         );
       }).pipe(
-        recoverUnexpectedDefect(request, 'Unexpected gateway relay defect', () =>
+        recoverUnexpectedDefect(request, 'Unexpected gateway delegation defect', () =>
           failApiKeyGatewayProblem(gatewayInternalProblem()),
         ),
       ),
@@ -1826,6 +2024,26 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
 );
 
 const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
+/**
+ * The five enforcement ports this composition reads its authority through (CUTOVER-PLAN §3.1).
+ * They stay in the output on purpose: the Action and Read runtimes bind the same gate through
+ * `bindLiveAccessGate`, so one composition builds them once and shares them.
+ */
+const accessEnforcementPortsLive = AccessEnforcementPortsLive.pipe(
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(ShellCryptoLive),
+);
+/**
+ * The one access gate of this composition: the seam over those five ports. Every Shell surface —
+ * reads, navigation, page opens, search providers, company selection and impersonation — asks it,
+ * and no Shell surface keeps a check of its own. A suite supplies its own gate through the runtime's
+ * `accessDecisionLayer` argument, exactly as it already supplies its Context access and providers.
+ */
+const defaultAccessDecisionLive = AccessDecisionLive.pipe(Layer.provide(accessEnforcementPortsLive));
+/** The gate layer a composition may be given; a suite's scripted gate is one of these. */
+type ShellAccessDecisionLayer = Layer.Layer<AccessDecisionGate, Layer.Error<typeof defaultAccessDecisionLive>>;
 const defaultContextAccessLive = Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive);
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
 const principalResolverLive = PrincipalResolverLive({
@@ -1896,6 +2114,11 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
   Layer.provide(compositionSourceLive),
 );
 const approvedModuleCatalogLive = ShellInstalledModuleCatalogLive.pipe(Layer.provide(activeApplicationCompositionLive));
+/** A suite may pin the Shell's own read authority; production reads the active composition. */
+const shellReadAuthorityLayerFor = (shellReadAuthority: ActiveApplicationCompositionServiceContract | undefined) =>
+  shellReadAuthority === undefined
+    ? activeApplicationCompositionLive
+    : Layer.succeed(ActiveApplicationCompositionService, shellReadAuthority);
 const approvedGatewayIssuerLive = GatewayIssuerLive.pipe(
   Layer.provide(approvedModuleCatalogLive),
   Layer.provide(GatewayScopeGrantRegistrarLive),
@@ -1915,6 +2138,8 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   resourceGateways?: ShellResourceGateways,
   scopedModuleStateFactory?: ShellScopedModuleStateFactory,
   externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
+  /** The access gate this composition asks; a suite supplies a scripted one (never a production default). */
+  accessDecisionLayer?: ShellAccessDecisionLayer,
   shellReadAuthority?: ActiveApplicationCompositionServiceContract,
   runtimeDatabase?: DatabaseConnectionPair,
 ];
@@ -1932,6 +2157,7 @@ export const makeShellAuthenticationApiRuntime = (
     resourceGateways = unavailableResourceGateways,
     scopedModuleStateFactory = defaultScopedModuleStateFactory,
     externalIdentityDeploymentLayer = ExternalIdentityNotInstalledLive,
+    accessDecisionLayer,
     shellReadAuthority,
     runtimeDatabase,
   ] = args;
@@ -1980,10 +2206,22 @@ export const makeShellAuthenticationApiRuntime = (
     (runtimeDatabase === undefined
       ? tenantModuleStateServiceLive
       : TenantModuleStateServiceLive.pipe(Layer.provide(runtimeCorePersistenceLive)));
-  const shellReadAuthorityLayer =
-    shellReadAuthority === undefined
-      ? activeApplicationCompositionLive
-      : Layer.succeed(ActiveApplicationCompositionService, shellReadAuthority);
+  const accessEnforcementPortsForRuntimeLive =
+    runtimeDatabase === undefined
+      ? accessEnforcementPortsLive
+      : AccessEnforcementPortsLive.pipe(
+          Layer.provide(TenantIntentLoaderLive),
+          Layer.provide(runtimeCorePersistenceLive),
+          Layer.provide(ShellCryptoLive),
+        );
+  const accessEnforcementLive = Layer.mergeAll(
+    accessDecisionLayer ??
+      (runtimeDatabase === undefined
+        ? defaultAccessDecisionLive
+        : AccessDecisionLive.pipe(Layer.provide(accessEnforcementPortsForRuntimeLive))),
+    accessEnforcementPortsForRuntimeLive,
+  );
+  const shellReadAuthorityLayer = shellReadAuthorityLayerFor(shellReadAuthority);
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
       ? approvedModuleCatalogLive
@@ -1993,7 +2231,7 @@ export const makeShellAuthenticationApiRuntime = (
   const moduleStateGateLayer = ModuleStateGateLive.pipe(Layer.provide(selectedModuleStateLayer));
   const moduleEntrypointGatewayLayer = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLayer));
   const operationalScopeResolverLayer = OperationalScopeResolverLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, contextAccessLayer)),
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, contextAccessLayer, accessEnforcementLive)),
   );
   const sharedOperationLayers = Layer.mergeAll(
     runtimeCorePersistenceLive,
@@ -2002,7 +2240,9 @@ export const makeShellAuthenticationApiRuntime = (
     moduleEntrypointGatewayLayer,
     operationalScopeResolverLayer,
   );
-  const readRuntimeLayer = ReadRuntimeLive.pipe(Layer.provide(sharedOperationLayers));
+  const readRuntimeLayer = ReadRuntimeLive.pipe(
+    Layer.provide(Layer.mergeAll(sharedOperationLayers, accessEnforcementLive)),
+  );
   const actionRuntimeLayer = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -2011,6 +2251,7 @@ export const makeShellAuthenticationApiRuntime = (
         InstalledModuleCatalogServiceLive.pipe(Layer.provide(activeApplicationCompositionLive)),
         ActionRepositoryLive,
         ActionPermissionLive,
+        accessEnforcementLive,
       ),
     ),
   );
@@ -2121,6 +2362,7 @@ export const makeShellAuthenticationApiRuntime = (
         selectedModuleStateLayer,
         moduleCatalogLayer,
         contextAccessLayer,
+        accessEnforcementLive,
         ShellCompositionFactoryLive,
         ShellResourceServicesFactoryLive,
       ),
@@ -2145,14 +2387,103 @@ export const makeShellAuthenticationApiRuntime = (
         ),
       )
     : Layer.empty;
-  const relayScopeResolverLayer = OperationalScopeResolverLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, contextAccessLayer)),
+  const accessAdminStoresLive = Layer.mergeAll(
+    AccessChangesStoreLive,
+    AccessMembershipStoreLive,
+    AccessPeopleDirectoryLive,
+    AccessPeopleStoreLive,
+    AccessTeamStoreLive,
+    AccessWriteJournalStoreLive,
+    TenantIntentLoaderLive,
+  ).pipe(Layer.provide(runtimeCorePersistenceLive));
+  const accessAdminCompilerLive = Layer.effect(
+    AccessProjectionCompiler,
+    Effect.gen(function* accessAdminCompilerLayer() {
+      const configuration = yield* loadSpiceDbConfig().pipe(Effect.orDie);
+      const transport = yield* Effect.acquireRelease(
+        Effect.sync(() => makeAccessProjectionTransport(configuration)),
+        (opened) => Effect.sync(() => opened.close()),
+      );
+      return makeAccessProjectionCompiler(transport);
+    }),
   );
-  const relayLedgerLayer = GatewayRelayExchangeLedgerLive.pipe(Layer.provide(runtimeAuthPersistenceLive));
+  const accessAdminProjectionWriterLive = AccessProjectionWriterLive.pipe(
+    Layer.provide(Layer.mergeAll(accessAdminStoresLive, accessAdminCompilerLive, ShellCryptoLive)),
+  );
+  const accessAdminCommandsLive = AccessChangesCommandsLive.pipe(
+    Layer.provide(Layer.mergeAll(accessAdminStoresLive, accessAdminProjectionWriterLive)),
+  );
+  const accessAdminPeopleCommandsLive = AccessPeopleCommandsLive.pipe(
+    Layer.provide(Layer.mergeAll(accessAdminStoresLive, accessAdminProjectionWriterLive)),
+  );
+  // Approve, reject and withdraw run over Core's live inbox; execution stays closed, because the inbox
+  // binds no owner transaction and the BFF refuses it first. This process registers no owner Action
+  // that governs an amount, so a command whose published declaration names one answers "unavailable".
+  const accessAdminApprovalsLive = AccessApprovalsLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        accessApprovalActionsLayer([]),
+        AccessApprovalsInboxLive.pipe(
+          Layer.provide(ApprovalStoreLive),
+          Layer.provide(FrozenCommandsLive),
+          Layer.provide(Layer.mergeAll(accessAdminStoresLive, runtimeCorePersistenceLive, ShellCryptoLive)),
+        ),
+        accessAdminCommandsLive,
+        accessAdminStoresLive,
+      ),
+    ),
+  );
+  const accessAdminRequestSessionLive = accessAdminSessionLive.pipe(
+    Layer.provide(Layer.mergeAll(authenticationLayer, operationalScopeResolverLayer, accessEnforcementLive)),
+  );
+  const accessAdminClockLive = Layer.effect(
+    AccessAdminClock,
+    Clock.Clock.pipe(
+      Effect.map((clock) => ({
+        now: clock.currentTimeMillis.pipe(Effect.map((millis) => DateTime.toDateUtc(DateTime.makeUnsafe(millis)))),
+      })),
+    ),
+  );
+  const accessAdminBffsLive = Layer.mergeAll(
+    AccessAdminRolesBffLive,
+    AccessApprovalsBffLive,
+    AccessChangesBffLive,
+    AccessExplainBffWithMembershipsLive,
+    AccessPeopleBffLive,
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        accessAdminStoresLive,
+        accessAdminProjectionWriterLive,
+        accessAdminCommandsLive,
+        accessAdminPeopleCommandsLive,
+        accessAdminApprovalsLive,
+        AccessChangesWritesClosedLive,
+        accessAdminRequestSessionLive,
+        accessAdminClockLive,
+        accessEnforcementLive,
+      ),
+    ),
+  );
+  const accessAdminHandlersLive = Layer.mergeAll(
+    accessAdminRolesGroupLive,
+    accessAdminPeopleGroupLive,
+    accessAdminChangesGroupLive,
+    accessAdminApprovalsGroupLive,
+    accessAdminExplainGroupLive,
+  ).pipe(Layer.provide(accessAdminBffsLive));
+  const delegationScopeResolverLayer = OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, contextAccessLayer, accessEnforcementLive)),
+  );
+  const delegationLedgerLayer = GatewayDelegationExchangeLedgerLive.pipe(Layer.provide(runtimeAuthPersistenceLive));
+  const originatorEvidenceLayer = GatewayOriginatorEvidenceLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
+  );
   const handlerDependenciesLive = Layer.mergeAll(
-    relayScopeResolverLayer,
-    relayLedgerLayer,
-    GatewayRelayVerificationLive,
+    delegationScopeResolverLayer,
+    delegationLedgerLayer,
+    originatorEvidenceLayer,
+    GatewayDelegationVerificationLive,
     authenticationLayer,
     runtimeAuthPersistenceLive,
     actionRuntimeLayer,
@@ -2165,6 +2496,7 @@ export const makeShellAuthenticationApiRuntime = (
     selectedModuleStateLayer,
     moduleCatalogLayer,
     contextAccessLayer,
+    accessEnforcementLive,
     shellGovernedReadsLayer,
     readRuntimeLayer,
     runtimeObservabilityLive,
@@ -2185,6 +2517,7 @@ export const makeShellAuthenticationApiRuntime = (
     coreReadLegalEntityDetailGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
     externalIdentityGroupLive,
+    accessAdminHandlersLive,
   ).pipe(
     Layer.provide(outboxMatcherLayer),
     Layer.provide(handlerDependenciesLive),
@@ -2199,7 +2532,12 @@ export const makeShellAuthenticationApiRuntime = (
   });
 };
 
-const apiRuntime = makeShellAuthenticationApiRuntime(
+/**
+ * The production Shell runtime arguments without the access gate. The default export appends the
+ * live gate; a test bundle that must not reach a real engine appends its own scripted gate instead
+ * (CUTOVER-PLAN §3.1 step 8).
+ */
+export const shellProductionRuntimeArguments = Object.freeze([
   authenticationServiceLive,
   approvedGatewayIssuerLive,
   tenantModuleStateServiceLive,
@@ -2209,6 +2547,8 @@ const apiRuntime = makeShellAuthenticationApiRuntime(
   unavailableResourceGateways,
   defaultScopedModuleStateFactory,
   CommerceExternalIdentityDeploymentLive,
-);
+] as const);
+
+const apiRuntime = makeShellAuthenticationApiRuntime(...shellProductionRuntimeArguments);
 
 export default apiRuntime;

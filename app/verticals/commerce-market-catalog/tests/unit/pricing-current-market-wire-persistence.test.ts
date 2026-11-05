@@ -69,6 +69,7 @@ type MarketSnapshotWireFixture = typeof wireSnapshot;
 
 const readWire = Effect.fn('MarketWireTest.read')(function* readWire(payload: MarketSnapshotWireFixture) {
   const harness = yield* makeReadTestHarness({
+    access: 'allowed',
     compositionRevision,
     executeOwnerQuery: ({ sql }) => {
       expect(sql).toContain('read_pricing_current_market_evidence');
@@ -77,7 +78,6 @@ const readWire = Effect.fn('MarketWireTest.read')(function* readWire(payload: Ma
     operationTime: DateTime.toDateUtc(DateTime.makeUnsafe(at)),
     ownerAuthorizationDecision: 'allowed',
     ownerRegistration: commerceMarketCatalogRegistration,
-    permissionDecision: 'allowed',
     scope: { ...principal, correlationId: 'market-wire' },
   });
   const result = yield* harness.runtime.runRead({

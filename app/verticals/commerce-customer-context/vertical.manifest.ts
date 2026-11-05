@@ -39,31 +39,16 @@ import { consumeOrderPurchaseApprovalAction } from './src/actions/consume-order-
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
 import { CounterpartyAccessInvitationReadApi } from './shared/apis/counterparty-access-invitation-read.ts';
 import { counterpartyAccessInvitationResourceDescriptor } from './shared/resources/counterparty-access-invitation.ts';
-import { counterpartyAccessManagePermission } from './shared/permissions/counterparty-access-manage.ts';
-import { counterpartyAccessReadPermission } from './shared/permissions/counterparty-access-read.ts';
-import { counterpartyAddressBookManagePermission } from './shared/permissions/counterparty-address-book-manage.ts';
-import { counterpartyAddressBookUsePermission } from './shared/permissions/counterparty-address-book-use.ts';
 import { CounterpartyAllCustomerArchiveApi } from './shared/apis/counterparty-all-customer-archive.ts';
 import { CounterpartyAllOrderHistoryApi } from './shared/apis/counterparty-all-order-history.ts';
 import { CounterpartyAllOrderHistoryDetailApi } from './shared/apis/counterparty-all-order-history-detail.ts';
-import { counterpartyApprovalDecidePermission } from './shared/permissions/counterparty-approval-decide.ts';
-import { counterpartyApprovalHierarchyManagePermission } from './shared/permissions/counterparty-approval-hierarchy-manage.ts';
-import { counterpartyApprovalRequestManagePermission } from './shared/permissions/counterparty-approval-request-manage.ts';
 import { CounterpartyCommerceAccessCheckApi } from './shared/apis/counterparty-commerce-access-check.ts';
 import { CounterpartyCommerceAccessDetailApi } from './shared/apis/counterparty-commerce-access-detail.ts';
 import { counterpartyCommerceAccessGrantResourceDescriptor } from './shared/resources/counterparty-commerce-access-grant.ts';
 import { CounterpartyCommerceAccessListApi } from './shared/apis/counterparty-commerce-access-list.ts';
-import { counterpartyHistoryReadAllPermission } from './shared/permissions/counterparty-history-read-all.ts';
-import { counterpartyHistoryReadOwnPermission } from './shared/permissions/counterparty-history-read-own.ts';
 import { CounterpartyOrderHistoryApi } from './shared/apis/counterparty-order-history.ts';
 import { CounterpartyOrderHistoryDetailApi } from './shared/apis/counterparty-order-history-detail.ts';
-import { counterpartyProfileReadPermission } from './shared/permissions/counterparty-profile-read.ts';
-import { counterpartyPurchaseLimitManagePermission } from './shared/permissions/counterparty-purchase-limit-manage.ts';
-import { counterpartyPurchasePreparePermission } from './shared/permissions/counterparty-purchase-prepare.ts';
-import { counterpartyPurchaseSubmitPermission } from './shared/permissions/counterparty-purchase-submit.ts';
 import { counterpartyPurchasingProfileResourceDescriptor } from './shared/resources/counterparty-purchasing-profile.ts';
-import { counterpartySettingsPaymentTermsManagePermission } from './shared/permissions/counterparty-settings-payment-terms-manage.ts';
-import { counterpartySettingsPriceGroupManagePermission } from './shared/permissions/counterparty-settings-price-group-manage.ts';
 import { createApprovalHierarchyAction } from './src/actions/create-approval-hierarchy.action.ts';
 import { createCounterpartyAccessInvitationAction } from './src/actions/create-counterparty-access-invitation.action.ts';
 import { createCounterpartyPurchasingProfileAction } from './src/actions/create-counterparty-purchasing-profile.action.ts';
@@ -141,23 +126,13 @@ import { reserveMarketRetirementAction } from './src/actions/reserve-market-reti
 import { reservePaymentTermRetirementAction } from './src/actions/reserve-payment-term-retirement.action.ts';
 import { resolveProfileReconciliationAction } from './src/actions/resolve-profile-reconciliation.action.ts';
 import { RetailAccessDecisionApi } from './shared/apis/retail-access-decision.ts';
-import { retailAddressBookManagePermission } from './shared/permissions/retail-address-book-manage.ts';
-import { retailAddressBookUsePermission } from './shared/permissions/retail-address-book-use.ts';
-import { retailAftercareReadPermission } from './shared/permissions/retail-aftercare-read.ts';
-import { retailClaimCreatePermission } from './shared/permissions/retail-claim-create.ts';
-import { retailConsentManagePermission } from './shared/permissions/retail-consent-manage.ts';
 import { retailCustomerProfileResourceDescriptor } from './shared/resources/retail-customer-profile.ts';
-import { retailHistoryReadPermission } from './shared/permissions/retail-history-read.ts';
-import { retailNotificationsManagePermission } from './shared/permissions/retail-notifications-manage.ts';
 import { RetailOrderHistoryApi } from './shared/apis/retail-order-history.ts';
 import { RetailOrderHistoryDetailApi } from './shared/apis/retail-order-history-detail.ts';
 import { RetailPortalProfileBindingReadApi } from './shared/apis/retail-portal-profile-binding-read.ts';
 import { retailPortalProfileBindingResourceDescriptor } from './shared/resources/retail-portal-profile-binding.ts';
 import { RetailPrincipalResolutionApi } from './shared/apis/retail-principal-resolution.ts';
-import { retailProfileReadPermission } from './shared/permissions/retail-profile-read.ts';
 import { RetailPurchasingSubjectCurrentV1Api } from './shared/apis/retail-purchasing-subject-current-v1.ts';
-import { retailRepeatOrderPermission } from './shared/permissions/retail-repeat-order.ts';
-import { retailSettingsPaymentTermPreferenceManagePermission } from './shared/permissions/retail-settings-payment-term-preference-manage.ts';
 import { revalidateOrderPurchaseApprovalAction } from './src/actions/revalidate-order-purchase-approval.action.ts';
 import { revalidatePurchaseApprovalAction } from './src/actions/revalidate-purchase-approval.action.ts';
 import { revokeCounterpartyAccessInvitationAction } from './src/actions/revoke-counterparty-access-invitation.action.ts';
@@ -225,6 +200,12 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
+  originatorActions: [
+    // Owner calls of a Retail enrollment act for the invocation that started its Attempt.
+    startPortalEnrollmentAction.descriptor.actionKey,
+    // The owner's outbox delivery of a privacy measure acts for the invocation that dispatched it.
+    'privacy.core.dispatch-privacy-measure',
+  ],
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
@@ -361,35 +342,6 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'verify-retail-purchasing-subject-current-v1': VerifyRetailPurchasingSubjectCurrentV1Api,
       // </generated-module-manifest-apis>
     },
-    businessPermissions: [
-      // <generated-module-manifest-business-permissions>
-      counterpartyAccessManagePermission,
-      counterpartyAccessReadPermission,
-      counterpartyAddressBookManagePermission,
-      counterpartyAddressBookUsePermission,
-      counterpartyApprovalDecidePermission,
-      counterpartyApprovalHierarchyManagePermission,
-      counterpartyApprovalRequestManagePermission,
-      counterpartyHistoryReadAllPermission,
-      counterpartyHistoryReadOwnPermission,
-      counterpartyProfileReadPermission,
-      counterpartyPurchaseLimitManagePermission,
-      counterpartyPurchasePreparePermission,
-      counterpartyPurchaseSubmitPermission,
-      counterpartySettingsPaymentTermsManagePermission,
-      counterpartySettingsPriceGroupManagePermission,
-      retailAddressBookManagePermission,
-      retailAddressBookUsePermission,
-      retailAftercareReadPermission,
-      retailClaimCreatePermission,
-      retailConsentManagePermission,
-      retailHistoryReadPermission,
-      retailNotificationsManagePermission,
-      retailProfileReadPermission,
-      retailRepeatOrderPermission,
-      retailSettingsPaymentTermPreferenceManagePermission,
-      // </generated-module-manifest-business-permissions>
-    ],
     components: {
       // <generated-module-manifest-components>
       // </generated-module-manifest-components>

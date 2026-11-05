@@ -3,12 +3,10 @@ import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { AssignCustomerPriceGroupPayloadSchema } from '../../src/actions/assign-customer-price-group.action.ts';
 import {
-  customerPriceGroupAssignmentReadPermission,
   customerPriceGroupAssignmentReadRead,
   readCustomerPriceGroupAssignments,
 } from '../../src/api/customer-price-group-assignment-read.read.ts';
 import {
-  customerPriceGroupResolutionPermission,
   customerPriceGroupResolutionRead,
   resolveCustomerPriceGroupFromServices,
 } from '../../src/api/customer-price-group-resolution.read.ts';
@@ -367,10 +365,16 @@ it.effect('rejects invalid periods and declares tagged business-plus-resource Re
       }),
     );
     expect(invalid._tag).toBe('Failure');
-    expect(customerPriceGroupAssignmentReadRead.descriptor.permissionTarget).toBe('conditional');
-    expect(customerPriceGroupResolutionRead.descriptor.permissionTarget).toBe('conditional');
-    expect(customerPriceGroupAssignmentReadPermission.branchTags).toEqual(['COUNTERPARTY', 'RETAIL']);
-    expect(customerPriceGroupResolutionPermission.branchTags).toEqual(['COUNTERPARTY', 'RETAIL']);
+    // One scope-wide declaration per read: the v2 gate decides the capability and the owner facts
+    // name the counterparty or Retail profile whose own grant the overlay checks (O67-Q1, O70).
+    expect(customerPriceGroupAssignmentReadRead.descriptor.accessDeclaration?.key).toBe(
+      'commerce.customer-context.customer-price-group-assignment.read',
+    );
+    expect(customerPriceGroupResolutionRead.descriptor.accessDeclaration?.key).toBe(
+      'commerce.customer-context.customer-price-group.resolve',
+    );
+    expect(customerPriceGroupAssignmentReadRead.descriptor.accessOwnerFacts).toBeDefined();
+    expect(customerPriceGroupResolutionRead.descriptor.accessOwnerFacts).toBeDefined();
     expect(
       Schema.is(CustomerPriceGroupResolutionRequestSchema)({
         authorizationSubject: { kind: 'COUNTERPARTY' },

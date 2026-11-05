@@ -63,7 +63,7 @@ const recoverActivatePackageOption = Effect.fn('ActivatePackageOptionRecoveryRea
 
 const activatePackageOptionRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.activate-package-option-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.activate-package-option-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const activatePackageOptionRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const activatePackageOptionRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.activate-package-option-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'package-definition', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: activatePackageOptionRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const activatePackageOptionRecoveryRead = defineRead(
     inputSchema: ActivatePackageOptionRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.activate-package-option-recovery',
     resultSchema: ActivatePackageOptionRecoveryResponseSchema,
@@ -92,5 +99,4 @@ export const activatePackageOptionRecoveryRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug issue-dsr-delivery-access
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/issue-dsr-delivery-access.ts';
 
 export { IssueDsrDeliveryAccessPayloadSchema } from '../actions/issue-dsr-delivery-access.ts';
-
 export const IssueDsrDeliveryAccessActionInvalidProblemSchema = makeProblemDetailsSchema(
   'IssueDsrDeliveryAccessActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const IssueDsrDeliveryAccessActionForbiddenProblemSchema = makeProblemDet
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const issueDsrDeliveryAccessActionGroupDefinition = HttpApiGroup.make('is
     HttpApiEndpoint.post('execute', '/privacy/actions/issue-dsr-delivery-access', {
       error: actionErrors,
       payload: Schema.toEncoded(IssueDsrDeliveryAccessPayloadSchema),
-      success: IssueDsrDeliveryAccessResultSchema,
+      success: [ActionProposalAcceptedSchema, IssueDsrDeliveryAccessResultSchema],
     }),
   )
   .middleware(IssueDsrDeliveryAccessActionSchemaErrorMiddleware);

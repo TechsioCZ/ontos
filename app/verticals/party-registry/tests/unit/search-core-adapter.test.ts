@@ -1,5 +1,5 @@
 import { CoreSearchProjectionHitSchema } from '@app/core-runtime';
-import type { CoreSearchQueryRuntimeService } from '@app/core-runtime';
+import type { CoreSearchAuthorization, CoreSearchQueryRuntimeService } from '@app/core-runtime';
 import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -66,13 +66,21 @@ const wrongResourceHit = Schema.decodeSync(CoreSearchProjectionHitSchema)({
   title: 'Wrong',
 });
 
+/** What this read's own gate answered: the whole scope is visible and every name surface is granted. */
+const authorization = {
+  hiddenTextFields: [],
+  listAccess: { groups: [] },
+} as const satisfies CoreSearchAuthorization;
+
 it.effect('Party adapter queries only the Core-owned Party projection and maps alias context', () =>
   Effect.gen(function* partyAdapterQuery() {
     const calls: unknown[] = [];
     const core: CoreSearchQueryRuntimeService = {
-      search: (input, searchScope) => {
+      search: (input, searchScope, searchAuthorization) => {
         calls.push(input);
         expect(searchScope).toBe(scope);
+        // The authorization is Core's third argument, so the query itself carries it (O17, O25).
+        expect(searchAuthorization).toBe(authorization);
         return Effect.succeed([partyAliasHit]);
       },
     };
@@ -85,6 +93,7 @@ it.effect('Party adapter queries only the Core-owned Party projection and maps a
         tenantId,
       },
       scope,
+      authorization,
     );
 
     expect(calls).toEqual([
@@ -111,9 +120,10 @@ it.effect('Counterparty adapter uses trusted Legal Entity, effective time, role 
   Effect.gen(function* counterpartyAdapterQuery() {
     const calls: unknown[] = [];
     const core: CoreSearchQueryRuntimeService = {
-      search: (input, searchScope) => {
+      search: (input, searchScope, searchAuthorization) => {
         calls.push(input);
         expect(searchScope).toBe(scope);
+        expect(searchAuthorization).toBe(authorization);
         return Effect.succeed([counterpartyHit]);
       },
     };
@@ -129,6 +139,7 @@ it.effect('Counterparty adapter uses trusted Legal Entity, effective time, role 
         tenantId,
       },
       scope,
+      authorization,
     );
 
     expect(calls).toEqual([
@@ -177,6 +188,7 @@ it.effect('Party adapter fails closed when a generic projection returns the wron
           tenantId,
         },
         scope,
+        authorization,
       ),
     );
     expect(Predicate.isTagged(failure, 'Failure')).toBeTruthy();

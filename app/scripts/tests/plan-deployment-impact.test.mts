@@ -11,16 +11,8 @@ import { expect, it } from 'effect-rstest';
 import type { ApplicationMigrationPlan } from '../application-migration-plan.mts';
 import { selectApplicationReleaseUnits } from '../application-release-intent.mts';
 import type { ApplicationReleaseIntent } from '../application-release-intent.mts';
-import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
-import {
-  planDeploymentImpact as planDeploymentImpactEffect,
-  validateAuthorizationPromotionGate,
-} from '../plan-deployment-impact.mts';
-import type {
-  AuthorizationPromotionGateInput,
-  DeploymentImpactPlan,
-  PlanDeploymentImpactOptions,
-} from '../plan-deployment-impact.mts';
+import { planDeploymentImpact as planDeploymentImpactEffect } from '../plan-deployment-impact.mts';
+import type { DeploymentImpactPlan, PlanDeploymentImpactOptions } from '../plan-deployment-impact.mts';
 import {
   findStageDeploymentBase,
   resolveStageDeploymentBase,
@@ -671,7 +663,7 @@ it.live('orders authorization schema and replay migration before every affected 
     yield* withFixture((root) =>
       Effect.gen(function* testEffect9() {
         const plan = yield* planDeploymentImpact({
-          changedPaths: ['app/scripts/authorization/rollout-contract.mts'],
+          changedPaths: ['packages/core-runtime/src/authorization/access-declaration.ts'],
           rootDirectory: root,
         });
         expect(plan.phases.map(({ id }) => id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
@@ -1921,171 +1913,3 @@ it.live('changing a topology identity changes the plan without editing planner s
     );
   }),
 );
-
-const promotionFixture = (): AuthorizationPromotionGateInput => {
-  const inventory = {
-    businessPermissions: [],
-    entries: [
-      {
-        authorization: { kind: 'public' as const },
-        deployment: 'contacts',
-        entrypointKey: 'contacts.route.home',
-        owner: 'contacts.core',
-        surface: 'route' as const,
-      },
-    ],
-    inventoryHash: 'a'.repeat(64),
-    schemaVersion: 2 as const,
-    sourceRevision: 'revision',
-  };
-  const impact = {
-    aggregates: [],
-    inventoryHash: inventory.inventoryHash,
-    observation: {
-      endedAt: '2026-09-10T00:00:00.000Z',
-      startedAt: '2026-09-02T00:00:00.000Z',
-    },
-    schemaVersion: 1 as const,
-    sourceRevision: inventory.sourceRevision,
-    totalWouldDeny: 0,
-  };
-  const negativeSmoke = {
-    environment: 'stage' as const,
-    inventoryHash: inventory.inventoryHash,
-    scenarios: [],
-    schemaVersion: 1 as const,
-    sourceRevision: inventory.sourceRevision,
-  };
-  return {
-    environment: 'stage',
-    impact,
-    inventory,
-    negativeSmoke,
-    nowEpochMs: Date.parse('2026-10-02T00:00:00.000Z'),
-    readiness: {
-      approvalReference: 'https://github.com/TechsioCZ/ontos/issues/169',
-      environment: 'stage',
-      fixedContextHash: 'b'.repeat(64),
-      impactReportHash: hashAuthorizationEvidence(impact),
-      inventoryHash: inventory.inventoryHash,
-      moduleStateVersion: 'module-state-v1',
-      negativeSmokeHash: hashAuthorizationEvidence(negativeSmoke),
-      observation: { ...impact.observation },
-      policyDataVersion: 'policy-v1',
-      replayMigrationHash: 'c'.repeat(64),
-      schemaVersion: 1,
-      sourceRevision: inventory.sourceRevision,
-      spiceDbSchemaHash: 'd'.repeat(64),
-      status: 'ready',
-      workerOwnershipVersion: 'worker-v1',
-    },
-    rollout: {
-      activatedAt: '2026-09-01T00:00:00.000Z',
-      baselineInventoryHash: inventory.inventoryHash,
-      baselineSourceRevision: inventory.sourceRevision,
-      compatibilityEligibleEntrypoints: [],
-      decisionReference: 'https://github.com/TechsioCZ/ontos/issues/169',
-      expiresAt: '2026-09-30T00:00:00.000Z',
-      mode: 'enforced',
-      schemaVersion: 1,
-    },
-  };
-};
-
-const withoutImpactEvidence = (input: AuthorizationPromotionGateInput): AuthorizationPromotionGateInput => {
-  const { impact, ...remaining } = input;
-  expect(impact !== undefined).toBe(true);
-  return remaining;
-};
-
-const withoutNegativeSmokeEvidence = (input: AuthorizationPromotionGateInput): AuthorizationPromotionGateInput => {
-  const { negativeSmoke, ...remaining } = input;
-  expect(negativeSmoke !== undefined).toBe(true);
-  return remaining;
-};
-
-const withoutReadinessEvidence = (input: AuthorizationPromotionGateInput): AuthorizationPromotionGateInput => {
-  const { readiness, ...remaining } = input;
-  expect(readiness !== undefined).toBe(true);
-  return remaining;
-};
-
-it('requires exact impact, readiness, and negative-smoke evidence for enforced promotion', () => {
-  expect(validateAuthorizationPromotionGate(promotionFixture())).toEqual({
-    environment: 'stage',
-    mode: 'enforced',
-    status: 'ready',
-  });
-  for (const changed of [
-    withoutImpactEvidence(promotionFixture()),
-    withoutNegativeSmokeEvidence(promotionFixture()),
-    withoutReadinessEvidence(promotionFixture()),
-  ]) {
-    expect(() => validateAuthorizationPromotionGate(changed)).toThrow(/requires impact/u);
-  }
-  const stale = promotionFixture();
-  const staleReadiness = stale.readiness;
-  expect(staleReadiness).toBeDefined();
-  if (staleReadiness === undefined) {
-    throw new Error('Expected readiness evidence');
-  }
-  expect(() =>
-    validateAuthorizationPromotionGate({
-      ...stale,
-      readiness: { ...staleReadiness, inventoryHash: 'f'.repeat(64) },
-    }),
-  ).toThrow(/stale, mismatched/u);
-});
-
-it('enforces a non-production environment without promotion evidence only when no allowance is withdrawn', () => {
-  const enforced = withoutReadinessEvidence(withoutNegativeSmokeEvidence(withoutImpactEvidence(promotionFixture())));
-  expect(validateAuthorizationPromotionGate(enforced)).toEqual({
-    environment: 'stage',
-    mode: 'enforced',
-    status: 'enforced',
-  });
-  expect(validateAuthorizationPromotionGate({ ...enforced, environment: 'development' }).status).toBe('enforced');
-  expect(() => validateAuthorizationPromotionGate({ ...enforced, environment: 'production' })).toThrow(
-    /requires impact/u,
-  );
-  expect(() =>
-    validateAuthorizationPromotionGate({
-      ...enforced,
-      rollout: { ...enforced.rollout, compatibilityEligibleEntrypoints: ['contacts.route.home'] },
-    }),
-  ).toThrow(/requires impact/u);
-});
-
-it('report-only promotion is bounded, explicit-baseline-only, and never allowed in production', () => {
-  const enforced = promotionFixture();
-  const withoutRequiredEvidence = withoutReadinessEvidence(
-    withoutNegativeSmokeEvidence(withoutImpactEvidence(enforced)),
-  );
-  const reportOnly = {
-    ...withoutRequiredEvidence,
-    nowEpochMs: Date.parse('2026-09-10T00:00:00.000Z'),
-    rollout: { ...enforced.rollout, mode: 'report_only' as const },
-  };
-  expect(validateAuthorizationPromotionGate(reportOnly).status).toBe('observing');
-  expect(() =>
-    validateAuthorizationPromotionGate({
-      ...reportOnly,
-      environment: 'production',
-    }),
-  ).toThrow(/production.*report-only/u);
-  expect(() =>
-    validateAuthorizationPromotionGate({
-      ...reportOnly,
-      nowEpochMs: Date.parse(reportOnly.rollout.expiresAt),
-    }),
-  ).toThrow(/inactive or expired/u);
-  expect(() =>
-    validateAuthorizationPromotionGate({
-      ...reportOnly,
-      rollout: {
-        ...reportOnly.rollout,
-        compatibilityEligibleEntrypoints: ['contacts.route.new'],
-      },
-    }),
-  ).toThrow(/unknown entrypoint/u);
-});

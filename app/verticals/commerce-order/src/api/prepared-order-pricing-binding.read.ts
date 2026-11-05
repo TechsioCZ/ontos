@@ -3,17 +3,18 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
   isVerifiedGatewayPrincipalContext,
-  ReadHandlerUnavailable,
+  readVerifiedGatewayActor,
   ReadPermissionDenied,
   ReadPolicyDenied,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadHandlerContext } from '@app/core-runtime';
+import type { OperationalScope, ReadHandlerContext, ReadServiceFactory } from '@app/core-runtime';
 import { OrderFinalBindingSchema } from '../../shared/domain/order-commitment.ts';
 import { readOrderPreparedPricingBinding } from '../services/order-final-source-verification.service.ts';
 import { makeOrderCommitmentPersistence } from '../services/order-commitment-persistence.ts';
 import type { OrderCommitmentPersistence } from '../services/order-commitment-persistence.ts';
 import { readFailure } from './order-commitment-read-support.ts';
-import { Config, Effect, Option, Schema } from 'effect';
+import { callAs } from '../services/order-module-call.ts';
+import { Effect, Schema } from 'effect';
 import {
   PreparedOrderPricingBindingRequestSchema,
   PreparedOrderPricingBindingResponseSchema,
@@ -23,40 +24,23 @@ const moduleKey = 'commerce.order' as const;
 
 const preparedOrderPricingBindingEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.order.api.prepared-order-pricing-binding',
   moduleKey,
   role: 'api',
 });
 
-const preparedPricingVerifier = Effect.fn('PreparedOrderPricingBindingRead.verifier')(
+/** The calling module is Pricing (declared by accessActor); the subject is the buyer of the prepared Order. */
+export const preparedPricingVerifier = Effect.fn('PreparedOrderPricingBindingRead.verifier')(
   function* preparedPricingVerifierEffect(scope: OperationalScope) {
-    const configured = yield* Config.all({
-      namespace: Config.String('ONTOS_ORDER_PRICING_VERIFIER_AUTHENTICATION_NAMESPACE_ID'),
-      principalId: Config.schema(Schema.String.check(Schema.isUUID()), 'ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID'),
-    }).pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
-    if (Option.isNone(configured)) {
-      return yield* new ReadHandlerUnavailable({
-        code: 'read_handler_unavailable',
-        reason: 'The Pricing verifier is not configured',
-      });
-    }
-    if (
-      !isVerifiedGatewayPrincipalContext(scope) ||
-      scope.authMethod !== 'api_key' ||
-      scope.authBindingId === undefined ||
-      scope.authContextRef === undefined ||
-      scope.impersonatedByPrincipalId !== undefined ||
-      scope.principalId !== configured.value.principalId ||
-      scope.authenticationNamespaceId !== configured.value.namespace ||
-      configured.value.namespace.trim().length === 0
-    ) {
+    const actor = readVerifiedGatewayActor(scope);
+    if (!isVerifiedGatewayPrincipalContext(scope) || actor === undefined || actor.appId !== 'pricing') {
       return yield* new ReadPermissionDenied({
         code: 'read_permission_denied',
-        reason: 'The configured Pricing verifier is required',
+        reason: 'The Pricing module is required to verify the prepared Order binding',
       });
     }
-    return configured.value.principalId;
+    return yield* Effect.void;
   },
 );
 
@@ -99,12 +83,15 @@ const preparedPricingServices = (verifiedPersistence: VerifiedPersistence, scope
       );
       const state = yield* persistence.loadPreparedForVerifier(binding).pipe(Effect.mapError(readFailure));
       const verified = yield* readOrderPreparedPricingBinding({
-        scope: {
-          buyerPrincipalId: state.bundle.buyerPrincipalId,
-          correlationId: state.attempt.commitmentCorrelationId,
-          legalEntityId: state.bundle.legalEntityId,
-          tenantId: scope.tenantId,
-        },
+        scope: callAs(
+          {
+            buyerPrincipalId: state.bundle.buyerPrincipalId,
+            correlationId: state.attempt.commitmentCorrelationId,
+            legalEntityId: state.bundle.legalEntityId,
+            tenantId: scope.tenantId,
+          },
+          { _tag: 'Assertion', scope },
+        ),
         state,
       }).pipe(Effect.mapError(readFailure));
       if (!Schema.toEquivalence(PreparedOrderPricingBindingRequestSchema)(input, verified.binding)) {
@@ -119,8 +106,41 @@ const preparedPricingServices = (verifiedPersistence: VerifiedPersistence, scope
     }),
   });
 
+/**
+ * The read's owner persistence factory. It is a named `ReadServiceFactory`, so the composition root
+ * sees the request's scoped transaction rather than a constructor imported into the read body.
+ */
+const preparedPricingReadServices: ReadServiceFactory<Effect.Success<ReturnType<typeof preparedPricingServices>>> = (
+  transaction,
+  scope,
+) =>
+  preparedPricingServices(
+    preparedPricingVerifier(scope).pipe(
+      Effect.map(() =>
+        makeOrderCommitmentPersistence(transaction, {
+          operationId: scope.correlationId,
+          scope,
+        }),
+      ),
+    ),
+    scope,
+  );
+
 export const preparedOrderPricingBindingRead = defineRead(
   {
+    accessActor: {
+      callers: ['pricing'],
+      reason: 'Pricing reads the prepared Order binding to confirm the commitment of its quotation.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.order.pricing-binding.read-prepared',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'order-finalization', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: preparedOrderPricingBindingEntrypoint,
     evidencePolicy: {
@@ -130,7 +150,6 @@ export const preparedOrderPricingBindingRead = defineRead(
     inputSchema: PreparedOrderPricingBindingRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.order.api.prepared-order-pricing-binding',
     resultSchema: PreparedOrderPricingBindingResponseSchema,
@@ -139,18 +158,5 @@ export const preparedOrderPricingBindingRead = defineRead(
   (input, context: ReadHandlerContext<Effect.Success<ReturnType<typeof preparedPricingServices>>>) =>
     context.services.verify(input).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   // The Read runtime's scoped transaction builds persistence only for the configured verifier.
-  (transaction, scope) =>
-    preparedPricingServices(
-      preparedPricingVerifier(scope).pipe(
-        Effect.map((preparedEvidencePrincipalId) =>
-          makeOrderCommitmentPersistence(transaction, {
-            operationId: scope.correlationId,
-            preparedEvidencePrincipalId,
-            scope,
-          }),
-        ),
-      ),
-      scope,
-    ),
-  () => ({ kind: 'module', moduleId: moduleKey }),
+  preparedPricingReadServices,
 );

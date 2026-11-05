@@ -6,6 +6,7 @@ export { defineMicroverticalPolicy, denyPolicy } from '../actions/policy.ts';
 export {
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
@@ -42,16 +43,6 @@ export {
   defineBusinessPermission,
   defineBusinessPermissionCatalog,
 } from '../permissions/business-permission.ts';
-export { AuthorizationMutationReconciliationUnavailable } from '../permissions/authorization-reconciler.ts';
-export {
-  AuthorizationMutationSagaError,
-  reconcileCommittedAuthorizationMutation,
-} from '../permissions/authorization-mutation-saga.ts';
-export { AuthorizationMutationStateSchema } from '../permissions/authorization-mutation.ts';
-export {
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
-} from '../permissions/business-permission-mutation.ts';
 export {
   ContextAccess,
   ContextAccessLive,
@@ -94,13 +85,11 @@ export {
 } from './definition.ts';
 export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
 export {
-  ResourceContainmentMutationUnavailable,
-  ResourceContainmentRelationshipMutation,
-  createResourceContainmentRelationshipMutationClient,
-  makeResourceContainmentRelationshipMutation,
-  makeResourceContainmentRelationshipMutationLive,
-} from '../permissions/resource-containment-mutation.ts';
-export { defineOutboxWorkerEntry, OutboxWorkerInfrastructureLive, startOutboxWorkerHost } from './process.ts';
+  defineOutboxWorkerEntry,
+  hostedOutboxWorkerEntry,
+  OutboxWorkerInfrastructureLive,
+  startOutboxWorkerHost,
+} from './process.ts';
 export { OutboxRepositoryLive } from './repository.ts';
 export {
   makeOutboxWorkerLegalEntityScopeFanout,
@@ -133,13 +122,6 @@ export type {
   OutboxWorkerTenantScopeService,
   OutboxWorkerTenantScopeView,
 } from './tenant-scope.ts';
-export type {
-  ResourceContainmentRelationship,
-  ResourceContainmentRelationshipMutationClient,
-  ResourceContainmentRelationshipMutationInput,
-  ResourceContainmentRelationshipMutationService,
-  SpiceDbResourceReference,
-} from '../permissions/resource-containment-mutation.ts';
 export type { CoreSearchIngestionService } from '../search/ingestion.ts';
 export type {
   CoreSearchProjectionDocument,
@@ -153,4 +135,3 @@ export type {
 } from '../search/worker-snapshot.ts';
 
 export type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/context-access.ts';
-export type { ResourceContainmentPreparation } from '../permissions/resource-containment-mutation.ts';

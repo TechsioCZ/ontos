@@ -59,7 +59,9 @@ import {
   TenantModuleStateService,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
+import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import {
@@ -71,6 +73,7 @@ import { makeCoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
 import { OperationAuthenticationRequired, OperationContextUnavailable } from '../../src/operations/errors.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const TestPersistenceErrorContract = Schema.TaggedStruct('TestPersistenceError', {
   reason: Schema.String,
@@ -369,6 +372,8 @@ const liveModuleStateOptions = (database: ContextServiceContract) => {
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   return {
     ...openActionRuntimeOptions,
+    // The protected Core module-state Action decides at the one gate; this suite proves module state, not authority.
+    accessDecision: makeScriptedBoundAccessGate('allowed').bound,
     contextAccess: allowTenantPermissions,
     moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
     moduleStateGate,
@@ -414,6 +419,8 @@ const prepareTestOwnerRows = Effect.fn(function* integrationProgram1(database: C
     state: 'active',
     tenantId,
   });
+  // The governed module-state Action runs under the Tenant's real access fence.
+  yield* writeTestTenantScopes(database.executor, { principalId, tenantId });
 });
 const prepare = withDatabase(prepareTestOwnerRows);
 
@@ -432,11 +439,11 @@ const cleanup = withDatabase(
         principalAuthBindings,
         principals,
         legalEntities,
-        tenants,
       ],
       (table) => database.executor.delete(table).where(eq(table.tenantId, tenantId)),
       { discard: true },
     );
+    // Core retains access intent (D27): the Tenant's scope and fence, and so the Tenant, stay.
   }),
 );
 
@@ -470,6 +477,7 @@ const makeRegistration = ({
 }: RegistrationOptions) =>
   defineAction(
     {
+      accessDeclaration: fixtureActionAccess('core.shell'),
       accessEvidencePolicy: {
         captureMode: 'metadata_only',
         policyKey: 'action-runtime.integration.v1',
@@ -593,6 +601,7 @@ const testProgram1 = () =>
       let handlerExecutions = 0;
       const action = defineAction(
         {
+          accessDeclaration: fixtureActionAccess('inventory.stock'),
           accessEvidencePolicy: {
             captureMode: 'metadata_only',
             policyKey: 'inventory.stock.concurrent-gate.v1',
@@ -889,6 +898,7 @@ const testProgram4 = Effect.fn(function* integrationProgram8() {
         });
         return defineAction(
           {
+            accessDeclaration: fixtureActionAccess('inventory.stock'),
             accessEvidencePolicy: {
               captureMode: 'metadata_only',
               policyKey: 'action-runtime.integration.v1',
@@ -1796,6 +1806,7 @@ const testProgram13 = () =>
       let handlerExecutions = 0;
       const action = defineAction(
         {
+          accessDeclaration: fixtureActionAccess(moduleKey),
           accessEvidencePolicy: {
             captureMode: 'metadata_only',
             policyKey: 'inventory.state-matrix.write.v1',

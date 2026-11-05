@@ -30,7 +30,7 @@ interface RetainedProductInput {
 
 const productHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-history' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.product-history',
   moduleKey: catalogModuleKey,
   role: 'api',
@@ -132,6 +132,14 @@ export const readProductHistory = Effect.fn('ProductHistoryRead.read')(function*
 
 export const productHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-history.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: productHistoryEntrypoint,
     evidencePolicy: {
@@ -141,7 +149,6 @@ export const productHistoryRead = defineRead(
     inputSchema: ProductHistoryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: catalogModuleKey,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.product-history',
     resultSchema: ProductHistoryResponseSchema,
@@ -161,5 +168,4 @@ export const productHistoryRead = defineRead(
         productHistory: localizedFactsReadsForScope(transaction, scope).productHistory,
       })),
     ),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

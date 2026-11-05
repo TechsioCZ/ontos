@@ -1,5 +1,3 @@
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import type { OperationalScope } from '@app/core-runtime';
 import {
   PriceGroupCompatibilityDecisionSchema,
   PriceGroupCompatibilityEvidenceSchema,
@@ -7,31 +5,23 @@ import {
   PriceGroupRefSchema,
 } from '@app/price-group-catalog-contracts';
 import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
-import { Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { Effect, Match, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+
+import { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-context-server';
 
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import {
-  PriceGroupCatalogGatewayCredentialService,
   priceGroupCatalogPort,
   priceGroupCatalogPortFromEnvironment,
 } from '../../src/integrations/price-group-catalog.ts';
 import type { PriceGroupCompatibilityExecutor } from '../../src/integrations/price-group-catalog.ts';
+import { issuedDelegatedContext, originatorSubject } from '../support/delegated-gateway-acquisition.fixture.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
-// Adapter-seam codec input only; the real credential issuer must reject its missing provenance.
-const scope: OperationalScope = {
-  ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
-    authBindingId: '30000000-0000-4000-8000-000000000001',
-    authContextRef: 'better-auth-session:price-group-adapter-unit',
-    authMethod: 'session',
-    legalEntityId: '20000000-0000-4000-8000-000000000001',
-    principalId: '40000000-0000-4000-8000-000000000001',
-    tenantId,
-  }),
-  correlationId: 'price-group-correlation',
-};
+const priceGroupSubject = originatorSubject('a'.repeat(64), tenantId);
 const otherTenantId = '10000000-0000-4000-8000-000000000002';
 const trustedOperationAt = Schema.decodeSync(PriceGroupInstantSchema)('2026-09-23T10:00:00.000Z');
 const priceGroupRef = Schema.decodeSync(PriceGroupRefSchema)({
@@ -273,43 +263,33 @@ it.effect('rejects stale expected evidence even when the provider returns a succ
   }),
 );
 
-it.effect('passes the original scope to the private issuer for every adapter provider attempt', () =>
+it.effect('obtains a fresh Shell-issued context for every provider attempt', () =>
   Effect.gen(function* freshAssertion() {
-    const issuanceRequests: {
-      readonly audience: 'price-group-catalog';
-      readonly requestCorrelation: string;
-      readonly scope: OperationalScope;
-    }[] = [];
+    const issuanceRequests: unknown[] = [];
     const authorizations: string[] = [];
     const destinations: (string | URL | undefined)[] = [];
     const selectedRevisions: (string | undefined)[] = [];
     const port = yield* priceGroupCatalogPortFromEnvironment(
-      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation', scope },
+      { requestCorrelation: 'price-group-correlation', subject: priceGroupSubject },
       (_payload, credential, _correlation, options) => {
         authorizations.push(Redacted.value(credential));
         destinations.push(options.baseUrl);
         selectedRevisions.push(options.compositionRevision);
         return Effect.succeed(decision({ evidence: compatibility, kind: 'USABLE' }));
       },
-    ).pipe(
-      Effect.provide(
-        Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
-          issue: (input) =>
-            Effect.sync(() => {
-              issuanceRequests.push(input);
-              return {
-                baseUrl: new URL('https://shell.example.test/owner-api'),
-                credential: Redacted.make(`Bearer fresh-price-group-assertion-${issuanceRequests.length}`),
-              };
-            }),
+      (request) =>
+        Effect.sync(() => {
+          issuanceRequests.push(request);
+          return issuedDelegatedContext({
+            compositionRevision: 'a'.repeat(64),
+            token: `fresh-price-group-assertion-${issuanceRequests.length}`,
+          });
         }),
-      ),
-    );
+    ).pipe(Effect.provide(nodeCryptoLayer));
 
     yield* port.resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt);
     yield* port.resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt);
 
-    expect(issuanceRequests.every((request) => request.scope === scope)).toBe(true);
     expect(authorizations).toEqual(['Bearer fresh-price-group-assertion-1', 'Bearer fresh-price-group-assertion-2']);
     expect(selectedRevisions).toEqual(['a'.repeat(64), 'a'.repeat(64)]);
     expect(destinations.map(String)).toEqual([
@@ -319,15 +299,15 @@ it.effect('passes the original scope to the private issuer for every adapter pro
     expect(issuanceRequests).toEqual([
       {
         audience: 'price-group-catalog',
-        compositionRevision: 'a'.repeat(64),
+        legalEntityScope: 'tenant',
         requestCorrelation: 'price-group-correlation',
-        scope,
+        subject: priceGroupSubject,
       },
       {
         audience: 'price-group-catalog',
-        compositionRevision: 'a'.repeat(64),
+        legalEntityScope: 'tenant',
         requestCorrelation: 'price-group-correlation',
-        scope,
+        subject: priceGroupSubject,
       },
     ]);
   }),
@@ -338,26 +318,16 @@ it.effect('fails closed before provider execution when the selected connection c
     let executionCount = 0;
     let issuanceCount = 0;
     const port = yield* priceGroupCatalogPortFromEnvironment(
-      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation', scope },
+      { requestCorrelation: 'price-group-correlation', subject: priceGroupSubject },
       () => {
         executionCount += 1;
         return Effect.succeed(decision({ evidence: compatibility, kind: 'USABLE' }));
       },
-    ).pipe(
-      Effect.provide(
-        Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
-          issue: () => {
-            issuanceCount += 1;
-            return Effect.fail(
-              new CustomerPriceGroupCatalogUnavailable({
-                code: 'customer_price_group_catalog_unavailable',
-                reason: 'Selected release credential unavailable',
-              }),
-            );
-          },
-        }),
-      ),
-    );
+      () => {
+        issuanceCount += 1;
+        return Effect.fail(new GatewayDelegationSourceError({ reason: 'Selected release credential unavailable' }));
+      },
+    ).pipe(Effect.provide(nodeCryptoLayer));
 
     const failure = yield* Effect.flip(
       port.resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt),

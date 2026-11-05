@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug govern-variant-axes
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { GovernVariantAxesPayloadSchema, GovernVariantAxesResultSchema } from '../actions/govern-variant-axes.ts';
 
 export { GovernVariantAxesPayloadSchema } from '../actions/govern-variant-axes.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const GovernVariantAxesActionInvalidProblemSchema = makeProblemDetailsSchema(
   'GovernVariantAxesActionInvalidProblem',
@@ -21,6 +23,7 @@ export const GovernVariantAxesActionForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -130,7 +133,7 @@ export const GovernVariantAxesActionApi = HttpApi.make('GovernVariantAxesActionA
       HttpApiEndpoint.post('execute', '/catalog/actions/govern-variant-axes', {
         error: actionErrors,
         payload: Schema.toEncoded(GovernVariantAxesPayloadSchema),
-        success: GovernVariantAxesResultSchema,
+        success: [ActionProposalAcceptedSchema, GovernVariantAxesResultSchema],
       }),
     )
     .middleware(GovernVariantAxesActionSchemaErrorMiddleware),

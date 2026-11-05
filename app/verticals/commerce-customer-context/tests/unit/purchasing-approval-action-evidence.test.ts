@@ -2,7 +2,7 @@ import { Effect, Exit, Layer, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
 import {
-  ActionPermissionCheckError,
+  ActionPermissionDenied,
   ContextAccess,
   CoreSearchResourceRefSchema,
   PrincipalRefSchema,
@@ -12,7 +12,7 @@ import {
 import { makeActionTestHarness, getActionHandler } from '@app/core-runtime/testing/actions';
 import {
   purchasingApprovalCurrentnessServicesForScope,
-  purchasingApprovalPermissionTarget,
+  purchasingApprovalOwnerFacts,
 } from '../../src/actions/purchasing-approval-action-support.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
@@ -92,18 +92,45 @@ const expiresAtText = '2026-09-09T13:00:00.000Z';
 const at = Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(atText);
 const expiresAt = Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(expiresAtText);
 
-const scope: OperationalScope = trustVerifiedGatewayPrincipalContext(
-  {
-    authBindingId: '30000000-0000-4000-8000-000000000001',
-    authContextRef: 'better-auth-api-key:commerce-order-owner',
-    authMethod: 'api_key' as const,
-    correlationId: 'purchasing-approval-action-evidence',
-    legalEntityId,
-    principalId: buyerId,
-    tenantId,
-    trustedStorefrontId: storefrontId,
-  },
+const buyerScopeFields = {
+  authBindingId: '30000000-0000-4000-8000-000000000001',
+  authContextRef: 'better-auth-session:approval-buyer',
+  authMethod: 'session' as const,
+  correlationId: 'purchasing-approval-action-evidence',
+  legalEntityId,
+  principalId: buyerId,
+  tenantId,
+  trustedStorefrontId: storefrontId,
+};
+const scope: OperationalScope = trustVerifiedGatewayPrincipalContext(buyerScopeFields, compositionRevision);
+/** The Order service calls with the buyer as its subject and itself as the verified actor. */
+const orderActorScope: OperationalScope = trustVerifiedGatewayPrincipalContext(
+  buyerScopeFields,
   compositionRevision,
+  undefined,
+  {
+    appId: 'commerce-order',
+    buildMarker: 'commerce-order-release-1',
+    principalId: '30000000-0000-4000-8000-0000000000c1',
+  },
+);
+/** Another verified module acting for the same buyer must not consume the Order commitment. */
+const pricingActorScope: OperationalScope = trustVerifiedGatewayPrincipalContext(
+  buyerScopeFields,
+  compositionRevision,
+  undefined,
+  { appId: 'pricing', buildMarker: 'pricing-release-1', principalId: '30000000-0000-4000-8000-0000000000c2' },
+);
+/** The Order service acts for a subject that is not the buyer of the approval being consumed. */
+const nonBuyerSubjectOrderScope: OperationalScope = trustVerifiedGatewayPrincipalContext(
+  { ...buyerScopeFields, principalId: '10000000-0000-4000-8000-000000000009' },
+  compositionRevision,
+  undefined,
+  {
+    appId: 'commerce-order',
+    buildMarker: 'commerce-order-release-1',
+    principalId: '30000000-0000-4000-8000-0000000000c1',
+  },
 );
 
 const counterpartyRef = Schema.decodeUnknownSync(CoreSearchResourceRefSchema)({
@@ -905,10 +932,10 @@ it.effect('consumes the exact Order commit once and keeps replay idempotent', ()
       consumePurchaseApprovalAction.descriptor.auditEvidenceSchema,
     );
     const workflow = makeWorkflow({ consume: () => Effect.succeed(result) });
-    yield* getActionHandler(consumePurchaseApprovalAction)(
-      payload,
-      contextFor(collector, workflow, 'consume-action-1'),
-    );
+    yield* getActionHandler(consumePurchaseApprovalAction)(payload, {
+      ...contextFor(collector, workflow, 'consume-action-1'),
+      scope: orderActorScope,
+    });
     expect(collector.snapshot().dataAccessEvents.map(({ targetResourceId }) => targetResourceId)).toEqual([
       'request-1',
       'proposal-1',
@@ -936,14 +963,14 @@ it.effect('consumes the exact Order commit once and keeps replay idempotent', ()
       ...result,
       outcome: 'ALREADY_CONSUMED',
     };
-    yield* getActionHandler(consumePurchaseApprovalAction)(
-      payload,
-      contextFor(
+    yield* getActionHandler(consumePurchaseApprovalAction)(payload, {
+      ...contextFor(
         replayCollector,
         makeWorkflow({ consume: () => Effect.succeed(replayResult) }),
         'consume-action-replay',
       ),
-    );
+      scope: orderActorScope,
+    });
     expect(replayCollector.snapshot().auditEvidence).toMatchObject({
       completionRule: 'ONE_APPROVER',
       outcome: 'ALREADY_CONSUMED',
@@ -975,11 +1002,54 @@ it.effect('consumes the exact Order commit once and keeps replay idempotent', ()
       code: 'PERMISSION_DENIED',
     });
     expect(untrustedCollector.snapshot().dataAccessEvents).toHaveLength(0);
+
+    const pricingCollector = createActionCollector(
+      consumePurchaseApprovalAction.descriptor.domainEvents,
+      'commerce.customer-context',
+      consumePurchaseApprovalAction.descriptor.accessEvidencePolicy,
+      consumePurchaseApprovalAction.descriptor.auditEvidenceSchema,
+    );
+    const pricingFailure = yield* Effect.flip(
+      getActionHandler(consumePurchaseApprovalAction)(payload, {
+        ...contextFor(
+          pricingCollector,
+          makeWorkflow({ consume: () => Effect.succeed(result) }),
+          'consume-action-pricing',
+        ),
+        scope: pricingActorScope,
+      }),
+    );
+    expect(pricingFailure).toMatchObject({ code: 'PERMISSION_DENIED' });
+    expect(pricingCollector.snapshot().dataAccessEvents).toHaveLength(0);
+
+    const nonBuyerCollector = createActionCollector(
+      consumePurchaseApprovalAction.descriptor.domainEvents,
+      'commerce.customer-context',
+      consumePurchaseApprovalAction.descriptor.accessEvidencePolicy,
+      consumePurchaseApprovalAction.descriptor.auditEvidenceSchema,
+    );
+    const nonBuyerFailure = yield* Effect.flip(
+      getActionHandler(consumePurchaseApprovalAction)(payload, {
+        ...contextFor(
+          nonBuyerCollector,
+          makeWorkflow({ consume: () => Effect.succeed(result) }),
+          'consume-action-non-buyer',
+        ),
+        scope: nonBuyerSubjectOrderScope,
+      }),
+    );
+    expect(nonBuyerFailure).toMatchObject({
+      code: 'PERMISSION_DENIED',
+      reason: 'The trusted subject must be the buyer of the approval being consumed',
+    });
+    expect(nonBuyerCollector.snapshot().domainEvents).toHaveLength(0);
+    expect(nonBuyerCollector.snapshot().outboxMessages).toHaveLength(0);
+    expect(nonBuyerCollector.snapshot().dataAccessEvents).toHaveLength(0);
   }),
 );
 
 it.effect(
-  'all seven registered Approval targets retain trusted Storefront identity and fail closed on missing or mismatched scope',
+  'all seven registered Approval targets fail closed at the one gate for a trusted, missing or foreign Storefront',
   () =>
     Effect.gen(function* verifyRegisteredApprovalTargets() {
       const common = { counterpartyRef, idempotencyKey: 'target-boundary', storefrontId };
@@ -1209,18 +1279,11 @@ it.effect(
           );
           const harness = yield* makeActionTestHarness({ ownerRegistration: commerceCustomerContextRegistration });
           const outcome = yield* candidate(harness.runtime, authenticated);
+          // The one v2 gate decides every registered Approval target: with no grant scripted it
+          // refuses before any transaction, for a trusted, missing or foreign Storefront alike (O62).
           expect(Result.isFailure(outcome)).toBe(true);
           if (Result.isFailure(outcome)) {
-            expect(Schema.is(ActionPermissionCheckError)(outcome.failure)).toBe(true);
-            if (Schema.is(ActionPermissionCheckError)(outcome.failure)) {
-              // The scripted harness has no business-permission backend. Reaching its explicit
-              // unavailable boundary proves the real trusted-target guard accepted this target.
-              expect(outcome.failure.reason).toBe(
-                trusted === storefrontId
-                  ? 'The authorization service could not determine permission safely'
-                  : 'The declared owner permission targets do not match trusted scope',
-              );
-            }
+            expect(Schema.is(ActionPermissionDenied)(outcome.failure)).toBe(true);
           }
           expect(harness.snapshot().transactionCount).toBe(0);
         }
@@ -1249,39 +1312,19 @@ it.effect(
         );
         expect(Result.isFailure(outcome)).toBe(true);
         if (Result.isFailure(outcome)) {
-          expect(Schema.is(ActionPermissionCheckError)(outcome.failure)).toBe(true);
-          if (Schema.is(ActionPermissionCheckError)(outcome.failure)) {
-            expect(outcome.failure.reason).toBe('The authorization service could not determine permission safely');
-          }
+          expect(Schema.is(ActionPermissionDenied)(outcome.failure)).toBe(true);
         }
         expect(harness.snapshot().transactionCount).toBe(0);
       }
-      const nullTarget = purchasingApprovalPermissionTarget({
-        counterpartyRef,
-        permission: 'counterparty.purchase.submit',
-        scope,
-        storefrontId: null,
+      // The owner rule names the counterparty, and the Storefront only when the request is
+      // Storefront-scoped; the overlay compares it with the trusted scope (O67-Q1, O70).
+      expect(purchasingApprovalOwnerFacts({ counterpartyRef, storefrontId: null })).toEqual({
+        counterpartyId: counterpartyRef.resourceId,
       });
-      expect(nullTarget).toEqual({
-        permission: 'counterparty.purchase.submit',
-        target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty', legalEntityId, tenantId },
-      });
-      const matching = purchasingApprovalPermissionTarget({
-        counterpartyRef,
-        permission: 'counterparty.purchase.submit',
-        scope,
+      expect(purchasingApprovalOwnerFacts({ counterpartyRef, storefrontId })).toEqual({
+        counterpartyId: counterpartyRef.resourceId,
         storefrontId,
       });
-      expect(matching.trustedStorefrontId).toBe(storefrontId);
-      const mismatchedScope = { ...scope, trustedStorefrontId: 'foreign-storefront' };
-      expect(
-        purchasingApprovalPermissionTarget({
-          counterpartyRef,
-          permission: 'counterparty.purchase.submit',
-          scope: mismatchedScope,
-          storefrontId,
-        }).trustedStorefrontId,
-      ).toBe('foreign-storefront');
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

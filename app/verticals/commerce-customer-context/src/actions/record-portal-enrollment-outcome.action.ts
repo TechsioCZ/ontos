@@ -80,6 +80,14 @@ const handleRecordPortalEnrollmentOutcome = Effect.fn('RecordPortalEnrollmentOut
 
 export const recordPortalEnrollmentOutcomeAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.portal-enrollment-outcome.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'portal-enrollment', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.record-portal-enrollment-outcome.access.v1',
@@ -92,7 +100,7 @@ export const recordPortalEnrollmentOutcomeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.record-portal-enrollment-outcome',
       moduleKey,
       role: 'action',

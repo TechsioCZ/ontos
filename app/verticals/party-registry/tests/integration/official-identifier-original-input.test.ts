@@ -5,6 +5,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
@@ -86,6 +87,7 @@ it.layer(
         const connections = { ...isolated.connections, runtime: native.partyConfiguration };
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            access: 'allowed',
             actionKeys: [
               addPartyOfficialIdentifierAction,
               correctPartyFactAction,
@@ -108,6 +110,8 @@ it.layer(
         const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(adminContext));
         const { executor: admin } = yield* makePartyDatabase(connections.admin);
         const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
+        const deniedAccess = makePartyDeniedAccess();
+        const fixtureLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
         const gateway = yield* makePartyReconciliationGateway(native, composition);
         const { issuer, jwks } = gateway;
         const authorization = (actor = principal) => gateway.authorization(actor);
@@ -126,7 +130,7 @@ it.layer(
             ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
           ),
           Layer.provide(redemption),
-          Layer.provide(fixture.layer),
+          Layer.provide(fixtureLayer),
           Layer.provide(
             ConfigProvider.layer(
               ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -138,7 +142,7 @@ it.layer(
             HttpRouter.toWebHandler(
               HttpApiBuilder.layer(api).pipe(
                 Layer.provide(handlers),
-                Layer.provideMerge(fixture.layer),
+                Layer.provideMerge(fixtureLayer),
                 Layer.provide(HttpServer.layerServices),
                 Layer.provide(NodeCrypto.layer),
               ),
@@ -284,6 +288,12 @@ it.layer(
           expect(Exit.isFailure(rejected)).toBe(true);
         }
         expect(yield* rows()).toHaveLength(countBeforeInvalid);
+        // v2: the one access gate decides every protected Action and Read (O62); a principal it
+        // does not admit is refused before any owner work. The fixture scripts its gate per
+        // capability, so the refusal of this one principal is named on the fixture's own
+        // per-request owner seam (the removed SpiceDB reader tuple no longer refuses anyone).
+        deniedAccess.deny(fixture.denied.principalId, 'party.registry.official-identifier.read-history');
+        deniedAccess.deny(fixture.denied.principalId, 'party.registry.official-identifier.add');
         const denied = yield* history(firstParty, { ...fixture.denied, legalEntityId: fixture.legalEntityId }).pipe(
           Effect.exit,
         );
@@ -296,6 +306,7 @@ it.layer(
         ).toBe(true);
         const foreignFixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            access: 'allowed',
             actionKeys: [addPartyOfficialIdentifierAction.descriptor.actionKey],
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,

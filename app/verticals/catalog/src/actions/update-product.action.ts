@@ -116,6 +116,14 @@ export const handleUpdateProduct = Effect.fn('UpdateProductAction.execute')(func
 
 export const updateProductAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.update-product.access.v1',
@@ -127,7 +135,7 @@ export const updateProductAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.update-product',
       moduleKey: 'commerce.catalog',
       role: 'action',

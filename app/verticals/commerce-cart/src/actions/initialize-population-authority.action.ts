@@ -32,6 +32,14 @@ const handleInitializePopulationAuthority = Effect.fn('InitializePopulationAutho
 
 export const initializePopulationAuthorityAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.cart.population-authority.initialize',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'cart-population', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.cart.initialize-population-authority.access.v1',
@@ -42,7 +50,7 @@ export const initializePopulationAuthorityAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.cart.initialize-population-authority',
       moduleKey: owningModuleKey,
       role: 'action',

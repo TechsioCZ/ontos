@@ -5,7 +5,7 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import {
-  CounterpartySearchResultSchema,
+  CounterpartySearchResultViewSchema,
   CurrentCounterpartyRoleSchema,
   PartySearchQuerySchema,
 } from '../domain/search-result.ts';
@@ -17,7 +17,7 @@ export const CounterpartiesProviderRequestSchema = Schema.Struct({
 });
 export type CounterpartiesProviderRequest = typeof CounterpartiesProviderRequestSchema.Type;
 
-export const CounterpartiesProviderResponseSchema = Schema.Array(CounterpartySearchResultSchema);
+export const CounterpartiesProviderResponseSchema = Schema.Array(CounterpartySearchResultViewSchema);
 export type CounterpartiesProviderResponse = typeof CounterpartiesProviderResponseSchema.Type;
 
 export const CounterpartiesProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(

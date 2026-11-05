@@ -111,6 +111,14 @@ const handleRemoveProductLocalizedFacts = Effect.fn('RemoveProductLocalizedFacts
 
 export const removeProductLocalizedFactsAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-localized-facts.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.remove-product-localized-facts.access.v1',
@@ -122,7 +130,7 @@ export const removeProductLocalizedFactsAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

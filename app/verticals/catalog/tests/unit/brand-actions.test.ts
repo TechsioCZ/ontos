@@ -125,7 +125,7 @@ describe('Brand governed Actions', () => {
         setProductBrand: () => Effect.succeed({ _tag: 'applied' as const, result: productBrandResult }),
       };
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         ownerRegistration: catalogRegistration,
         services: [
           bindActionTestServices(createBrandAction, services),
@@ -204,10 +204,7 @@ describe('Brand governed Actions', () => {
     ]) {
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
   });
 

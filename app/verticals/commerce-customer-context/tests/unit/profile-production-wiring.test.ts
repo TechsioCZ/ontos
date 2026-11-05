@@ -28,7 +28,7 @@ it('attaches every stable Profile registration to scoped production persistence'
     'profileServicesForVerifiedScope',
   );
   expect(getActionServiceFactory(bindRetailPortalProfileAction).toString()).toContain(
-    'profileServicesForVerifiedScope',
+    'retailPortalBindingServicesForVerifiedScope',
   );
   expect(getActionServiceFactory(createCounterpartyPurchasingProfileAction).toString()).toContain(
     'profileServicesForVerifiedScope',
@@ -43,13 +43,13 @@ it('attaches every stable Profile registration to scoped production persistence'
     'profileServicesForVerifiedScope',
   );
   expect(getActionServiceFactory(recoverRetailPortalProfileBindingAction).toString()).toContain(
-    'profileServicesForVerifiedScope',
+    'retailPortalBindingServicesForVerifiedScope',
   );
   expect(getActionServiceFactory(resolveProfileReconciliationAction).toString()).toContain(
     'profileServicesForVerifiedScope',
   );
   expect(getActionServiceFactory(revokeRetailPortalProfileBindingAction).toString()).toContain(
-    'profileServicesForVerifiedScope',
+    'retailPortalBindingServicesForVerifiedScope',
   );
   expect(getActionServiceFactory(suspendCustomerProfileAction).toString()).toContain('profileServicesForVerifiedScope');
   expect(getReadServiceFactory(customerProfileReadRead).toString()).toContain('profileServicesForVerifiedScope');

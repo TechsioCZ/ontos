@@ -12,6 +12,7 @@ import {
   MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
   MODULE_REGISTRATION_PAGE_SLOT_END,
   MODULE_REGISTRATION_PAGE_SLOT_START,
+  DEFAULT_ACCESS_RISK,
   asJsonObject,
   createMutationEffect as createSharedMutation,
   discoverOntosModuleEffect as discoverSharedModule,
@@ -25,11 +26,14 @@ import {
   patchJsonObjectProperty,
   readJsonEffect as readSharedJson,
   readGeneratedSlotEntries,
+  renderAccessDeclaration,
+  renderReadAuthorizationLiteral,
   requireCanonicalSlug,
   requiredString,
   resolveContainedPath,
   toCamelCase,
   toPascalCase,
+  toReadAccessDeclarationKey,
   updateMutation,
 } from '../shared.mts';
 import type {
@@ -397,38 +401,26 @@ export default ${componentName};
 `;
 };
 
-const renderReadAuthorization = (config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>): string => {
-  if (config.authorization === 'context_permission') {
-    return `{ kind: 'context_permission', permission: '${config.permission ?? ''}' }`;
-  }
-  return `{ kind: '${config.authorization}' }`;
-};
+type PageAuthorizationConfig = Pick<PageScaffoldConfig, 'accessRisk' | 'authorization'>;
 
-const validateReadAuthorization = (
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
-): Effect.Effect<void, PageScaffoldError, FileSystem.FileSystem> =>
-  Effect.gen(function* validateReadAuthorizationEffect() {
-    if (
-      config.authorization === 'context_permission' &&
-      (config.permission === undefined || !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(config.permission))
-    ) {
-      yield* pageScaffoldFailure('context_permission authorization requires a stable --permission value');
-    }
-    if (config.authorization !== 'context_permission' && config.permission !== undefined) {
-      yield* pageScaffoldFailure('--permission is valid only for context_permission authorization');
-    }
-  });
+const renderReadAuthorization = (config: PageAuthorizationConfig): string =>
+  renderReadAuthorizationLiteral(config.authorization);
 
 const pageWiring = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
+  config: PageAuthorizationConfig,
 ) => {
   const componentName = `${toPascalCase(page)}Page`;
   const componentKey = `${vertical.moduleId}.page-${page}`;
   const contributionKey = `${vertical.moduleId}.page.${page}`;
   const entrypoint = `{ access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${contributionKey}', moduleKey: '${vertical.moduleId}', role: 'page', scope: 'tenant' }`;
+  // Only a protected page carries a declaration; the navigation entry shares this entrypoint.
+  const accessDeclaration =
+    config.authorization === 'protected'
+      ? `accessDeclaration: { key: '${toReadAccessDeclarationKey(vertical.moduleId, page, 'view')}', kind: 'read', modes: ['run'], placement: { group: '${page}', level: 'basic' }, risk: '${config.accessRisk ?? DEFAULT_ACCESS_RISK}', selectors: [] }, `
+      : '';
   return {
     componentKey,
     componentName,
@@ -438,7 +430,7 @@ const pageWiring = (
     manifestNavigation: route.isDynamic
       ? undefined
       : `navigationContribution({ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' }),`,
-    manifestPage: `pageContribution({ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, expose: './Page${toPascalCase(page)}', routePath: '${route.canonicalPath}' }),`,
+    manifestPage: `pageContribution({ ${accessDeclaration}componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, expose: './Page${toPascalCase(page)}', routePath: '${route.canonicalPath}' }),`,
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${route.relativePath}/page.tsx'),`,
   } as const;
 };
@@ -452,7 +444,7 @@ const patchPageWiring = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
+  config: PageAuthorizationConfig,
 ): PageOwnerWiring => {
   const wiring = pageWiring(vertical, page, route, config);
   let manifest = insertSortedSlot(
@@ -499,14 +491,30 @@ const renderRouteMetadata = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
+  config: PageAuthorizationConfig,
 ): string => {
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '${route.canonicalPath}',`).join('\n');
+  const accessDeclaration =
+    config.authorization === 'protected'
+      ? renderAccessDeclaration(
+          {
+            group: page,
+            key: toReadAccessDeclarationKey(vertical.moduleId, page, 'view'),
+            kind: 'read',
+            level: 'basic',
+            modes: ['run'],
+            risk: config.accessRisk ?? DEFAULT_ACCESS_RISK,
+            selectors: [],
+          },
+          '  ',
+        )
+      : '';
   return `import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
+import { defineRouteMeta } from '@app/core-runtime/route-meta';
 
-const routeMeta = {
-  canonicalPath: '${route.canonicalPath}',
+const routeMeta = defineRouteMeta({
+${accessDeclaration}  canonicalPath: '${route.canonicalPath}',
   descriptionKey: '${keyRoot}.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
@@ -527,7 +535,7 @@ ${localisedPaths}
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: '${keyRoot}.title',
-} as const;
+});
 
 export default routeMeta;
 export { routeMeta };
@@ -847,7 +855,7 @@ const generatedWiringMatches = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
+  config: PageAuthorizationConfig,
 ): Effect.Effect<boolean, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* generatedWiringMatchesEffect() {
     const wiring = pageWiring(vertical, page, route, config);
@@ -917,7 +925,7 @@ const generatedPageState = (
   routeDirectory: string,
   pagePath: string,
   routeMetadataPath: string,
-  config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
+  config: PageAuthorizationConfig,
 ): Effect.Effect<GeneratedPageState, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* generatedPageStateEffect() {
     const entries = yield* readDirectoryEntries(routeDirectory);
@@ -952,7 +960,6 @@ const planPageScaffold = (
   config: PageScaffoldConfig,
 ): Effect.Effect<ScaffoldPlan<PageScaffoldResult>, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* planPageScaffoldEffect() {
-    yield* validateReadAuthorization(config);
     const page = yield* Effect.try({
       catch: (cause) => pageScaffoldFailureFromUnknown(cause, 'page name is invalid'),
       try: () => requireCanonicalSlug(config.page, 'page'),

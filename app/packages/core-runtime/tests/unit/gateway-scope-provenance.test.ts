@@ -6,6 +6,7 @@ import {
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
   preserveSystemPrincipalContextTrust,
+  readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
   trustResolvedSystemPrincipalContext,
@@ -84,4 +85,21 @@ it('trusts only the exact carrier: copies and forged provenance properties carry
   expect(isTrustedSystemPrincipalContext(system)).toBe(true);
   expect(isTrustedSystemPrincipalContext({ ...system })).toBe(false);
   expect(isVerifiedGatewayPrincipalContext(system)).toBe(false);
+});
+
+it('carries the calling module of a delegated assertion beside the subject, only inside provenance', () => {
+  const actor = {
+    appId: 'commerce-order',
+    buildMarker: 'commerce-order-build',
+    principalId: '30000000-0000-4000-8000-000000000009',
+  };
+  const trusted = trustVerifiedGatewayPrincipalContext(context, compositionRevision, undefined, actor);
+  const preserved = preserveSystemPrincipalContextTrust(trusted, Object.freeze({ ...trusted, correlationId: 'c-2' }));
+
+  expect(readVerifiedGatewayActor(trusted)).toEqual(actor);
+  expect(readVerifiedGatewayActor(preserved)).toEqual(actor);
+  expect(readVerifiedGatewayActor({ ...trusted })).toBeUndefined();
+  expect(readVerifiedGatewayActor(context)).toBeUndefined();
+  expect(Object.keys(preserved).some((key) => key.includes('actor'))).toBe(false);
+  expect(encodeJson(preserved)).not.toContain('commerce-order');
 });

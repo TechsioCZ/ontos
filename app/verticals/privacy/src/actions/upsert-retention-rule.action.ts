@@ -94,6 +94,14 @@ export const handleUpsertRetentionRule = Effect.fn('UpsertRetentionRuleAction.ha
 
 export const upsertRetentionRuleAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.retention-rule.upsert',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'retention', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.upsert-retention-rule.access.v1',
@@ -105,7 +113,7 @@ export const upsertRetentionRuleAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.upsert-retention-rule',
       moduleKey: 'privacy.core',
       role: 'action',

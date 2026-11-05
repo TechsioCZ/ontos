@@ -10,6 +10,7 @@ import {
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makePartyDeniedAccess } from '../support/live-access-authority.ts';
 import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -134,6 +135,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const compositionSnapshot = yield* partyCompositionSnapshot;
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
+            access: 'allowed',
             actionKeys: [
               addContactPointAction,
               addPartyOfficialIdentifierAction,
@@ -151,6 +153,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),
         );
+        const deniedAccess = makePartyDeniedAccess();
+        const fixtureLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
         const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
         const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
         const coreAdmin = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
@@ -253,7 +257,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
           ),
           Layer.provide(redemption),
-          Layer.provide(fixture.layer),
+          Layer.provide(fixtureLayer),
           Layer.provide(
             ConfigProvider.layer(
               ConfigProvider.fromUnknown({
@@ -268,7 +272,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             HttpRouter.toWebHandler(
               HttpApiBuilder.layer(api).pipe(
                 Layer.provide(handlers),
-                Layer.provideMerge(fixture.layer),
+                Layer.provideMerge(fixtureLayer),
                 Layer.provideMerge(upstream),
                 Layer.provide(HttpServer.layerServices),
                 Layer.provide(
@@ -523,6 +527,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         expect(replay.skipped.length).toBe(3);
         const afterReplay = yield* state();
         expect(afterReplay.core.events.length).toBe(persisted.core.events.length);
+        // v2: the one access gate decides this ARES read (O62); a principal it does not admit is
+        // refused before any provider work. The fixture scripts its gate per capability, so the
+        // refusal of this one principal is named on the fixture's own per-request owner seam.
+        deniedAccess.deny(fixture.denied.principalId);
         const deniedGateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
           expect(requestedRevision).toBe(compositionRevision);
           return sign(fixture.denied).pipe(

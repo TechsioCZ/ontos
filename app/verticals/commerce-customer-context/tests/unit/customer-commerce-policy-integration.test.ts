@@ -1,15 +1,13 @@
 import type { ContextAccessService, OperationalScope, ScopedRoutineDefinition } from '@app/core-runtime';
-import {
-  getVerticalRuntimeEntrypoints,
-  toContextPermissionAccessKey,
-  ScopedRoutineInvocationError,
-} from '@app/core-runtime';
+import { getVerticalRuntimeEntrypoints, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Predicate, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { readVerifiedGatewayCompositionRevision } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
+import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
+import type { TestAccessOutcome } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { CommerceQuantityPolicyCurrentResponseSchema } from '../../shared/apis/commerce-quantity-policy-current.ts';
@@ -82,18 +80,14 @@ const actionPrincipal = {
 } as const;
 
 interface PolicyReadAuthorizationHarnessOptions {
-  readonly contextPermissionDecision: (permission: string) => 'allowed' | 'denied' | 'unavailable';
-  readonly modulePermissionDecision: 'allowed' | 'denied' | 'unavailable';
+  readonly access: TestAccessOutcome;
   readonly routineResults?: readonly (readonly [name: string, result: Schema.Json])[];
 }
 
 const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAuthorizationHarness(
   options: PolicyReadAuthorizationHarnessOptions,
 ) {
-  let businessPermissionCalls = 0;
   let handlerQueries = 0;
-  const contextPermissions: string[] = [];
-  const moduleIds: string[] = [];
   const routineCalls: string[] = [];
   const database = {
     executor: yield* makeTestDatabase((text) => {
@@ -116,48 +110,33 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
       return Effect.succeed([]);
     }),
   };
+  // Every protected read now asks exactly one Core gate (CUTOVER-PLAN §3.1). The scripted gate
+  // records what it was asked, and the retired ContextAccess seam must never be consulted again.
+  const gate = makeScriptedBoundAccessGate(options.access);
   const contextAccess: ContextAccessService = {
-    contextPermissions: ({ targets }) =>
-      Effect.succeed(
-        targets.map((target) => {
-          contextPermissions.push(target.permission);
-          return {
-            decision: options.contextPermissionDecision(target.permission),
-            key: toContextPermissionAccessKey(target),
-          };
-        }),
-      ),
-    legalEntities: ({ legalEntityIds }) =>
-      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    modules: ({ moduleIds: requestedModuleIds }) => {
-      moduleIds.push(...requestedModuleIds);
-      return Effect.succeed(requestedModuleIds.map((key) => ({ decision: options.modulePermissionDecision, key })));
-    },
-    ownerPermissions: () => {
-      businessPermissionCalls += 1;
-      return Effect.die('Policy Current reads must not call the business-permission adapter');
-    },
-    resources: ({ resources }) =>
-      Effect.succeed(
-        resources.map((resource) => ({
-          decision: 'denied' as const,
-          key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-        })),
-      ),
-    tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    contextPermissions: () => Effect.die('v2 reads must not call the context-permission adapter'),
+    legalEntities: () => Effect.die('v2 reads must not call the legal-entity adapter'),
+    modules: () => Effect.die('v2 reads must not call the module adapter'),
+    ownerPermissions: () => Effect.die('v2 reads must not call the owner-permission adapter'),
+    resources: () => Effect.die('v2 reads must not call the resource adapter'),
+    tenants: () => Effect.die('v2 reads must not call the tenant adapter'),
   };
   const runtime = makeReadRuntime(
     database,
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(scope) },
     contextAccess,
-    { ownerRegistration: commerceCustomerContextRegistration },
+    {
+      accessDecision: gate.bound,
+      ownerRegistration: commerceCustomerContextRegistration,
+    },
   );
   return {
-    businessPermissionCalls: () => businessPermissionCalls,
-    contextPermissions,
+    askedCapabilityKeys: (): readonly string[] => [
+      ...gate.accessDecision.askedDecisions.map((question) => question.carrier.accessDeclaration?.key ?? '<none>'),
+      ...gate.accessDecision.askedLists.map((question) => question.carrier.accessDeclaration?.key ?? '<none>'),
+    ],
     handlerQueries: () => handlerQueries,
-    moduleIds,
     routineCalls,
     runtime,
   };
@@ -741,7 +720,7 @@ describe('Customer Commerce Policy integration', () => {
         readCurrentPurchaseCurrencyPolicy: () => Effect.die('unused'),
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         ownerRegistration: commerceCustomerContextRegistration,
         services: [
           bindActionTestServices(administerMarketBootstrapPolicyAction, service),
@@ -854,7 +833,7 @@ describe('Customer Commerce Policy integration', () => {
         readCurrentPurchaseCurrencyPolicy: () => Effect.die('unused'),
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         ownerRegistration: commerceCustomerContextRegistration,
         services: [
           bindActionTestServices(administerMarketBootstrapPolicyAction, service),
@@ -965,7 +944,7 @@ describe('Customer Commerce Policy integration', () => {
         readCurrentPurchaseCurrencyPolicy: () => Effect.die('unused'),
       } satisfies CustomerCommercePolicyAdministrationService;
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'denied',
+        access: 'denied',
         ownerRegistration: commerceCustomerContextRegistration,
         services: [bindActionTestServices(administerPurchaseCurrencyPolicyAction, service)],
       });
@@ -988,17 +967,17 @@ describe('Customer Commerce Policy integration', () => {
     }),
   );
 
-  it.effect('runs every Current policy read only after its exact field permission and module authority', () =>
+  it.effect('runs every Current policy read only after its exact capability is allowed by the one gate', () =>
     Effect.gen(function* isolatedCurrentReadAuthority() {
       type AuthorizationHarness = Effect.Success<ReturnType<typeof makePolicyReadAuthorizationHarness>>;
       interface CurrentReadCase {
-        readonly permission: string;
+        readonly capabilityKey: string;
         readonly routineCalls: readonly string[];
         readonly run: (harness: AuthorizationHarness) => Effect.Effect<void, unknown>;
       }
       const currentReads: readonly CurrentReadCase[] = [
         {
-          permission: 'customer_commerce_policy.market_bootstrap.read',
+          capabilityKey: 'commerce.customer-context.market-bootstrap-policy.read',
           routineCalls: ['load_current_market_bootstrap_policy_candidates'],
           run: (harness) =>
             harness.runtime
@@ -1011,7 +990,7 @@ describe('Customer Commerce Policy integration', () => {
               .pipe(Effect.asVoid),
         },
         {
-          permission: 'customer_commerce_policy.purchase_currency.read',
+          capabilityKey: 'commerce.customer-context.purchase-currency-policy.read',
           routineCalls: ['load_purchase_currency_policy_state'],
           run: (harness) =>
             harness.runtime
@@ -1024,7 +1003,7 @@ describe('Customer Commerce Policy integration', () => {
               .pipe(Effect.asVoid),
         },
         {
-          permission: 'customer_commerce_policy.payment_term.read',
+          capabilityKey: 'commerce.customer-context.payment-term-policy.read',
           routineCalls: ['load_payment_term_policy_state'],
           run: (harness) =>
             harness.runtime
@@ -1037,7 +1016,7 @@ describe('Customer Commerce Policy integration', () => {
               .pipe(Effect.asVoid),
         },
         {
-          permission: 'customer_commerce_policy.quantity.read',
+          capabilityKey: 'commerce.customer-context.commerce-quantity-policy.read',
           routineCalls: [
             'load_commerce_quantity_rule_assignments',
             'load_commerce_quantity_rule_state',
@@ -1056,35 +1035,29 @@ describe('Customer Commerce Policy integration', () => {
       ];
 
       for (const currentRead of currentReads) {
-        const contextDenied = yield* makePolicyReadAuthorizationHarness({
-          contextPermissionDecision: () => 'denied',
-          modulePermissionDecision: 'allowed',
-        });
-        const moduleDenied = yield* makePolicyReadAuthorizationHarness({
-          contextPermissionDecision: () => 'allowed',
-          modulePermissionDecision: 'denied',
-        });
+        const denied = yield* makePolicyReadAuthorizationHarness({ access: 'denied' });
+        const unavailable = yield* makePolicyReadAuthorizationHarness({ access: 'unavailable' });
 
-        for (const harness of [contextDenied, moduleDenied]) {
-          const failure = yield* Effect.flip(currentRead.run(harness));
-          expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
-          expect(harness.businessPermissionCalls()).toBe(0);
-          expect(harness.handlerQueries()).toBe(0);
-          expect(harness.contextPermissions).toEqual([currentRead.permission]);
-          expect(harness.moduleIds).toEqual(['commerce.customer-context']);
-        }
+        // A denied capability refuses before the handler runs; a dead engine is an unavailable
+        // authorization answer, which is a 503 rather than a 403 (O48).
+        const deniedFailure = yield* Effect.flip(currentRead.run(denied));
+        expect(Predicate.isTagged(deniedFailure, 'ReadPermissionDenied')).toBe(true);
+        expect(denied.handlerQueries()).toBe(0);
+        expect(denied.askedCapabilityKeys()).toEqual([currentRead.capabilityKey]);
+
+        const unavailableFailure = yield* Effect.flip(currentRead.run(unavailable));
+        expect(Predicate.isTagged(unavailableFailure, 'ReadPermissionUnavailable')).toBe(true);
+        expect(unavailable.handlerQueries()).toBe(0);
+        expect(unavailable.askedCapabilityKeys()).toEqual([currentRead.capabilityKey]);
 
         const allowed = yield* makePolicyReadAuthorizationHarness({
-          contextPermissionDecision: () => 'allowed',
-          modulePermissionDecision: 'allowed',
+          access: 'allowed',
           routineResults: currentRoutineResults,
         });
         yield* currentRead.run(allowed);
 
-        expect(allowed.businessPermissionCalls()).toBe(0);
-        expect(allowed.contextPermissions).toEqual([currentRead.permission]);
+        expect(allowed.askedCapabilityKeys()).toEqual([currentRead.capabilityKey]);
         expect(allowed.handlerQueries()).toBe(currentRead.routineCalls.length);
-        expect(allowed.moduleIds).toEqual(['commerce.customer-context']);
         expect(new Set(allowed.routineCalls)).toEqual(new Set(currentRead.routineCalls));
       }
     }),
@@ -1100,10 +1073,7 @@ describe('Customer Commerce Policy integration', () => {
     ] as const;
     for (const action of actions) {
       expect(action.descriptor.auditEvidenceSchema).toBeDefined();
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.ownerPermissions).toBeUndefined();
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('required');
@@ -1121,11 +1091,19 @@ describe('Customer Commerce Policy integration', () => {
         paymentTermPolicyCurrentRead,
         commerceQuantityPolicyCurrentRead,
       ].map(({ descriptor }) => descriptor.entrypoint.authorization),
+    ).toEqual([{ kind: 'protected' }, { kind: 'protected' }, { kind: 'protected' }, { kind: 'protected' }]);
+    expect(
+      [
+        marketBootstrapPolicyCurrentRead,
+        purchaseCurrencyPolicyCurrentRead,
+        paymentTermPolicyCurrentRead,
+        commerceQuantityPolicyCurrentRead,
+      ].map(({ descriptor }) => descriptor.accessDeclaration?.key),
     ).toEqual([
-      { kind: 'context_permission', permission: 'customer_commerce_policy.market_bootstrap.read' },
-      { kind: 'context_permission', permission: 'customer_commerce_policy.purchase_currency.read' },
-      { kind: 'context_permission', permission: 'customer_commerce_policy.payment_term.read' },
-      { kind: 'context_permission', permission: 'customer_commerce_policy.quantity.read' },
+      'commerce.customer-context.market-bootstrap-policy.read',
+      'commerce.customer-context.purchase-currency-policy.read',
+      'commerce.customer-context.payment-term-policy.read',
+      'commerce.customer-context.commerce-quantity-policy.read',
     ]);
     expect(
       (commerceCustomerContextManifest.publicSurface.businessPermissions ?? []).some(({ key }) =>

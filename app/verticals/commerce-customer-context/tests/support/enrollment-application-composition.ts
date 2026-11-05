@@ -87,6 +87,7 @@ export const makeEnrollmentApplicationCompositionSnapshot = Effect.fn('Enrollmen
     const authoredManifest = {
       activation: manifest.activation,
       module: manifest.module,
+      originatorActions: manifest.originatorActions,
       publicSurface: {
         actions: owner.actions,
         api: apis,

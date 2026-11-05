@@ -3,14 +3,14 @@
 // @ontos-action-slug govern-product-attribute-applicability
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Option } from 'effect';
 
 import {
   GovernProductAttributeApplicabilityPayloadSchema,
   GovernProductAttributeApplicabilityResultSchema,
 } from '../../shared/actions/govern-product-attribute-applicability.ts';
 import type { GovernProductAttributeApplicabilityPayload } from '../../shared/actions/govern-product-attribute-applicability.ts';
-import { cartOpenSelectionPopulationFromEnvironment } from '../../shared/domain/catalog-open-selection-population.ts';
+import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import {
   AttributeApplicabilityConflict,
@@ -85,6 +85,14 @@ export const handleGovernProductAttributeApplicability = Effect.fn('GovernProduc
 
 export const governProductAttributeApplicabilityAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-attribute-applicability.govern',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.govern-product-attribute-applicability.access.v1',
@@ -96,7 +104,7 @@ export const governProductAttributeApplicabilityAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: CATALOG_MODULE_KEY,
       role: 'action',
@@ -112,7 +120,7 @@ export const governProductAttributeApplicabilityAction = defineAction(
   handleGovernProductAttributeApplicability,
   Effect.fn('GovernProductAttributeApplicabilityAction.services')(
     function* makeGovernProductAttributeApplicabilityServices(transaction, scope) {
-      const openSelections = yield* cartOpenSelectionPopulationFromEnvironment;
+      const openSelections = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
       const services = yield* attributeApplicabilityPersistenceForScope(
         transaction,
         scope,

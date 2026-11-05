@@ -11,6 +11,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { OperationalScope, ReadHandlerContext } from '@app/core-runtime';
+import type { Crypto } from 'effect';
 import { DateTime, Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import {
@@ -37,9 +38,7 @@ import {
 } from '../persistence/price-group-persistence.ts';
 import type { PriceGroupRoutineInvoker } from '../persistence/price-group-persistence.ts';
 import { validateCustomerPriceGroupReadProfile } from './customer-price-group-assignment-read.read.ts';
-import { customerPriceGroupReadPermission } from './customer-price-group-read-permission.ts';
-
-export { customerPriceGroupReadPermission as customerPriceGroupResolutionPermission } from './customer-price-group-read-permission.ts';
+import { customerPriceGroupOwnerFacts } from './customer-price-group-read-permission.ts';
 
 const CUSTOMER_CONTEXT_MODULE_ID = 'commerce.customer-context' as const;
 
@@ -171,7 +170,7 @@ export const resolveCustomerPriceGroupFromServices = Effect.fn(
 
 const customerPriceGroupResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.customer-price-group-resolution',
   moduleKey: CUSTOMER_CONTEXT_MODULE_ID,
   role: 'api',
@@ -181,7 +180,7 @@ export const customerPriceGroupResolutionServicesForTransaction = (
   transaction: PriceGroupRoutineInvoker,
   scope: OperationalScope,
   compositionRevision: string | undefined,
-): Effect.Effect<CustomerPriceGroupResolutionServices, OperationContextUnavailable> => {
+): Effect.Effect<CustomerPriceGroupResolutionServices, OperationContextUnavailable, Crypto.Crypto> => {
   if (compositionRevision === undefined) {
     return Effect.fail(
       new OperationContextUnavailable({
@@ -202,9 +201,8 @@ export const customerPriceGroupResolutionServicesForTransaction = (
   const trustedScope = { ...scope, legalEntityId };
   return Effect.gen(function* makeCustomerPriceGroupResolutionServices() {
     const catalog = yield* priceGroupCatalogPortFromEnvironment({
-      compositionRevision,
       requestCorrelation: scope.correlationId,
-      scope,
+      subject: { _tag: 'Assertion', scope },
     });
     const requiredCatalog: PriceGroupCatalogPort = {
       resolveCurrent: (...args) =>
@@ -233,7 +231,21 @@ export const customerPriceGroupResolutionServicesForTransaction = (
 
 export const customerPriceGroupResolutionRead = defineRead(
   {
+    accessActor: {
+      callers: ['pricing'],
+      reason: "Pricing resolves a customer's Price Group for a verified subject during quotation and commitment.",
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-price-group.resolve',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-pricing', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: customerPriceGroupOwnerFacts,
     domainErrorSchema: Schema.Never,
     entrypoint: customerPriceGroupResolutionEntrypoint,
     evidencePolicy: {
@@ -243,7 +255,6 @@ export const customerPriceGroupResolutionRead = defineRead(
     inputSchema: CustomerPriceGroupResolutionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: CUSTOMER_CONTEXT_MODULE_ID,
-    permissionTarget: 'conditional',
     policies: [],
     readKey: 'commerce.customer-context.api.customer-price-group-resolution',
     resultSchema: CustomerPriceGroupResolutionResponseSchema,
@@ -264,5 +275,4 @@ export const customerPriceGroupResolutionRead = defineRead(
       })),
     ),
   customerPriceGroupResolutionServicesForTransaction,
-  customerPriceGroupReadPermission,
 );

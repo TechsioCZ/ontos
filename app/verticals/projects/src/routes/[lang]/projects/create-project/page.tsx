@@ -41,10 +41,13 @@ const loadOwners = Effect.fn('ProjectsPage.loadOwners')(function* loadOwners({
         candidates: [],
         status: 'status' in error && error.status === 403 ? 'forbidden' : 'unavailable',
       }),
-      onSuccess: (response) => ({
-        candidates: response.candidates,
-        status: response.candidates.length === 0 ? 'empty' : 'idle',
-      }),
+      onSuccess: (response) => {
+        // Field-projected results may omit personal names. Never render an unnamed candidate.
+        const candidates = response.candidates.filter(
+          (candidate): candidate is OwnerCandidate => candidate.displayName !== undefined,
+        );
+        return { candidates, status: candidates.length === 0 ? 'empty' : 'idle' };
+      },
     }),
   );
   setCandidates(result.candidates);

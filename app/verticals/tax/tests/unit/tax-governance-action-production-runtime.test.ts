@@ -20,6 +20,7 @@ import { ActionRepository } from '../../../../packages/core-runtime/src/actions/
 import type { ActionRepositoryService } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { ActionPermission } from '../../../../packages/core-runtime/src/permissions/service.ts';
+import { makeSellerScopedAccessGate } from '../support/scoped-access-gate.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
@@ -30,6 +31,7 @@ import { publishedTaxComposition } from '../support/published-tax-composition.ts
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
+const accessScopeId = '99999999-9999-4999-8999-999999999999';
 const authBindingId = '40000000-0000-4000-8000-000000000001';
 const sellerA = '30000000-0000-4000-8000-000000000001';
 const sellerB = '30000000-0000-4000-8000-000000000002';
@@ -45,35 +47,15 @@ const principalFor = (legalEntityId: string) =>
     tenantId,
   });
 
-/** SpiceDB stand-in: a principal holds one TAX permission only on the exact Selling Legal Entity objects granted. */
-const spiceDbContextAccess = (
-  grantedSellers: readonly string[],
-  grantedPermission = 'tax.rule.manage',
-): ContextAccessService => {
-  const granted = new Set(
-    grantedSellers.map(
-      (legalEntityId) =>
-        `ctx_${Buffer.from(JSON.stringify([grantedPermission, tenantId, legalEntityId, 'tax_selling_legal_entity']), 'utf-8').toString('base64url')}`,
-    ),
-  );
-  return {
-    legalEntities: ({ legalEntityIds }) =>
-      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    ownerPermissions: ({ principal, targets }) =>
-      Effect.succeed(
-        targets.map(({ target }) => ({
-          decision:
-            principal.principalId === principalId && granted.has(target.objectId)
-              ? ('allowed' as const)
-              : ('denied' as const),
-          key: target.key,
-        })),
-      ),
-    resources: ({ resources }) =>
-      Effect.succeed(resources.map((resource) => ({ decision: 'denied' as const, key: resource.resourceId }))),
-    tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'denied' as const, key }))),
-  };
+/** The retired legacy authority: the one access gate decides a protected Tax Action (O62). */
+const legacyContextAccess: ContextAccessService = {
+  legalEntities: ({ legalEntityIds }) =>
+    Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  ownerPermissions: () => Effect.die('The gate decides; no legacy owner target is checked'),
+  resources: ({ resources }) =>
+    Effect.succeed(resources.map((resource) => ({ decision: 'denied' as const, key: resource.resourceId }))),
+  tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'denied' as const, key }))),
 };
 
 const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionError({ cause }) });
@@ -85,8 +67,8 @@ const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionErro
  */
 const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(function* makeProductionComposition(
   grantedSellers: readonly string[],
-  grantedPermission = 'tax.rule.manage',
 ) {
+  const accessGate = makeSellerScopedAccessGate(grantedSellers);
   const { deployment, snapshot } = yield* publishedTaxComposition;
   const ownerStatements: string[] = [];
   const permissionDenials: string[] = [];
@@ -125,6 +107,14 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
     if (text.includes('transaction_timestamp')) {
       return [{ operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2027-01-02T00:00:00.000Z'))) }];
     }
+    // The shared access fence P6 added: the Action's transaction pins the authority to a resolved
+    // access scope and its Ready fence, exactly as the production dispatch does.
+    if (text.includes('access_scopes')) {
+      return [{ scope_id: accessScopeId }];
+    }
+    if (text.includes('lock_access_scope_fence')) {
+      return [{ state: 'Ready' }];
+    }
     if (text.startsWith('select') && !text.includes('pg_advisory')) {
       return [{ authBindingId }];
     }
@@ -157,7 +147,8 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
         Layer.succeed(CoreDatabase, database),
         Layer.succeed(ActionRepository, repository),
         Layer.succeed(ActionPermission, { checkActionPermission: () => Effect.succeed('allowed' as const) }),
-        Layer.succeed(ContextAccess, spiceDbContextAccess(grantedSellers, grantedPermission)),
+        Layer.succeed(ContextAccess, legacyContextAccess),
+        accessGate.layer,
         Layer.succeed(ModuleStateGate, openModuleStateGate),
         Layer.succeed(ModuleEntrypointGateway, openModuleEntrypointGateway),
         Layer.succeed(OperationalScopeResolver, testOperationalScopeResolver),
@@ -165,7 +156,12 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
     ),
   );
   const runtime = Context.get(yield* Effect.scoped(Layer.build(actionRuntimeLive)), ActionRuntime);
-  return { ownerStatements, permissionDenials, runtime };
+  return {
+    askedLegalEntities: () => accessGate.askedDecisions.map((one) => one.scope.legalEntityId ?? '<tenant>'),
+    ownerStatements,
+    permissionDenials,
+    runtime,
+  };
 });
 
 const createTaxRule = (
@@ -212,6 +208,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))('TAX production r
       expect(permitted.ownerStatements.length).toBeGreaterThan(0);
       expect(permitted.permissionDenials).toEqual([]);
       expect(Predicate.isTagged(permittedFailure, 'TaxGovernancePersistenceUnavailable')).toBe(true);
+      // The gate asked the Action's own capability in the selected Selling Legal Entity's scope (O7),
+      // twice on purpose: the runner re-decides while holding the shared access fence, and both answers
+      // name the same seller, so the fence never moves the decision to another scope.
+      expect(permitted.askedLegalEntities()).toEqual([sellerA, sellerA]);
 
       const ungranted = yield* makeProductionComposition([]);
       expect(Predicate.isTagged(yield* createTaxRule(ungranted, sellerA), 'ActionPermissionDenied')).toBe(true);
@@ -220,6 +220,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))('TAX production r
       const otherSeller = yield* makeProductionComposition([sellerA]);
       expect(Predicate.isTagged(yield* createTaxRule(otherSeller, sellerB), 'ActionPermissionDenied')).toBe(true);
       expect(otherSeller.ownerStatements).toEqual([]);
+      expect(otherSeller.askedLegalEntities()).toEqual([sellerB]);
     }),
   );
 });

@@ -30,6 +30,15 @@ const handleIssueAssortmentCommitmentConfirmation = Effect.fn('IssueAssortmentCo
 
 export const issueAssortmentCommitmentConfirmationAction = defineAction(
   {
+    accessDeclaration: {
+      ephemeral: true,
+      key: 'commerce.assortment.commitment-confirmation.issue',
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'decisions', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.assortment.issue-assortment-commitment-confirmation.access.v1',
@@ -40,7 +49,7 @@ export const issueAssortmentCommitmentConfirmationAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.assortment.issue-assortment-commitment-confirmation',
       moduleKey: 'commerce.assortment',
       role: 'action',

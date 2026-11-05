@@ -101,6 +101,8 @@ export const runStandalonePreproposalNativeTest = Effect.fn('PreproposalNative.s
     const environment = yield* bootstrapPreproposalNativeSource();
     const inherited = yield* Config.all({
       HOME: Config.String('HOME'),
+      // The container the isolated-database fixture runs pg_dump/psql in; a lane-owned stack names its own.
+      ONTOS_TEST_DB_CONTAINER: Config.String('ONTOS_TEST_DB_CONTAINER').pipe(Config.withDefault('ontos-db')),
       PATH: Config.String('PATH'),
       TMPDIR: Config.String('TMPDIR').pipe(Config.withDefault('/tmp')),
     });

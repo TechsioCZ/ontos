@@ -129,9 +129,6 @@ const mapDomainProblem = (error: DomainError): UpdateProjectActionProblem =>
       ProjectHierarchyConflict: () => updateProjectActionProblem.conflict('project_hierarchy_conflict'),
       ProjectLifecycleConflict: () => updateProjectActionProblem.conflict('project_lifecycle_conflict'),
       ProjectNotFound: () => updateProjectActionProblem.notFound('project_not_found'),
-      ProjectOwnerEligibilityUnavailable: () =>
-        updateProjectActionProblem.unavailable('project_owner_eligibility_unavailable'),
-      ProjectOwnerIneligible: () => updateProjectActionProblem.ineligible('project_owner_ineligible'),
       ProjectPersistenceUnavailable: () => updateProjectActionProblem.unavailable('project_persistence_unavailable'),
       ProjectPrefixConflict: () => updateProjectActionProblem.conflict('project_prefix_conflict'),
     }),

@@ -140,7 +140,7 @@ export const handleGuestPaymentTermsResolution = (
 
 export const guestPaymentTermsResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.guest-payment-terms-resolution',
   moduleKey,
   role: 'api',
@@ -166,9 +166,9 @@ export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTe
       });
     }
     const catalog = yield* paymentTermCatalogPortFromEnvironment({
-      compositionRevision,
       legalEntityId,
       requestCorrelation: scope.correlationId,
+      subject: { _tag: 'Assertion', scope },
     });
     const requiredCatalog: typeof catalog = {
       resolveDefinitions: (requests) =>
@@ -214,6 +214,14 @@ export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTe
 
 export const guestPaymentTermsResolutionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.guest-payment-terms.resolve',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'payment-terms', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: guestPaymentTermsResolutionEntrypoint,
     evidencePolicy: {
@@ -223,7 +231,6 @@ export const guestPaymentTermsResolutionRead = defineRead(
     inputSchema: GuestPaymentTermsResolutionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.guest-payment-terms-resolution',
     resultSchema: GuestPaymentTermsResolutionResponseSchema,
@@ -231,5 +238,4 @@ export const guestPaymentTermsResolutionRead = defineRead(
   },
   handleGuestPaymentTermsResolution,
   makeGuestPaymentTermsResolutionServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

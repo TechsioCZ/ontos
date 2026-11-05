@@ -1,22 +1,15 @@
 import { Schema } from 'effect';
 import {
   ProfileInstantSchema,
-  RETAIL_PORTAL_SELF_SERVICE_BASELINE,
   RetailPortalBindingAuthorizationOperationSchema,
-  RetailPortalBindingAuthorizationStateSchema,
-  RetailPortalPermissionCodeSchema,
+  RetailPortalBindingStateSchema,
   SellingLegalEntityRefSchema,
 } from '../domain/profile-contracts.ts';
 import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
-import {
-  RetailPortalPrincipalRefSchema,
-  RetailPortalProfileBindingRefSchema,
-} from '../resources/retail-portal-profile-binding.ts';
+import { RetailPortalProfileBindingRefSchema } from '../resources/retail-portal-profile-binding.ts';
 
 const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
 const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
-const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'));
-const BindingStateSchema = Schema.Literals(['ACTIVE', 'REVOKED']);
 const RevisionSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
 const PrincipalRefSchema = Schema.Struct({
   moduleId: Schema.Literal('core.identity'),
@@ -31,7 +24,7 @@ const RetailPortalBindingPayloadSchema = Schema.Struct({
   // oxlint-disable-next-line effect-native/no-nullable-schema-field -- null explicitly means no existing binding revision on create.
   expectedRevision: Schema.NullOr(RevisionSchema),
   // oxlint-disable-next-line effect-native/no-nullable-schema-field -- null explicitly means no existing binding state on create.
-  expectedState: Schema.NullOr(BindingStateSchema),
+  expectedState: Schema.NullOr(RetailPortalBindingStateSchema),
   principalRef: PrincipalRefSchema,
   profileRef: RetailCustomerProfileRefSchema,
   reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
@@ -39,78 +32,26 @@ const RetailPortalBindingPayloadSchema = Schema.Struct({
 });
 export type RetailPortalBindingPayload = typeof RetailPortalBindingPayloadSchema.Type;
 
-interface RetailPortalBindingResultValidationInput {
+/** The binding and its authorization are written together, so both name the same final state. */
+const retailPortalBindingResultIssue = (result: {
   readonly authorizationOperation?: typeof RetailPortalBindingAuthorizationOperationSchema.Type;
-  readonly authorizationState?: typeof RetailPortalBindingAuthorizationStateSchema.Type;
-  readonly permissionMutations?: readonly {
-    readonly operation: typeof RetailPortalBindingAuthorizationOperationSchema.Type;
-    readonly permission: typeof RetailPortalPermissionCodeSchema.Type;
-  }[];
-}
-
-const authorizationStateIssue = (result: RetailPortalBindingResultValidationInput) => {
-  const { authorizationOperation, authorizationState } = result;
-  if (authorizationOperation === undefined || authorizationState === undefined) {
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- Explicit undefined preserves this optional validation-result contract.
-    return undefined;
-  }
-  const validStates =
-    authorizationOperation === 'grant'
-      ? ['ACTIVE', 'PENDING_GRANT', 'RECONCILIATION_REQUIRED']
-      : ['REVOKED', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED'];
-  return validStates.includes(authorizationState)
+  readonly authorizationState?: typeof RetailPortalBindingStateSchema.Type;
+  readonly state: typeof RetailPortalBindingStateSchema.Type;
+}) =>
+  (result.authorizationOperation === undefined ||
+    result.authorizationOperation === (result.state === 'ACTIVE' ? 'grant' : 'revoke')) &&
+  (result.authorizationState === undefined || result.authorizationState === result.state)
     ? undefined
-    : 'Retail binding authorization state must match its operation';
-};
-
-const permissionMutationIssue = (result: RetailPortalBindingResultValidationInput) => {
-  const { authorizationOperation, permissionMutations } = result;
-  if (permissionMutations === undefined) {
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- Explicit undefined preserves this optional validation-result contract.
-    return undefined;
-  }
-  const permissions = permissionMutations.map(({ permission }) => permission);
-  const operations = new Set(permissionMutations.map(({ operation }) => operation));
-  const expected = new Set<string>(RETAIL_PORTAL_SELF_SERVICE_BASELINE);
-  const coversReviewedBaseline =
-    permissions.length === expected.size &&
-    new Set(permissions).size === permissions.length &&
-    permissions.every((permission) => expected.has(permission));
-  const matchesAuthorizationOperation =
-    operations.size === 1 &&
-    (authorizationOperation === undefined ||
-      permissionMutations.every(({ operation }) => operation === authorizationOperation));
-  return coversReviewedBaseline && matchesAuthorizationOperation
-    ? undefined
-    : 'Retail binding Permission mutation intents must exactly cover the reviewed baseline';
-};
-
-const retailPortalBindingResultIssue = (result: RetailPortalBindingResultValidationInput) =>
-  authorizationStateIssue(result) ?? permissionMutationIssue(result);
-
-const RetailPortalBindingAuthorizationMutationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.decodeTo(Schema.String),
-);
+    : 'Retail binding authorization must match the binding state';
 
 export const RetailPortalBindingResultSchema = Schema.Struct({
-  authorizationMutationId: Schema.optionalKey(RetailPortalBindingAuthorizationMutationIdSchema),
   authorizationOperation: Schema.optionalKey(RetailPortalBindingAuthorizationOperationSchema),
-  authorizationState: Schema.optionalKey(RetailPortalBindingAuthorizationStateSchema),
+  authorizationState: Schema.optionalKey(RetailPortalBindingStateSchema),
   bindingRef: RetailPortalProfileBindingRefSchema,
   effectiveAt: ProfileInstantSchema,
   outcome: Schema.Literals(['BINDING_ACTIVATED', 'BINDING_RECOVERED', 'BINDING_REVOKED']),
-  permissionMutations: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        mutationId: RetailPortalBindingAuthorizationMutationIdSchema,
-        operation: RetailPortalBindingAuthorizationOperationSchema,
-        permission: RetailPortalPermissionCodeSchema,
-        staged: Schema.Boolean,
-      }),
-    ),
-  ),
   revision: RevisionSchema,
-  state: BindingStateSchema,
+  state: RetailPortalBindingStateSchema,
 }).check(Schema.makeFilter(retailPortalBindingResultIssue));
 export type RetailPortalBindingResult = typeof RetailPortalBindingResultSchema.Type;
 
@@ -140,93 +81,18 @@ export const retailPortalBindingResultMatches = (
   result.outcome === expectedOutcome &&
   result.state === expectedState;
 
-export const retailPortalBindingStagedPermissionMutations = (
-  permissionMutations: RetailPortalBindingResult['permissionMutations'],
-) => (permissionMutations !== undefined && permissionMutations.length > 0 ? permissionMutations : undefined);
-
-export const retailPortalBindingPermissionMutationPayloads = <
-  Mutation extends {
-    readonly mutationId: string;
-    readonly operation: typeof RetailPortalBindingAuthorizationOperationSchema.Type;
-    readonly permission: typeof RetailPortalPermissionCodeSchema.Type;
-  },
->(
-  permissionMutations: readonly Mutation[],
-) => permissionMutations.map(({ mutationId, operation, permission }) => ({ mutationId, operation, permission }));
-
-const RetailPortalBindingPermissionMutationSchema = Schema.Struct({
-  mutationId: RetailPortalBindingAuthorizationMutationIdSchema,
-  operation: RetailPortalBindingAuthorizationOperationSchema,
-  permission: RetailPortalPermissionCodeSchema,
+/** The binding facts every activated, recovered and revoked event carries. */
+export const retailPortalBindingEventFields = (
+  result: Pick<RetailPortalBindingResult, 'bindingRef' | 'effectiveAt' | 'revision'>,
+  payload: Pick<RetailPortalBindingPayload, 'principalRef' | 'profileRef' | 'sellingLegalEntityRef'>,
+) => ({
+  bindingRef: result.bindingRef,
+  effectiveAt: result.effectiveAt,
+  principalRef: payload.principalRef,
+  profileRef: payload.profileRef,
+  revision: result.revision,
+  sellingLegalEntityRef: payload.sellingLegalEntityRef,
 });
-type RetailPortalBindingPermissionMutation = typeof RetailPortalBindingPermissionMutationSchema.Type;
-
-const authorizationMutationRequestedFields = {
-  bindingRef: RetailPortalProfileBindingRefSchema,
-  catalogVersion: Schema.Literal('1'),
-  legalEntityId: LegalEntityIdSchema,
-  mutationId: RetailPortalBindingAuthorizationMutationIdSchema,
-  permissionMutations: Schema.optionalKey(Schema.Array(RetailPortalBindingPermissionMutationSchema)),
-  principalRef: RetailPortalPrincipalRefSchema,
-  profileRef: RetailCustomerProfileRefSchema,
-  schemaVersion: Schema.Literal('1'),
-  sellingLegalEntityRef: SellingLegalEntityRefSchema,
-} as const;
-
-const exactAuthorizationMutationScope = <
-  Request extends {
-    readonly bindingRef: { readonly tenantId: string };
-    readonly legalEntityId: string;
-    readonly operation: 'grant' | 'revoke';
-    readonly permissionMutations?: readonly RetailPortalBindingPermissionMutation[];
-    readonly principalRef: { readonly tenantId: string };
-    readonly profileRef: { readonly tenantId: string };
-    readonly sellingLegalEntityRef: { readonly resourceId: string; readonly tenantId: string };
-  },
->(
-  request: Request,
-) => {
-  const referencesMatch =
-    request.bindingRef.tenantId === request.profileRef.tenantId &&
-    request.bindingRef.tenantId === request.principalRef.tenantId &&
-    request.bindingRef.tenantId === request.sellingLegalEntityRef.tenantId &&
-    request.legalEntityId === request.sellingLegalEntityRef.resourceId;
-  let issue: string | undefined;
-  if (!referencesMatch) {
-    issue = 'Retail binding authorization mutation references must share one exact Tenant and Legal Entity';
-  } else if (request.permissionMutations !== undefined) {
-    const intentsAreExact =
-      new Set(request.permissionMutations.map(({ mutationId }) => mutationId)).size ===
-        request.permissionMutations.length &&
-      new Set(request.permissionMutations.map(({ permission }) => permission)).size ===
-        request.permissionMutations.length &&
-      request.permissionMutations.every(({ operation }) => operation === request.operation);
-    if (!intentsAreExact) {
-      issue = 'Retail binding authorization mutation intents must be exact and atomic';
-    }
-  }
-  return issue;
-};
-
-export { LegalEntityIdSchema };
-
-export const RetailPortalProfileBindingActivationAuthorizationMutationRequestedPayloadSchema = Schema.Struct({
-  ...authorizationMutationRequestedFields,
-  operation: Schema.Literal('grant'),
-  transition: Schema.Literal('activation'),
-}).check(Schema.makeFilter(exactAuthorizationMutationScope));
-
-export const RetailPortalProfileBindingRecoveryAuthorizationMutationRequestedPayloadSchema = Schema.Struct({
-  ...authorizationMutationRequestedFields,
-  operation: Schema.Literal('grant'),
-  transition: Schema.Literal('recovery'),
-}).check(Schema.makeFilter(exactAuthorizationMutationScope));
-
-export const RetailPortalProfileBindingRevocationAuthorizationMutationRequestedPayloadSchema = Schema.Struct({
-  ...authorizationMutationRequestedFields,
-  operation: Schema.Literal('revoke'),
-  transition: Schema.Literal('revocation'),
-}).check(Schema.makeFilter(exactAuthorizationMutationScope));
 
 export class RetailPortalBindingActionRejected extends Schema.TaggedError<RetailPortalBindingActionRejected>()(
   'RetailPortalBindingActionRejected',

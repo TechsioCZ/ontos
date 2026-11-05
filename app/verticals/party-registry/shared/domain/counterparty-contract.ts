@@ -99,6 +99,14 @@ export const CounterpartyPartyProjectionSchema = Schema.Struct({
   partyType: Schema.Literals(['PERSON', 'ORGANIZATION', 'UNRESOLVED']),
   storedPartyRef: PartyRefSchema,
 });
+/**
+ * The party of a counterparty as a read answers it: the display name is a governed field class, so a
+ * caller without the identity capability receives the party without it (O17, O58).
+ */
+export const CounterpartyPartyProjectionViewSchema = Schema.Struct({
+  ...CounterpartyPartyProjectionSchema.fields,
+  displayName: Schema.optionalKey(CounterpartyPartyProjectionSchema.fields.displayName),
+});
 
 const CounterpartyRecordSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,

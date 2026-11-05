@@ -83,7 +83,19 @@ export const OfficialIdentifierAssertionStateSchema = Schema.Literals([
   'DISPUTED',
 ]);
 
-export const OfficialIdentifierAssertionSchema = Schema.Struct({
+/** Retained ICO digits must normalize to the canonical value they were asserted with. */
+const originalDigitsIssue = (assertion: {
+  readonly identifierType: string;
+  readonly normalizedValue?: string;
+  readonly originalInputDigits?: string | null;
+}): string | undefined =>
+  assertion.originalInputDigits === undefined ||
+  assertion.originalInputDigits === null ||
+  (assertion.identifierType === 'ICO' && assertion.originalInputDigits.padStart(8, '0') === assertion.normalizedValue)
+    ? undefined
+    : 'original ICO digits must normalize to the asserted canonical value';
+
+const officialIdentifierAssertionFields = {
   externalEvidence: Schema.optionalKey(Schema.toEncoded(Schema.OptionFromNullOr(AresAppliedEvidenceSchema))),
   identifierType: OfficialIdentifierTypeSchema,
   namespace: Schema.String,
@@ -99,13 +111,17 @@ export const OfficialIdentifierAssertionSchema = Schema.Struct({
   validFrom: CanonicalUtcTimestampJsonSchema,
   validTo: Schema.toEncoded(Schema.OptionFromNullOr(CanonicalUtcTimestampJsonSchema)),
   verification: IdentifierVerificationSchema,
-}).check(
-  Schema.makeFilter((assertion) =>
-    assertion.originalInputDigits === undefined ||
-    assertion.originalInputDigits === null ||
-    (assertion.identifierType === 'ICO' && assertion.originalInputDigits.padStart(8, '0') === assertion.normalizedValue)
-      ? undefined
-      : 'original ICO digits must normalize to the asserted canonical value',
-  ),
+};
+
+export const OfficialIdentifierAssertionSchema = Schema.Struct(officialIdentifierAssertionFields).check(
+  Schema.makeFilter(originalDigitsIssue),
 );
 export type OfficialIdentifierAssertion = typeof OfficialIdentifierAssertionSchema.Type;
+/**
+ * An official identifier as a read answers it: the value is a governed field class, so a caller
+ * without the value capability receives the assertion without it (O17, O58).
+ */
+export const OfficialIdentifierAssertionViewSchema = Schema.Struct({
+  ...officialIdentifierAssertionFields,
+  normalizedValue: Schema.optionalKey(Schema.String),
+}).check(Schema.makeFilter(originalDigitsIssue));

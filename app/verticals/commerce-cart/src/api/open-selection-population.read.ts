@@ -13,7 +13,7 @@ type CartServices = Effect.Success<ReturnType<typeof cartPopulationService>>;
 
 const openSelectionPopulationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.cart.read.open_selection_population' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.cart.api.open-selection-population',
   moduleKey: 'commerce.cart',
   role: 'api',
@@ -21,6 +21,20 @@ const openSelectionPopulationEntrypoint = defineTenantModuleEntrypoint({
 
 export const openSelectionPopulationRead = defineRead(
   {
+    accessActor: {
+      callers: ['catalog'],
+      reason:
+        'The Catalog service reads the complete open-selection population of the Tenant to assess catalog changes',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.cart.open-selection-population.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'cart-population', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: openSelectionPopulationEntrypoint,
     evidencePolicy: {
@@ -30,7 +44,6 @@ export const openSelectionPopulationRead = defineRead(
     inputSchema: OpenSelectionPopulationRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.cart',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.cart.api.open-selection-population',
     resultSchema: OpenSelectionPopulationResponseSchema,
@@ -49,5 +62,4 @@ export const openSelectionPopulationRead = defineRead(
       ),
     ),
   (transaction, scope) => cartPopulationService(transaction, scope),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

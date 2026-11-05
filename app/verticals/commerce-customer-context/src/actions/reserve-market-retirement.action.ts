@@ -116,6 +116,19 @@ const handleReserveMarketRetirement = Effect.fn('ReserveMarketRetirementAction.h
 
 export const reserveMarketRetirementAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-market-catalog'],
+      reason: "Commerce Market Catalog retirement reservation is relayed under the retiring user's rights.",
+      subject: 'rights',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.market-retirement.reserve',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commerce-policy', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.reserve-market-retirement.access.v1',
@@ -127,7 +140,7 @@ export const reserveMarketRetirementAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.reserve-market-retirement',
       moduleKey,
       role: 'action',

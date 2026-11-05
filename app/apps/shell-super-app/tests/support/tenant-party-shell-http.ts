@@ -1,11 +1,13 @@
+import { CorePersistenceLive, DatabaseConfigLive, LegalEntityContextLive } from '@app/core-runtime';
 import { createEffectBffTestHandler, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Exit, Layer, Predicate, Schema, Tracer } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
-import apiRuntime from '../../api/index.ts';
+import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { nativeShellAccessGateLive } from './native-shell-access-gate.ts';
 
 const REDACTED = '[REDACTED]';
 const redactCredentials = (text: string) =>
@@ -37,29 +39,8 @@ const defectTracer = Tracer.make({
     return span;
   },
 });
-const observedRuntime = defineEffectBff({
-  ...apiRuntime,
-  layer: apiRuntime.layer.pipe(Layer.provide(Layer.succeed(Tracer.Tracer, defectTracer))),
-});
-
-// Test-only: the default Effect logger writes to stdout (the protocol channel); copy error-level lines to private stderr.
-const writeStdout = process.stdout.write.bind(process.stdout);
-process.stdout.write = (
-  chunk: string | Uint8Array,
-  encodingOrOnWritten?: BufferEncoding | ((error?: Error | null) => void),
-  onWritten?: (error?: Error | null) => void,
-) => {
-  const text = Predicate.isString(chunk) ? chunk : new TextDecoder().decode(chunk);
-  if (/level=(?:ERROR|FATAL|WARN)/u.test(text) && observedBytes <= 49_152) {
-    const redacted = redactCredentials(text).slice(0, 4096);
-    observedBytes += redacted.length;
-    process.stderr.write(`${redacted}\n`);
-  }
-  return Predicate.isFunction(encodingOrOnWritten)
-    ? writeStdout(chunk, encodingOrOnWritten)
-    : writeStdout(chunk, encodingOrOnWritten, onWritten);
-};
-
+// Test-only: failed spans report their bounded, redacted cause on private stderr, so the child's
+// stdout stays the protocol channel. The child never mutates a global stream.
 class TenantPartyShellHttpTestError extends Schema.TaggedError<TenantPartyShellHttpTestError>()(
   'TenantPartyShellHttpTestError',
   {
@@ -68,9 +49,28 @@ class TenantPartyShellHttpTestError extends Schema.TaggedError<TenantPartyShellH
 ) {}
 
 const describe = Effect.sync(() => process.stdout.write(`${JSON.stringify(ultramodernDeliveryUnit)}\n`));
+/** Serve with the production access gate: the starting suite has seeded the tenant's v2 access intent. */
+const serveWithAccessIntent = '--serve-with-access-intent';
 
 const serve = Effect.scoped(
   Effect.gen(function* serveTenantPartyShellHttp() {
+    // A suite that seeds the tenant's v2 access intent starts the Shell with its production gate. Any other
+    // suite seeds none for the Shell, so its child must not reach a real access engine: it scripts the one
+    // gate every protected surface of this bundle asks.
+    const runtime = process.argv.includes(serveWithAccessIntent)
+      ? makeShellAuthenticationApiRuntime(...shellProductionRuntimeArguments)
+      : makeShellAuthenticationApiRuntime(
+          ...shellProductionRuntimeArguments,
+          nativeShellAccessGateLive.pipe(
+            Layer.provide(LegalEntityContextLive),
+            Layer.provide(CorePersistenceLive),
+            Layer.provide(DatabaseConfigLive),
+          ),
+        );
+    const observedRuntime = defineEffectBff({
+      ...runtime,
+      layer: runtime.layer.pipe(Layer.provide(Layer.succeed(Tracer.Tracer, defectTracer))),
+    });
     const app = yield* Effect.acquireRelease(
       Effect.tryPromise({
         catch: () => new TenantPartyShellHttpTestError({ reason: 'The actual owner HTTP dispatcher failed' }),

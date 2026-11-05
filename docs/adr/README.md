@@ -23,7 +23,7 @@ relevant to the task. An accepted ADR remains current unless a later ADR explici
 | [0016](0016-independently-deployable-microverticals.md)    | Independent MicroVertical deployment seams                | Accepted                          |
 | [0017](0017-commerce-application-boundaries.md)            | Commerce application boundaries                           | Accepted                          |
 | [0018](0018-party-registry-operational-boundaries.md)      | Party Registry operational boundaries                     | Accepted                          |
-| [0019](0019-explicit-action-authorization.md)              | Explicit fail-closed Action authorization                 | Accepted                          |
+| [0019](0019-explicit-action-authorization.md)              | Explicit fail-closed Action authorization                 | Superseded by 0030                |
 | [0020](0020-governed-application-composition.md)           | Governed runtime Application Composition                  | Accepted                          |
 | [0021](0021-attempt-bound-proofs-outside-order-acceptance-bundle.md) | Attempt-bound proofs stay outside the Order Acceptance Bundle | Accepted                       |
 | [0022](0022-optional-provider-neutral-email-delivery.md)    | Optional provider-neutral email delivery capability       | Accepted                          |
@@ -34,6 +34,7 @@ relevant to the task. An accepted ADR remains current unless a later ADR explici
 | [0027](0027-launch-order-tax-fixed-at-commitment-time.md) | Launch Order Tax is fixed at one Order Commitment Time | Accepted |
 | [0028](0028-stage-accounts-from-operator-data.md) | Stage accounts and their rights come from operator data | Accepted |
 | [0029](0029-tax-launch-seller-regime-and-shipping-basis.md) | TAX Launch seller regime and shipping basis | Accepted |
+| [0030](0030-granular-authorization.md) | Granular authorization behind simple product layers | Accepted |
 
 ## Status meanings
 

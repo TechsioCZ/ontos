@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug start-portal-enrollment
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/start-portal-enrollment.ts';
 
 export { StartPortalEnrollmentPayloadSchema } from '../actions/start-portal-enrollment.ts';
-
 export const StartPortalEnrollmentActionInvalidProblemSchema = makeProblemDetailsSchema(
   'StartPortalEnrollmentActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const StartPortalEnrollmentActionForbiddenProblemSchema = makeProblemDeta
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -148,7 +149,7 @@ export const startPortalEnrollmentActionGroupDefinition = HttpApiGroup.make('sta
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/start-portal-enrollment', {
       error: actionErrors,
       payload: Schema.toEncoded(StartPortalEnrollmentPayloadSchema),
-      success: StartPortalEnrollmentResultSchema,
+      success: [ActionProposalAcceptedSchema, StartPortalEnrollmentResultSchema],
     }),
   )
   .middleware(StartPortalEnrollmentActionSchemaErrorMiddleware);

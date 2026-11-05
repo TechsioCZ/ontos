@@ -79,6 +79,15 @@ const handleEndPartyRelationship = Effect.fn('EndPartyRelationshipAction.handleE
 
 export const endPartyRelationshipAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.party-relationship.end',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'contact-data', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.relationshipRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.end-party-relationship.access.v1',
@@ -92,10 +101,7 @@ export const endPartyRelationshipAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.end-party-relationship',
       moduleKey: 'party.registry',
       role: 'action',
@@ -107,7 +113,6 @@ export const endPartyRelationshipAction = defineAction(
     policies: [],
     resultSchema: ChangePartyRelationshipResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_relationships',
   },
   handleEndPartyRelationship,
   (transaction, scope) =>

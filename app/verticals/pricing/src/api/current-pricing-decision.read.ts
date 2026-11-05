@@ -14,6 +14,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
+import type { Crypto } from 'effect';
 import { Effect, Match, Option, Schema } from 'effect';
 
 import {
@@ -45,7 +46,7 @@ const MODULE_KEY = 'commerce.pricing';
 
 const currentPricingDecisionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.current-pricing-decision',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -53,6 +54,7 @@ const currentPricingDecisionEntrypoint = defineTenantModuleEntrypoint({
 
 export interface CurrentPricingDecisionTrustedScope {
   readonly legalEntityId: string;
+  /** The receiving request's own verified context. Owner connections need its gateway provenance, so it is never copied. */
   readonly principal: TrustedPrincipalContext;
 }
 
@@ -204,7 +206,7 @@ export const resolveCurrentPricingDecisionTrustedScope = (
     );
   }
   return Schema.decodeEffect(TrustedPrincipalContextSchema)(scope).pipe(
-    Effect.map((principal): CurrentPricingDecisionTrustedScope => ({ legalEntityId, principal })),
+    Effect.map((): CurrentPricingDecisionTrustedScope => ({ legalEntityId, principal: scope })),
     Effect.mapError((cause) =>
       Object.defineProperty(
         new OperationContextUnavailable({
@@ -226,7 +228,7 @@ export const makeCurrentPricingDecisionReadServiceFactory = (
   } = {},
 ): ReadServiceFactory<
   CurrentPricingDecisionReadServices,
-  CurrentPricingDecisionEvaluationFactory | PricingExternalOwnerEvidenceValidation
+  Crypto.Crypto | CurrentPricingDecisionEvaluationFactory | PricingExternalOwnerEvidenceValidation
 > =>
   Effect.fn('CurrentPricingDecisionRead.serviceFactory')(function* currentPricingDecisionServiceFactory(
     transaction: ScopedTransactionExecutor,
@@ -243,11 +245,10 @@ export const makeCurrentPricingDecisionReadServiceFactory = (
     const pricingOwnerFinalFenceForScope =
       options.pricingOwnerFinalFenceForScope ?? pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope;
     const trustedScope = yield* resolveCurrentPricingDecisionTrustedScope(scope);
-    const verifiedScope = { ...scope, legalEntityId: trustedScope.legalEntityId };
     const [source, pricingOwnerFinalFence, evaluationFactory, subjectAuthorityOption] = yield* Effect.all(
       [
-        wholeEvaluationForScope(transaction, verifiedScope, compositionRevision, requirements),
-        pricingOwnerFinalFenceForScope(transaction, verifiedScope, compositionRevision),
+        wholeEvaluationForScope(transaction, scope, compositionRevision, requirements),
+        pricingOwnerFinalFenceForScope(transaction, scope, compositionRevision),
         CurrentPricingDecisionEvaluationFactory,
         Effect.serviceOption(CurrentPricingDecisionSubjectAuthority),
       ],
@@ -258,7 +259,7 @@ export const makeCurrentPricingDecisionReadServiceFactory = (
         currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(scope.correlationId, compositionRevision),
       onSome: Effect.succeed,
     });
-    const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence, compositionRevision, requirements);
+    const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence, compositionRevision, scope, requirements);
     return {
       evaluate: evaluation.evaluate,
       trustedScope,
@@ -279,6 +280,19 @@ export const currentPricingDecisionReadServiceFactory = makeCurrentPricingDecisi
 
 export const currentPricingDecisionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.decision.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'pricing-decisions', level: 'basic' },
+      // The customer-safe published projection states the money a purchase costs (A1): a price is
+      // financial materiality, so reading a decision is at least sensitive (O21). Audit A1 also
+      // proposed a `financial_amounts` group on `result.total` and the published line amounts; it is
+      // not declared because both are required by the wire contract and redacting a required property
+      // fails the transport encode (O17), so the whole read is the gate until they become optional.
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: currentPricingDecisionEntrypoint,
     evidencePolicy: {
@@ -288,7 +302,6 @@ export const currentPricingDecisionRead = defineRead(
     inputSchema: CurrentPricingDecisionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.current-pricing-decision',
     resultSchema: CurrentPricingDecisionResponseSchema,
@@ -296,5 +309,4 @@ export const currentPricingDecisionRead = defineRead(
   },
   handleCurrentPricingDecision,
   currentPricingDecisionReadServiceFactory,
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

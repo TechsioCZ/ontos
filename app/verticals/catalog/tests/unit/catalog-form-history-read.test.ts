@@ -326,7 +326,7 @@ it('keeps all three historical endpoints behind current context permission and a
     [packageOptionHistoryRead, PackageOptionHistoryForbiddenProblemSchema],
   ] as const) {
     expect(read.descriptor.entrypoint.access).toBe('historical_read');
-    expect(read.descriptor.entrypoint.authorization.kind).toBe('context_permission');
+    expect(read.descriptor.entrypoint.authorization.kind).toBe('protected');
     const denial = schema.make({
       detail: 'The principal is not permitted to perform this read.',
       status: 403,

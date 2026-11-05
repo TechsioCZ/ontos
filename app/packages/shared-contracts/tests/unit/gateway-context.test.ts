@@ -9,11 +9,13 @@ import {
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
   GatewayContextResponseSchema,
+  GatewayContextV3ClaimsSchema,
   GatewayRateLimitedProblemSchema,
   GatewayReloadRequiredProblemSchema,
   GatewayTrustedPrincipalContextSchema,
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
+  decodeSupportedGatewayContextClaims,
 } from '../../src/gateway-context.ts';
 import { issueApiKeyGatewayContext } from '../../src/gateway-context-api-key.ts';
 
@@ -370,5 +372,59 @@ it.effect('issues API-key gateway context through the server-only credential bou
       compositionRevision: claims.compositionRevision,
       legalEntityId: '20000000-0000-4000-8000-000000000001',
     });
+  }),
+);
+
+const delegatedPrincipal = { ...principal, authenticationNamespaceId: 'test.third-provider.realm' };
+const actor = {
+  appId: 'commerce-market-catalog',
+  buildMarker: 'market-release-2026-11-04',
+  principalId: '90000000-0000-4000-8000-000000000001',
+};
+const delegatedClaims = {
+  ...claims,
+  act: actor,
+  aud: 'party-registry',
+  principal: delegatedPrincipal,
+  ver: 3 as const,
+};
+
+it.effect('decodes version 3 claims that name the calling module as act beside the subject', () =>
+  Effect.gen(function* delegatedClaimsContractTest() {
+    expect(
+      yield* Schema.decodeUnknownEffect(GatewayContextV3ClaimsSchema, { onExcessProperty: 'error' })(delegatedClaims),
+    ).toEqual(delegatedClaims);
+    expect(yield* decodeSupportedGatewayContextClaims(delegatedClaims)).toEqual(delegatedClaims);
+  }),
+);
+
+it.effect('rejects version 3 claims whose actor is the subject, malformed, missing, or extended', () =>
+  Effect.gen(function* delegatedActorContractTest() {
+    const invalidClaims: readonly unknown[] = [
+      { ...delegatedClaims, act: { ...actor, principalId: principal.principalId } },
+      { ...delegatedClaims, act: { ...actor, appId: 'Commerce Market' } },
+      { ...delegatedClaims, act: { ...actor, buildMarker: '' } },
+      { ...delegatedClaims, act: { ...actor, buildMarker: ' market-release ' } },
+      { ...delegatedClaims, act: { ...actor, principalId: 'not-a-uuid' } },
+      { ...delegatedClaims, act: { ...actor, displayName: 'must-not-pass' } },
+      Struct.omit(delegatedClaims, ['act']),
+      { ...delegatedClaims, principal },
+      { ...delegatedClaims, operationKey: 'party.registry.api.party-detail' },
+      { ...delegatedClaims, sub: '60000000-0000-4000-8000-000000000001' },
+      { ...delegatedClaims, exp: claims.iat + 301 },
+    ];
+    for (const invalid of invalidClaims) {
+      expect(yield* Effect.flip(decodeSupportedGatewayContextClaims(invalid))).toBeDefined();
+    }
+  }),
+);
+
+it.effect('keeps version 1 and version 2 assertions decodable and refuses an actor on them', () =>
+  Effect.gen(function* supportedVersionsContractTest() {
+    const external = { ...claims, principal: delegatedPrincipal, ver: 2 as const };
+    expect(yield* decodeSupportedGatewayContextClaims(claims)).toEqual(claims);
+    expect(yield* decodeSupportedGatewayContextClaims(external)).toEqual(external);
+    expect(yield* Effect.flip(decodeSupportedGatewayContextClaims({ ...claims, act: actor }))).toBeDefined();
+    expect(yield* Effect.flip(decodeSupportedGatewayContextClaims({ ...external, act: actor }))).toBeDefined();
   }),
 );

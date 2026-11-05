@@ -2,7 +2,7 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug create-payment-term
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import {
   CreatePaymentTermPayloadSchema,
@@ -117,6 +117,14 @@ export const handleCreatePaymentTerm = Effect.fn('CreatePaymentTermAction.handle
 
 export const createPaymentTermAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'payment.term-catalog.payment-term.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'payment-terms', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'payment.term-catalog.create-payment-term.access.v1',
@@ -128,7 +136,7 @@ export const createPaymentTermAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'payment.term-catalog.create-payment-term',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -138,14 +146,6 @@ export const createPaymentTermAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: CreatePaymentTermPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CreatePaymentTermPayload>((_payload, scope) => ({
-      permission: 'write',
-      resource: {
-        moduleId: MODULE_KEY,
-        resourceId: scope.legalEntityId ?? '',
-        resourceType: 'payment.term-catalog.payment-term-catalog-root',
-      },
-    })),
     resultSchema: CreatePaymentTermResultSchema,
     schemaVersion: '1',
   },

@@ -15,6 +15,15 @@ import {
 
 export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.duplicate-candidate.request-evidence',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'identity-review', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all', 'assigned'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.caseRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.mark-duplicate-candidate-needs-evidence.access.v1',
@@ -25,10 +34,7 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.mark-duplicate-candidate-needs-evidence',
       moduleKey: 'party.registry',
       role: 'action',
@@ -40,7 +46,6 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
     policies: [],
     resultSchema: MarkDuplicateCandidateNeedsEvidenceResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'review_party_identity',
   },
   handleDuplicateCaseResolution,
   (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'NEEDS_EVIDENCE'),

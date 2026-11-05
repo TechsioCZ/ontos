@@ -24,6 +24,14 @@ const handleCancelOrderCommitment = Effect.fn('CancelOrderCommitment.handle')(fu
 });
 export const cancelOrderCommitmentAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.order.commitment.cancel',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'orders', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.order.cancel-order-commitment.access.v1',
@@ -34,7 +42,7 @@ export const cancelOrderCommitmentAction = defineAction(
     domainEvents: orderCommitmentDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.order.cancel-order-commitment',
       moduleKey: 'commerce.order',
       role: 'action',

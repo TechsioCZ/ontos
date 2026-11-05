@@ -1,6 +1,5 @@
 // Native operator integration only. Nothing acquires resources until an it.live callback runs.
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 
 import { privacyLegacyCompletionOwner } from '@app/privacy/admin/legacy-completion';
 import {
@@ -61,9 +60,6 @@ import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import {
   makePrivacyPublicCompletionSession,
   PublicCompletionCapabilitySchema,
-  PublicCompletionProducerSchema,
-  frozenDispatchMatches,
-  LEGACY_DISPATCH_SHA256,
 } from './support/privacy-public-completion-session.mts';
 import {
   ApplicationCompositionAuthorityError,
@@ -1049,7 +1045,7 @@ it.live(
     }).pipe(Effect.provide(services)),
 );
 
-it('validates creator capability schema and frozen-source hash discrimination without native setup', () => {
+it('validates the creator capability schema without native setup', () => {
   expect(
     Schema.is(PublicCompletionCapabilitySchema)({
       creatorPid: process.pid,
@@ -1066,97 +1062,82 @@ it('validates creator capability schema and frozen-source hash discrimination wi
       systemIdentifier: '456',
     }),
   ).toBe(false);
-  expect(Schema.is(PublicCompletionProducerSchema)('arbitrary-source')).toBe(false);
-  const source = readFileSync(
-    new URL('../../verticals/privacy/tests/support/privacy-completion-http.ts', import.meta.url),
-    'utf-8',
-  );
-  const literal = /const legacyDispatchSource =\s*(?<source>"(?:[^"\\]|\\.)*")/u.exec(source)?.groups?.source;
-  const frozen = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String))(literal);
-  expect(frozenDispatchMatches(frozen)).toBe(true);
-  expect(frozenDispatchMatches(`${frozen}\n`)).toBe(false);
-  expect(frozenDispatchMatches('new format with metadata reset to null')).toBe(false);
-  expect(LEGACY_DISPATCH_SHA256).toBe('dc8a3848294951d5f54ce8758e506ca556ce37c42911c2a693c406a02a5c8132');
 });
 
 for (const phase of ['active', 'draining', 'sealed'] as const) {
-  it.live(
-    `refuses genuine unmarked old-producer history at first owner-verifier publication or recovered ${phase}`,
-    () =>
-      Effect.gen(function* realOldProducerRefusal() {
-        const fixture = yield* makeFixture();
-        const session = yield* makePrivacyPublicCompletionSession({
-          capability: fixture.capability,
-          connections: fixture.owned.connections,
-          producer: 'legacy',
-        }).pipe(Effect.provideService(CoreDatabase, fixture.database));
-        const produced = yield* session.run();
-        expect(produced.producerSha256).toBe(LEGACY_DISPATCH_SHA256);
-        expect(produced.invocationId).not.toBeNull();
-        const observeCore = Effect.all([
-          fixture.database.executor
-            .select()
-            .from(outboxMessages)
-            .where(eq(outboxMessages.outboxMessageId, produced.messageId)),
-          fixture.database.executor
-            .select()
-            .from(outboxDeliveries)
-            .where(eq(outboxDeliveries.outboxMessageId, produced.messageId)),
-        ]);
-        const originalCoreHash = createHash('sha256')
+  it.live(`refuses unprovable owner history at first owner-verifier publication or recovered ${phase}`, () =>
+    Effect.gen(function* realUnprovableOwnerHistoryRefusal() {
+      const fixture = yield* makeFixture();
+      const session = yield* makePrivacyPublicCompletionSession({
+        capability: fixture.capability,
+        connections: fixture.owned.connections,
+      }).pipe(Effect.provideService(CoreDatabase, fixture.database));
+      const produced = yield* session.run();
+      expect(produced.invocationId).not.toBeNull();
+      const observeCore = Effect.all([
+        fixture.database.executor
+          .select()
+          .from(outboxMessages)
+          .where(eq(outboxMessages.outboxMessageId, produced.messageId)),
+        fixture.database.executor
+          .select()
+          .from(outboxDeliveries)
+          .where(eq(outboxDeliveries.outboxMessageId, produced.messageId)),
+      ]);
+      const originalCoreHash = createHash('sha256')
+        .update(JSON.stringify(yield* observeCore))
+        .digest('hex');
+      const before = yield* fixture.observeOwner;
+      expect(before).toMatchObject({
+        dispatches: 1,
+        measureIds: [produced.measureId],
+        outcomeIds: [produced.outcomeId],
+        outcomes: 1,
+      });
+      if (phase !== 'active') {
+        yield* fixture.database.executor.transaction((transaction) =>
+          closeApplicationCompositionDurableAdmission(transaction, session.snapshot.composition.revision).pipe(
+            Effect.andThen(drainApplicationCompositionAuthority(transaction, session.snapshot.composition.revision)),
+          ),
+        );
+      }
+      if (phase === 'sealed') {
+        yield* fixture.database.executor.transaction((transaction) =>
+          sealApplicationCompositionAuthority(transaction, session.snapshot.composition.revision),
+        );
+      }
+      const calls = yield* Ref.make(0);
+      const attempted =
+        phase === 'sealed'
+          ? runApplicationCompositionMigration(
+              Ref.update(calls, (value) => value + 1),
+              fixture.proof,
+            )
+          : publishSnapshot(yield* snapshot(`unprovable-${phase}`, 10_000), Option.none(), fixture.proof);
+      const refused = yield* attempted.pipe(Effect.provide(fixture.publication), Effect.flip);
+      expect(Schema.is(LegacyCompletionPublicationError)(refused)).toBe(true);
+      expect(yield* Ref.get(calls)).toBe(0);
+      expect(yield* fixture.observeAuthority).toMatchObject([
+        { phase, revision: session.snapshot.composition.revision },
+      ]);
+      expect(yield* fixture.observeOwner).toEqual(before);
+      expect(
+        createHash('sha256')
           .update(JSON.stringify(yield* observeCore))
-          .digest('hex');
-        const before = yield* fixture.observeOwner;
-        expect(before).toMatchObject({
-          dispatches: 1,
-          measureIds: [produced.measureId],
-          outcomeIds: [produced.outcomeId],
-          outcomes: 1,
-        });
-        if (phase !== 'active') {
-          yield* fixture.database.executor.transaction((transaction) =>
-            closeApplicationCompositionDurableAdmission(transaction, session.snapshot.composition.revision).pipe(
-              Effect.andThen(drainApplicationCompositionAuthority(transaction, session.snapshot.composition.revision)),
-            ),
-          );
-        }
-        if (phase === 'sealed') {
-          yield* fixture.database.executor.transaction((transaction) =>
-            sealApplicationCompositionAuthority(transaction, session.snapshot.composition.revision),
-          );
-        }
-        const calls = yield* Ref.make(0);
-        const attempted =
-          phase === 'sealed'
-            ? runApplicationCompositionMigration(
-                Ref.update(calls, (value) => value + 1),
-                fixture.proof,
-              )
-            : publishSnapshot(yield* snapshot(`old-${phase}`, 10_000), Option.none(), fixture.proof);
-        const refused = yield* attempted.pipe(Effect.provide(fixture.publication), Effect.flip);
-        expect(Schema.is(LegacyCompletionPublicationError)(refused)).toBe(true);
-        expect(yield* Ref.get(calls)).toBe(0);
-        expect(yield* fixture.observeAuthority).toMatchObject([
-          { phase, revision: session.snapshot.composition.revision },
-        ]);
-        expect(yield* fixture.observeOwner).toEqual(before);
-        expect(
-          createHash('sha256')
-            .update(JSON.stringify(yield* observeCore))
-            .digest('hex'),
-        ).toBe(originalCoreHash);
-        expect((yield* Ref.get(fixture.requests)).some((request) => request.startsWith('PUT'))).toBe(false);
-        const observations = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
-        expect(observations.length).toBeGreaterThan(0);
-        for (const name of observations) {
-          const retained = yield* Schema.decodeUnknownEffect(
-            Schema.fromJsonString(Schema.toCodecJson(LegacyCompletionRetainedObservationSchema)),
-          )(yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${name}`));
-          expect(retained.status).toBe('UNRESOLVED');
-          expect(retained.binding.expectedRevision).toEqual(Option.some(session.snapshot.composition.revision));
-        }
-        yield* session.close;
-      }).pipe(Effect.provide(services)),
+          .digest('hex'),
+      ).toBe(originalCoreHash);
+      expect((yield* Ref.get(fixture.requests)).some((request) => request.startsWith('PUT'))).toBe(false);
+      const observations = yield* fixture.fs.readDirectory(fixture.evidenceDirectory);
+      expect(observations.length).toBeGreaterThan(0);
+      for (const name of observations) {
+        const retained = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Schema.toCodecJson(LegacyCompletionRetainedObservationSchema)),
+        )(yield* fixture.fs.readFileString(`${fixture.evidenceDirectory}/${name}`));
+        expect(retained.status).toBe('UNRESOLVED');
+        expect(retained.binding.expectedRevision).toEqual(Option.some(session.snapshot.composition.revision));
+      }
+      yield* session.close;
+    }).pipe(Effect.provide(services)),
   );
 }
 
@@ -1166,7 +1147,6 @@ it.live('retains BUSINESS_REJECTED owner history after public ACK and refuses op
     const session = yield* makePrivacyPublicCompletionSession({
       capability: fixture.capability,
       connections: fixture.owned.connections,
-      producer: 'current',
     }).pipe(Effect.provideService(CoreDatabase, fixture.database));
     const actual = yield* session.run();
     expect(actual.status).toBe('BUSINESS_REJECTED');

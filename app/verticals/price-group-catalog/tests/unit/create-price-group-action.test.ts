@@ -1,7 +1,5 @@
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
-import type { OwnerPermissionAccessTarget } from '@app/core-runtime';
-
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -28,11 +26,6 @@ import {
   PriceGroupSemanticIdentityConflict,
 } from '../../shared/domain/price-group-errors.ts';
 import type { PriceGroupDefinitionRevision } from '../../shared/domain/price-group.ts';
-
-const permissionRequest = (targets: readonly OwnerPermissionAccessTarget[] | undefined) => {
-  const first = targets?.[0];
-  return first === undefined ? undefined : { permission: first.definition.key, target: first.target };
-};
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const compositionRevision = 'b'.repeat(64);
@@ -151,14 +144,16 @@ describe('Create Price Group Action', () => {
     expect(() => decode({ ...payload, effectiveTo: '2026-12-01T00:00:00.000Z' })).toThrow();
   });
 
-  it('declares the catalog permission, forbidden legal-entity scope, and stable event contract', () => {
-    const resolveBusinessPermission = getActionOwnerPermissionTargetResolver(createPriceGroupAction);
-
+  it('declares the catalog capability, forbidden legal-entity scope, and stable event contract', () => {
     expect(createPriceGroupAction.descriptor.legalEntityScope).toBe('forbidden');
-    expect(permissionRequest(resolveBusinessPermission?.(payload, scope))).toEqual({
-      permission: 'pricing.price_group.create',
-      target: { kind: 'pricing_catalog', pricingCatalogId: tenantId, tenantId },
+    // O67-Q2: the capability is scope-wide in the Tenant context; no per-catalog target survives.
+    expect(createPriceGroupAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(createPriceGroupAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'pricing.price-group-catalog.price-group.create',
+      kind: 'action',
+      selectors: [],
     });
+    expect(getActionOwnerPermissionTargetResolver(createPriceGroupAction)).toBeUndefined();
     expect(Object.keys(createPriceGroupAction.descriptor.domainEvents)).toEqual([
       'pricing.price-group-catalog.price-group-containment-projection-requested.v1',
     ]);

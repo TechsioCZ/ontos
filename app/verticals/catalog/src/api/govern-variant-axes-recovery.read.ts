@@ -71,7 +71,7 @@ const recoverGovernVariantAxes = Effect.fn('GovernVariantAxesRecoveryRead.recove
 
 const governVariantAxesRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.govern-variant-axes-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.govern-variant-axes-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -79,6 +79,14 @@ const governVariantAxesRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const governVariantAxesRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.govern-variant-axes-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: governVariantAxesRecoveryEntrypoint,
     evidencePolicy: {
@@ -88,7 +96,6 @@ export const governVariantAxesRecoveryRead = defineRead(
     inputSchema: GovernVariantAxesRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.govern-variant-axes-recovery',
     resultSchema: GovernVariantAxesRecoveryResponseSchema,
@@ -98,5 +105,4 @@ export const governVariantAxesRecoveryRead = defineRead(
     recoverGovernVariantAxes(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

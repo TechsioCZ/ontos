@@ -26,11 +26,13 @@ import { FetchHttpClient } from 'effect/http';
 import { Crypto, DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema, Stream } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
-import { catalogSelectionAssessmentPortFromEnvironment } from '../../src/integrations/catalog-selection-evidence.ts';
 import {
-  PricingCatalogSelectionUnavailable,
-  CatalogSelectionGatewayCredentialService,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
+  executeSelectionEvidence,
+  makeCatalogSelectionAssessmentPort,
+} from '../../src/integrations/catalog-selection-evidence.ts';
+import { OwnerGatewayConnectionError } from '../../src/integrations/owner-gateway-connection.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
 import { applyPriceDefinition, DefinePricePayloadSchema } from '../../src/actions/define-price.action.ts';
 import type { DefinePriceActionServices } from '../../src/actions/define-price.action.ts';
@@ -185,13 +187,10 @@ it.layer(services, { excludeTestServices: true })((suite) =>
           return `Bearer ${content}.${Buffer.from(signature).toString('base64url')}`;
         });
         let credentials = 0;
-        const port = yield* catalogSelectionAssessmentPortFromEnvironment({
-          compositionRevision: ready.compositionRevision,
-          legalEntityId: ready.legalEntityId,
-          requestCorrelation: yield* nextId,
-        }).pipe(
-          Effect.provideService(CatalogSelectionGatewayCredentialService, {
-            issue: (request) =>
+        const requestCorrelation = yield* nextId;
+        const port = yield* Effect.succeed(
+          makeCatalogSelectionAssessmentPort({
+            acquire: (request) =>
               Effect.gen(function* issueCatalogOnlyTestCredential() {
                 expect(request.audience).toBe('catalog');
                 expect(request.compositionRevision).toBe(ready.compositionRevision);
@@ -207,7 +206,20 @@ it.layer(services, { excludeTestServices: true })((suite) =>
                       retryable: true,
                     }),
                 ),
+                Effect.mapError(() => new OwnerGatewayConnectionError({ reason: 'Owner gateway is unavailable' })),
               ),
+            context: {
+              compositionRevision: ready.compositionRevision,
+              legalEntityId: ready.legalEntityId,
+              requestCorrelation,
+              scope: verifiedTestScope({
+                correlationId: requestCorrelation,
+                legalEntityId: ready.legalEntityId,
+                principalId: ready.actor.principalId,
+                tenantId: ready.actor.tenantId,
+              }),
+            },
+            execute: executeSelectionEvidence,
           }),
         );
         const healthy = yield* port.assess(ready.alternate);

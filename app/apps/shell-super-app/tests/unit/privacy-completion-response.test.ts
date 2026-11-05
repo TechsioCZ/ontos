@@ -19,6 +19,7 @@ const fixtureReady = () =>
     apiKey: 'private-test-key-never-stdout',
     legalEntityId: '11111111-1111-4111-8111-111111111111',
     marker: { appId: 'shell-super-app', label: 'Příprava' },
+    moduleApiKey: 'private-module-key-never-stdout',
     port: 4123,
     principal: {
       authContextRef: 'job:fixture:run:private-response',
@@ -86,6 +87,7 @@ it.layer(NodeServices.layer)('private completion response socket', (suite) => {
               line.trim(),
             );
             expect(Redacted.value(decoded.apiKey)).toBe(Redacted.value(payload.apiKey));
+            expect(Redacted.value(decoded.moduleApiKey)).toBe(Redacted.value(payload.moduleApiKey));
             expect(decoded.principal).toEqual(payload.principal);
             expect(decoded.protocolVersion).toBe(2);
             yield* Fiber.interrupt(listener);

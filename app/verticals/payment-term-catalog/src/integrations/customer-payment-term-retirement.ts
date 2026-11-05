@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { executeReservePaymentTermRetirementWithAuthorization } from '@app/customer-payment-term-contracts/reserve-payment-term-retirement/client';
 import type {
   ReservePaymentTermRetirementPayload,
@@ -141,7 +142,7 @@ const unavailableAuthority: PaymentTermRetirementAuthority = {
 };
 
 export const customerPaymentTermRetirementAuthorityFromEnvironment = (
-  requestCorrelation: string,
+  scope: OperationalScope,
   execute?: ReservationExecutor,
 ): Effect.Effect<PaymentTermRetirementAuthority> =>
   Effect.serviceOption(CustomerContextGatewayCredentialService).pipe(
@@ -152,13 +153,15 @@ export const customerPaymentTermRetirementAuthorityFromEnvironment = (
       const runner: ReservationExecutor =
         execute ??
         ((payload, correlation, idempotencyKey) =>
-          issuerOption.value.issue({ audience: 'commerce-customer-context', requestCorrelation: correlation }).pipe(
-            Effect.flatMap((credential) =>
-              executeReservePaymentTermRetirementWithAuthorization(payload, Redacted.value(credential), correlation, {
-                idempotencyKey,
-              }),
-            ),
-          ));
-      return customerPaymentTermRetirementAuthority(requestCorrelation, runner);
+          issuerOption.value
+            .issue({ audience: 'commerce-customer-context', requestCorrelation: correlation, scope })
+            .pipe(
+              Effect.flatMap((credential) =>
+                executeReservePaymentTermRetirementWithAuthorization(payload, Redacted.value(credential), correlation, {
+                  idempotencyKey,
+                }),
+              ),
+            ));
+      return customerPaymentTermRetirementAuthority(scope.correlationId, runner);
     }),
   );

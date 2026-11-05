@@ -113,11 +113,19 @@ const snapshot = (routePath: string) =>
                       navigation: [],
                       pages: [
                         {
+                          accessDeclaration: {
+                            key: 'party.registry.people-page.open',
+                            kind: 'read',
+                            modes: ['run'],
+                            placement: { group: 'parties', level: 'basic' },
+                            risk: 'routine',
+                            selectors: [],
+                          },
                           componentKey: partyComponentKey,
                           contributionKey: partyEntrypointKey,
                           entrypoint: {
                             access: 'read',
-                            authorization: { kind: 'context_permission', permission: 'module.access' },
+                            authorization: { kind: 'protected' },
                             entrypointKey: partyEntrypointKey,
                             moduleKey: partyModuleId,
                             role: 'page',

@@ -86,6 +86,14 @@ const handleEvaluateProcessingEligibility = Effect.fn('EvaluateProcessingEligibi
 
 export const evaluateProcessingEligibilityAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.processing-eligibility.evaluate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'consent', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.evaluate-processing-eligibility.access.v1',
@@ -97,7 +105,7 @@ export const evaluateProcessingEligibilityAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.evaluate-processing-eligibility',
       moduleKey: 'privacy.core',
       role: 'action',

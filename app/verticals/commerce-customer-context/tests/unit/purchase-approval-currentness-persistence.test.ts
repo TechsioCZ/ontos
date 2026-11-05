@@ -1,6 +1,5 @@
 import { TestClock } from 'effect/testing';
 import type {
-  ContextAccessService,
   OperationalScope,
   ScopedRoutineDefinition,
   ScopedRoutineInputValues,
@@ -206,15 +205,6 @@ const makeRoutineInvoker = (calls: string[]): ScopedRoutineInvoker => ({
   },
 });
 
-const contextAccess: ContextAccessService = {
-  legalEntities: () => Effect.succeed([]),
-  modules: () => Effect.succeed([]),
-  ownerPermissions: ({ targets }) =>
-    Effect.succeed(targets.map(({ target }) => ({ decision: 'allowed' as const, key: target.key }))),
-  resources: () => Effect.succeed([]),
-  tenants: () => Effect.succeed([]),
-};
-
 const purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPortService = {
   resolveCurrent: () => Effect.never,
 };
@@ -223,13 +213,9 @@ it.effect('rejects a mismatched tenant target before invoking the Core owner acc
   Effect.gen(function* rejectMismatchedTenantTarget() {
     const routineKeys: string[] = [];
     const factory = yield* PurchaseApprovalCurrentnessFactory;
-    const service = factory.make(
-      makeRoutineInvoker(routineKeys),
-      mismatchedScope,
-      contextAccess,
-      purchaseLimitCurrentness,
-      { loadCurrent: () => Effect.die('unused after mismatched tenant rejection') },
-    );
+    const service = factory.make(makeRoutineInvoker(routineKeys), mismatchedScope, purchaseLimitCurrentness, {
+      loadCurrent: () => Effect.die('unused after mismatched tenant rejection'),
+    });
     if (service.resolveSubmission === undefined) {
       return yield* Effect.die('The currentness fixture must expose submission validation');
     }
@@ -338,7 +324,7 @@ it.effect('passes the complete typed approval request reference to its declared 
       },
     };
     const factory = yield* PurchaseApprovalCurrentnessFactory;
-    const service = factory.make(invoker, validScope, contextAccess, purchaseLimitCurrentness, {
+    const service = factory.make(invoker, validScope, purchaseLimitCurrentness, {
       loadCurrent: () => Effect.die('No snapshot must not reach current evaluation'),
     });
     const failure = yield* Effect.flip(
@@ -408,7 +394,7 @@ it.effect('keeps unavailable native snapshots typed and does not fabricate curre
           );
         },
       };
-      const service = factory.make(invoker, validScope, contextAccess, purchaseLimitCurrentness, {
+      const service = factory.make(invoker, validScope, purchaseLimitCurrentness, {
         loadCurrent: () => Effect.die('Unavailable snapshots must not reach current evaluation'),
       });
       const failure = yield* Effect.flip(
@@ -501,7 +487,6 @@ const RoleModeSchema = Schema.Literals(['ELIGIBLE', 'INELIGIBLE', 'INDETERMINATE
 type RoleMode = typeof RoleModeSchema.Type;
 const currentProfileFixture = (
   options: {
-    readonly core?: 'allowed' | 'denied' | 'unavailable';
     readonly finalAuthority?:
       | 'MISSING'
       | 'DENIED'
@@ -648,11 +633,6 @@ const currentProfileFixture = (
       };
     },
   });
-  const access: ContextAccessService = {
-    ...contextAccess,
-    ownerPermissions: ({ targets }) =>
-      Effect.succeed(targets.map(({ target }) => ({ decision: options.core ?? 'allowed', key: target.key }))),
-  };
   const currentness: PurchaseLimitEvaluationCurrentnessPortService = {
     resolveCurrent: () =>
       options.unavailableExternal === true
@@ -714,7 +694,7 @@ const currentProfileFixture = (
         yield* TestClock.setTime(DateTime.toEpochMillis(options.observedAt));
       }
       const factory = yield* PurchaseApprovalCurrentnessFactory;
-      const service = factory.make(transaction, validScope, access, currentness, evaluation);
+      const service = factory.make(transaction, validScope, currentness, evaluation);
       const scope = { legalEntityId, principalId: buyerId, storefrontId, tenantId };
       if (path === 'REVALIDATE') {
         return yield* service.resolveRevalidation({ claimed: claimedRevalidation, scope }).pipe(
@@ -739,7 +719,8 @@ const currentProfileFixture = (
             verifyConsumption: () => Effect.die('Unit revalidation never proves an Order commit'),
             verifyRevalidation: ({ binding, request, scope }) => {
               expect(request.requestRef).toEqual(currentRequest.requestRef);
-              expect(scope).toEqual({ legalEntityId, principalId: buyerId, storefrontId, tenantId });
+              // The final authority delegates as the verified requester, so it receives the whole operational scope.
+              expect(scope).toEqual(validScope);
               if (options.finalAuthority === 'DENIED' || options.finalAuthority === 'UNKNOWN') {
                 return Effect.fail(
                   new PurchasingApprovalRejected({
@@ -790,7 +771,12 @@ it.effect('supplies exact scoped Party role evidence to the real profile gate fo
       const outcome = yield* fixture.run(path);
       expect(outcome).toEqual({ buyer: 'ALLOWED', profile: 'ACTIVE', routeCurrent: true });
       expect(fixture.resolverScopes).toEqual([
-        { legalEntityId, requestCorrelation: validScope.correlationId, tenantId },
+        {
+          legalEntityId,
+          operationalScope: validScope,
+          requestCorrelation: validScope.correlationId,
+          tenantId,
+        },
       ]);
       expect(fixture.roleRequests).toEqual([{ counterpartyResourceId: counterpartyRef.resourceId, tenantId }]);
       expect(fixture.calls.some(({ routineKey }) => routineKey === 'profile.read-trading-gate')).toBe(true);
@@ -841,7 +827,6 @@ it.effect('retains real profile identity, state, source vector and Core/owner au
       for (const options of [
         { profileState: 'SUSPENDED' },
         { profileOutcome: 'PROFILE_RECONCILIATION_REQUIRED' },
-        { core: 'denied' },
         { owner: 'REVOKED' },
       ] as const) {
         const result = yield* Effect.result(currentProfileFixture(options).run(path));
@@ -854,11 +839,7 @@ it.effect('retains real profile identity, state, source vector and Core/owner au
           }
         }
       }
-      for (const options of [
-        { core: 'unavailable' },
-        { owner: 'RECONCILIATION_REQUIRED' },
-        { unavailableExternal: true },
-      ] as const) {
+      for (const options of [{ owner: 'RECONCILIATION_REQUIRED' }, { unavailableExternal: true }] as const) {
         const result = yield* Effect.result(currentProfileFixture(options).run(path));
         expect(Result.isFailure(result)).toBe(true);
         if (Result.isFailure(result)) {

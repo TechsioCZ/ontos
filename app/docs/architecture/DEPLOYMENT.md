@@ -256,21 +256,44 @@ New connections can fail after the migrator changes PostgreSQL's password until 
 
 `zerops.yaml` is shared with production. Production stays blocked until the same `migrator` secrets exist there.
 
-### Order-flow owner credentials
+### Module credentials and bindings
 
-Commerce Order, Customer Context, Commerce Cart and Pricing call each other and the Shell gateway with Shell-issued API keys, and admit each other's API-key Principals by ID or by grant list. `scripts/ops/owner-runtime-configuration.mts` names every value each owner reads; the Zerops generator and the Cloudflare Worker secret plan both read it. Before the first deploy that carries them, a human operator, never an agent, issues the keys in Shell and records the per-environment values:
+Every module deployment that calls another module presents its own module credential, `ONTOS_GATEWAY_MODULE_API_KEY`, to the Shell's delegated issuance. The Shell binds each credential to exactly one module through `ONTOS_GATEWAY_MODULE_BINDINGS` and attests that module's identity on every call, so no module admits another by Principal ID or grant list. `scripts/ops/owner-runtime-configuration.mts` names every value each module reads; the Zerops generator and the Cloudflare Worker secret plan both read it. Before the first deploy that carries them, a human operator, never an agent, issues one module credential per module in Shell (one service Principal with one managed API key) and records the values. For each module:
 
-| Owner                       | Credentials (sensitive)                                                                                                       | Per-environment values (not secret)                                                                                                                                                                                                                                                                        |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `commerce-order`            | `ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY`, `ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY`                                            | `ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID` (the finalization key's Principal), `ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID` (Customer Context's `ONTOS_CCC_ORDER_GATEWAY_API_KEY` Principal), `ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID` (Pricing's key Principal)                                         |
-| `commerce-customer-context` | `ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY`, `ONTOS_CCC_ORDER_GATEWAY_API_KEY`, `ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY` | `ONTOS_CCC_ORDER_CONSUMER_{PRINCIPAL,LEGAL_ENTITY,TENANT}_ID` (Order's approval key), `ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID`, and the JSON grant lists `ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS`, `ONTOS_CCC_PRICING_FINALIZATION_SERVICE_GRANTS`, `ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS` |
-| `commerce-cart`             | `ONTOS_CART_FINALIZATION_SERVICE_API_KEY`                                                                                     | the JSON grant lists `ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS`, `ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS`                                                                                                                                                                                                  |
-| `pricing`                   | `ONTOS_PRICING_GATEWAY_API_KEY`, `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET`                                                  | `ONTOS_PRICING_ORDER_PRINCIPAL_ID`, `ONTOS_PRICING_PREPROPOSAL_PRINCIPAL_ID`, `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}`                                                                                                                                                                   |
+1. In the platform tenant, run `core.identity.create-non-human-principal` with `kind: service` and the module's name as the display name. Record the returned principal ID.
+2. Issue a managed API key for that principal through Shell's API key service. Its Better Auth key ID is the provider key ID.
+3. Run `core.identity.bind-managed-api-key` with that principal ID and provider key ID. It binds the key to the principal in the same tenant.
+4. Record the key as the module's `ONTOS_GATEWAY_MODULE_API_KEY_<UNIT>` secret, and add one binding for it to `ONTOS_GATEWAY_MODULE_BINDINGS`.
 
-1. Store the credentials as sensitive `migrator` service secrets and the per-environment values as `migrator` service variables, under those names.
+Stage bootstrap does not issue these keys. `stage-accounts-file.ts` declares only the external workloads (`commerce.storefront-client`, `core.identity-provider`), and a test checks that list against the carriers' `accessWorkload` declarations.
+
+Local development sets `ONTOS_GATEWAY_MODULE_BINDINGS=[]` (`pnpm env:local:ensure`), so local module-to-module calls stay unprovisioned and fail closed.
+
+| Module (deployment)         | Module credential (sensitive, `migrator` secret)         | Other values                                                                                                     |
+| --------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `catalog`                   | `ONTOS_GATEWAY_MODULE_API_KEY_CATALOG`                   |                                                                                                                  |
+| `commerce-cart`             | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CART`             |                                                                                                                  |
+| `commerce-customer-context` | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT` |                                                                                                                  |
+| `commerce-market-catalog`   | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_MARKET_CATALOG`   |                                                                                                                  |
+| `commerce-order`            | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER`            |                                                                                                                  |
+| `party-registry`            | `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`            |                                                                                                                  |
+| `pricing`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PRICING`                   | `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET` (secret); `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}` |
+| `shell-super-app`           |                                                          | `ONTOS_GATEWAY_MODULE_BINDINGS` (JSON array, one binding per module credential above)                            |
+
+`party-registry` is the one worker-only unit: only its Outbox Worker makes delegated module calls, so its request service receives no module credential and none of the internal API bases its worker calls (`ONTOS_PARTY_REGISTRY_API_BASE_URL`, `ONTOS_PRIVACY_API_BASE_URL`, `ONTOS_SHELL_GATEWAY_BASE_URL`). `party-registry-worker` alone holds `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`.
+
+Each binding is `{compositionRevision, providerKeyId, sourceAppId, sourceBuildMarker}`: the module key's Better Auth ID, the module's topology app ID, and the composition revision and build that module runs. The Shell refuses module and API-key issuance (as unavailable) while the value is absent or malformed, so a deployment with no module enrolled sets `[]`.
+
+The bindings pin the release. The Shell accepts a module's call only while `compositionRevision` and `sourceBuildMarker` equal the current release, so every composition publish and every module redeploy changes what the bindings must say. Refresh `ONTOS_GATEWAY_MODULE_BINDINGS` in the same deploy that changes a release, before the module calls it. Until the refresh, every module-to-module call fails closed. The Worker secrets step checks the shape only: one binding per module credential, all for one composition revision. It does not compare the revision or build markers with the published release, so the operator must.
+
+1. Store the module credentials and the other credentials as sensitive `migrator` service secrets, and the per-environment values and `ONTOS_GATEWAY_MODULE_BINDINGS` as `migrator` service variables, under those names.
 2. Add all of them to the cut-over settings file for the Cloudflare Workers (see [Stage cut-over](#stage-cut-over-and-zerops-service-retirement)).
 
-Each owner's service references only its own values as `${migrator_<KEY>}`; an owner with an Outbox Worker (Order, Customer Context) also hands them to that worker and `outbox-worker-host`. `scripts/tests/zerops-deployment-contract.test.mts` enforces that no other service references them. Caller namespaces (`*_NAMESPACE_ID`) are the Shell's staff namespace `ontos.staff.better-auth.v1`, the code constant every Shell-issued API key is bound in, and every owner base is the owner's internal address `http://<hostname>:<port>/<unit>-api`; both are generated from topology. Create the values before the deploy that first references them, because `outbox-worker-host` references Order's and Customer Context's. At runtime each owner reads its values lazily, so an unusable one fails only the work that needs it, never the other owners in `outbox-worker-host`. Production stays blocked until the same `migrator` values exist there.
+Each module's service references only its own module credential and values as `${migrator_<KEY>}`; the Shell alone references `ONTOS_GATEWAY_MODULE_BINDINGS`. `scripts/tests/zerops-deployment-contract.test.mts` enforces these holders and derives the module callers from source. A module's Outbox Worker holds that module's credential too (`commerce-customer-context-worker`, `commerce-order-worker`, `party-registry-worker`).
+
+**Stage host:** `outbox-worker-host` runs the Order, Customer Context and Party Registry workers in one process. It receives each hosted owner's credential under its own per-unit name, `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`, `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT` and `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER`, and never a plain `ONTOS_GATEWAY_MODULE_API_KEY`. The host runtime gives each hosted owner's layer its own configuration overlay that reads the owner's per-unit variable as `ONTOS_GATEWAY_MODULE_API_KEY`; no other owner sees it. `scripts/generate-outbox-worker-deployment.mjs` writes those references and the host entry, and the deployment contract test checks them. Stage bootstrap does not issue these three keys: that stays a manual operator step, an accepted deviation, done with the procedure above and recorded as those three `migrator` secrets.
+
+Create the values before the deploy that first references them. Every module's base is the module's internal address `http://<hostname>:<port>/<unit>-api`, generated from topology. At runtime each module reads its values lazily, so an unusable one fails only the work that needs it. Production stays blocked until the same `migrator` values exist there.
 
 ### SpiceDB
 
@@ -287,18 +310,11 @@ For every authorization-schema change:
 
 Bootstrap files are only for an empty installation. They are not the ongoing authorization-schema deployment mechanism.
 
-The fail-closed Action authorization rollout uses an explicit expand/provision/verify/deploy gate:
+Authorization v2 replaces the earlier model directly: no dual read or write, no legacy relations and no rollout contract. Deploying it publishes the v2-only SpiceDB schema, then bootstraps Tenant intent from the installed modules' declarations ([Granular Authorization](./AUTHORIZATION.md), [ADR-0028](../../../docs/adr/0028-stage-accounts-from-operator-data.md)). Apply the schema before any runtime that reads it. The v2 schema is generated from the Core schema constant and pinned by a test, so `stage-bootstrap.yaml` never drifts from it.
 
-1. prepare the candidate application/release artifact for the operator command while the previous runtime remains active; this is separate from the PostgreSQL migration artifact;
-2. ensure the fixed stage contexts and their Tenant membership relationships already exist;
-3. run `mise exec -- pnpm authorization:provision-current-actions` in the stage-gated artifact. It publishes the compatible schema and membership-set executor grants for every `tenant_membership_default` Action across the fixed stage Tenants. For every `explicit` Action it writes direct executor grants for the accounts whose `grants.explicitActions` in the operator stage accounts file name it ([ADR-0028](../../../docs/adr/0028-stage-accounts-from-operator-data.md)); set `ONTOS_STAGE_ACCOUNTS_FILE` for the run;
-4. verify every default Action for the fixed stage Principals and the non-member denial. Verify every explicit Action as allowed for its grantees and denied for every other fixed account and the non-member. Verify that no fixed Principal can access the other fixed Tenant;
-5. only then deploy the runtime that treats missing `action#execute` permission as denial;
-6. smoke one provisioned Action and one deliberately unconfigured Action denial.
+Authorization intent is data, not a provisioning command. The stage operator bootstrap (`stage:bootstrap-accounts`) creates each stage Tenant's scopes, owner membership, "Plný přístup" Role and assignments through `bootstrapTenantAccess`, then reconciles the SpiceDB projection through the single Core writer. Nothing else writes v2 relationships; there is no separate Action-provisioning command, no per-Action assertion set and no `authorization:provision-current-actions` step.
 
-The command is operator-invoked, idempotent, accepts no scope arguments, and must not be attached to PostgreSQL migrations, SpiceDB startup, application startup, or automatic deployment. A failure or catalog mismatch blocks promotion. Rollback restores the previous application artifact while leaving the additive schema and relationships in place.
-
-Provisioning is additive, not stale-grant reconciliation. Before narrowing an Action from `tenant_membership_default` to `explicit`, the operator must prepare its intended narrow grants, remove the obsolete `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relation for each affected fixed Tenant, and verify both the intended allowed Principal and a Tenant member who must now be denied. Removed Actions and revoked role/workload assignments likewise require an explicit, reviewed removal of their obsolete executor relations. Derive Action object IDs with `toSpiceDbActionObjectId`; never delete unrelated tuples or rely on rerunning `TOUCH` to revoke access. Record and verify this policy-data transition before promotion. An application rollback must not silently restore a revoked grant; any policy restoration needs its own reviewed decision. The fixed environment's provisioning input records at least one allowed and one denied Principal assertion for every `explicit` Action. On stage those assertions and grants are derived from the operator stage accounts file, the same data the bootstrap writes; grant data may name only accounts in the file and current `explicit` Actions, and a direct grant may name only a fixed Principal with an allowed assertion. Development has no explicit policy, so it still fails while the catalog has `explicit` Actions. Promotion verifies every fixed context plus the representative non-member for each `tenant_membership_default` Action; it verifies only those recorded per-Action assertions for an `explicit` Action. Missing, duplicate, unknown, allow-only, or deny-only explicit assertion sets fail before schema or relationship writes.
+Rollback restores the previous application artifact. A rollback must not resurrect authority that was revoked in the meantime: the v2 projection follows Core intent, and only a reviewed intent change restores a grant.
 
 ### Stage accounts bootstrap
 
@@ -337,8 +353,8 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
           "password": "<at least 8 characters>",
           "displayName": "<name>",
           "grants": {
-            "tenantRelations": ["<tenant relation from the SpiceDB schema>"],
-            "explicitActions": ["<explicit Action key>"]
+            "owner": true,
+            "roles": ["full_access"]
           }
         }
       ]
@@ -349,11 +365,12 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
 }
 ```
 
-- Every Tenant, slug, legal entity, module state, Principal, binding, and email must be unique; unknown keys are rejected.
-- `tenantRelations` may name any Principal relation on `tenant` in the SpiceDB schema except `member`, which every account gets. `explicitActions` is a list of `explicit` Action keys or `"all"`. `authorization:provision-current-actions` reads the same file, so grants and their assertions cannot drift apart.
-- `retiredTenants` (may be empty) lists former stage Tenants. The bootstrap revokes their bindings, archives their rows, and deletes every SpiceDB relationship it can have written for them.
+- Every Tenant, slug, legal entity, module state, Principal, binding, and email must be unique; unknown keys are rejected. Exactly one account per Tenant sets `grants.owner`.
+- `grants.owner` names the account that owns the Tenant. `bootstrapTenantAccess` creates the Tenant's scopes, memberships, the "Plný přístup" Role compiled from the current catalog, and the owner's Assignment in every scope. `grants.roles` lists the further roles the account holds beside its membership; today the only value is `full_access`.
+- The bootstrap writes Core intent and reconciles the SpiceDB projection; nothing writes SpiceDB relationships directly. Rerunning with a changed account re-reconciles the same intent.
+- `retiredTenants` (may be empty) lists former stage Tenants. The bootstrap revokes their memberships and assignments in PostgreSQL, archives their identity rows, and reconciles, so the projected tuples go with the intent.
 - `retiredAccountEmails` (may be empty) lists former stage accounts. The bootstrap bans each one, ends its sessions and removes its password credential. Retired data must not overlap an active Tenant, Principal, or email.
-- Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions. Both tools only add relationships; removing a grant from the file does not revoke it.
+- Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions. Adding a grant to the file does not revoke anything; only removing or changing the account's data does.
 
 Every later canonical state change uses a typed Action.
 
@@ -392,7 +409,7 @@ Use this sequence for a new or changed MicroVertical:
 1. **Plan:** generate the impacted delivery-unit graph from topology and capture compatibility, migration, flag, smoke, and rollback declarations.
 2. **Preflight:** validate configuration and record last-known-good artifacts.
 3. **Build:** produce and verify immutable target-shaped artifacts.
-4. **Migrate:** expand PostgreSQL, refresh grants, verify schemas, then compatibly update SpiceDB and complete any required operator-controlled relationship provisioning before deploying a fail-closed consumer.
+4. **Migrate:** expand PostgreSQL, verify schemas, publish the SpiceDB schema, and reconcile the v2 projection before deploying a consumer.
 5. **Deploy providers:** deploy affected MicroVerticals in dependency order, initially dark.
 6. **Expose providers:** verify readiness, module manifest, BFF, remote assets, and public endpoint. Stage public subdomains are declared at service creation in `zerops-import.yaml`, never re-enabled per deploy.
 7. **Promote composition:** validate and explicitly promote one immutable candidate revision. A compatible MicroVertical update or installation does not redeploy Shell.
@@ -437,12 +454,11 @@ Zerops can equally run `host`.
 secret from the deploying environment without creating a deployment. An invalid target or mode fails
 the run, and so does a configured environment without `OUTBOX_WORKER_MODE`: it has no default. An
 environment without its Zerops project or token deploys nothing and records nothing. `deploy-plan`
-then plans in that environment from the environment's last successful deployment and promotes
-authorization for that environment (`--authorization-environment`), so production needs its own
-enforced authorization evidence and context. After the complete expected candidate is prepared,
-`deploy-migrations` runs the independent migration/verifier closure and requested SpiceDB deploy.
-`deploy-node-backends` deploys fresh Node business units and Shell, then `deploy-zerops` handles workers
-and the Node publication in the original environment. Pushes to `main` deploy `stage`. Production deploys
+then plans in that environment from the environment's last successful deployment. After the complete
+expected candidate is prepared, `deploy-migrations` runs the independent migration/verifier closure and
+requested SpiceDB deploy. `deploy-node-backends` deploys fresh Node business units and Shell, then
+`deploy-zerops`, the environment's one deployment record, handles workers and the Node publication in the
+original environment. Pushes to `main` deploy `stage`. Production deploys
 only on an explicit dispatch:
 
 ```sh
@@ -642,10 +658,10 @@ in single quotes). They use the vault export's `<hostname>_<KEY>` names, so the 
 `stage-zerops-services.mts restore --secrets-file`. Zerops is no place for them: it returns a
 sensitive project variable only masked, and every service would inherit it. The Worker secrets step
 and `verify` fail when either is missing. The file also holds
-`ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY` and every value in
-[Order-flow owner credentials](#order-flow-owner-credentials); the Worker secrets step fails before
-writing anything, naming the setting, when one is missing or is not a UUID, JSON document or reference
-where one is required. Those owners' Workers also receive their caller namespaces and the owner API bases
+every module credential, `ONTOS_GATEWAY_MODULE_BINDINGS` and every value in
+[Module credentials and bindings](#module-credentials-and-bindings); the Worker secrets step fails before
+writing anything, naming the setting, when one is missing, is not one binding per module credential, or is not a reference
+where one is required. Those modules' Workers also receive the module API bases
 they call by URL on the owners' custom domains. A base a Worker reaches through a service binding, or
 only an Outbox Worker on Zerops reads (`ONTOS_ORDER_API_BASE_URL`), is not set. A new value takes effect only after `worker-secrets`, which
 gives the Shell the new key and every vertical its derived public JWKS in the same run. To create
@@ -1059,13 +1075,11 @@ Use the CI provider's rerun or manual dispatch for a genuine retry. Do not creat
 
 Git history and regression tests own the detailed rollout-failure record. When a failure class recurs or deployment behavior changes, add a permanent automated contract test instead of extending a prose commit list.
 
-## Fail-closed authorization promotion
+## Authorization deployment
 
-Authorization changes deploy schema and data expansion first: the Contacts assertion-redemption migration and SpiceDB policy precede every provider and the Shell. Run the inventory check, collect sanitized report-only evidence for one source revision and inventory hash, reduce it with `pnpm authorization:impact:report`, and validate fixed-context evidence with `pnpm authorization:readiness:check -- stage`. The command accepts only a fixed environment name; it loads `topology/authorization-contexts/<environment>.json` and the fixed inventory, impact, observation, and negative-smoke report names. The resulting artifact binds the environment, source revision, inventory and context hashes, schema/data versions, replay migration, impact report, smoke evidence, observation bounds, and approval reference.
+Authorization v2 is the only model: there is no compatibility baseline, no report-only window, no enforced-promotion artifact, no inventory/impact/readiness evidence chain and no fixed stage context. A release that changes authorization publishes the v2-only SpiceDB schema (generated from the Core schema constant and pinned by a test) and, for a new or changed stage Tenant, runs the operator stage bootstrap ([Stage accounts bootstrap](#stage-accounts-bootstrap)). Apply the schema before any runtime that reads it, and reconcile the projection through the single Core writer.
 
-Pass `--authorization-environment <environment>` to `pnpm deployment-impact:plan --` for a promotion plan. `report_only` is valid only before its declared expiry and never in production. `enforced` has no expiry; `expiresAt` bounds only a report-only window. In production, `enforced` requires matching zero-impact, readiness, and negative-smoke artifacts from the exact build. Development and stage may enforce without those artifacts only while the compatibility baseline is empty, because enforcing then withdraws no allowance; the plan records status `enforced` instead of `ready`. Any present artifact must still match, and a non-empty baseline needs the full evidence. Stage enforces since 2026-10-01. Abort on an expired window, mixed build evidence, unresolved impact, missing policy/module/worker/issuer/replay data, or a failed negative smoke.
-
-Production remains blocked while no approved source-controlled production context exists; the development/stage provisioner must continue rejecting production and arbitrary tenant or Action arguments. Issue #173 owns technical implementation and readiness; issue #369 owns the separate production-promotion approval gate. Issue #169 is broader review context, not approval. Their current records—not this playbook—determine whether the gates are satisfied. An implementation override never records Petr/Jiří approval or permits production enforcement. The checked-in stage context remains `pending`; code-only override is not approval. Rollback restores the prior application mode only after preserving the exact evidence and must not remove the expanded schema or durable redemption rows while old/new consumers overlap.
+Production has no fixed accounts and no operator stage accounts file. Its promotion approval gate is owned by issue #369 and is independent of the authorization model. Rollback restores the prior application artifact; it must not resurrect authority that was revoked in the meantime, because the v2 projection follows Core intent and only a reviewed intent change restores a grant.
 
 ## Operator-only legacy completion gate
 

@@ -12,10 +12,6 @@ import type {
   InvitationClaimProofReference,
   VerifiedInvitationClaimAttestation,
 } from './invitation-contract.ts';
-import type {
-  AccessAuthorizationMutationEvidence,
-  InvitationClaimAuthorizationMutationEvidence,
-} from './access-authorization-mutation.ts';
 import type { CounterpartyPermissionCode } from './permission-catalog.ts';
 import type { CounterpartyAccessInvitationRef } from '../resources/counterparty-access-invitation.ts';
 import type { CounterpartyCommerceAccessGrantRef } from '../resources/counterparty-commerce-access-grant.ts';
@@ -62,44 +58,15 @@ export interface RevokeCounterpartyAccessInput extends GrantCounterpartyAccessIn
   readonly grantRef?: CounterpartyCommerceAccessGrantRef | undefined;
 }
 
-type GrantCounterpartyAccessOutcome =
-  | Readonly<{
-      readonly grant: CounterpartyAccessGrant;
-      readonly outcome: 'APPLIED' | 'ALREADY_ACTIVE' | 'CONFLICT';
-    }>
-  | Readonly<{
-      readonly grant: CounterpartyAccessGrant;
-      readonly outcome: 'RECONCILIATION_REQUIRED';
-      readonly reconciliation: AccessAuthorizationMutationEvidence & {
-        readonly operation: 'grant';
-      };
-    }>;
+type GrantCounterpartyAccessOutcome = Readonly<{
+  readonly grant: CounterpartyAccessGrant;
+  readonly outcome: 'APPLIED' | 'ALREADY_ACTIVE' | 'CONFLICT';
+}>;
 
-type RevokeCounterpartyAccessOutcome =
-  | Readonly<{
-      readonly grant: CounterpartyAccessGrant;
-      readonly outcome: 'REVOKED' | 'ALREADY_REVOKED' | 'LAST_ADMIN_PROTECTED' | 'SCOPE_MISMATCH';
-    }>
-  | Readonly<{
-      readonly grant: CounterpartyAccessGrant;
-      readonly outcome: 'RECONCILIATION_REQUIRED';
-      readonly reconciliation: AccessAuthorizationMutationEvidence & {
-        readonly operation: 'revoke';
-      };
-    }>;
-
-type BootstrapCounterpartyAccessAdministratorOutcome =
-  | Readonly<{
-      readonly grant: CounterpartyAccessGrant;
-      readonly outcome: 'APPLIED' | 'ALREADY_ACTIVE' | 'CONFLICT';
-    }>
-  | Readonly<{
-      readonly grant: CounterpartyAccessGrant;
-      readonly outcome: 'RECONCILIATION_REQUIRED';
-      readonly reconciliation: AccessAuthorizationMutationEvidence & {
-        readonly operation: 'grant';
-      };
-    }>;
+type RevokeCounterpartyAccessOutcome = Readonly<{
+  readonly grant: CounterpartyAccessGrant;
+  readonly outcome: 'REVOKED' | 'ALREADY_REVOKED' | 'LAST_ADMIN_PROTECTED' | 'SCOPE_MISMATCH';
+}>;
 
 export interface CreateCounterpartyAccessInvitationInput extends AccessOperationContext {
   readonly counterpartyRef: CounterpartyRef;
@@ -158,12 +125,6 @@ type ClaimCounterpartyAccessInvitationOutcome =
       readonly outcome: 'CLAIMED';
     }>
   | Readonly<{
-      readonly attestation: VerifiedInvitationClaimAttestation;
-      readonly invitation: CounterpartyAccessInvitation;
-      readonly outcome: 'RECONCILIATION_REQUIRED';
-      readonly reconciliation: InvitationClaimAuthorizationMutationEvidence;
-    }>
-  | Readonly<{
       readonly invitation: CounterpartyAccessInvitation;
       readonly outcome: 'ALREADY_CLAIMED';
     }>
@@ -176,7 +137,7 @@ type ClaimCounterpartyAccessInvitationOutcome =
 export interface CounterpartyAccessPortService {
   readonly bootstrapAdministrator: (
     input: GrantCounterpartyAccessInput,
-  ) => Effect.Effect<BootstrapCounterpartyAccessAdministratorOutcome, CounterpartyAccessDomainError>;
+  ) => Effect.Effect<GrantCounterpartyAccessOutcome, CounterpartyAccessDomainError>;
   readonly check: (input: {
     readonly counterpartyRef: CounterpartyRef;
     readonly permission: CounterpartyPermissionCode;

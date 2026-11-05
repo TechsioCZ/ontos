@@ -61,6 +61,7 @@ import {
   unitPriceFixtureEffectiveAt,
   unitPriceFixtureTenantId,
 } from './support/unit-price-calculation.fixture.ts';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 
 const unexpected = () => Effect.die('The pipeline must stop at the unavailable Tier owner read');
 const unavailableExternalOwnerEvidence = { loadFresh: unexpected } as const;
@@ -356,6 +357,12 @@ describe('Current Pricing Decision whole evaluation source', () => {
         },
         undefined,
         'revision:790',
+        verifiedTestScope({
+          correlationId: 'whole-evaluation-service-790',
+          legalEntityId: request.decision.commercialScope.sellingLegalEntityId,
+          principalId: '55555555-5555-4555-8555-555555555790',
+          tenantId: request.decision.tenantId,
+        }),
       );
 
       const result = yield* evaluator.evaluate(request, trustedScopeFor(request));
@@ -775,6 +782,8 @@ const catalogContract1225 = (
   questions: PricingPurposeEquivalenceRequest[],
   inputs: readonly PricingUnitPriceCalculationAttempt[],
 ) => ({
+  acquire: () =>
+    Effect.succeed({ baseUrl: new URL('http://127.0.0.1:1225'), credential: Redacted.make('TEST:1225:catalog-only') }),
   execute: (payload: PricingPurposeEquivalenceRequest) =>
     Effect.gen(function* declaredCatalogEquivalence1225() {
       expect(Schema.is(PricingPurposeEquivalenceRequestSchema)(payload)).toBe(true);
@@ -976,24 +985,28 @@ for (const variant of [
           compositionRevision: activeComposition.composition.revision,
           legalEntityId: decision.commercialScope.sellingLegalEntityId,
           requestCorrelation: 'TEST:1225:whole',
+          scope: verifiedTestScope({
+            correlationId: 'TEST:1225:whole',
+            legalEntityId: decision.commercialScope.sellingLegalEntityId,
+            principalId: '55555555-5555-4555-8555-555555555790',
+            tenantId: decision.tenantId,
+          }),
           tenantId: decision.tenantId,
         },
         {
           applicationComposition: { load: Effect.succeed(activeComposition) },
           catalog: catalogContract1225(questions, inputs),
           customerContext: {
+            acquire: () => Effect.die('Guest must not request Profile credential'),
             execute: () => Effect.die('Guest must not call Profile owner'),
-            issuer: { issue: () => Effect.die('Guest must not request Profile credential') },
           },
           market: {
+            acquire: () =>
+              Effect.succeed({
+                baseUrl: new URL('http://127.0.0.1:1225'),
+                credential: Redacted.make('TEST:1225:market-only'),
+              }),
             execute: marketContract1225,
-            issuer: {
-              issue: () =>
-                Effect.succeed({
-                  baseUrl: new URL('http://127.0.0.1:1225'),
-                  credential: Redacted.make('TEST:1225:market-only'),
-                }),
-            },
           },
           validation: makePricingExternalOwnerEvidenceValidationService(),
         },

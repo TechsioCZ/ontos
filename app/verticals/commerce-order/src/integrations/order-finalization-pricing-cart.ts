@@ -1,4 +1,5 @@
-import type { OrderFinalizationContext } from '../../shared/domain/order-finalization-evidence.ts';
+import { delegationSubject } from '../services/order-module-call.ts';
+import type { OrderFinalizationCall } from '../services/order-module-call.ts';
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
@@ -21,21 +22,22 @@ import type { PricingCommitmentConfirmationBinding } from '@app/pricing-contract
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
 import { ManageCommitmentConfirmationActionAlreadyCommittedProblemSchema } from '@app/pricing-contracts/manage-commitment-confirmation/api';
 import { executeManageCommitmentConfirmationWithAuthorization } from '@app/pricing-contracts/manage-commitment-confirmation/client';
+import { ManageCommitmentConfirmationResultSchema } from '@app/pricing-contracts/manage-commitment-confirmation';
 import { executeCommitmentConfirmationVerificationWithAuthorization } from '@app/pricing-contracts/commitment-confirmation/client';
 import { executeQuotationVerificationWithAuthorization } from '@app/pricing-contracts/quotation-verification/client';
 import { CoreSearchResourceRefSchema } from '@app/core-runtime';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Clock, Config, Context, DateTime, Effect, Layer, Option, Schema, Predicate } from 'effect';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import { Clock, Config, Context, Crypto, DateTime, Effect, Layer, Option, Schema, Predicate } from 'effect';
 import { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
 
-type FinalizationScope = OrderFinalizationContext;
+type FinalizationScope = OrderFinalizationCall;
 type QuotationOutcome = Effect.Success<ReturnType<typeof executeQuotationVerificationWithAuthorization>>;
 type VerifiedQuotation = Extract<QuotationOutcome, { readonly outcome: 'QUOTATION_VERIFIED' }>;
 /** Pricing's owner-proven terminal expiry of the exact retained Quotation. */
 export type OrderQuotationExpired = Extract<QuotationOutcome, { readonly outcome: 'QUOTATION_EXPIRED' }>;
 type VerifiedConfirmation = typeof PricingCommitmentConfirmationVerifiedSchema.Type;
 type ExpiredConfirmation = typeof PricingCommitmentConfirmationExpiredSchema.Type;
-type IssuedConfirmationResult = Effect.Success<ReturnType<typeof executeManageCommitmentConfirmationWithAuthorization>>;
+type IssuedConfirmationResult = typeof ManageCommitmentConfirmationResultSchema.Type;
 export type OrderPricingProofOutcome = VerifiedConfirmation | typeof PricingCommitmentConfirmationExpiredSchema.Type;
 export interface OrderQuotationVerificationInput {
   readonly candidate: FinalCartCandidate;
@@ -98,10 +100,8 @@ const httpUrl = Schema.URLFromString.check(
   ),
 );
 const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY'),
   cartBaseUrl: Config.schema(httpUrl, 'ONTOS_COMMERCE_CART_API_BASE_URL'),
   pricingBaseUrl: Config.schema(httpUrl, 'ONTOS_PRICING_API_BASE_URL'),
-  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 const sameCandidateRef = Schema.toEquivalence(FinalCartCandidateSchema.fields.candidateRef);
 const samePricingDecision = Schema.toEquivalence(PricingDecisionSchema);
@@ -200,6 +200,7 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
   OrderFinalizationPricingCart,
   Effect.gen(function* orderFinalizationPricingCartLayer() {
     const composition = yield* ActiveApplicationCompositionService;
+    const crypto = yield* Crypto.Crypto;
     const configured = yield* configuration.pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
     const credential = Effect.fn('OrderFinalizationPricingCart.credential')(function* credential(
       audience: 'commerce-cart' | 'pricing',
@@ -212,13 +213,17 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
         Effect.flatMap(validateActiveApplicationCompositionSnapshot),
         Effect.mapError(unavailable),
       );
-      const issued = yield* issueApiKeyGatewayContext(
-        { audience, compositionRevision: active.composition.revision, legalEntityId: scope.legalEntityId },
+      const issued = yield* acquireDelegatedGatewayContext(
         {
-          apiKey: configured.value.apiKey,
-          baseUrl: configured.value.shellBaseUrl,
+          audience,
+          legalEntityScope: 'subject',
           requestCorrelation: scope.correlationId,
+          subject: delegationSubject(scope.caller, {
+            compositionRevision: active.composition.revision,
+            tenantId: scope.tenantId,
+          }),
         },
+        crypto,
       ).pipe(Effect.mapError(unavailable));
       if (
         issued.compositionRevision !== active.composition.revision ||
@@ -227,7 +232,7 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
         return yield* unavailable('The owner credential is expired or bound to a different active composition');
       }
       return {
-        authorization: `Bearer ${issued.token}`,
+        authorization: issued.authorization,
         baseUrl: audience === 'commerce-cart' ? configured.value.cartBaseUrl : configured.value.pricingBaseUrl,
         compositionRevision: active.composition.revision,
       };
@@ -300,6 +305,8 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
           scope.correlationId,
           { ...issuanceAuthorization, idempotencyKey: input.idempotencyKey },
         ).pipe(
+          // A parked proposal is not an issued confirmation and cannot advance Order finalization.
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(ManageCommitmentConfirmationResultSchema))),
           Effect.match({
             onFailure: (error) => ({ error, failed: true as const }),
             onSuccess: (result) => ({ failed: false as const, result }),

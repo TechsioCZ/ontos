@@ -1638,18 +1638,36 @@ const isWholeObjectCall = (expression: string | undefined, value: string | undef
   !value.includes('...') &&
   isWholeCallExpression(expression, callee);
 
-const hasReadDescriptorPolicy = (read: string, allowedAccessKinds: ReadonlySet<string>): boolean => {
+const CLOSED_READ_PERMISSION_TARGET =
+  /^['"](?:assortment_permission|business_permission|conditional|legal_entity|module|owner_permission|resource|tenant)['"]$/u;
+
+/**
+ * The transitional v2 shape (O62, O68): a read that carries its own access declaration, workload or
+ * module-caller marker on a `protected` entrypoint decides its record through the access gate, so it declares no
+ * legacy permission target and no positional resolver. The legacy shape stays accepted until C03b
+ * removes those kinds.
+ */
+const declaresV2ReadAccess = (entrypoint: string, read: string): boolean => {
+  const authorization = objectProperty(entrypoint, 'authorization');
+  return (
+    authorization !== undefined &&
+    matches(objectProperty(authorization, 'kind'), /^['"]protected['"]$/u) &&
+    (objectProperty(read, 'accessDeclaration') !== undefined ||
+      objectProperty(read, 'accessWorkload') !== undefined ||
+      objectProperty(read, 'accessActor') !== undefined)
+  );
+};
+
+const hasReadDescriptorPolicy = (read: string, allowedAccessKinds: ReadonlySet<string>, v2Access = false): boolean => {
   const policies = objectProperty(read, 'policies');
   const accessKind = objectProperty(read, 'accessKind');
+  const permissionTarget = objectProperty(read, 'permissionTarget');
   const normalizedAccessKind = /^['"](?<value>[^'"]+)['"]$/u.exec(accessKind ?? '')?.groups?.value;
   return (
     normalizedAccessKind !== undefined &&
     allowedAccessKinds.has(`'${normalizedAccessKind}'`) &&
     matches(objectProperty(read, 'legalEntityScope'), /^['"](?:required|optional|forbidden)['"]$/u) &&
-    matches(
-      objectProperty(read, 'permissionTarget'),
-      /^['"](?:assortment_permission|business_permission|conditional|legal_entity|module|owner_permission|resource|tenant)['"]$/u,
-    ) &&
+    (v2Access && permissionTarget === undefined ? true : matches(permissionTarget, CLOSED_READ_PERMISSION_TARGET)) &&
     policies !== undefined &&
     policies.startsWith('[') &&
     matchingDelimiterEnd(policies, 0, '[', ']') === policies.length - 1
@@ -2619,6 +2637,7 @@ const hasReadCallbacks = (
   sources: ReadonlyMap<string, string>,
   readFile: string,
   ownerPath: string,
+  v2Access = false,
 ): boolean => {
   const handler = callArgument(readExpression, /^defineRead\(/u, 1);
   const callbacks = [2, 3];
@@ -2663,6 +2682,15 @@ const hasReadCallbacks = (
     (isReadHandlerCallback(handler, source) || isOwnerLocalImportedFactoryResult(handler)) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
+      // A v2 read resolves its record through `accessTarget` and the gate, so its target resolvers are
+      // gone: the slot is absent, an empty trailing slot left by a trailing comma, or the explicit
+      // `undefined` placeholder that keeps a later executable-policy argument in position. The handler
+      // and service factory callbacks are still required.
+      const resolverIsAbsent =
+        callback === undefined || callback.trim().length === 0 || callback.trim() === 'undefined';
+      if (v2Access && index > 2 && resolverIsAbsent) {
+        return true;
+      }
       if (
         index === 3 &&
         matches(
@@ -2738,8 +2766,9 @@ const hasReadContract = (
   if (entrypoint === undefined || read === undefined || readExpression === undefined) {
     return false;
   }
+  const v2Access = declaresV2ReadAccess(entrypoint, read);
   const checks = {
-    callbacks: hasReadCallbacks(source, readExpression, contribution.kind, sources, readFile, ownerPath),
+    callbacks: hasReadCallbacks(source, readExpression, contribution.kind, sources, readFile, ownerPath, v2Access),
     descriptorReferences:
       connected !== undefined &&
       (objectPropertyValue(read, 'entrypoint') === connected.name ||
@@ -2782,7 +2811,7 @@ const hasReadContract = (
       defineRead: CORE_RUNTIME_MODULE,
       defineTenantModuleEntrypoint: CORE_RUNTIME_MODULE,
     }),
-    policy: hasReadDescriptorPolicy(read, allowedAccessKinds),
+    policy: hasReadDescriptorPolicy(read, allowedAccessKinds, v2Access),
     readCall: isWholeObjectCall(readExpression, read, /^defineRead\(/u),
   };
   return Object.values(checks).every(Boolean);

@@ -82,6 +82,14 @@ const handleActivateLocalOverride = Effect.fn('ActivateLocalOverrideAction.handl
 
 export const activateLocalOverrideAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.local-override.activate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'catalog-source', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.activate-local-override.access.v1',
@@ -93,7 +101,7 @@ export const activateLocalOverrideAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

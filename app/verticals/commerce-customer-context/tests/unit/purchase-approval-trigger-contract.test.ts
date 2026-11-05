@@ -1,14 +1,13 @@
-import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import { getActionOwnerFactsResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { mapTriggerPurchaseApprovalActionProblem } from '../../api/trigger-purchase-approval-action-problems.ts';
 import { TriggerPurchaseApprovalPayloadSchema } from '../../shared/actions/trigger-purchase-approval.ts';
 import { PurchaseApprovalSubmissionResultSchema } from '../../shared/domain/purchase-limit-approval-trigger.ts';
 import {
   triggerPurchaseApprovalAction,
-  triggerPurchaseApprovalPermissionTarget,
+  triggerPurchaseApprovalOwnerFacts,
 } from '../../src/actions/trigger-purchase-approval.action.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -62,50 +61,23 @@ it('declares the governed idempotent Purchase submission contract', () => {
   expect(triggerPurchaseApprovalAction.descriptor.auditProfile).toBe('sensitive');
   expect(triggerPurchaseApprovalAction.descriptor.idempotency).toBe('required');
   expect(triggerPurchaseApprovalAction.descriptor.legalEntityScope).toBe('required');
-  expect(triggerPurchaseApprovalAction.descriptor.entrypoint.authorization).toEqual({
-    kind: 'action_execution',
-    provisioning: 'explicit',
-  });
+  expect(triggerPurchaseApprovalAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
   expect(Object.keys(triggerPurchaseApprovalAction.descriptor.domainEvents)).toEqual([
     'commerce.customer-context.purchase-approval-request-submitted.v1',
   ]);
 });
 
-it('requires exact counterparty.purchase.submit authority bound to trusted Storefront scope', () => {
-  const resolvePermission = getActionOwnerPermissionTargetResolver(triggerPurchaseApprovalAction);
-  expect(resolvePermission?.(payload, scope)).toEqual([
-    customerOwnerPermissionTarget(
-      {
-        permission: 'counterparty.purchase.submit',
-        target: {
-          counterpartyId: payload.counterpartyRef.resourceId,
-          kind: 'counterparty_storefront',
-          legalEntityId,
-          storefrontId,
-          tenantId,
-        },
-        trustedStorefrontId: storefrontId,
-      },
-      'action',
-    ),
-  ]);
-
-  const untrustedScope: OperationalScope = {
-    authMethod: 'system',
-    correlationId: 'purchase-approval-trigger-untrusted',
-    legalEntityId,
-    principalId,
-    tenantId,
-  };
-  expect(triggerPurchaseApprovalPermissionTarget(payload, untrustedScope)).toEqual({
-    permission: 'counterparty.purchase.submit',
-    target: {
-      counterpartyId: payload.counterpartyRef.resourceId,
-      kind: 'counterparty_storefront',
-      legalEntityId,
-      storefrontId,
-      tenantId,
-    },
+it('names the counterparty and Storefront for the owner rule that checks purchase submission', () => {
+  const resolveOwnerFacts = getActionOwnerFactsResolver(triggerPurchaseApprovalAction);
+  // The v2 declaration gates the capability; the owner rule still compares the Storefront the payload
+  // names with the trusted scope before it reads that counterparty's grant (O67-Q1, O70).
+  expect(resolveOwnerFacts?.(payload, scope)).toEqual({
+    counterpartyId: payload.counterpartyRef.resourceId,
+    storefrontId,
+  });
+  expect(triggerPurchaseApprovalOwnerFacts(payload)).toEqual({
+    counterpartyId: payload.counterpartyRef.resourceId,
+    storefrontId,
   });
 });
 

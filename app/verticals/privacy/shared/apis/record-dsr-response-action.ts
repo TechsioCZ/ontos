@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug record-dsr-response
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { RecordDsrResponsePayloadSchema, RecordDsrResponseResultSchema } from '../actions/record-dsr-response.ts';
 
 export { RecordDsrResponsePayloadSchema } from '../actions/record-dsr-response.ts';
-
 export const RecordDsrResponseActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordDsrResponseActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const RecordDsrResponseActionForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const recordDsrResponseActionGroupDefinition = HttpApiGroup.make('recordD
     HttpApiEndpoint.post('execute', '/privacy/actions/record-dsr-response', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordDsrResponsePayloadSchema),
-      success: RecordDsrResponseResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordDsrResponseResultSchema],
     }),
   )
   .middleware(RecordDsrResponseActionSchemaErrorMiddleware);

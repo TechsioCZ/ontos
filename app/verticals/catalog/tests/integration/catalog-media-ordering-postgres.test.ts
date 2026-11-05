@@ -44,6 +44,8 @@ import { SqlError, UniqueViolation } from 'effect/sql/SqlError';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { executeCreateProductWithAuthorization } from '../../src/api/create-product-action-client.ts';
+import { CreateProductResultSchema } from '../../shared/actions/create-product.ts';
+import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { executeAssignCatalogMediaWithAuthorization } from '../../src/api/assign-catalog-media-action-client.ts';
 import { executeReorderCatalogMediaRecoveryWithAuthorization } from '../../src/api/reorder-catalog-media-recovery-client.ts';
 import { ProductActionInvocationIdSchema } from '../../shared/domain/product.ts';
@@ -523,6 +525,7 @@ const makeNative = Effect.fn('MediaOrderingNative.make')(function* makeNative() 
   const owned = yield* captureOwnedCertificate(isolated);
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [
         'commerce.catalog.create-product',
@@ -558,6 +561,7 @@ const makeNative = Effect.fn('MediaOrderingNative.make')(function* makeNative() 
     actor: fixture.manager,
     composition,
     database: owned.certificate,
+    deniedPrincipalId: fixture.denied.principalId,
     issuer: authority.issuer,
     jwks: authority.jwks,
     spiceDb,
@@ -661,14 +665,17 @@ const observeOriginalProtection = Effect.fn('MediaOrderingNative.originalProtect
 const produceSubjects = Effect.fn('MediaOrderingNative.produceSubjects')(function* produceSubjects(
   native: Effect.Success<ReturnType<typeof makeNative>>,
 ) {
-  const created = yield* executeCreateProductWithAuthorization(
-    {
-      name: 'Observed media-ordering sample',
-      reason: 'Observe actual Product and its initial Variant for media ordering',
-    },
-    yield* native.authority.issue(yield* DateTime.now),
-    yield* nextId,
-    yield* native.options(),
+  const created = yield* requireExecutionResult(
+    CreateProductResultSchema,
+    executeCreateProductWithAuthorization(
+      {
+        name: 'Observed media-ordering sample',
+        reason: 'Observe actual Product and its initial Variant for media ordering',
+      },
+      yield* native.authority.issue(yield* DateTime.now),
+      yield* nextId,
+      yield* native.options(),
+    ),
   );
   const { productRef } = created.product;
   const variantRef = yield* Schema.decodeUnknownEffect(VariantRefSchema)({
@@ -679,11 +686,14 @@ const produceSubjects = Effect.fn('MediaOrderingNative.produceSubjects')(functio
   });
   // Opaque owner-qualified identities are genuinely issued by Catalog. This fixture does not
   // assert Documents ownership, bytes or Current availability (the public contract says UNVERIFIED).
-  const owner = yield* executeCreateProductWithAuthorization(
-    { name: 'Observed resource owner identity', reason: 'Issue an owner-qualified opaque resource reference' },
-    yield* native.authority.issue(yield* DateTime.now),
-    yield* nextId,
-    yield* native.options(),
+  const owner = yield* requireExecutionResult(
+    CreateProductResultSchema,
+    executeCreateProductWithAuthorization(
+      { name: 'Observed resource owner identity', reason: 'Issue an owner-qualified opaque resource reference' },
+      yield* native.authority.issue(yield* DateTime.now),
+      yield* nextId,
+      yield* native.options(),
+    ),
   );
   const permissions = yield* makeContextPermissionRelationshipMutationLive();
   const principal = { principalId: native.fixture.manager.principalId, tenantId: native.fixture.tenantId };
@@ -1463,6 +1473,7 @@ it.live(
       expect(yield* observeMedia(native)).toEqual(before);
       const other = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionExecutor: 'manager-only',
           actionKeys: ['commerce.catalog.reorder-catalog-media'],
           adminConnectionString: Redacted.make(native.isolated.connections.admin.connectionString),

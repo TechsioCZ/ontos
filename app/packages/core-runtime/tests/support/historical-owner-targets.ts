@@ -196,13 +196,6 @@ export const historicalOwnerTarget = (
   }
   return createOwnerPermissionAccessTarget(contract, base);
 };
-export const prepareHistoricalOwnerTarget = (
-  permission: string,
-  target: HistoricalOwnerTargetInput,
-): OwnerPermissionAccessTarget | undefined =>
-  historicalPermissionObjectId(permission, target) === undefined
-    ? undefined
-    : historicalOwnerTarget(permission, target);
 export const historicalOwnerReadTarget = (
   permission: string,
   target: HistoricalOwnerTargetInput,

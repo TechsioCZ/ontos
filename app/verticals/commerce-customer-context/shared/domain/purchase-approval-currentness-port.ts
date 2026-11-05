@@ -1,4 +1,4 @@
-import type { ContextAccessService, OperationalScope } from '@app/core-runtime'; // eslint-disable-line eslint/max-classes-per-file -- This owner-local port intentionally colocates its implementation and composition service tags; expires: 2027-09-10.
+import type { OperationalScope } from '@app/core-runtime'; // eslint-disable-line eslint/max-classes-per-file -- This owner-local port intentionally colocates its implementation and composition service tags; expires: 2027-09-10.
 import type {
   TrustedRevalidatePurchaseApprovalInput,
   PurchaseApprovalFinalBinding,
@@ -107,7 +107,6 @@ export interface PurchaseApprovalCurrentnessFactoryContract {
       readonly legalEntityId: string;
       readonly trustedStorefrontId: string;
     },
-    contextAccess: ContextAccessService,
     purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPortService,
     evaluationSource: PurchaseLimitEvaluationSourceService,
   ) => PurchaseApprovalCurrentnessService;
@@ -140,7 +139,7 @@ export interface PurchaseApprovalFinalBindingAuthorityService {
     readonly binding: PurchaseApprovalFinalBinding;
     readonly claimed: RevalidatePurchaseApprovalInput;
     readonly request: PurchaseApprovalRequest;
-    readonly scope: PurchaseApprovalCurrentnessTrustedScope;
+    readonly scope: OperationalScope;
   }) => Effect.Effect<PurchaseApprovalFinalBindingEvidence, PurchasingApprovalRejected>;
 }
 

@@ -8,6 +8,7 @@ import {
   ActionRuntime,
   bindSelfApiKeyAction,
   ActiveApplicationCompositionSnapshotSchema,
+  CorePersistenceLive,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
   ONTOS_MODULE_CONTRACT_PATH,
@@ -16,9 +17,21 @@ import {
   OperationalScopeResolver,
   makeReadRuntimeLive,
 } from '@app/core-runtime';
+import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
+  TenantIntentLoaderLive,
+} from '@app/core-runtime/actions/runtime-wiring';
+import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
+import {
+  grantTestTenantOwnerAccess,
+  grantTestTenantRoleAccess,
+  liveFixtureSpiceDb,
+  markServicePrincipal,
+} from '@app/core-runtime/testing/tenant-access';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeHttpServer } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
@@ -365,13 +378,9 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     return yield* unavailable();
   }
   const baseConfiguration = {
-    actionExecutor: 'manager-only' as const,
+    access: 'allowed' as const,
     actionKeys: [
-      ...actionKeys.filter(
-        (key) =>
-          retirementManagementExecutor !== 'denied' ||
-          key !== manageMarketRetirementAdmissionAction.descriptor.actionKey,
-      ),
+      ...actionKeys,
       bindSelfApiKeyAction.descriptor.actionKey,
       'commerce.storefront-registry.register-storefront-application',
       'commerce.customer-context.reserve-market-retirement',
@@ -380,8 +389,6 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     allowedAudiences: [marketAppId, 'storefront-registry', 'commerce-customer-context'],
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
     compositionRevision: snapshot.composition.revision,
-    executorProbeActionKeys:
-      retirementManagementExecutor === 'denied' ? [manageMarketRetirementAdmissionAction.descriptor.actionKey] : [],
     moduleAccess: 'configured-modules' as const,
     moduleKeys: [moduleKey, registryModuleId, customerContextModuleId],
     runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
@@ -390,11 +397,47 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     makeLiveOperationFixture({
       ...baseConfiguration,
       managerProviderSubjectId: shell.providerUserId,
-      readerActionKeys: [bindSelfApiKeyAction.descriptor.actionKey],
       readerProviderSubjectId: shell.relaySourceProviderUserId,
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
+  // The manager owns the Tenant; the relay-source reader and the other fixture humans hold no access.
+  // The denied scenario instead holds every catalog capability except the private retirement Manage one,
+  // so public Retire stays granted while its independent Manage step is refused.
+  const accessTarget = {
+    adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+    legalEntityIds: [fixture.legalEntityId] as const,
+    spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+  };
+  if (retirementManagementExecutor === 'denied') {
+    const { modules } = yield* filesystem
+      .readFileString(path.resolve(process.cwd(), '../../topology/authorization-catalog.json'))
+      .pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({ modules: AccessCatalogModulesSchema }))),
+        ),
+      );
+    // Every declared capability, field groups included, except the one this scenario denies.
+    const capabilityKeys = modules.flatMap(({ descriptors }) =>
+      descriptors.flatMap(({ accessDeclaration, accessFieldGroups = [] }) => [
+        accessDeclaration.key,
+        ...accessFieldGroups.map(({ key }) => key),
+      ]),
+    );
+    const manageKey = 'commerce.market-catalog.market.manage-retirement-admission';
+    yield* grantTestTenantRoleAccess({
+      ...accessTarget,
+      holders: [
+        {
+          capabilityKeys: capabilityKeys.filter((key) => key !== manageKey),
+          principalId: fixture.manager.principalId,
+        },
+      ],
+      tenantId: fixture.tenantId,
+    });
+  } else {
+    yield* grantTestTenantOwnerAccess({ ...accessTarget, owner: fixture.manager });
+  }
   const evidence = Effect.fn('MarketRevisionNative.evidence')(function* evidence() {
     const recorded = yield* fixture.evidence(admin);
     const reservationInvocations = new Set(
@@ -527,21 +570,10 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(authorization)));
   const binding = yield* shell.issueAndBind(principal).pipe(Effect.provideContext(baseContext));
   const relayBinding = yield* shell.issueRelaySourceAndBind(fixture.reader).pipe(Effect.provideContext(baseContext));
-  if (retirementManagementExecutor === 'denied') {
-    // Read-only, fully consistent checks for the same real P whose personal key is bound above.
-    // Probe-universe membership permits this query only; it never grants Manage execution.
-    yield* fixture.verifyActionExecutor({
-      actionKey: retireMarketAction.descriptor.actionKey,
-      expected: 'allowed',
-      principalId: principal.principalId,
-    });
-    yield* fixture.verifyActionExecutor({
-      actionKey: manageMarketRetirementAdmissionAction.descriptor.actionKey,
-      expected: 'denied',
-      principalId: principal.principalId,
-    });
-  }
-
+  yield* admin.execute(
+    markServicePrincipal({ principalId: fixture.reader.principalId, tenantId: fixture.tenantId }),
+    'objects',
+  );
   const context = Context.add(
     baseContext,
     ConfigProvider.ConfigProvider,
@@ -549,8 +581,8 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       ConfigProvider.fromEnvRecord({
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
         ONTOS_GATEWAY_ISSUER: shell.issuer,
+        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(relayBinding.secret),
         ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
-        ONTOS_GATEWAY_RELAY_API_KEY: Redacted.value(relayBinding.secret),
         ONTOS_SHELL_GATEWAY_BASE_URL: shell.baseUrl,
       }),
       ConfigProvider.fromEnv(),
@@ -648,14 +680,21 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
         Layer.provide(Layer.mergeAll(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration), NodeCrypto.layer)),
       ),
     ).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configuration));
+    const accessEnforcement = AccessDecisionLive.pipe(
+      Layer.provideMerge(AccessEnforcementPortsLive),
+      Layer.provide(TenantIntentLoaderLive),
+      Layer.provide(CorePersistenceLive),
+      Layer.provide(Layer.succeed(DatabaseConfig, scenario.databaseConfiguration)),
+      Layer.provide(NodeCrypto.layer),
+    );
     const coreFactory = makeActionRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
-      Layer.provide(Layer.succeedContext(dependencies)),
+      Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), accessEnforcement)),
     );
     const base = Context.get(yield* Layer.build(coreFactory), ActionRuntime);
     const readRuntime = Context.get(
       yield* Layer.build(
         makeReadRuntimeLive(ultramodernDeliveryUnit, commerceMarketCatalogRegistration).pipe(
-          Layer.provide(Layer.succeedContext(dependencies)),
+          Layer.provide(Layer.mergeAll(Layer.succeedContext(dependencies), accessEnforcement)),
         ),
       ),
       ReadRuntime,

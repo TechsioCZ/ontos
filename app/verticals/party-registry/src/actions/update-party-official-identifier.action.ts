@@ -166,6 +166,15 @@ const handleUpdatePartyOfficialIdentifier = Effect.fn(
 
 export const updatePartyOfficialIdentifierAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.official-identifier.update',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'party-identity', level: 'extended' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.officialIdentifierRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.update-party-official-identifier.access.v1',
@@ -176,10 +185,7 @@ export const updatePartyOfficialIdentifierAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.update-party-official-identifier',
       moduleKey: 'party.registry',
       role: 'action',
@@ -191,7 +197,6 @@ export const updatePartyOfficialIdentifierAction = defineAction(
     policies: [],
     resultSchema: UpdatePartyOfficialIdentifierResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleUpdatePartyOfficialIdentifier,
   (transaction, scope) =>

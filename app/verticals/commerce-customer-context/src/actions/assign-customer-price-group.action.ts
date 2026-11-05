@@ -3,7 +3,7 @@
 // @ontos-action-slug assign-customer-price-group
 /* eslint-disable effect-native/no-manual-tag-comparison, sonarjs/no-duplicate-string -- Generated Action shape uses explicit public outcome narrowing and canonical owner keys; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CustomerPriceGroupAssignedAuditEvidenceSchema,
@@ -319,6 +319,14 @@ export const handleAssignCustomerPriceGroup = Effect.fn(
 
 export const assignCustomerPriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-price-group.assign',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-pricing', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.assign-customer-price-group.access.v1',
@@ -332,7 +340,7 @@ export const assignCustomerPriceGroupAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.assign-customer-price-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -342,10 +350,6 @@ export const assignCustomerPriceGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: AssignCustomerPriceGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<AssignCustomerPriceGroupPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.profile,
-    })),
     resultSchema: AssignCustomerPriceGroupResultSchema,
     schemaVersion: '1',
   },

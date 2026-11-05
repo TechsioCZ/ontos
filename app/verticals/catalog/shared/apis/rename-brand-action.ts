@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug rename-brand
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { RenameBrandPayloadSchema, RenameBrandResultSchema } from '../actions/rename-brand.ts';
 
 export { RenameBrandPayloadSchema } from '../actions/rename-brand.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RenameBrandActionInvalidProblemSchema = makeProblemDetailsSchema('RenameBrandActionInvalidProblem', 400);
 export const RenameBrandActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -18,6 +20,7 @@ export const RenameBrandActionForbiddenProblemSchema = makeProblemDetailsSchema(
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -118,7 +121,7 @@ export const RenameBrandActionApi = HttpApi.make('RenameBrandActionApi').add(
       HttpApiEndpoint.post('execute', '/catalog/actions/rename-brand', {
         error: actionErrors,
         payload: Schema.toEncoded(RenameBrandPayloadSchema),
-        success: RenameBrandResultSchema,
+        success: [ActionProposalAcceptedSchema, RenameBrandResultSchema],
       }),
     )
     .middleware(RenameBrandActionSchemaErrorMiddleware),

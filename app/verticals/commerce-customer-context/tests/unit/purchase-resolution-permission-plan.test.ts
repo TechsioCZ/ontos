@@ -1,8 +1,8 @@
-import { ContextAccess, TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import type { ContextAccessService, ReadRuntimeService } from '@app/core-runtime';
+import { TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import type { ReadRuntimeService } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, DateTime, Effect, Layer, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { invoiceRecipientResolutionRead } from '../../src/api/invoice-recipient-resolution.read.ts';
@@ -63,31 +63,49 @@ const counterpartyProfile = {
   kind: 'COUNTERPARTY',
   profileRef: { ...profile.profileRef, resourceType: 'commerce.customer-context.counterparty-purchasing-profile' },
 } as const;
+const retailFacts = { retailPermission: 'retail.address_book.use', retailProfileId: profileId } as const;
+const counterpartyFacts = { counterpartyId } as const;
+/** Each positive case names the exact owner-fact bag its subject must publish (O67-Q1, O70). */
 const inputs = {
-  counterparty: { purchasingContext, subject: { kind: 'PROFILE', profile: counterpartyProfile } },
+  counterparty: {
+    facts: counterpartyFacts,
+    input: { purchasingContext, subject: { kind: 'PROFILE', profile: counterpartyProfile } },
+  },
   counterpartySaved: {
-    explicitChoice: { kind: 'SAVED_ADDRESS', savedAddressRef },
-    purchasingContext,
-    subject: { kind: 'PROFILE', profile: counterpartyProfile },
+    facts: counterpartyFacts,
+    input: {
+      explicitChoice: { kind: 'SAVED_ADDRESS', savedAddressRef },
+      purchasingContext,
+      subject: { kind: 'PROFILE', profile: counterpartyProfile },
+    },
   },
   guest: {
-    purchasingContext,
-    subject: { guestEvidenceRef: 'guest-evidence', guestSessionRef: 'guest-session', kind: 'GUEST' },
+    facts: {},
+    input: {
+      purchasingContext,
+      subject: { guestEvidenceRef: 'guest-evidence', guestSessionRef: 'guest-session', kind: 'GUEST' },
+    },
   },
   oneTime: {
-    explicitChoice: {
-      choiceEvidenceRef: 'one-time-proof',
-      kind: 'ONE_TIME',
-      postalAddress: { addressLine1: '1 Unit Street', city: 'Prague', countryCode: 'CZ', postalCode: '11000' },
+    facts: retailFacts,
+    input: {
+      explicitChoice: {
+        choiceEvidenceRef: 'one-time-proof',
+        kind: 'ONE_TIME',
+        postalAddress: { addressLine1: '1 Unit Street', city: 'Prague', countryCode: 'CZ', postalCode: '11000' },
+      },
+      purchasingContext,
+      subject: { kind: 'PROFILE', profile },
     },
-    purchasingContext,
-    subject: { kind: 'PROFILE', profile },
   },
-  profile: { purchasingContext, subject: { kind: 'PROFILE', profile } },
+  profile: { facts: retailFacts, input: { purchasingContext, subject: { kind: 'PROFILE', profile } } },
   saved: {
-    explicitChoice: { kind: 'SAVED_ADDRESS', savedAddressRef },
-    purchasingContext,
-    subject: { kind: 'PROFILE', profile },
+    facts: retailFacts,
+    input: {
+      explicitChoice: { kind: 'SAVED_ADDRESS', savedAddressRef },
+      purchasingContext,
+      subject: { kind: 'PROFILE', profile },
+    },
   },
 } as const;
 type Input = Readonly<object>;
@@ -118,6 +136,8 @@ const reads = [
   },
 ];
 
+const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z'));
+
 it.layer(NodeCrypto.layer)('purchase resolution conditional authority', (suite) => {
   for (const read of reads) {
     const positiveInputs =
@@ -125,126 +145,83 @@ it.layer(NodeCrypto.layer)('purchase resolution conditional authority', (suite) 
         ? {
             ...inputs,
             pickup: {
-              explicitChoice: {
-                kind: 'PICKUP',
-                pickupDestinationRef: {
-                  moduleId: 'fulfillment',
-                  resourceId: 'pickup-1',
-                  resourceType: 'fulfillment.pickup-destination',
-                  tenantId,
+              facts: retailFacts,
+              input: {
+                explicitChoice: {
+                  kind: 'PICKUP',
+                  pickupDestinationRef: {
+                    moduleId: 'fulfillment',
+                    resourceId: 'pickup-1',
+                    resourceType: 'fulfillment.pickup-destination',
+                    tenantId,
+                  },
                 },
+                purchasingContext,
+                subject: { kind: 'PROFILE', profile },
               },
-              purchasingContext,
-              subject: { kind: 'PROFILE', profile },
-            } as const,
+            },
           }
         : inputs;
-    for (const [name, input] of Object.entries(positiveInputs)) {
-      suite.effect(`${read.name} ${name} reaches its original handler after the exact permission plan`, () =>
+    for (const [name, { facts, input }] of Object.entries(positiveInputs)) {
+      suite.effect(`${read.name} ${name} reaches its original handler after the one gate and its owner rule`, () =>
         Effect.gen(function* reachesOwnerBoundary() {
-          const calls: string[] = [];
+          const ownerFactsSeen: (Readonly<Record<string, string>> | undefined)[] = [];
           const harness = yield* makeReadTestHarness({
+            access: 'allowed',
             compositionRevision,
             executeOwnerQuery: () => Effect.die('Unexpected owner SQL before missing Current evidence'),
-            operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z')),
-            ownerAuthorizationDecision: 'allowed',
-            ownerPermissionDecision: (target) => {
-              calls.push('business');
-              if (input.subject.kind === 'PROFILE') {
-                expect(target).toMatchObject(
-                  input.subject.profile.kind === 'COUNTERPARTY'
-                    ? {
-                        definition: { key: 'counterparty.address_book.use' },
-                        target: { counterpartyId, kind: 'counterparty', legalEntityId, tenantId },
-                      }
-                    : {
-                        definition: { key: 'retail.address_book.use' },
-                        target: { kind: 'retail_profile', legalEntityId, profileId, tenantId },
-                      },
-                );
-              }
-              return 'allowed';
+            onOwnerAuthorization: (ownerInput) => {
+              ownerFactsSeen.push(ownerInput.ownerFacts);
+              return 'allowed' as const;
             },
+            operationTime,
             ownerRegistration: commerceCustomerContextRegistration,
-            permissionDecision: 'allowed',
             scope,
           });
-          const contextAccess = Context.get(yield* Layer.build(harness.layer), ContextAccess);
-          const checkResources: ContextAccessService['resources'] = ({ resources }) =>
-            Effect.succeed(
-              resources.map((resource) => {
-                calls.push(resource.resourceId);
-                return {
-                  decision: 'allowed' as const,
-                  key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-                };
-              }),
-            );
-          Object.assign(contextAccess, { resources: checkResources });
           const failure = yield* Effect.flip(read.run(harness.runtime, input));
           expect(Predicate.isTagged(failure, 'ReadHandlerUnavailable')).toBe(true);
-          expect(calls).toEqual(
-            input.subject.kind === 'GUEST'
-              ? []
-              : [
-                  'business',
-                  profileId,
-                  ...('explicitChoice' in input && input.explicitChoice.kind === 'SAVED_ADDRESS' ? [addressId] : []),
-                ],
-          );
+          // One owner rule per request, named by exactly the record the subject is about.
+          expect(ownerFactsSeen).toEqual([facts]);
           expect(harness.snapshot().evidenceWrites).toBe(0);
         }),
       );
     }
-    for (const deniedId of [profileId, addressId]) {
-      for (const decision of ['denied', 'unavailable'] as const) {
-        suite.effect(`${read.name} requires the independent ${decision} resource read for ${deniedId}`, () =>
-          Effect.gen(function* resourceConjunction() {
-            const harness = yield* makeReadTestHarness({
-              compositionRevision,
-              executeOwnerQuery: () => Effect.die('Denied plan must not read owner SQL'),
-              operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z')),
-              ownerAuthorizationDecision: 'allowed',
-              ownerRegistration: commerceCustomerContextRegistration,
-              permissionDecision: 'allowed',
-              scope,
-            });
-            const contextAccess = Context.get(yield* Layer.build(harness.layer), ContextAccess);
-            const checkResources: ContextAccessService['resources'] = ({ resources }) =>
-              Effect.succeed(
-                resources.map((resource) => ({
-                  decision: resource.resourceId === deniedId ? decision : ('allowed' as const),
-                  key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-                })),
-              );
-            Object.assign(contextAccess, { resources: checkResources });
-            const failure = yield* Effect.flip(read.run(harness.runtime, inputs.saved));
-            expect(
-              Predicate.isTagged(failure, decision === 'denied' ? 'ReadPermissionDenied' : 'ReadPermissionUnavailable'),
-            ).toBe(true);
-          }),
-        );
-      }
-    }
     for (const decision of ['denied', 'unavailable'] as const) {
-      suite.effect(`${read.name} fails closed when the business requirement is ${decision}`, () =>
-        Effect.gen(function* businessConjunction() {
+      suite.effect(`${read.name} fails closed when the gate answers ${decision}`, () =>
+        Effect.gen(function* gateConjunction() {
           const harness = yield* makeReadTestHarness({
+            access: decision,
             compositionRevision,
-            executeOwnerQuery: () => Effect.die('Denied business plan must not read owner SQL'),
-            operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-10-19T10:00:00.000Z')),
-            ownerAuthorizationDecision: 'allowed',
-            ownerPermissionDecision: () => decision,
+            executeOwnerQuery: () => Effect.die('Denied authority must not read owner SQL'),
+            operationTime,
             ownerRegistration: commerceCustomerContextRegistration,
-            permissionDecision: 'allowed',
             scope,
           });
-          const failure = yield* Effect.flip(read.run(harness.runtime, inputs.saved));
+          const failure = yield* Effect.flip(read.run(harness.runtime, inputs.saved.input));
           expect(
             Predicate.isTagged(failure, decision === 'denied' ? 'ReadPermissionDenied' : 'ReadPermissionUnavailable'),
           ).toBe(true);
+          expect(harness.snapshot().ownerQueries).toEqual([]);
+          expect(harness.snapshot().stages).not.toContain('handler_executed');
         }),
       );
     }
+    suite.effect(`${read.name} fails closed when the owner rule denies the named record`, () =>
+      Effect.gen(function* ownerDenied() {
+        const harness = yield* makeReadTestHarness({
+          access: 'allowed',
+          compositionRevision,
+          executeOwnerQuery: () => Effect.die('Owner denial must not read owner SQL'),
+          onOwnerAuthorization: () => 'denied' as const,
+          operationTime,
+          ownerRegistration: commerceCustomerContextRegistration,
+          scope,
+        });
+        const failure = yield* Effect.flip(read.run(harness.runtime, inputs.saved.input));
+        expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
+        expect(harness.snapshot().ownerQueries).toEqual([]);
+        expect(harness.snapshot().stages).not.toContain('handler_executed');
+      }),
+    );
   }
 });

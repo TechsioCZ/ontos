@@ -193,10 +193,18 @@ it.effect('executes the registered address factories against their scoped owner 
     // Invoking their ports proves wiring; it does not claim a native Action commit or provider HTTP proof.
     const factoryProbe = defineRead(
       {
+        accessDeclaration: {
+          key: `${factoryProbeModuleId}.saved-address.list`,
+          kind: 'read',
+          modes: ['run'],
+          placement: { group: 'address-book', level: 'basic' },
+          risk: 'sensitive',
+          selectors: [],
+        },
         accessKind: 'list',
         entrypoint: defineTenantModuleEntrypoint({
           access: 'read',
-          authorization: { kind: 'context_permission', permission: 'module.access' },
+          authorization: { kind: 'protected' },
           entrypointKey: factoryProbeReadKey,
           moduleKey: factoryProbeModuleId,
           role: 'api',
@@ -205,7 +213,6 @@ it.effect('executes the registered address factories against their scoped owner 
         inputSchema: Schema.Struct({}),
         legalEntityScope: 'required',
         owningModuleKey: factoryProbeModuleId,
-        permissionTarget: 'module',
         policies: [],
         readKey: factoryProbeReadKey,
         resultSchema: Schema.Struct({}),

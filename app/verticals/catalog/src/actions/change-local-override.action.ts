@@ -80,6 +80,14 @@ const handleChangeLocalOverride = Effect.fn('ChangeLocalOverrideAction.handle')(
 
 export const changeLocalOverrideAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.local-override.change',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'catalog-source', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.change-local-override.access.v1',
@@ -91,7 +99,7 @@ export const changeLocalOverrideAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

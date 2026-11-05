@@ -11,6 +11,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createCatalogDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { catalogRegistration } from '../../vertical.registration.ts';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -30,6 +31,7 @@ import { changeLocalOverrideActionApiLive } from '../../api/change-local-overrid
 import { releaseLocalOverrideActionApiLive } from '../../api/release-local-override-action-server.ts';
 import { activateLocalOverrideRecoveryReadApiLive } from '../../api/activate-local-override-recovery-read-server.ts';
 import { catalogSourceResolutionReadApiLive } from '../../api/catalog-source-resolution-read-server.ts';
+import { CreateProductResultSchema } from '../../shared/actions/create-product.ts';
 import type { CreateProductPayloadSchema } from '../../shared/actions/create-product.ts';
 import {
   ActivateLocalOverrideActionAlreadyCommittedProblemSchema,
@@ -62,6 +64,7 @@ import { CatalogSourceResolutionUnavailable } from '../../src/persistence/catalo
 import { catalogExternalCorrelationResolverLive } from '../../src/persistence/external-correlation-resolver.ts';
 import { catalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { createProductAction } from '../../src/actions/create-product.action.ts';
 import { executeCreateProductWithAuthorization } from '../../src/api/create-product-action-client.ts';
 import {
@@ -182,6 +185,7 @@ it.live(
       const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(adminContext));
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionExecutor: 'manager-only',
           actionKeys: [
             createProductAction.descriptor.actionKey,
@@ -203,6 +207,7 @@ it.live(
       // A second genuine Tenant has CreateProduct only; it has no Local Override executor and proves foreign identity.
       const ungranted = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          access: 'allowed',
           actionExecutor: 'manager-only',
           actionKeys: [createProductAction.descriptor.actionKey],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
@@ -215,6 +220,10 @@ it.live(
         }),
         (value) => value.close().pipe(Effect.orDie),
       );
+      // The one access gate this suite scripts (the native database carries no v2 access intent and
+      // reaches no engine), plus the per-principal refusals it names (see `live-access-authority`).
+      const deniedAccess = createCatalogDeniedAccess();
+      const accessLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
       const { tenantId } = fixture;
       const permissions = yield* makeContextPermissionRelationshipMutationLive();
       const principal = { principalId: fixture.manager.principalId, tenantId };
@@ -296,7 +305,7 @@ it.live(
           ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
         ),
         Layer.provide(redemption),
-        Layer.provide(fixture.layer),
+        Layer.provide(accessLayer),
         Layer.provide(
           catalogSourceActionPersistenceFactoryLive.pipe(
             Layer.provide(
@@ -319,7 +328,7 @@ it.live(
           HttpRouter.toWebHandler(
             HttpApiBuilder.layer(api).pipe(
               Layer.provide(handlers),
-              Layer.provideMerge(fixture.layer),
+              Layer.provideMerge(accessLayer),
               Layer.provide(HttpServer.layerServices),
               Layer.provide(NodeCrypto.layer),
             ),
@@ -334,11 +343,14 @@ it.live(
         key?: string,
         actor = fixture.manager,
       ) {
-        return yield* executeCreateProductWithAuthorization(payload, yield* authorization(actor), yield* nextId, {
-          baseUrl: 'https://catalog.ontos.test',
-          compositionRevision: composition.composition.revision,
-          idempotencyKey: key ?? (yield* nextId),
-        }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch));
+        return yield* requireExecutionResult(
+          CreateProductResultSchema,
+          executeCreateProductWithAuthorization(payload, yield* authorization(actor), yield* nextId, {
+            baseUrl: 'https://catalog.ontos.test',
+            compositionRevision: composition.composition.revision,
+            idempotencyKey: key ?? (yield* nextId),
+          }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch)),
+        );
       });
       const observe = () =>
         fixture
@@ -368,16 +380,14 @@ it.live(
         key?: string,
         actor = fixture.manager,
       ) {
-        return yield* executeActivateLocalOverrideWithAuthorization(
-          payload,
-          yield* authorization(actor),
-          yield* nextId,
-          {
+        return yield* requireExecutionResult(
+          CatalogLocalOverrideResultSchema,
+          executeActivateLocalOverrideWithAuthorization(payload, yield* authorization(actor), yield* nextId, {
             baseUrl: 'https://catalog.ontos.test',
             compositionRevision: composition.composition.revision,
             idempotencyKey: key ?? (yield* nextId),
-          },
-        ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch));
+          }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch)),
+        );
       });
       const current = Effect.fn('OverrideTarget.current')(function* current(
         scope: (typeof ActivateLocalOverridePayloadSchema.Type)['scope'],
@@ -499,21 +509,22 @@ it.live(
         ]),
       );
       const beforeDenied = yield* observe();
+      // v2: the one access gate decides this Action (O62); the principal with no assignment is named
+      // on the fixture's own per-request owner seam (see `live-access-authority`).
+      deniedAccess.deny(fixture.denied.principalId, 'commerce.catalog.local-override.activate');
       expect(
         Schema.is(ActivateLocalOverrideActionForbiddenProblemSchema)(
           yield* activate(absentPayload, undefined, fixture.denied).pipe(Effect.flip),
         ),
       ).toBe(true);
       expect(yield* observe()).toEqual(beforeDenied);
-      const permission = {
-        moduleId: 'commerce.catalog',
-        permission: 'commerce.catalog.read.catalog-source-resolution' as const,
-      };
-      yield* permissions.mutate({ operation: 'revoke', principal, target: permission, tenantId });
+      // v2: the same gate answers this read, so a withdrawn assignment is a gate denial rather than a
+      // removed SpiceDB context permission.
+      deniedAccess.deny(fixture.manager.principalId, 'commerce.catalog.catalog-source-resolution.read');
       expect(
         Schema.is(CatalogSourceResolutionForbiddenProblemSchema)(yield* current(payload.scope).pipe(Effect.flip)),
       ).toBe(true);
-      yield* permissions.mutate({ operation: 'grant', principal, target: permission, tenantId });
+      deniedAccess.allow(fixture.manager.principalId, 'commerce.catalog.catalog-source-resolution.read');
       const change = yield* Schema.decodeUnknownEffect(ChangeLocalOverridePayloadSchema)({
         ...payload,
         classification: {
@@ -526,37 +537,36 @@ it.live(
         expectedRevision: '1',
         value: 'Corrected name',
       });
-      const changed = yield* executeChangeLocalOverrideWithAuthorization(
-        change,
-        yield* authorization(),
-        yield* nextId,
-        {
+      const changed = yield* requireExecutionResult(
+        CatalogLocalOverrideResultSchema,
+        executeChangeLocalOverrideWithAuthorization(change, yield* authorization(), yield* nextId, {
           baseUrl: 'https://catalog.ontos.test',
           compositionRevision: composition.composition.revision,
           idempotencyKey: yield* nextId,
-        },
-      ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch));
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch)),
+      );
       expect(changed).toMatchObject({ revision: 2n, status: 'APPLIED' });
-      const stale = yield* executeChangeLocalOverrideWithAuthorization(change, yield* authorization(), yield* nextId, {
-        baseUrl: 'https://catalog.ontos.test',
-        compositionRevision: composition.composition.revision,
-        idempotencyKey: yield* nextId,
-      }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch));
+      const stale = yield* requireExecutionResult(
+        CatalogLocalOverrideResultSchema,
+        executeChangeLocalOverrideWithAuthorization(change, yield* authorization(), yield* nextId, {
+          baseUrl: 'https://catalog.ontos.test',
+          compositionRevision: composition.composition.revision,
+          idempotencyKey: yield* nextId,
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch)),
+      );
       expect(stale.status).toBe('STALE_EDITOR');
       const releasePayload = yield* Schema.decodeUnknownEffect(ReleaseLocalOverridePayloadSchema)({
         ...payload,
         expectedRevision: '2',
       });
-      const released = yield* executeReleaseLocalOverrideWithAuthorization(
-        releasePayload,
-        yield* authorization(),
-        yield* nextId,
-        {
+      const released = yield* requireExecutionResult(
+        CatalogLocalOverrideResultSchema,
+        executeReleaseLocalOverrideWithAuthorization(releasePayload, yield* authorization(), yield* nextId, {
           baseUrl: 'https://catalog.ontos.test',
           compositionRevision: composition.composition.revision,
           idempotencyKey: yield* nextId,
-        },
-      ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch));
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch)),
+      );
       expect(released).toMatchObject({
         lifecycle: 'RELEASED',
         resolved: { status: 'ABSENT' },

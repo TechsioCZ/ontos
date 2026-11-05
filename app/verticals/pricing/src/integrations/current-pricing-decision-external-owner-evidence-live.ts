@@ -26,7 +26,7 @@ import {
   PricingMarketSourceReceiptSchema as OwnerPricingMarketSourceReceiptSchema,
 } from '@app/commerce-market-catalog/api/pricing-current-market-evidence';
 import { executePricingCurrentMarketEvidenceWithAuthorization } from '@app/commerce-market-catalog/api/pricing-current-market-evidence-client';
-import type { ActiveApplicationCompositionServiceContract } from '@app/core-runtime';
+import type { ActiveApplicationCompositionServiceContract, OperationalScope } from '@app/core-runtime';
 import { ActiveApplicationCompositionService } from '@app/core-runtime';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { PricingInstantSchema } from '@app/pricing-contracts/domain/currency-support';
@@ -42,23 +42,10 @@ import {
   PricingSourceEvidenceVerifiedAbsentSchema,
   PricingSourceEvidenceVerifiedPresentSchema,
 } from '@app/pricing-contracts/domain/source-revision-evidence';
-import { DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import {
-  CatalogSelectionGatewayCredentialService,
-  unavailableCatalogSelectionGatewayCredentialIssuer,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import type { CommercePriceGroupResolutionGatewayCredentialIssuer } from '../../shared/domain/commerce-price-group-resolution-gateway-credential.ts';
-import {
-  CommercePriceGroupResolutionGatewayCredentialService,
-  unavailableCommercePriceGroupResolutionGatewayCredentialIssuer,
-} from '../../shared/domain/commerce-price-group-resolution-gateway-credential.ts';
-import type { CommercialContextGatewayCredentialIssuer } from '../../shared/domain/commercial-context-gateway-credential.ts';
-import {
-  CommercialContextGatewayCredentialService,
-  unavailableCommercialContextGatewayCredentialIssuer,
-} from '../../shared/domain/commercial-context-gateway-credential.ts';
 import type { PricingExternalOwnerEvidenceValidationService } from '../services/external-owner-evidence-validation.service.ts';
 import { PricingExternalOwnerEvidenceValidation } from '../services/external-owner-evidence-validation.service.ts';
 import type { CurrentPricingDecisionOwnerReadFailure as CurrentPricingDecisionOwnerReadFailureType } from '../services/current-pricing-decision-whole-evaluation.service.ts';
@@ -89,6 +76,7 @@ export interface CurrentPricingDecisionExternalOwnerEvidenceEnvironment {
   readonly legalEntityId: string;
   readonly requestCorrelation: string;
   readonly requirements?: PricingWholeEvaluationRequirements;
+  readonly scope: OperationalScope;
   readonly tenantId: string;
 }
 
@@ -134,27 +122,27 @@ type CustomerExecutor = (
 interface LiveDependencies {
   readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
   readonly catalog: {
+    readonly acquire: OwnerGatewayConnectionAcquire;
     readonly execute: CatalogExecutor;
     readonly executeCompatibility: CatalogCompatibilityExecutor;
-    readonly issuer: CatalogSelectionGatewayCredentialIssuer;
   };
   readonly customerContext: {
+    readonly acquire: OwnerGatewayConnectionAcquire;
     readonly execute: CustomerExecutor;
-    readonly issuer: CommercePriceGroupResolutionGatewayCredentialIssuer;
   };
-  readonly market: { readonly execute: MarketExecutor; readonly issuer: CommercialContextGatewayCredentialIssuer };
+  readonly market: { readonly acquire: OwnerGatewayConnectionAcquire; readonly execute: MarketExecutor };
   readonly validation: PricingExternalOwnerEvidenceValidationService;
 }
 
-const executeCatalog: CatalogExecutor = (payload, credential, correlation, options) =>
+export const executeCatalog: CatalogExecutor = (payload, credential, correlation, options) =>
   executePricingPurposeEquivalenceWithAuthorization(payload, Redacted.value(credential), correlation, options);
-const executeCatalogCompatibility: CatalogCompatibilityExecutor = (payload, credential, correlation, options) =>
+export const executeCatalogCompatibility: CatalogCompatibilityExecutor = (payload, credential, correlation, options) =>
   executeQuantityBasisCompatibilityWithAuthorization(payload, Redacted.value(credential), correlation, options);
 export const executeMarket: MarketExecutor = (payload, credential, correlation, options) =>
   executePricingCurrentMarketEvidenceWithAuthorization(payload, Redacted.value(credential), correlation, options).pipe(
     Effect.flatMap(Schema.encodeEffect(PricingCurrentMarketEvidenceResponseSchema)),
   );
-const executeCustomer: CustomerExecutor = (payload, credential, correlation, options) =>
+export const executeCustomer: CustomerExecutor = (payload, credential, correlation, options) =>
   executeCustomerPriceGroupResolutionWithAuthorization(payload, Redacted.value(credential), correlation, options);
 
 const failed = (
@@ -292,12 +280,13 @@ const makeCatalogReader = (
             Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence operation is unavailable')),
           );
         }
-        const { baseUrl, credential } = yield* dependencies.issuer
-          .issue({
+        const { baseUrl, credential } = yield* dependencies
+          .acquire({
             audience: 'catalog',
             compositionRevision: environment.compositionRevision,
-            legalEntityId: environment.legalEntityId,
+            legalEntityScope: 'subject',
             requestCorrelation: environment.requestCorrelation,
+            scope: environment.scope,
           })
           .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog owner credential is unavailable')));
         const raw = yield* dependencies
@@ -379,12 +368,13 @@ const makeCatalogReader = (
             Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog quantity operation is unavailable')),
           );
         }
-        const compatibilityCredential = yield* dependencies.issuer
-          .issue({
+        const compatibilityCredential = yield* dependencies
+          .acquire({
             audience: 'catalog',
             compositionRevision: environment.compositionRevision,
-            legalEntityId: environment.legalEntityId,
+            legalEntityScope: 'subject',
             requestCorrelation: environment.requestCorrelation,
+            scope: environment.scope,
           })
           .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog owner credential is unavailable')));
         const compatibilityRaw = yield* dependencies
@@ -551,12 +541,13 @@ const makeMarketReader = (
         Effect.mapError(mapFailure(MARKET_OWNER, 'Market final-fence operation is unavailable')),
       );
     }
-    const { baseUrl, credential } = yield* dependencies.issuer
-      .issue({
+    const { baseUrl, credential } = yield* dependencies
+      .acquire({
         audience: 'commerce-market-catalog',
         compositionRevision: environment.compositionRevision,
-        legalEntityId: environment.legalEntityId,
+        legalEntityScope: 'subject',
         requestCorrelation: environment.requestCorrelation,
+        scope: environment.scope,
       })
       .pipe(Effect.mapError(mapFailure(MARKET_OWNER, 'Market owner credential is unavailable')));
     const raw = yield* dependencies
@@ -749,12 +740,13 @@ const makeCustomerContextReader = (
         Effect.mapError(mapFailure(CUSTOMER_CONTEXT_OWNER, 'Customer Price Group operation is unavailable')),
       );
     }
-    const { baseUrl, credential } = yield* dependencies.issuer
-      .issue({
+    const { baseUrl, credential } = yield* dependencies
+      .acquire({
         audience: 'commerce-customer-context',
         compositionRevision: environment.compositionRevision,
-        legalEntityId: environment.legalEntityId,
+        legalEntityScope: 'subject',
         requestCorrelation: environment.requestCorrelation,
+        scope: environment.scope,
       })
       .pipe(Effect.mapError(mapFailure(CUSTOMER_CONTEXT_OWNER, 'Customer Context credential is unavailable')));
     const raw = yield* dependencies
@@ -841,6 +833,7 @@ const makePromotionReader = (
       .verifyOpaqueProofsAgainstCurrentState({
         candidateRef: context.commercialTotal.candidateRef,
         compositionRevision: environment.compositionRevision,
+        scope: environment.scope,
         sources: [],
         typedSources: [],
         verificationContext: {
@@ -880,34 +873,17 @@ export const currentPricingDecisionExternalOwnerEvidencePortFromEnvironment = (
   Effect.all(
     {
       applicationComposition: Effect.serviceOption(ActiveApplicationCompositionService),
-      catalogIssuer: Effect.serviceOption(CatalogSelectionGatewayCredentialService),
-      customerIssuer: Effect.serviceOption(CommercePriceGroupResolutionGatewayCredentialService),
-      marketIssuer: Effect.serviceOption(CommercialContextGatewayCredentialService),
+      crypto: Crypto.Crypto,
       validation: PricingExternalOwnerEvidenceValidation,
     },
     { concurrency: 5 },
   ).pipe(
-    Effect.map(({ applicationComposition, catalogIssuer, customerIssuer, marketIssuer, validation }) => {
+    Effect.map(({ applicationComposition, crypto, validation }) => {
+      const acquire: OwnerGatewayConnectionAcquire = (input) => acquireOwnerGatewayConnection(input, crypto);
       const common = {
-        catalog: {
-          execute: executeCatalog,
-          executeCompatibility: executeCatalogCompatibility,
-          issuer: Option.isSome(catalogIssuer)
-            ? catalogIssuer.value
-            : unavailableCatalogSelectionGatewayCredentialIssuer,
-        },
-        customerContext: {
-          execute: executeCustomer,
-          issuer: Option.isSome(customerIssuer)
-            ? customerIssuer.value
-            : unavailableCommercePriceGroupResolutionGatewayCredentialIssuer,
-        },
-        market: {
-          execute: executeMarket,
-          issuer: Option.isSome(marketIssuer)
-            ? marketIssuer.value
-            : unavailableCommercialContextGatewayCredentialIssuer,
-        },
+        catalog: { acquire, execute: executeCatalog, executeCompatibility: executeCatalogCompatibility },
+        customerContext: { acquire, execute: executeCustomer },
+        market: { acquire, execute: executeMarket },
         validation,
       } satisfies Omit<LiveDependencies, 'applicationComposition'>;
       return makeCurrentPricingDecisionExternalOwnerEvidenceLivePort(

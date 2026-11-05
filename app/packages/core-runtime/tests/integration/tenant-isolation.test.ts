@@ -31,10 +31,12 @@ import {
 } from '../../src/db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
+import { makeTestOperationalScopeAccess } from '../../src/testing/access-gate.ts';
 import type { ReadHandlerContext } from '../../src/reads/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
+import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient, makeTestPgSession } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
@@ -306,6 +308,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('tenant isolation', (s
       }) => {
         const registration = defineRead(
           {
+            accessDeclaration: fixtureReadAccess('core.shell'),
             accessKind: 'list',
             entrypoint,
             evidencePolicy: {
@@ -349,7 +352,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('tenant isolation', (s
             openModuleEntrypointGateway,
             yield* makeOperationalScopeResolver(
               makeOperationalScopeRepository({ executor: runtimeDatabase }),
-              contextAccess,
+              makeTestOperationalScopeAccess(),
             ),
             contextAccess,
             {

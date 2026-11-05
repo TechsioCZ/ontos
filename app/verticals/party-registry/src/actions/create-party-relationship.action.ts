@@ -69,6 +69,14 @@ const handleCreatePartyRelationship = Effect.fn('CreatePartyRelationshipAction.h
 
 export const createPartyRelationshipAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.party-relationship.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'contact-data', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.create-party-relationship.access.v1',
@@ -81,10 +89,7 @@ export const createPartyRelationshipAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.create-party-relationship',
       moduleKey: 'party.registry',
       role: 'action',
@@ -96,7 +101,6 @@ export const createPartyRelationshipAction = defineAction(
     policies: [],
     resultSchema: CreatePartyRelationshipResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_relationships',
   },
   handleCreatePartyRelationship,
   (transaction, scope) =>

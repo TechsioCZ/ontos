@@ -2,12 +2,7 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug retire-payment-term
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-  requireModuleOperation,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint, requireModuleOperation } from '@app/core-runtime';
 import { Context, DateTime, Effect, Match, Option, Schema } from 'effect';
 import {
   RetirePaymentTermPayloadSchema,
@@ -126,8 +121,8 @@ const makeRetirePaymentTermServices = Effect.fn('RetirePaymentTermAction.makeRet
     const authorityOption = yield* Effect.serviceOption(PaymentTermAffectedUseAuthorityService);
     const authority = Option.isSome(authorityOption)
       ? authorityOption.value
-      : yield* customerPaymentTermAffectedUseAuthorityFromEnvironment(scope.correlationId);
-    const retirementAuthority = yield* customerPaymentTermRetirementAuthorityFromEnvironment(scope.correlationId);
+      : yield* customerPaymentTermAffectedUseAuthorityFromEnvironment(scope);
+    const retirementAuthority = yield* customerPaymentTermRetirementAuthorityFromEnvironment(scope);
     const services: RetirePaymentTermServices = {
       ...catalog,
       ...authority,
@@ -467,6 +462,14 @@ export const handleRetirePaymentTerm = Effect.fn('RetirePaymentTermAction.handle
 
 export const retirePaymentTermAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'payment.term-catalog.payment-term.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'payment-terms', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'payment.term-catalog.retire-payment-term.access.v1',
@@ -478,7 +481,7 @@ export const retirePaymentTermAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'payment.term-catalog.retire-payment-term',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -488,10 +491,6 @@ export const retirePaymentTermAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: RetirePaymentTermPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RetirePaymentTermPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.paymentTermRef,
-    })),
     resultSchema: RetirePaymentTermResultSchema,
     schemaVersion: '1',
   },

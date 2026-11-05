@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug govern-product-attribute-applicability
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/govern-product-attribute-applicability.ts';
 
 export { GovernProductAttributeApplicabilityPayloadSchema } from '../actions/govern-product-attribute-applicability.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const GovernProductAttributeApplicabilityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'GovernProductAttributeApplicabilityActionInvalidProblem',
@@ -24,6 +26,7 @@ export const GovernProductAttributeApplicabilityActionForbiddenProblemSchema = m
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -135,7 +138,7 @@ export const GovernProductAttributeApplicabilityActionApi = HttpApi.make(
       HttpApiEndpoint.post('execute', '/catalog/actions/govern-product-attribute-applicability', {
         error: actionErrors,
         payload: Schema.toEncoded(GovernProductAttributeApplicabilityPayloadSchema),
-        success: GovernProductAttributeApplicabilityResultSchema,
+        success: [ActionProposalAcceptedSchema, GovernProductAttributeApplicabilityResultSchema],
       }),
     )
     .middleware(GovernProductAttributeApplicabilityActionSchemaErrorMiddleware),

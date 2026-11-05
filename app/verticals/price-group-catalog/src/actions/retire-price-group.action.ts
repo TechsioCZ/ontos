@@ -4,7 +4,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
-import { definePriceGroupActionPermissions } from '../permissions/authorization.ts';
 
 import {
   RetirePriceGroupPayloadSchema,
@@ -97,6 +96,14 @@ export const handleRetirePriceGroup = Effect.fn('RetirePriceGroupAction.handle')
 
 export const retirePriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'pricing.price-group-catalog.price-group.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'price-groups', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'pricing.price-group-catalog.retire-price-group.access.v1',
@@ -108,22 +115,13 @@ export const retirePriceGroupAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'pricing.price-group-catalog.retire-price-group',
       moduleKey: MODULE_KEY,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'forbidden',
-    ownerPermissions: definePriceGroupActionPermissions<RetirePriceGroupPayload>((payload) => ({
-      permission: 'pricing.price_group.retire',
-      target: {
-        kind: 'price_group',
-        priceGroupId: payload.expectedCurrent.priceGroupRef.resourceId,
-        pricingCatalogId: payload.expectedCurrent.priceGroupRef.tenantId,
-        tenantId: payload.expectedCurrent.priceGroupRef.tenantId,
-      },
-    })),
     owningModuleKey: MODULE_KEY,
     payloadSchema: RetirePriceGroupPayloadSchema,
     policies: [],

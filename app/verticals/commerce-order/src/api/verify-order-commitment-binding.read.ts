@@ -12,7 +12,7 @@ const moduleKey = 'commerce.order' as const;
 
 const verifyOrderCommitmentBindingEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.order.api.verify-order-commitment-binding',
   moduleKey,
   role: 'api',
@@ -20,6 +20,19 @@ const verifyOrderCommitmentBindingEntrypoint = defineTenantModuleEntrypoint({
 
 export const verifyOrderCommitmentBindingRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: 'Customer Context verifies that a purchase approval is bound to the committed Order.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.order.commitment-binding.verify',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'orders', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: verifyOrderCommitmentBindingEntrypoint,
     evidencePolicy: {
@@ -29,7 +42,6 @@ export const verifyOrderCommitmentBindingRead = defineRead(
     inputSchema: VerifyOrderCommitmentBindingRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.order.api.verify-order-commitment-binding',
     resultSchema: VerifyOrderCommitmentBindingResponseSchema,
@@ -38,5 +50,4 @@ export const verifyOrderCommitmentBindingRead = defineRead(
   (input, context: ReadHandlerContext<Effect.Success<ReturnType<typeof orderCommitmentReadServices>>>) =>
     context.services.verifyBinding(input).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   orderCommitmentReadServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

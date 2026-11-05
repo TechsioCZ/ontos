@@ -2,15 +2,15 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug prepare-purchase-proposal-basis
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
   PreparePurchaseProposalBasisPayloadSchema,
-  PreparePurchaseProposalBasisResultSchema,
+  PurchaseProposalBasisSchema,
 } from '../actions/prepare-purchase-proposal-basis.ts';
 
 export { PreparePurchaseProposalBasisPayloadSchema } from '../actions/prepare-purchase-proposal-basis.ts';
-
 export const PreparePurchaseProposalBasisActionInvalidProblemSchema = makeProblemDetailsSchema(
   'PreparePurchaseProposalBasisActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const PreparePurchaseProposalBasisActionForbiddenProblemSchema = makeProb
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -169,7 +170,7 @@ export const preparePurchaseProposalBasisActionGroupDefinition = HttpApiGroup.ma
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/prepare-purchase-proposal-basis', {
       error: actionErrors,
       payload: Schema.toEncoded(PreparePurchaseProposalBasisPayloadSchema),
-      success: PreparePurchaseProposalBasisResultSchema,
+      success: [ActionProposalAcceptedSchema, PurchaseProposalBasisSchema],
     }),
   )
   .middleware(PreparePurchaseProposalBasisActionSchemaErrorMiddleware);

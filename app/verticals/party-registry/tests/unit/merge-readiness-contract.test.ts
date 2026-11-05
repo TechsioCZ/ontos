@@ -130,6 +130,14 @@ it.layer(NodeFileSystem.layer)('merge-readiness-contract', (suite) => {
         }),
       ).toThrow();
       expect(partyMergeReadinessRead.descriptor).toEqual({
+        accessDeclaration: {
+          key: 'party.registry.party-merge.read-readiness',
+          kind: 'read',
+          modes: ['run'],
+          placement: { group: 'identity-review', level: 'manage' },
+          risk: 'sensitive',
+          selectors: ['all'],
+        },
         accessKind: 'detail',
         entrypoint: partyMergeReadinessRead.descriptor.entrypoint,
         evidencePolicy: {
@@ -139,7 +147,6 @@ it.layer(NodeFileSystem.layer)('merge-readiness-contract', (suite) => {
         inputSchema: PartyMergeReadinessRequestSchema,
         legalEntityScope: 'optional',
         owningModuleKey: 'party.registry',
-        permissionTarget: 'tenant',
         policies: [],
         readKey: 'party.registry.api.party-merge-readiness',
         resultSchema: PartyMergeReadinessResponseSchema,

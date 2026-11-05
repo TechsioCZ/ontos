@@ -101,14 +101,14 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
 
 const page = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'inventory.stock.page.orders',
   moduleKey: 'inventory.stock',
   role: 'page',
 });
 const component = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'inventory.stock.component.summary',
   moduleKey: 'inventory.stock',
   role: 'public_component',

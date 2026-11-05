@@ -3,12 +3,12 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
   isVerifiedGatewayPrincipalContext,
-  ReadHandlerUnavailable,
+  readVerifiedGatewayActor,
   ReadPermissionDenied,
   ReadPolicyDenied,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadHandlerContext } from '@app/core-runtime';
-import { Config, DateTime, Effect, Option, Schema } from 'effect';
+import type { OperationalScope, ReadHandlerContext, ReadServiceFactory } from '@app/core-runtime';
+import { DateTime, Effect, Schema } from 'effect';
 import { makeOrderCommitmentPersistence } from '../services/order-commitment-persistence.ts';
 import type { OrderCommitmentPersistence } from '../services/order-commitment-persistence.ts';
 import { readFailure } from './order-commitment-read-support.ts';
@@ -21,40 +21,26 @@ const moduleKey = 'commerce.order' as const;
 
 const preparedOrderApprovalBindingEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.order.api.prepared-order-approval-binding',
   moduleKey,
   role: 'api',
 });
 
-const preparedApprovalVerifier = Effect.fn('PreparedOrderApprovalBindingRead.verifier')(
+export const preparedApprovalVerifier = Effect.fn('PreparedOrderApprovalBindingRead.verifier')(
   function* preparedApprovalVerifierEffect(scope: OperationalScope) {
-    const configured = yield* Config.all({
-      namespace: Config.String('ONTOS_ORDER_CCC_VERIFIER_AUTHENTICATION_NAMESPACE_ID'),
-      principalId: Config.schema(Schema.String.check(Schema.isUUID()), 'ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID'),
-    }).pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
-    if (Option.isNone(configured)) {
-      return yield* new ReadHandlerUnavailable({
-        code: 'read_handler_unavailable',
-        reason: 'The prepared Order approval verifier is not configured',
-      });
-    }
+    const actor = readVerifiedGatewayActor(scope);
     if (
       !isVerifiedGatewayPrincipalContext(scope) ||
-      scope.authMethod !== 'api_key' ||
-      scope.authBindingId === undefined ||
-      scope.authContextRef === undefined ||
-      scope.impersonatedByPrincipalId !== undefined ||
-      scope.principalId !== configured.value.principalId ||
-      scope.authenticationNamespaceId !== configured.value.namespace ||
-      configured.value.namespace.trim().length === 0
+      actor === undefined ||
+      actor.appId !== 'commerce-customer-context'
     ) {
       return yield* new ReadPermissionDenied({
         code: 'read_permission_denied',
-        reason: 'The configured CCC verifier is required',
+        reason: 'The Customer Context module is required to verify this Order approval',
       });
     }
-    return configured.value.principalId;
+    return yield* Effect.void;
   },
 );
 
@@ -68,8 +54,8 @@ const preparedApprovalServices = (verifiedPersistence: VerifiedPersistence) =>
       input: typeof PreparedOrderApprovalBindingRequestSchema.Type,
     ) {
       const persistence = yield* verifiedPersistence;
-      // The persistence read recovers the buyer from the retained Attempt. The
-      // authenticated CCC service remains the actual operation principal.
+      // The subject is the buyer, checked against the retained Attempt in loadPreparedForVerifier.
+      // Commerce Customer Context is the verified calling module admitted by accessActor.
       const state = yield* persistence.loadPreparedForVerifier(input.binding).pipe(Effect.mapError(readFailure));
       const retained = {
         binding: state.attempt.binding,
@@ -115,8 +101,40 @@ const preparedApprovalServices = (verifiedPersistence: VerifiedPersistence) =>
     }),
   });
 
+/**
+ * The read's owner persistence factory. It is a named `ReadServiceFactory`, so the composition root
+ * sees the request's scoped transaction rather than a constructor imported into the read body.
+ */
+const preparedApprovalReadServices: ReadServiceFactory<Effect.Success<ReturnType<typeof preparedApprovalServices>>> = (
+  transaction,
+  scope,
+) =>
+  preparedApprovalServices(
+    preparedApprovalVerifier(scope).pipe(
+      Effect.map(() =>
+        makeOrderCommitmentPersistence(transaction, {
+          operationId: scope.correlationId,
+          scope,
+        }),
+      ),
+    ),
+  );
+
 export const preparedOrderApprovalBindingRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: 'Customer Context binds a purchase approval to the Order it prepares for finalization.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.order.approval-binding.read-prepared',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'order-finalization', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: preparedOrderApprovalBindingEntrypoint,
     evidencePolicy: {
@@ -126,7 +144,6 @@ export const preparedOrderApprovalBindingRead = defineRead(
     inputSchema: PreparedOrderApprovalBindingRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.order.api.prepared-order-approval-binding',
     resultSchema: PreparedOrderApprovalBindingResponseSchema,
@@ -135,17 +152,5 @@ export const preparedOrderApprovalBindingRead = defineRead(
   (input, context: ReadHandlerContext<Effect.Success<ReturnType<typeof preparedApprovalServices>>>) =>
     context.services.verify(input).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   // The Read runtime's scoped transaction builds persistence only for the configured verifier.
-  (transaction, scope) =>
-    preparedApprovalServices(
-      preparedApprovalVerifier(scope).pipe(
-        Effect.map((preparedEvidencePrincipalId) =>
-          makeOrderCommitmentPersistence(transaction, {
-            operationId: scope.correlationId,
-            preparedEvidencePrincipalId,
-            scope,
-          }),
-        ),
-      ),
-    ),
-  () => ({ kind: 'module', moduleId: moduleKey }),
+  preparedApprovalReadServices,
 );

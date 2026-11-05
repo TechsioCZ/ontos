@@ -114,6 +114,14 @@ const handleAdministerPaymentTermPolicy = Effect.fn('AdministerPaymentTermPolicy
 
 export const administerPaymentTermPolicyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.payment-term-policy.administer',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'commerce-policy', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.administer-payment-term-policy.access.v1',
@@ -125,7 +133,7 @@ export const administerPaymentTermPolicyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.administer-payment-term-policy',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -139,7 +147,8 @@ export const administerPaymentTermPolicyAction = defineAction(
     schemaVersion: '1',
   },
   handleAdministerPaymentTermPolicy,
-  customerCommercePolicyAdministrationServiceFactory,
+  (transaction, scope, compositionRevision) =>
+    customerCommercePolicyAdministrationServiceFactory(transaction, scope, compositionRevision),
 );
 
 // <generated-outbox-message-exports>

@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug record-legal-hold
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { RecordLegalHoldPayloadSchema, RecordLegalHoldResultSchema } from '../actions/record-legal-hold.ts';
 
 export { RecordLegalHoldPayloadSchema } from '../actions/record-legal-hold.ts';
-
 export const RecordLegalHoldActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordLegalHoldActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const RecordLegalHoldActionForbiddenProblemSchema = makeProblemDetailsSch
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const recordLegalHoldActionGroupDefinition = HttpApiGroup.make('recordLeg
     HttpApiEndpoint.post('execute', '/privacy/actions/record-legal-hold', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordLegalHoldPayloadSchema),
-      success: RecordLegalHoldResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordLegalHoldResultSchema],
     }),
   )
   .middleware(RecordLegalHoldActionSchemaErrorMiddleware);

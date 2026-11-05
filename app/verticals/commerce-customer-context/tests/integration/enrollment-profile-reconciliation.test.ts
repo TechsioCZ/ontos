@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { ActionAuthorizationPreflightDatabaseLive, CorePersistenceLive, DatabaseConfigLive } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { expect, it } from 'effect-rstest';
 
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
@@ -21,7 +22,7 @@ import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
   COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
   ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
-  RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
+  RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
 } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import type { JourneyTransitionSpec } from '../../src/enrollment/journeys/journey-contracts.ts';
 import {
@@ -95,6 +96,7 @@ const coreClient: ExternalIdentityClientPort = {
  * this layer is what the scenarios below are actually asserting about.
  */
 const registryLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
+  Layer.provide(nodeCryptoLayer),
   Layer.provide(
     Layer.mergeAll(
       Layer.succeed(ExternalIdentityClient, coreClient),
@@ -128,6 +130,8 @@ interface Scenario {
   readonly bindInvocationId: string;
   readonly ensureInvocationId: string;
   readonly legalEntityId: string;
+  /** The start Action invocation the Attempt was created under: the originator its owner calls act for. */
+  readonly originatorInvocationId: string;
   readonly partyResourceId: string;
   readonly tenantId: string;
 }
@@ -138,6 +142,7 @@ const scenario = (): Scenario => ({
   bindInvocationId: randomUUID(),
   ensureInvocationId: randomUUID(),
   legalEntityId: randomUUID(),
+  originatorInvocationId: randomUUID(),
   partyResourceId: `retail-reconciliation-party-${randomUUID()}`,
   tenantId: randomUUID(),
 });
@@ -171,6 +176,9 @@ const attemptFor = (identities: Scenario): EnrollmentAttemptSnapshot => ({
     'commerce.customer-context.portal-enrollment.retail_self_enrollment.reconciliation',
   ),
   journey: 'RETAIL_SELF_ENROLLMENT',
+  originatorActionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(
+    identities.originatorInvocationId,
+  ),
   portalEnrollmentAttemptId: Schema.decodeSync(EnrollmentAttemptIdSchema)(identities.attemptId),
   revision: 5,
   state: 'RECONCILIATION_REQUIRED',
@@ -385,7 +393,7 @@ it.live('leaves a Retail Customer Profile ensure that never committed open for a
 );
 
 it.live(
-  'retains a committed Retail Portal Profile Binding as pending when its response was lost before grants settled',
+  'settles a committed Retail Portal Profile Binding whose response was lost, with its grants already Current',
   () =>
     Effect.scoped(
       Effect.gen(function* lostBindResponse() {
@@ -402,16 +410,12 @@ it.live(
           reconciliationFor(identities, bindTransition, identities.bindInvocationId),
         );
 
-        // #1232: the committed binding is real progress, but no worker has made its grants Current.
+        // The binding commits with its ACTIVE grant, so the lost answer settles from the owner row.
         expect(resolution).toMatchObject({
           actorPrincipalId: identities.actorPrincipalId,
-          failureCode: 'owner_reconciliation_required',
-          nextState: 'RECONCILIATION_REQUIRED',
-          outcomeCode: RETAIL_PORTAL_GRANTS_INCOMPLETE_OUTCOME_CODE,
-          status: 'FAILED',
+          outcomeCode: RETAIL_PORTAL_PROFILE_BOUND_OUTCOME_CODE,
+          status: 'SUCCEEDED',
         });
-        expect(resolution.resultReference).toBeUndefined();
-        expect(String(resolution.reconciliationRef).length).toBeGreaterThan(0);
       }),
     ),
 );

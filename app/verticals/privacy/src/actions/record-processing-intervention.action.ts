@@ -49,6 +49,14 @@ const handleRecordProcessingIntervention = Effect.fn('RecordProcessingInterventi
 });
 export const recordProcessingInterventionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.processing-intervention.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'consent', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-processing-intervention.access.v1',
@@ -60,7 +68,7 @@ export const recordProcessingInterventionAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-processing-intervention',
       moduleKey: 'privacy.core',
       role: 'action',

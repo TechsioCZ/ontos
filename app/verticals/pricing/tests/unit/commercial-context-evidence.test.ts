@@ -2,8 +2,9 @@ import { CurrentMarketCatalogResponseSchema } from '@app/commerce-market-catalog
 import { DateTime, Effect, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CommercialContextGatewayCredentialService } from '../../shared/domain/commercial-context-gateway-credential.ts';
-import { commercialContextAssessmentPortFromEnvironment } from '../../src/integrations/commercial-context-evidence.ts';
+import { makeCommercialContextAssessmentPort } from '../../src/integrations/commercial-context-evidence.ts';
+import type { OwnerGatewayConnectionAcquire } from '../../src/integrations/owner-gateway-connection.ts';
+import { ownerConnectionStub, verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 
 const compositionRevision = 'a'.repeat(64);
 
@@ -56,19 +57,41 @@ const response = Schema.decodeSync(CurrentMarketCatalogResponseSchema)({
   observedAt: '2026-09-27T10:00:00.000Z',
 });
 
-const gateway = {
-  issue: () =>
-    Effect.succeed({
-      baseUrl: new URL('https://commerce-market.example.test'),
-      credential: Redacted.make('Bearer market-owner-assertion'),
+const principalId = '44444444-4444-4444-8444-444444444440';
+type CommercialExecute = Parameters<typeof makeCommercialContextAssessmentPort>[0]['execute'];
+const marketOwner = ownerConnectionStub('Bearer market-owner-assertion', 'https://commerce-market.example.test');
+
+/** Builds the port from a provenance-bearing verified scope, the way the receiving request does. */
+const portFromEnvironment = (
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  },
+  execute: CommercialExecute,
+  acquire: OwnerGatewayConnectionAcquire = marketOwner,
+) =>
+  Effect.succeed(
+    makeCommercialContextAssessmentPort({
+      acquire,
+      context: {
+        ...context,
+        scope: verifiedTestScope({
+          correlationId: context.requestCorrelation,
+          legalEntityId: context.legalEntityId,
+          principalId,
+          tenantId,
+        }),
+      },
+      execute,
     }),
-};
+  );
 
 describe('Pricing commercial-context evidence integration', () => {
   it.effect('validates only the exact SLE, Channel, and Commerce Market without a Storefront selector', () =>
     Effect.gen(function* assessExactCommercialContext() {
       const requests: unknown[] = [];
-      const port = yield* commercialContextAssessmentPortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'define-price-commercial-context' },
         (payload, credential, requestCorrelation, options) =>
           Effect.sync(() => {
@@ -94,12 +117,12 @@ describe('Pricing commercial-context evidence integration', () => {
       ]);
       expect(requests[0]).not.toHaveProperty('storefrontId');
       expect(requests[0]).not.toHaveProperty('storefrontRef');
-    }).pipe(Effect.provideService(CommercialContextGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('returns definite invalidity for a complete snapshot without the exact tuple', () =>
     Effect.gen(function* rejectUnconfiguredTuple() {
-      const port = yield* commercialContextAssessmentPortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'define-price-commercial-context' },
         () => Effect.succeed(response),
       );
@@ -114,7 +137,7 @@ describe('Pricing commercial-context evidence integration', () => {
         reason: 'Commerce Market did not validate the exact Selling Legal Entity, Channel, and Market tuple',
         status: 'INVALID',
       });
-    }).pipe(Effect.provideService(CommercialContextGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('fails retryably on competing exact definitions or internally inconsistent completeness evidence', () =>
@@ -129,22 +152,26 @@ describe('Pricing commercial-context evidence integration', () => {
           },
         },
       ]) {
-        const port = yield* commercialContextAssessmentPortFromEnvironment(
+        const port = yield* portFromEnvironment(
           { compositionRevision, legalEntityId, requestCorrelation: 'define-price-commercial-context' },
           () => Effect.succeed(ownerResponse),
         );
         const failure = yield* port.assess({ assessedAt, commercialScope, tenantId }).pipe(Effect.flip);
         expect(failure).toMatchObject({ code: 'pricing_commercial_context_unavailable', retryable: true });
       }
-    }).pipe(Effect.provideService(CommercialContextGatewayCredentialService, gateway)),
+    }),
   );
 
   it.effect('rejects a caller-substituted Selling Legal Entity before issuing an owner credential', () => {
     let credentialCalls = 0;
     return Effect.gen(function* rejectSubstitutedSeller() {
-      const port = yield* commercialContextAssessmentPortFromEnvironment(
+      const port = yield* portFromEnvironment(
         { compositionRevision, legalEntityId, requestCorrelation: 'define-price-commercial-context' },
         () => Effect.die('must not call the Commerce Market owner'),
+        () => {
+          credentialCalls += 1;
+          return Effect.die('must not issue an owner connection');
+        },
       );
       const result = yield* port.assess({
         assessedAt,
@@ -157,13 +184,6 @@ describe('Pricing commercial-context evidence integration', () => {
 
       expect(result.status).toBe('INVALID');
       expect(credentialCalls).toBe(0);
-    }).pipe(
-      Effect.provideService(CommercialContextGatewayCredentialService, {
-        issue: () => {
-          credentialCalls += 1;
-          return Effect.die('must not issue a credential');
-        },
-      }),
-    );
+    });
   });
 });

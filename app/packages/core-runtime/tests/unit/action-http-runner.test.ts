@@ -2,10 +2,15 @@ import { Effect, Redacted, Schema } from 'effect';
 import { Headers } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
+import { ProposalIdSchema } from '../../src/access/ids.ts';
+import type { ActionTransportMetadata } from '../../src/actions/context.ts';
+import { ActionTransportMetadataSchema } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
-import { ActionAlreadyCommitted } from '../../src/actions/errors.ts';
+import { ActionAlreadyCommitted, ActionPermissionDenied } from '../../src/actions/errors.ts';
 import type { ActionCoreError } from '../../src/actions/errors.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { ActionProposalAcceptedSchema } from '../../src/actions/proposal-accepted.ts';
+import type { ActionProposalAccepted } from '../../src/actions/proposal-accepted.ts';
 import { ActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeService } from '../../src/actions/runtime.ts';
 import {
@@ -31,6 +36,15 @@ const CommittedRetryReceiptSchema = Schema.TaggedStruct('CommittedRetryReceipt',
 
 const registration = defineAction(
   {
+    // O62: a protected Action must declare its access.
+    accessDeclaration: {
+      key: 'core.shell.test.http-runner',
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'tests', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.test.http-runner.access.v1',
@@ -75,6 +89,24 @@ const authorization = (value?: string) => Redacted.make(value);
 const alreadyCommittedRuntime = (failure: ActionAlreadyCommitted): ActionRuntimeService => ({
   resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
   runAction: () => Effect.fail(failure),
+});
+
+const acceptedProposal = Schema.decodeSync(ActionProposalAcceptedSchema)({
+  _tag: 'ActionProposalAccepted',
+  expiresAt: '2026-11-04T09:00:00.000Z',
+  proposalId: Schema.decodeSync(ProposalIdSchema)('00000000-0000-4000-8000-0000000000a5'),
+});
+
+/** A runner that answers the parked 202 the seam must carry as a success, not as a problem. */
+const acceptedProposalRuntime = (
+  accepted: ActionProposalAccepted,
+  seen: ActionTransportMetadata[],
+): ActionRuntimeService => ({
+  resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
+  runAction: (input) => {
+    seen.push(Schema.decodeUnknownSync(ActionTransportMetadataSchema)(input.transport));
+    return Effect.succeed(accepted);
+  },
 });
 
 it.effect('invalid correlation metadata is rejected before principal acquisition and runtime lookup', () =>
@@ -300,6 +332,96 @@ it.effect('maps an already committed Action normally when recovery is not opted 
   }),
 );
 
+it.effect('answers a parked proposal as the declared 202 success of a proposal transport (O85)', () =>
+  Effect.gen(function* transportAcceptedProposal() {
+    const seen: ActionTransportMetadata[] = [];
+    let mappedErrors = 0;
+    const result = yield* runGovernedActionHttp({
+      endpointHeaders: { idempotencyKey: 'proposal-invocation', intent: 'propose', traceId: 'proposal-trace' },
+      internalProblem: () => internalProblem,
+      invalidCorrelationProblem: () => invalidProblem,
+      mapError: () => {
+        mappedErrors += 1;
+        return internalProblem;
+      },
+      payload: {},
+      principal: { authenticate: () => Effect.succeed(principal) },
+      registration,
+      requestHeaders: {
+        authorization: authorization(),
+        'x-correlation-id': 'proposal-transport-test',
+      },
+      // The endpoint's own declaration: only this transport shape names the parked 202 (O85).
+      successContract: 'result-or-proposal',
+    }).pipe(Effect.provideService(ActionRuntime, acceptedProposalRuntime(acceptedProposal, seen)));
+
+    expect(Schema.is(ActionProposalAcceptedSchema)(result)).toBe(true);
+    expect(result).toHaveProperty('proposalId', acceptedProposal.proposalId);
+    // The intent reaches the one runner through the transport, and the 202 is never a Problem Details body.
+    expect(seen).toEqual([
+      {
+        correlationId: 'proposal-transport-test',
+        idempotencyKey: 'proposal-invocation',
+        intent: 'propose',
+        traceId: 'proposal-trace',
+      },
+    ]);
+    expect(mappedErrors).toBe(0);
+  }),
+);
+
+it.effect('carries the proposal intent only for the runtime to refuse on a result-only endpoint (O85)', () =>
+  Effect.gen(function* transportRefusedProposal() {
+    const denied = new ActionPermissionDenied({
+      code: 'action_permission_denied',
+      reason: 'This Action endpoint does not accept proposal requests',
+    });
+    const seen: (readonly [ActionTransportMetadata, string | undefined])[] = [];
+    const mappedProblem = { _tag: 'ProposalRefusedProblem' as const };
+    let mappedFailure: unknown;
+
+    const effect = runGovernedActionHttp({
+      endpointHeaders: { idempotencyKey: 'proposal-refused', intent: 'propose', traceId: 'proposal-refused-trace' },
+      internalProblem: () => internalProblem,
+      invalidCorrelationProblem: () => invalidProblem,
+      mapError: (failure) => {
+        mappedFailure = failure;
+        return mappedProblem;
+      },
+      payload: {},
+      principal: { authenticate: () => Effect.succeed(principal) },
+      registration,
+      requestHeaders: {
+        authorization: authorization(),
+        'x-correlation-id': 'proposal-refused-test',
+      },
+    }).pipe(
+      Effect.provideService(ActionRuntime, {
+        resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
+        runAction: (input) => {
+          seen.push([Schema.decodeUnknownSync(ActionTransportMetadataSchema)(input.transport), input.successContract]);
+          return Effect.fail(denied);
+        },
+      } satisfies ActionRuntimeService),
+    );
+
+    expect(yield* Effect.flip(effect)).toBe(mappedProblem);
+    expect(mappedFailure).toBe(denied);
+    expect(seen).toEqual([
+      [
+        {
+          correlationId: 'proposal-refused-test',
+          idempotencyKey: 'proposal-refused',
+          intent: 'propose',
+          traceId: 'proposal-refused-trace',
+        },
+        // The result-only endpoint declares no 202, so the one runner refuses the intent (O85).
+        undefined,
+      ],
+    ]);
+  }),
+);
+
 it.effect('decodes only the Action transport headers among open browser headers', () =>
   Effect.gen(function* decodeEndpointHeaders() {
     const browserHeaders = Headers.fromInput({
@@ -310,11 +432,21 @@ it.effect('decodes only the Action transport headers among open browser headers'
     const absent = yield* decodeActionEndpointHeaders(browserHeaders);
     expect(absent.idempotencyKey).toBeUndefined();
     expect(absent.traceId).toBeUndefined();
+    // Absence omits the key entirely, so a caller never has to tell "no intent" from "undefined intent".
+    expect(absent).not.toHaveProperty('intent');
     expect(
       yield* decodeActionEndpointHeaders(
         Headers.setAll(browserHeaders, { 'idempotency-key': 'key-1', 'x-trace-id': 'trace-1' }),
       ),
     ).toEqual({ idempotencyKey: 'key-1', traceId: 'trace-1' });
+    // O80: the proposal intent travels beside the other Action transport metadata, as a closed literal.
+    expect(
+      yield* decodeActionEndpointHeaders(Headers.set(browserHeaders, 'x-action-intent', 'propose')),
+    ).toHaveProperty('intent', 'propose');
+    const rejectedIntent = yield* Effect.flip(
+      decodeActionEndpointHeaders(Headers.set(browserHeaders, 'x-action-intent', 'execute')),
+    );
+    expect(Schema.isSchemaError(rejectedIntent)).toBe(true);
     for (const rejected of ['', 'k'.repeat(201)]) {
       const failure = yield* Effect.flip(
         decodeActionEndpointHeaders(Headers.set(browserHeaders, 'idempotency-key', rejected)),

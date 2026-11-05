@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import type { QuantityBasisCompatibilityRequest } from '@app/catalog/api/quantity-basis-compatibility';
 import {
   QuantityBasisCompatibilityRequestSchema,
@@ -9,14 +10,11 @@ import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-ev
 import { priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
 import { PricingCatalogQuantityBasisDecisionSchema } from '@app/pricing-contracts/domain/quantity-unit-package-basis';
 import type { PricingCatalogQuantityBasisDecision } from '@app/pricing-contracts/domain/quantity-unit-package-basis';
-import { Context, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Redacted, Schema } from 'effect';
 
-import {
-  CatalogSelectionGatewayCredentialService,
-  PricingCatalogSelectionUnavailable,
-  unavailableCatalogSelectionGatewayCredentialIssuer,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
 type QuantityBasisCompatibilityClientEffect = ReturnType<typeof executeQuantityBasisCompatibilityWithAuthorization>;
 type QuantityBasisCompatibilityClientFailure =
@@ -114,15 +112,16 @@ const successBindsRequest = (
   );
 };
 
-const makeCatalogQuantityBasisCompatibilityPort = (dependencies: {
+export const makeCatalogQuantityBasisCompatibilityPort = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
     readonly tenantId: string;
   };
   readonly execute: QuantityBasisCompatibilityExecutor;
-  readonly issuer: CatalogSelectionGatewayCredentialIssuer;
 }): CatalogQuantityBasisCompatibilityPort =>
   CatalogQuantityBasisCompatibilityService.of({
     assess: Effect.fn('CatalogQuantityBasisCompatibilityPort.assess')(function* assess(request) {
@@ -132,12 +131,13 @@ const makeCatalogQuantityBasisCompatibilityPort = (dependencies: {
       if (payload.handoff.selection.productRef.tenantId !== dependencies.context.tenantId) {
         return yield* unavailable('Catalog Quantity-basis request is outside the trusted Tenant');
       }
-      const { baseUrl, credential } = yield* dependencies.issuer
-        .issue({
+      const { baseUrl, credential } = yield* dependencies
+        .acquire({
           audience: 'catalog',
           compositionRevision: dependencies.context.compositionRevision,
-          legalEntityId: dependencies.context.legalEntityId,
+          legalEntityScope: 'subject',
           requestCorrelation: dependencies.context.requestCorrelation,
+          scope: dependencies.context.scope,
         })
         .pipe(Effect.mapError((cause) => unavailable('Catalog Quantity-basis compatibility is unavailable', cause)));
       const ownerResponse = yield* dependencies
@@ -189,21 +189,22 @@ const makeCatalogQuantityBasisCompatibilityPort = (dependencies: {
     }),
   });
 
-export const catalogQuantityBasisCompatibilityPortFromEnvironment = (
+export const catalogQuantityBasisCompatibilityPortFromEnvironment = Effect.fn(
+  'catalogQuantityBasisCompatibilityPortFromEnvironment',
+)(function* catalogQuantityBasisCompatibilityPortFromEnvironment(
   context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
     readonly tenantId: string;
   },
   execute: QuantityBasisCompatibilityExecutor = executeAuthorizedCompatibility,
-): Effect.Effect<CatalogQuantityBasisCompatibilityPort> =>
-  Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      makeCatalogQuantityBasisCompatibilityPort({
-        context,
-        execute,
-        issuer: Option.isSome(issuerOption) ? issuerOption.value : unavailableCatalogSelectionGatewayCredentialIssuer,
-      }),
-    ),
-  );
+): Effect.fn.Return<CatalogQuantityBasisCompatibilityPort, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
+  return makeCatalogQuantityBasisCompatibilityPort({
+    acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+    context,
+    execute,
+  });
+});

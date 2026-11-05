@@ -19,6 +19,7 @@ import {
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { Schema } from 'effect';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
+import { defineAccessTables } from './access-schema.ts';
 import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
@@ -27,34 +28,9 @@ import {
 
 export const CORE_SCHEMA_NAME = 'core';
 
-export const CORE_TABLE_INVENTORY = [
-  'application_composition_authority',
-  'application_composition_durable_work',
-  'tenants',
-  'legal_entities',
-  'principals',
-  'principal_auth_bindings',
-  'tenant_module_states',
-  'action_invocations',
-  'tenant_module_state_changes',
-  'audit_events',
-  'data_access_events',
-  'domain_events',
-  'outbox_messages',
-  'outbox_deliveries',
-  'outbox_attempts',
-  'outbox_delivery_resolutions',
-  'media_assets',
-  'media_links',
-  'evidence_references',
-  'search_index_entries',
-  'search_projection_generations',
-  'search_projection_rebuilds',
-  'worker_checkpoints',
-] as const;
-
 export const ACTION_INVOCATION_STATUSES = [
   'received',
+  'proposed',
   'rejected',
   'running',
   'succeeded',
@@ -475,7 +451,7 @@ export const actionInvocations = enableCoreGovernedRls(
       ),
       check(
         'core_action_invocations_status_ck',
-        sql`${table.status} in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
+        sql`${table.status} in ('received', 'proposed', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
       ),
       sharedRuntimeAllPolicy('action_invocations'),
       pgPolicy('core_action_invocations_party_registry_request_select', {
@@ -1299,7 +1275,73 @@ export const workerCheckpoints = coreSchema.table(
   ],
 );
 
+/** The access intent tables, materialized against this module's Core identity tables. */
+const accessTables = defineAccessTables({
+  legalEntities,
+  principals,
+  requestRoles: [PARTY_REGISTRY_REQUEST_ROLE],
+  tenants,
+});
+
+export const {
+  accessAgentConnections,
+  accessAssignments,
+  accessCatalogEntries,
+  accessCatalogSnapshots,
+  accessChangeDecisions,
+  accessChangeItems,
+  accessConsentSnapshots,
+  accessDecisionLogs,
+  accessDelegations,
+  accessFrozenCommands,
+  accessGrantIncarnations,
+  accessMandateGrants,
+  accessMandates,
+  accessMemberships,
+  accessOperationJournals,
+  accessProposals,
+  accessRoleRevisions,
+  accessRoles,
+  accessScopeFences,
+  accessScopes,
+  accessTeamMembers,
+  accessTeams,
+  accessWorkloadBindings,
+} = accessTables.tables;
+
+export const accessDatabaseSchema = accessTables.tables;
+export const ACCESS_TABLE_INVENTORY = accessTables.inventory;
+export const ACCESS_TABLES = accessTables.all;
+
+export const CORE_TABLE_INVENTORY = [
+  'application_composition_authority',
+  'application_composition_durable_work',
+  'tenants',
+  'legal_entities',
+  'principals',
+  'principal_auth_bindings',
+  'tenant_module_states',
+  'action_invocations',
+  'tenant_module_state_changes',
+  'audit_events',
+  'data_access_events',
+  'domain_events',
+  'outbox_messages',
+  'outbox_deliveries',
+  'outbox_attempts',
+  'outbox_delivery_resolutions',
+  'media_assets',
+  'media_links',
+  'evidence_references',
+  'search_index_entries',
+  'search_projection_generations',
+  'search_projection_rebuilds',
+  'worker_checkpoints',
+  ...ACCESS_TABLE_INVENTORY,
+] as const;
+
 export const coreDatabaseSchema = {
+  ...accessDatabaseSchema,
   applicationCompositionAuthority,
   applicationCompositionDurableWork,
   actionInvocations,
@@ -1349,6 +1391,7 @@ export const CORE_TABLES = [
   searchProjectionGenerations,
   searchProjectionRebuilds,
   workerCheckpoints,
+  ...ACCESS_TABLES,
 ] as const;
 
 export type TenantRow = typeof tenants.$inferSelect;

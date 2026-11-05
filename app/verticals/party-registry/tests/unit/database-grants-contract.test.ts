@@ -1,3 +1,4 @@
+import { ACCESS_DECISION_REQUEST_GRANTS } from '@app/core-runtime';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
@@ -65,6 +66,32 @@ it('grants the request role full DML on every RLS-protected Party and Contacts t
     expect(grant.privileges).toEqual(['select', 'insert', 'update', 'delete']);
     expect(grant.columns).toBeUndefined();
   }
+});
+
+it('composes the Core access-decision request grants into the Party request identity', () => {
+  const byTable = new Map(PARTY_REGISTRY_REQUEST_DATABASE_GRANTS.tables.map((grant) => [grant.table, grant]));
+  for (const grant of ACCESS_DECISION_REQUEST_GRANTS) {
+    const composed = byTable.get(grant.table);
+    expect(composed, grant.table).toBeDefined();
+    for (const privilege of grant.privileges) {
+      expect(composed?.privileges, grant.table).toContain(privilege);
+    }
+    for (const privilege of ['insert', 'select', 'update'] as const) {
+      const extra = grant.columns?.[privilege];
+      if (extra === undefined) {
+        continue;
+      }
+      const composedColumns = composed?.columns?.[privilege];
+      expect(composedColumns, `${grant.table} ${privilege} columns`).toBeDefined();
+      for (const column of extra) {
+        expect(composedColumns, `${grant.table} ${privilege} ${column}`).toContain(column);
+      }
+    }
+  }
+  // The merge adds the gate's `kind` beside the identity columns Party already read, and never widens
+  // a Party grant: the composed column set is exactly the union of both declarations.
+  expect(byTable.get('core.principals')?.columns?.select).toEqual(['kind', 'principal_id', 'status', 'tenant_id']);
+  expect(byTable.get('core.principals')?.privileges).toEqual(['select']);
 });
 
 it('keeps every grant explained, qualified, unique and inside its declared schemas', () => {

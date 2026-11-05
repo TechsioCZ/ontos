@@ -46,14 +46,7 @@ import { openProfileReconciliationAction } from './src/actions/open-profile-reco
 import { preparePurchaseProposalBasisAction } from './src/actions/prepare-purchase-proposal-basis.action.ts';
 import { reactivateCustomerGroupAction } from './src/actions/reactivate-customer-group.action.ts';
 import { reactivateCustomerProfileAction } from './src/actions/reactivate-customer-profile.action.ts';
-import { reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-administrator-bootstrap-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessGrantAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-grant-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts';
-import { reconcileCounterpartyAccessRevokeAuthorizationMutationWorker } from './src/workers/reconcile-counterparty-access-revoke-authorization-mutation.worker.ts';
 import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
-import { reconcileRetailPortalProfileBindingActivationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-activation-authorization-mutation.worker.ts';
-import { reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-recovery-authorization-mutation.worker.ts';
-import { reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker } from './src/workers/reconcile-retail-portal-profile-binding-revocation-authorization-mutation.worker.ts';
 import { recordPortalEnrollmentOutcomeAction } from './src/actions/record-portal-enrollment-outcome.action.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
@@ -294,14 +287,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
   outboxWorkers: [
     executePrivacyMeasureWorker,
     // <generated-module-registration-workers>
-    reconcileCounterpartyAccessAdministratorBootstrapAuthorizationMutationWorker,
-    reconcileCounterpartyAccessGrantAuthorizationMutationWorker,
-    reconcileCounterpartyAccessInvitationClaimAuthorizationMutationWorker,
-    reconcileCounterpartyAccessRevokeAuthorizationMutationWorker,
     reconcilePartyMergeWorker,
-    reconcileRetailPortalProfileBindingActivationAuthorizationMutationWorker,
-    reconcileRetailPortalProfileBindingRecoveryAuthorizationMutationWorker,
-    reconcileRetailPortalProfileBindingRevocationAuthorizationMutationWorker,
     // </generated-module-registration-workers>
   ],
   reads: [

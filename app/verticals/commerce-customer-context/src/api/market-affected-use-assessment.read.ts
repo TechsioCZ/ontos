@@ -5,7 +5,6 @@ import {
   ReadHandlerUnavailable,
   ReadPermissionDenied,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import {
@@ -236,7 +235,7 @@ export const handleMarketAffectedUseAssessment: (
 
 export const marketAffectedUseAssessmentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'market.catalog.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.market-affected-use-assessment',
   moduleKey: MARKET_AFFECTED_USE_MODULE_KEY,
   role: 'api',
@@ -244,6 +243,19 @@ export const marketAffectedUseAssessmentEntrypoint = defineTenantModuleEntrypoin
 
 export const marketAffectedUseAssessmentRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-market-catalog'],
+      reason: "Commerce Market Catalog retirement impact is relayed under the retiring user's rights.",
+      subject: 'rights',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.market-use.assess',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'commerce-policy', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: marketAffectedUseAssessmentEntrypoint,
     evidencePolicy: {
@@ -253,13 +265,8 @@ export const marketAffectedUseAssessmentRead = defineRead(
     inputSchema: MarketAffectedUseAssessmentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MARKET_AFFECTED_USE_MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.market-affected-use-assessment',
-    resourcePermission: defineReadResourcePermission<MarketAffectedUseAssessmentRequest>(({ marketRef }) => ({
-      permission: 'read',
-      resource: marketRef,
-    })),
     resultSchema: MarketAffectedUseAssessmentResponseSchema,
     schemaVersion: '1',
   },
@@ -276,5 +283,4 @@ export const marketAffectedUseAssessmentRead = defineRead(
     }
     return marketAffectedUseAssessmentServicesForTransaction(transaction);
   },
-  () => ({ kind: 'module', moduleId: MARKET_AFFECTED_USE_MODULE_KEY }),
 );

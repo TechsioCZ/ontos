@@ -13,7 +13,9 @@ import type {
   ReserveMarketRetirementResult,
 } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
 import { executeReserveMarketRetirementWithAuthorization } from '@app/customer-market-retirement-contracts/reserve-market-retirement/client';
-import { Crypto, DateTime, Effect, Function as EffectFunction, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
+import { Crypto, DateTime, Effect, Function as EffectFunction, Layer, Match, Option, Schema } from 'effect';
 
 import type {
   MarketRetirementImpactAssessment,
@@ -24,7 +26,7 @@ import { MarketRetirementImpactAssessmentStale } from '../actions/market-retirem
 import { MarketRetirementImpactAssessmentUnavailable } from '../actions/market-retirement-impact-assessment-unavailable.ts';
 import { MarketRetirementImpactAuthorityFactory } from '../services/market-retirement-impact-authority.ts';
 import type { MarketRetirementImpactAuthority } from '../services/market-retirement-impact-authority.ts';
-import { acquireOwnerGatewayContext } from './server-owner-gateway.ts';
+import { acquireMarketOwnerDelegation } from './market-owner-delegation.ts';
 import { executeMarketRetirementReservationRecoveryWithAuthorization } from '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery/client';
 import type { MarketRetirementReservationRecoveryResponse } from '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery';
 import type { RetireMarketPayload } from '../../shared/action-contracts.ts';
@@ -46,7 +48,7 @@ type ExecuteMarketRetirementReservation<Failure> = (
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
   },
-) => Effect.Effect<ReserveMarketRetirementResult, Failure>;
+) => Effect.Effect<ReserveMarketRetirementResult | ActionProposalAccepted, Failure>;
 
 const CUSTOMER_CONTEXT_MODULE_KEY = 'commerce.customer-context' as const;
 const GatewayFailureSchema = Schema.Struct({
@@ -134,6 +136,23 @@ const mapReservationFailure = (
   }
   return unavailable(errorText(cause), cause);
 };
+
+/**
+ * A business-execution caller can never accept a parked proposal as an executed reservation: the 202
+ * `ActionProposalAccepted` alternative is refused before any reservation evidence is accepted or a
+ * reservation lifecycle is advanced.
+ */
+const executedReservationResult = (
+  result: ReserveMarketRetirementResult | ActionProposalAccepted,
+): Effect.Effect<
+  ReserveMarketRetirementResult,
+  MarketRetirementImpactAssessmentRejected | MarketRetirementImpactAssessmentUnavailable
+> =>
+  Schema.is(ActionProposalAcceptedSchema)(result)
+    ? Effect.fail(
+        unavailable('Customer Context parked the Market retirement reservation as a proposal instead of executing it'),
+      )
+    : Effect.succeed(result);
 
 const identityMatches = (
   request: MarketAffectedUseAssessmentRequest,
@@ -347,6 +366,7 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
       requestCorrelation: input.actionInvocationId,
     }).pipe(
       Effect.mapError(mapReservationFailure),
+      Effect.flatMap(executedReservationResult),
       Effect.flatMap((result) =>
         finishedReservationMatches(result, input.assessment, operation === 'COMMIT' ? 'COMMITTED' : 'RELEASED')
           ? Effect.void
@@ -385,6 +405,7 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
             requestCorrelation: input.actionInvocationId,
           }).pipe(
             Effect.mapError(mapReservationFailure),
+            Effect.flatMap(executedReservationResult),
             Effect.flatMap((result) =>
               result.lifecycle === 'RESERVED' && reservationResultMatches(result, assessment)
                 ? Effect.succeed({
@@ -443,14 +464,7 @@ export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
 }) => {
   const gateway = (operationKey: string) =>
     (beforeGateway?.(operationKey) ?? Effect.void).pipe(
-      Effect.andThen(
-        acquireOwnerGatewayContext(
-          scope,
-          crypto,
-          { audience: 'commerce-customer-context', operationKey },
-          compositionRevision,
-        ),
-      ),
+      Effect.andThen(acquireMarketOwnerDelegation(scope, crypto, 'commerce-customer-context', compositionRevision)),
     );
   const recover = () =>
     Effect.gen(function* recoverOriginalReservation() {
@@ -461,9 +475,9 @@ export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
           sourceActionInvocationId,
           tenantId: scope.tenantId,
         },
-        Redacted.value(credential.authorization),
+        credential.authorization,
         scope.correlationId,
-        { baseUrl: credential.apiUrl, compositionRevision },
+        { baseUrl: new URL(credential.apiBaseUrl), compositionRevision },
       );
       if (
         response.sourceActionInvocationId !== sourceActionInvocationId ||
@@ -502,10 +516,10 @@ export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
     const credential = yield* gateway('commerce.customer-context.reserve-market-retirement');
     return yield* executeReserveMarketRetirementWithAuthorization(
       payload,
-      Redacted.value(credential.authorization),
+      credential.authorization,
       scope.correlationId,
-      { baseUrl: credential.apiUrl, compositionRevision, idempotencyKey },
-    );
+      { baseUrl: new URL(credential.apiBaseUrl), compositionRevision, idempotencyKey },
+    ).pipe(Effect.flatMap(executedReservationResult));
   });
   const recoverAfterExecuteFailure = Effect.fn('MarketRetirement.recoverAfterExecuteFailure')(
     function* recoverAfterExecuteFailure(
@@ -563,9 +577,9 @@ export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
       const credential = yield* gateway('commerce.customer-context.api.market-affected-use-assessment');
       return yield* executeMarketAffectedUseAssessmentWithAuthorization(
         payload,
-        Redacted.value(credential.authorization),
+        credential.authorization,
         scope.correlationId,
-        { baseUrl: credential.apiUrl, compositionRevision },
+        { baseUrl: new URL(credential.apiBaseUrl), compositionRevision },
       );
     }),
     (payload, context) => {
@@ -715,13 +729,10 @@ export const MarketRetirementImpactAuthorityLive = Layer.effect(
             'The original retirement basis requires exact trusted Tenant and Legal Entity scope',
           );
         }
-        const credential = yield* acquireOwnerGatewayContext(
+        const credential = yield* acquireMarketOwnerDelegation(
           scope,
           crypto,
-          {
-            audience: 'commerce-customer-context',
-            operationKey: 'commerce.customer-context.api.market-affected-use-assessment',
-          },
+          'commerce-customer-context',
           compositionRevision,
         ).pipe(Effect.mapError((cause) => unavailable('The original retirement gateway is unavailable', cause)));
         const request = requestFor({
@@ -731,9 +742,9 @@ export const MarketRetirementImpactAuthorityLive = Layer.effect(
         });
         const response = yield* executeMarketAffectedUseAssessmentWithAuthorization(
           request,
-          Redacted.value(credential.authorization),
+          credential.authorization,
           scope.correlationId,
-          { baseUrl: credential.apiUrl, compositionRevision },
+          { baseUrl: new URL(credential.apiBaseUrl), compositionRevision },
         ).pipe(Effect.mapError((cause) => unavailable('The original retirement basis is unavailable', cause)));
         const verified = yield* toVerifiedAssessment(request, response);
         const reserve = yield* Schema.encodeEffect(MarketRetirementReserveBasisSchema)(verified.response).pipe(

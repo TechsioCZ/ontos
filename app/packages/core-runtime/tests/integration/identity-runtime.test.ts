@@ -39,6 +39,11 @@ import { recordSupportImpersonationAction } from '../../src/modules/actions/reco
 import { setManagedApiKeyBindingStatusAction } from '../../src/modules/actions/set-managed-api-key-binding-status.action.ts';
 import { setSelfApiKeyBindingStatusAction } from '../../src/modules/actions/set-self-api-key-binding-status.action.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
+import { makeTestOperationalScopeAccess } from '../../src/testing/access-gate.ts';
+import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
+import { bindFixedAccessGate } from '../support/fixed-access-gate.ts';
+import { cell, makeAuthority, makeCheck, principalHolder } from '../unit/access-decision-support.ts';
+import { PrincipalIdSchema } from '../../src/access/ids.ts';
 import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
@@ -138,20 +143,55 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
       const actionPermission = makeActionPermissionService(permissionClient);
       const operationalScope = yield* makeOperationalScopeResolver(
         makeOperationalScopeRepository({ executor: runtimeDatabase }),
-        contextAccess,
+        makeTestOperationalScopeAccess(),
       );
+      // Identity administration is decided by the one gate (O37): the actor kind is read from
+      // `core.principals`, and the suite grants exactly the identity capabilities the admin holds.
+      const identityCapabilities = [
+        'core.identity.bind-managed-api-key',
+        'core.identity.bind-self-api-key',
+        'core.identity.change-principal-status',
+        'core.identity.create-non-human-principal',
+        'core.identity.managed-api-key.bind',
+        'core.identity.managed-api-key.change-status',
+        'core.identity.principal-binding.change-status',
+        'core.identity.principal-binding.read',
+        'core.identity.principal.change-status',
+        'core.identity.principal.create-non-human',
+        'core.identity.principal.list-managed',
+        'core.identity.principal.read-authentication-metadata',
+        'core.identity.principal.read-personal-data',
+        'core.identity.record-support-impersonation',
+        'core.identity.self-api-key.bind',
+        'core.identity.self-api-key.change-status',
+        'core.identity.self-api-key.list',
+        'core.identity.set-managed-api-key-binding-status',
+        'core.identity.set-self-api-key-binding-status',
+        'core.identity.support.impersonate',
+      ];
+      const identityHolder = principalHolder(PrincipalIdSchema.make(administratorPrincipalId));
+      const identityAuthority = {
+        cells: identityCapabilities.map((capability) => cell({ capability, holder: identityHolder })),
+      };
+      const authority = makeAuthority(identityAuthority);
+      const accessGate = bindFixedAccessGate({
+        authorityFor: () => authority.port,
+        check: makeCheck({ authority: identityAuthority }).port,
+        executor: runtimeDatabase,
+      });
       const actionRuntime = makeActionRuntime(
         { executor: runtimeDatabase },
         makeActionRepository(yield* Crypto.Crypto),
         actionPermission,
         operationalScope,
-        { ...openActionRuntimeOptions, contextAccess },
+        { ...openActionRuntimeOptions, accessDecision: accessGate, contextAccess },
       );
       const readRuntime = makeReadRuntime(
         { executor: runtimeDatabase },
         openModuleEntrypointGateway,
         operationalScope,
         contextAccess,
+        { accessDecision: accessGate },
       );
       const principal = {
         authBindingId: administratorAuthBindingId,
@@ -190,7 +230,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
           .delete(principalAuthBindings)
           .where(inArray(principalAuthBindings.tenantId, [tenantId, foreignTenantId]));
         yield* admin.delete(principals).where(inArray(principals.tenantId, [tenantId, foreignTenantId]));
-        yield* admin.delete(tenants).where(inArray(tenants.tenantId, [tenantId, foreignTenantId]));
+        yield* admin.delete(tenants).where(eq(tenants.tenantId, foreignTenantId));
+        // Core retains access intent (D27): the Tenant's scope and fence, and so the Tenant, stay.
       });
 
       const exercise = Effect.gen(function* exerciseIdentityRuntime() {
@@ -219,6 +260,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
             tenantId: foreignTenantId,
           },
         ]);
+        // The identity Actions run under the Tenant's real access fence.
+        yield* writeTestTenantScopes(admin, { principalId: administratorPrincipalId, tenantId });
         yield* admin.insert(principals).values([
           {
             displayName: 'Identity administrator',
@@ -416,7 +459,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
         expect(binding.status).toBe('active');
         expect(
           listed.items.map(({ authBindingId, principalId: listedPrincipalId }) => ({
-            authBindingId: Option.getOrThrow(authBindingId),
+            // The binding fields are a governed field group (O58): the fixture's gate allows them, so
+            // they are present; the accessor keeps the optional declared shape honest.
+            authBindingId: Option.getOrThrow(Option.fromUndefinedOr(authBindingId).pipe(Option.flatten)),
             principalId: listedPrincipalId,
           })),
         ).toEqual([
@@ -495,48 +540,19 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
           ),
         );
         expect(Predicate.isTagged(systemDenied, 'ActionPermissionDenied')).toBe(true);
-        const systemTenantMember = relationship('tenant', tenantId, 'member', 'principal', systemPrincipalId);
-        const systemIdentityAdministrator = relationship(
-          'tenant',
-          tenantId,
-          'identity_admin',
-          'principal',
-          systemPrincipalId,
-        );
-        spiceDbRelationships.push(systemTenantMember, systemIdentityAdministrator);
-        const systemRelationshipsRequest = v1.WriteRelationshipsRequest.create({
-          updates: [systemTenantMember, systemIdentityAdministrator].map((item) =>
-            v1.RelationshipUpdate.create({
-              operation: v1.RelationshipUpdate_Operation.TOUCH,
-              relationship: item,
+        // O29, O67-Q5: a trusted workload never gains a human capability, so no relationship or
+        // assignment can make it run an identity declaration. It is refused on the read too.
+        const systemReadDenied = yield* Effect.flip(
+          runIdentityRead(
+            readRuntime.runRead({
+              input: { limit: 100, offset: 0 },
+              principal: systemPrincipal,
+              registration: managedPrincipalsRead,
+              transport: { correlationId: yield* nextUuid },
             }),
           ),
-        });
-        yield* Effect.promise(() => spiceDbClient.promises.writeRelationships(systemRelationshipsRequest));
-        const systemCreated = yield* runIdentityAction(
-          actionRuntime.runAction({
-            payload: {
-              displayName: 'System-created integration',
-              kind: 'integration',
-            },
-            principal: systemPrincipal,
-            registration: createNonHumanPrincipalAction,
-            transport: {
-              correlationId: yield* nextUuid,
-              idempotencyKey: yield* nextUuid,
-            },
-          }),
         );
-        expect(systemCreated.status).toBe('active');
-        const systemRead = yield* runIdentityRead(
-          readRuntime.runRead({
-            input: { limit: 100, offset: 0 },
-            principal: systemPrincipal,
-            registration: managedPrincipalsRead,
-            transport: { correlationId: yield* nextUuid },
-          }),
-        );
-        expect(systemRead.items.length >= 2).toBe(true);
+        expect(Predicate.isTagged(systemReadDenied, 'ReadPermissionDenied')).toBe(true);
 
         const supportReason = 'Investigate a live support incident';
         const supportSessionRef = `better-auth-session:${yield* nextUuid}`;

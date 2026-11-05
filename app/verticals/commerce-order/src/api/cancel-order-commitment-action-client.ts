@@ -4,6 +4,7 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
 import type { HttpApiClient } from 'effect/http-api';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import {
   CancelOrderCommitmentActionApi,
   CancelOrderCommitmentPayloadSchema,
@@ -19,6 +20,11 @@ export interface CancelOrderCommitmentActionClientOptions {
   readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
+  /**
+   * O80: ask for a parked proposal instead of an immediate write. Omitted means the ordinary run, so a
+   * refusal is never turned into a proposal on the caller's behalf.
+   */
+  readonly intent?: 'propose';
   readonly [traceIdOption]?: string;
 }
 
@@ -42,6 +48,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       credential,
       defaultApiPrefix: '/commerce-order-api',
       idempotencyKey: options.idempotencyKey,
+      intent: options.intent,
       requestCorrelation,
     },
     options,
@@ -50,7 +57,8 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
 type EndpointResult = ReturnType<
   HttpApiClient.ForApi<typeof CancelOrderCommitmentActionApi>['cancelOrderCommitmentAction']['execute']
 >;
-type AuthorizedResult = Effect.Effect<OrderCommitmentState, Effect.Error<EndpointResult> | Schema.SchemaError>;
+type ClientResult = OrderCommitmentState | ActionProposalAccepted;
+type AuthorizedResult = Effect.Effect<ClientResult, Effect.Error<EndpointResult> | Schema.SchemaError>;
 
 export const executeCancelOrderCommitmentWithAuthorization = (
   payload: CancelOrderCommitmentPayload,
@@ -67,7 +75,7 @@ export const executeCancelOrderCommitmentWithAuthorization = (
 export const executeCancelOrderCommitment = (
   payload: CancelOrderCommitmentPayload,
   ...[requestCorrelation, options]: OperationInvocation
-): ReturnType<typeof operationGateway.invoke<OrderCommitmentState, Effect.Error<AuthorizedResult>>> =>
+): ReturnType<typeof operationGateway.invoke<ClientResult, Effect.Error<AuthorizedResult>>> =>
   operationGateway.invoke(
     (credential, { apiBaseUrl, compositionRevision }) =>
       executeCancelOrderCommitmentWithAuthorization(payload, credential, requestCorrelation, {

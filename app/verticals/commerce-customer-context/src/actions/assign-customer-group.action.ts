@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug assign-customer-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   AssignCustomerGroupPayloadSchema,
@@ -29,7 +29,6 @@ import {
   requireCustomerGroupLegalEntityId,
   customerGroupScopeMatches,
   customerGroupServiceFactory,
-  customerProfileWritePermission,
 } from './customer-group-action-support.ts';
 import { createAssignCustomerGroupCommerceCustomerContextCustomerGroupMembershipAssignedV1OutboxMessage as createCustomerGroupMembershipAssignedOutboxMessage } from './assign-customer-group.commerce-customer-context-customer-group-membership-assigned-v1.outbox-message.ts';
 
@@ -155,6 +154,14 @@ const handleAssignCustomerGroup = Effect.fn('AssignCustomerGroupAction.handle')(
 
 export const assignCustomerGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group.assign',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-groups', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.assign-customer-group.access.v1',
@@ -166,7 +173,7 @@ export const assignCustomerGroupAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.assign-customer-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -176,9 +183,6 @@ export const assignCustomerGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: AssignCustomerGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<AssignCustomerGroupPayload>(({ profile }) =>
-      customerProfileWritePermission(profile),
-    ),
     resultSchema: AssignCustomerGroupResultSchema,
     schemaVersion: '1',
   },

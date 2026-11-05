@@ -17,7 +17,7 @@ const MODULE_KEY = 'commerce.tax';
 
 const taxMaterialityComparisonEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'tax.governed.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.tax.api.tax-materiality-comparison',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -42,6 +42,14 @@ export const readTaxMaterialityComparison = (
 
 export const taxMaterialityComparisonRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.tax-materiality.compare',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'order-tax', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: taxMaterialityComparisonEntrypoint,
     evidencePolicy: {
@@ -51,7 +59,6 @@ export const taxMaterialityComparisonRead = defineRead(
     inputSchema: TaxMaterialityComparisonRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.tax.api.tax-materiality-comparison',
     resultSchema: TaxMaterialityComparisonResponseSchema,
@@ -59,5 +66,4 @@ export const taxMaterialityComparisonRead = defineRead(
   },
   readTaxMaterialityComparison,
   () => Effect.succeed({}),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

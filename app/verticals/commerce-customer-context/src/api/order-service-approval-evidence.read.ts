@@ -18,7 +18,7 @@ const MODULE_KEY = 'commerce.customer-context' as const;
 
 const orderServiceApprovalEvidenceEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.order-service-approval-evidence',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -26,6 +26,20 @@ const orderServiceApprovalEvidenceEntrypoint = defineTenantModuleEntrypoint({
 
 export const orderServiceApprovalEvidenceRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-order', 'commerce-cart'],
+      reason:
+        'The Order and Cart services call this read to verify approval evidence for the buyer of an order they process',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.order-service-approval.read-evidence',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'purchasing-approval', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: orderServiceApprovalEvidenceEntrypoint,
     evidencePolicy: {
@@ -35,7 +49,6 @@ export const orderServiceApprovalEvidenceRead = defineRead(
     inputSchema: OrderServiceApprovalEvidenceRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.order-service-approval-evidence',
     resultSchema: OrderServiceApprovalEvidenceResponseSchema,
@@ -75,5 +88,4 @@ export const orderServiceApprovalEvidenceRead = defineRead(
       Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
     ),
   orderApprovalFinalizationService,
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

@@ -198,10 +198,7 @@ describe('Variant Action payload contracts', () => {
 
   it('routes all mutations through explicit tenant-scoped, idempotent Action authorization', () => {
     for (const action of [createVariantAction, changeVariantAction, retireVariantAction, reactivateVariantAction]) {
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('forbidden');
       expect(action.descriptor.owningModuleKey).toBe('commerce.catalog');

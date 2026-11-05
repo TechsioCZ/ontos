@@ -8,6 +8,7 @@ import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { Header } from '@techsio/ui-kit/organisms/header';
+import { Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
@@ -37,9 +38,14 @@ interface DashboardLegalEntityItem {
   readonly legalName: string;
 }
 
+/** The access administration pages in navigation order. */
+const AccessAdministrationPageSchema = Schema.Literals(['roles', 'people', 'changes', 'approvals', 'why']);
+export type AccessAdministrationPage = typeof AccessAdministrationPageSchema.Type;
+
 export interface AuthenticatedDashboardLayoutProps {
   readonly children: ReactNode;
   readonly compositionRevision?: string;
+  readonly currentAccessPage?: AccessAdministrationPage;
   readonly currentLegalEntityId?: string;
   readonly currentModuleId?: string;
   readonly currentTenantId: string;
@@ -379,6 +385,33 @@ const DashboardNavigation = ({
   );
 };
 
+/** Access administration is tenant work, so it is offered whether or not a company is selected. */
+const AccessAdministrationNavigation = ({
+  currentPage,
+}: {
+  readonly currentPage: AccessAdministrationPage | undefined;
+}) => {
+  const { t } = useModernI18n();
+  const label = t('shell.accessAdmin.accessible.navigation');
+
+  return (
+    <section aria-label={label} className="shell:flex shell:flex-col shell:gap-2">
+      <p>{t('shell.accessAdmin.navigation.label')}</p>
+      <nav aria-label={label}>
+        <ul className="shell:flex shell:flex-col shell:gap-2">
+          {AccessAdministrationPageSchema.literals.map((page) => (
+            <li key={page}>
+              <Link aria-current={currentPage === page ? 'page' : undefined} as={LocalizedLink} to={`/access/${page}`}>
+                {t(`shell.accessAdmin.navigation.${page}`)}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </section>
+  );
+};
+
 const DashboardHeader = ({ identity, logoutPending, onLogout, title }: DashboardHeaderProps) => {
   const { t } = useModernI18n();
   const hydrated = useHydrated();
@@ -438,30 +471,33 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         aria-label={t('shell.dashboard.sidebar.label')}
         className="shell:flex shell:max-h-[65vh] shell:w-full shell:shrink-0 shell:flex-col shell:gap-3 shell:overflow-y-auto shell:bg-(--color-surface) shell:p-4 shell:md:max-h-none shell:md:w-64 shell:md:gap-6 shell:md:overflow-visible"
       >
-        <p>{t('shell.dashboard.brand')}</p>
-        <DashboardTenantSelector
-          currentTenantId={props.currentTenantId}
-          onTenantChange={props.onTenantChange}
-          tenantChoices={props.tenantChoices}
-          tenantState={props.tenantState}
-          tenantSwitchFailed={props.tenantSwitchFailed}
-          tenantSwitchPending={props.tenantSwitchPending}
-        />
-        <DashboardLegalEntitySelector
-          currentLegalEntityId={props.currentLegalEntityId}
-          legalEntityChoices={props.legalEntityChoices}
-          legalEntityState={props.legalEntityState}
-          legalEntitySwitchFailed={props.legalEntitySwitchFailed}
-          legalEntitySwitchPending={props.legalEntitySwitchPending}
-          onLegalEntityChange={props.onLegalEntityChange}
-        />
-        <DashboardSearch onSearch={props.onSearch} onValueChange={setSearchValue} value={searchValue} />
-        <DashboardNavigation
-          currentModuleId={props.currentModuleId}
-          homeCurrent={props.homeCurrent}
-          navigation={props.navigation}
-          unavailableDeployments={props.unavailableDeployments}
-        />
+        <div className="shell:flex shell:flex-col shell:gap-3 shell:md:gap-6">
+          <p>{t('shell.dashboard.brand')}</p>
+          <DashboardTenantSelector
+            currentTenantId={props.currentTenantId}
+            onTenantChange={props.onTenantChange}
+            tenantChoices={props.tenantChoices}
+            tenantState={props.tenantState}
+            tenantSwitchFailed={props.tenantSwitchFailed}
+            tenantSwitchPending={props.tenantSwitchPending}
+          />
+          <DashboardLegalEntitySelector
+            currentLegalEntityId={props.currentLegalEntityId}
+            legalEntityChoices={props.legalEntityChoices}
+            legalEntityState={props.legalEntityState}
+            legalEntitySwitchFailed={props.legalEntitySwitchFailed}
+            legalEntitySwitchPending={props.legalEntitySwitchPending}
+            onLegalEntityChange={props.onLegalEntityChange}
+          />
+          <DashboardSearch onSearch={props.onSearch} onValueChange={setSearchValue} value={searchValue} />
+          <DashboardNavigation
+            currentModuleId={props.currentModuleId}
+            homeCurrent={props.homeCurrent}
+            navigation={props.navigation}
+            unavailableDeployments={props.unavailableDeployments}
+          />
+        </div>
+        <AccessAdministrationNavigation currentPage={props.currentAccessPage} />
       </aside>
       <main className="shell:flex shell:min-w-0 shell:flex-1 shell:flex-col">
         <DashboardHeader

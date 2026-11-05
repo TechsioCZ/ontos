@@ -1,3 +1,4 @@
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
@@ -9,6 +10,8 @@ import {
   MarketRetirementInstantSchema,
   MarketRevisionSchema,
 } from './market-affected-use-assessment.ts';
+
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 const boundedReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isTrimmed());
 const sha256Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
@@ -92,6 +95,7 @@ export const ReserveMarketRetirementForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -185,7 +189,7 @@ export const ReserveMarketRetirementApi = HttpApi.make('ReserveMarketRetirementA
         ReserveMarketRetirementInternalProblemSchema,
       ],
       payload: Schema.toEncoded(ReserveMarketRetirementPayloadSchema),
-      success: ReserveMarketRetirementResultSchema,
+      success: [ActionProposalAcceptedSchema, ReserveMarketRetirementResultSchema],
     }),
   ),
 );

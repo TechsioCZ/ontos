@@ -226,8 +226,8 @@ it.effect('CreateParty MATCHED_EXISTING publishes an attached identifier and ind
     const search = makeSearchFixture([]);
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       ownerRegistration: partyRegistryBackendRegistration,
-      actionPermission: 'allowed',
       services: [
         bindActionTestServices(createPartyAction, {
           createOrMatch: () =>
@@ -241,7 +241,6 @@ it.effect('CreateParty MATCHED_EXISTING publishes an attached identifier and ind
             ),
         }),
       ],
-      tenantPermission: 'allowed',
     });
     const result = yield* harness.runtime.runAction({
       payload: {
@@ -281,8 +280,8 @@ it.effect('reviewed MATCH_EXISTING publishes an attached identifier and indexes 
     const search = makeSearchFixture([]);
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       ownerRegistration: partyRegistryBackendRegistration,
-      actionPermission: 'allowed',
       services: [
         bindActionTestServices(resolveDuplicateCandidateMatchAction, {
           resolve: () =>
@@ -298,7 +297,6 @@ it.effect('reviewed MATCH_EXISTING publishes an attached identifier and indexes 
             ),
         }),
       ],
-      tenantPermission: 'allowed',
     });
     const result = yield* harness.runtime.runAction({
       payload: {
@@ -339,8 +337,8 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
     } as const;
     const after = { ...before, state: 'ENDED', validTo } as const;
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       ownerRegistration: partyRegistryBackendRegistration,
-      actionPermission: 'allowed',
       services: [
         bindActionTestServices(updatePartyOfficialIdentifierAction, {
           update: () =>
@@ -359,7 +357,6 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
             ),
         }),
       ],
-      tenantPermission: 'allowed',
     });
     yield* harness.runtime.runAction({
       payload: {

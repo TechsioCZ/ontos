@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug add-processing-purpose-version
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/add-processing-purpose-version.ts';
 
 export { AddProcessingPurposeVersionPayloadSchema } from '../actions/add-processing-purpose-version.ts';
-
 export const AddProcessingPurposeVersionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AddProcessingPurposeVersionActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const AddProcessingPurposeVersionActionForbiddenProblemSchema = makeProbl
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -145,7 +146,7 @@ export const addProcessingPurposeVersionActionGroupDefinition = HttpApiGroup.mak
     HttpApiEndpoint.post('execute', '/privacy/actions/add-processing-purpose-version', {
       error: actionErrors,
       payload: Schema.toEncoded(AddProcessingPurposeVersionPayloadSchema),
-      success: AddProcessingPurposeVersionResultSchema,
+      success: [ActionProposalAcceptedSchema, AddProcessingPurposeVersionResultSchema],
     }),
   )
   .middleware(AddProcessingPurposeVersionActionSchemaErrorMiddleware);

@@ -29,7 +29,7 @@ const validAccountsFile = {
           authBindingId: '30000000-0000-4000-8000-0000000000a1',
           displayName: 'Tenant A account',
           email: 'account-a@example.invalid',
-          grants: { explicitActions: [], tenantRelations: ['party_identity_reader'] },
+          grants: { owner: true, roles: [] },
           password: 'fixture-a-password',
           principalId: '20000000-0000-4000-8000-0000000000a1',
         },
@@ -75,6 +75,7 @@ it.effect('builds the stage configuration from the operator accounts file', () =
     const [tenant] = configuration.accountsFile.tenants;
     const [account] = tenant.accounts;
     expect(account.email).toBe('account-a@example.invalid');
+    expect(account.grants).toEqual({ owner: true, roles: [] });
     expect(Redacted.value(account.password)).toBe('fixture-a-password');
     expect(Redacted.isRedacted(account.password)).toBe(true);
   }),

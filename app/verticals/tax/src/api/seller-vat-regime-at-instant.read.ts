@@ -22,7 +22,7 @@ interface SellerVatRegimeAtInstantServices {
 
 const sellerVatRegimeAtInstantEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'tax.governed.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.tax.api.seller-vat-regime-at-instant',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -57,6 +57,14 @@ export const readSellerVatRegimeAtInstant = (
 
 export const sellerVatRegimeAtInstantRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.seller-vat-regime.read-at-instant',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'seller-vat-regime', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: sellerVatRegimeAtInstantEntrypoint,
     evidencePolicy: {
@@ -66,7 +74,6 @@ export const sellerVatRegimeAtInstantRead = defineRead(
     inputSchema: SellerVatRegimeAtInstantRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.tax.api.seller-vat-regime-at-instant',
     resultSchema: SellerVatRegimeAtInstantResponseSchema,
@@ -74,5 +81,4 @@ export const sellerVatRegimeAtInstantRead = defineRead(
   },
   readSellerVatRegimeAtInstant,
   (transaction, scope) => Effect.succeed({ declarations: sellerVatRegimeDeclarationsForScope(transaction, scope) }),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

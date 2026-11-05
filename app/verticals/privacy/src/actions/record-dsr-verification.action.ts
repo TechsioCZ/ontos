@@ -101,6 +101,14 @@ export const handleRecordDsrVerification = Effect.fn('RecordDsrVerificationActio
 });
 export const recordDsrVerificationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-verification.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'privacy.core.record-dsr-verification.access.v1' },
     actionKey: 'privacy.core.record-dsr-verification',
     auditEvidenceSchema: PrivacyActionAuditEvidenceSchema,
@@ -109,7 +117,7 @@ export const recordDsrVerificationAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-dsr-verification',
       moduleKey: 'privacy.core',
       role: 'action',

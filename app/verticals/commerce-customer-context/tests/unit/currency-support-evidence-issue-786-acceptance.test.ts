@@ -1,9 +1,14 @@
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { PurchaseCurrencyPricingGatewayCredentialService } from '../../shared/domain/purchase-currency-pricing-gateway-credential.ts';
 import { purchaseCurrencyPricingPortFromEnvironment } from '../../src/integrations/purchase-currency-pricing.ts';
+import {
+  fakeDelegatedAcquire,
+  issuedDelegatedContext,
+  originatorSubject,
+} from '../support/delegated-gateway-acquisition.fixture.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const supportRootId = '30000000-0000-4000-8000-000000000001';
@@ -65,13 +70,9 @@ const ownerResponse = Schema.decodeSync(CurrentSupportedCurrenciesSuccessSchema)
   verificationRef,
 });
 
-const credentialLayer = Layer.succeed(PurchaseCurrencyPricingGatewayCredentialService, {
-  issue: () =>
-    Effect.succeed({
-      baseUrl: new URL('https://shell.example.test/owner-api'),
-      credential: Redacted.make('Bearer pricing-owner-issued'),
-    }),
-});
+const issued = issuedDelegatedContext({ compositionRevision: 'a'.repeat(64), token: 'pricing-owner-issued' });
+const acquire = fakeDelegatedAcquire(issued);
+const subject = originatorSubject('a'.repeat(64), '20000000-0000-4000-8000-000000000001');
 
 describe('issue #786 Tenant Currency Support evidence propagation', () => {
   it.effect('preserves requested, evaluated, and observed time plus owner proof through Commerce', () =>
@@ -79,14 +80,14 @@ describe('issue #786 Tenant Currency Support evidence propagation', () => {
       const ownerCalls: unknown[] = [];
       const port = yield* purchaseCurrencyPricingPortFromEnvironment(
         {
-          compositionRevision: 'a'.repeat(64),
-          legalEntityId: '40000000-0000-4000-8000-000000000001',
           requestCorrelation: 'issue-786-currency-proof',
+          subject,
         },
         (payload) => {
           ownerCalls.push(payload);
           return Effect.succeed(ownerResponse);
         },
+        acquire,
       );
 
       const result = yield* port.resolveCurrent({ effectiveAt, tenantId });
@@ -119,7 +120,7 @@ describe('issue #786 Tenant Currency Support evidence propagation', () => {
       expect(evaluatedAt).not.toBe(observedAt);
       expect(JSON.stringify(result)).not.toContain('EUR');
       expect(JSON.stringify(result).toLowerCase()).not.toContain('fx');
-    }).pipe(Effect.provide(credentialLayer)),
+    }).pipe(Effect.provide(nodeCryptoLayer)),
   );
 
   it('rejects timestamp rewriting and a future owner observation presented as earlier proof', () => {

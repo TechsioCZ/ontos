@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
-import { getReadConditionalPermissionPlan } from '@app/core-runtime/testing/reads';
+import { getReadOwnerFactsResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import {
   PurchaseCurrencyResolutionDomainConflictProblemSchema,
@@ -34,9 +34,7 @@ import type {
 import {
   handlePurchaseCurrencyResolution,
   makePurchaseCurrencyResolutionServices,
-  purchaseCurrencyGuestPermissionTargets,
-  purchaseCurrencyProfilePermissionTargets,
-  purchaseCurrencyResolutionPermission,
+  purchaseCurrencyResolutionRead,
 } from '../../src/api/purchase-currency-resolution.read.ts';
 import { composeCurrentPurchaseCurrencyPolicy } from '../../src/integrations/purchase-currency-policy.ts';
 
@@ -605,67 +603,46 @@ it.effect('rejects a Current profile subject with a different Counterparty', () 
   }),
 );
 
-it('declares finite Guest and Profile authorization branches for Launch resolution', () => {
+it('declares one scope-wide capability and names the subject record for the owner rule', () => {
+  const read = purchaseCurrencyResolutionRead;
+  // One declaration cannot branch per subject, so the Guest/Profile branch rule moved into the owner
+  // facts and the v2 capability gates the read itself (O62.4, O67-Q1, O70).
+  expect(read.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.customer-context.purchase-currency.resolve',
+    kind: 'read',
+    selectors: [],
+  });
+  const ownerFacts = getReadOwnerFactsResolver(read);
+  expect(ownerFacts).toBeDefined();
+  const { request } = baseResolution();
   const scope = {
     authMethod: 'system' as const,
-    correlationId: 'purchase-currency-permission-targets',
+    correlationId: 'purchase-currency-owner-facts',
     legalEntityId: sellingLegalEntityId,
-    principalId: '50000000-0000-4000-8000-000000000001',
+    principalId: supportRootId,
     tenantId,
     trustedStorefrontId: purchasingContext.storefrontId,
   };
-  const plan = getReadConditionalPermissionPlan(purchaseCurrencyResolutionPermission);
-  expect(purchaseCurrencyResolutionPermission.branchTags).toEqual(['GUEST', 'PROFILE']);
-  expect(purchaseCurrencyGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
-  expect(plan.branches.GUEST.requiredKinds).toEqual(['module']);
-  expect(plan.branches.PROFILE.requiredKinds).toEqual(['owner_permission', 'resource_read']);
+  // A Guest names no owner record; a Retail profile names its own capability; a Counterparty subject
+  // names the Counterparty whose grant the overlay checks.
+  expect(ownerFacts?.({ ...request, subject: guestSubject }, scope)).toEqual({});
+  expect(ownerFacts?.({ ...request, subject: retailSubject }, scope)).toEqual({
+    retailPermission: 'retail.profile.read',
+    retailProfileId: profileRef.resourceId,
+  });
   expect(
-    purchaseCurrencyProfilePermissionTargets(
-      baseResolution().request,
-      { authorizationSubject: { kind: 'RETAIL' }, kind: 'PROFILE', profileRef },
-      scope,
-    ),
-  ).toMatchObject([
-    {
-      kind: 'owner_permission',
-      ownerPermission: {
-        definition: { key: 'retail.profile.read' },
-        target: { kind: 'retail_profile', profileId: profileRef.resourceId },
-      },
-    },
-    { kind: 'resource_read', permission: 'read', resource: { resourceId: profileRef.resourceId } },
-  ]);
-  expect(
-    purchaseCurrencyProfilePermissionTargets(
+    ownerFacts?.(
       {
-        ...baseResolution().request,
+        ...request,
         subject: {
           authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
           kind: 'PROFILE',
           profileRef: counterpartyProfileRef,
         },
       },
-      {
-        authorizationSubject: { counterpartyRef, kind: 'COUNTERPARTY' },
-        kind: 'PROFILE',
-        profileRef: counterpartyProfileRef,
-      },
       scope,
     ),
-  ).toMatchObject([
-    {
-      kind: 'owner_permission',
-      ownerPermission: {
-        definition: { key: 'counterparty.profile.read' },
-        target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty' },
-      },
-    },
-    {
-      kind: 'resource_read',
-      permission: 'read',
-      resource: { resourceId: counterpartyProfileRef.resourceId },
-    },
-  ]);
+  ).toEqual({ counterpartyId: counterpartyRef.resourceId });
 });
 
 it.effect('loads Current policy and pricing without a preference persistence dependency', () =>

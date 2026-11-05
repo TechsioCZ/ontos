@@ -1,5 +1,7 @@
-import { requireModuleOperation, OperationContextUnavailable } from '@app/core-runtime';
+import { readVerifiedGatewayActor, requireModuleOperation, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
+import { accessPortalWritesForTransaction } from '@app/core-runtime/access/portal';
+import type { AccessPortalTransaction, AccessPortalWrites } from '@app/core-runtime/access/portal';
 import { Crypto, Effect } from 'effect';
 
 import { ProfileReactivationEligibilityEvaluatorFactory } from './integrations/profile-reactivation-eligibility.ts';
@@ -17,20 +19,22 @@ import type {
 } from './persistence/profile-persistence.ts';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from './profile-counterparty-role-eligibility.ts';
 import type { ProfileReconciliationOwnerVerifierService } from './profile-reconciliation-owner-verifier.ts';
-import { ProfileRetailPermissionReaderFactory } from './integrations/retail-permission-reader.ts';
 import { PartyRegistryGuestResolverFactory } from './integrations/party-registry-guest-resolver.ts';
 import { PartyRegistryRetailPartyResolverFactory } from './integrations/party-registry-retail-party-resolver.ts';
 
-export const profileServicesForVerifiedScope = (
+/** The calling module of this module's own enrollment continuation (`retail-owner-gateway-credential.ts`). */
+const ENROLLMENT_CONTINUATION_APP_ID = 'commerce-customer-context';
+
+const profileServicesFor = (
   transaction: ProfileScopedRoutineInvoker,
   scope: OperationalScope,
+  portalAccess?: AccessPortalWrites,
 ): Effect.Effect<
   ProfilePersistenceServices,
   OperationContextUnavailable,
   | Crypto.Crypto
   | ProfileCounterpartyRoleEligibilityResolverFactory
   | ProfileReactivationEligibilityEvaluatorFactory
-  | ProfileRetailPermissionReaderFactory
   | PartyRegistryGuestResolverFactory
   | PartyRegistryRetailPartyResolverFactory
 > => {
@@ -49,17 +53,20 @@ export const profileServicesForVerifiedScope = (
   };
   let verifiedScope: ProfilePersistenceScope = baseScope;
   if (scope.authBindingId !== undefined) {
-    verifiedScope = { ...baseScope, authBindingId: scope.authBindingId };
+    verifiedScope = { ...verifiedScope, authBindingId: scope.authBindingId };
+  }
+  if (readVerifiedGatewayActor(scope)?.appId === ENROLLMENT_CONTINUATION_APP_ID) {
+    verifiedScope = { ...verifiedScope, enrollmentContinuation: true };
   }
   return Effect.gen(function* profileServices() {
     const roleResolverFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
     const reactivationEvaluatorFactory = yield* ProfileReactivationEligibilityEvaluatorFactory;
-    const retailPermissionReaderFactory = yield* ProfileRetailPermissionReaderFactory;
     const guestResolverFactory = yield* PartyRegistryGuestResolverFactory;
     const crypto = yield* Crypto.Crypto;
     const retailPartyResolverFactory = yield* PartyRegistryRetailPartyResolverFactory;
     const resolveCounterpartyRole = roleResolverFactory.make({
       legalEntityId: verifiedScope.legalEntityId,
+      operationalScope: scope,
       requestCorrelation: scope.correlationId,
       tenantId: verifiedScope.tenantId,
     });
@@ -67,11 +74,6 @@ export const profileServicesForVerifiedScope = (
       resolveCounterpartyRole,
       scope: verifiedScope,
       transaction,
-    });
-    const readRetailPermissions = retailPermissionReaderFactory.make({
-      legalEntityId: verifiedScope.legalEntityId,
-      principalId: verifiedScope.principalId,
-      tenantId: verifiedScope.tenantId,
     });
     const guestParty = guestResolverFactory.make({ crypto, scope });
     const retailParty = retailPartyResolverFactory.make({ crypto, scope });
@@ -111,13 +113,29 @@ export const profileServicesForVerifiedScope = (
         return profileOwnerVerifier.verify(request, context);
       },
     };
-    return profilePersistenceServicesForTransaction(transaction, verifiedScope, {
+    const dependencies = {
       evaluateReactivation,
-      readRetailPermissions,
       reconciliationOwnerVerifier,
       resolveCounterpartyRole,
       resolveGuestParty,
       resolveRetailParty,
-    });
+    };
+    return profilePersistenceServicesForTransaction(
+      transaction,
+      verifiedScope,
+      portalAccess === undefined ? dependencies : { ...dependencies, portalAccess },
+    );
   });
 };
+
+export const profileServicesForVerifiedScope = (transaction: ProfileScopedRoutineInvoker, scope: OperationalScope) =>
+  profileServicesFor(transaction, scope);
+
+/**
+ * The profile services of a Retail Portal binding Action: a binding and the bound person's portal access
+ * commit in the Action's one transaction, so the binding services carry Core's portal writes over it.
+ */
+export const retailPortalBindingServicesForVerifiedScope = (
+  transaction: ProfileScopedRoutineInvoker & AccessPortalTransaction,
+  scope: OperationalScope,
+) => profileServicesFor(transaction, scope, accessPortalWritesForTransaction(transaction, scope));

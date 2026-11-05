@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 
 import {
   ActionRuntime,
-  ContextAccess,
   PrincipalResolver,
   SupportRecoveryPrincipalContextResolver,
   makeOperationalScopeRepository,
@@ -10,6 +9,8 @@ import {
   makePrincipalResolver,
   makeSupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { and, eq, inArray } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
 import { Context, Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
@@ -58,6 +59,7 @@ import {
   SupportImpersonationStoreService,
 } from '../../api/auth/impersonation-service.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
+import { makeShellTestAccessGate, shellTestAnswers } from '../support/access-decision-double.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string => {
@@ -129,48 +131,23 @@ it.live.each([
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    let supportPermissionAllowed = true;
-    const allowedContextAccess = {
-      legalEntities: () => Effect.succeed([]),
-      modules: () => Effect.succeed([]),
-      resources: () => Effect.succeed([]),
-      tenants: ({
-        permission,
-        tenantIds,
-      }: {
-        readonly permission:
-          | 'access'
-          | 'impersonate'
-          | 'manage_identity'
-          | 'manage_party_identity'
-          | 'manage_party_relationships'
-          | 'merge_party_identity'
-          | 'read_party_identity'
-          | 'review_party_identity';
-        readonly tenantIds: readonly string[];
-      }) =>
-        Effect.succeed(
-          tenantIds.map((key) => ({
-            decision:
-              permission === 'impersonate' && !supportPermissionAllowed ? ('denied' as const) : ('allowed' as const),
-            key,
-          })),
-        ),
-    };
-    const provideContextAccess = <Success, Failure, Requirements>(
-      effect: Effect.Effect<Success, Failure, Requirements>,
-    ) =>
-      provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
+    // The impersonation capability is the only question this suite toggles; every other protected
+    // entrypoint of the fixture is admitted (O35: a revoked impersonation is refused on the next
+    // request by the scope resolver, and stopping it stays allowed).
+    const supportAnswers = shellTestAnswers({ 'core.identity.support.impersonate': 'allowed' });
+    const accessGate = makeShellTestAccessGate({ answers: supportAnswers, defaultAnswer: 'allowed' });
+    const provideAccessGate = <Success, Failure, Requirements>(effect: Effect.Effect<Success, Failure, Requirements>) =>
+      provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(AccessDecisionGate, accessGate)));
     const operationalScope = yield* makeOperationalScopeResolver(
       makeOperationalScopeRepository({ executor: coreDatabase }),
-      allowedContextAccess,
+      accessGate,
     );
     const actionRuntime = makeActionRuntime(
       { executor: coreDatabase },
       makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
-      { ...openActionRuntimeOptions, contextAccess: allowedContextAccess },
+      { ...openActionRuntimeOptions, accessDecision: accessGate.bound },
     );
     const fixtureAuthentication = yield* makeAuthenticationService({
       allowFixtureSignUp: true,
@@ -199,7 +176,7 @@ it.live.each([
         coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
         coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId)),
         coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
-        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+        // Core retains access intent (D27): the Tenant's scope and fence, and so the Tenant, stay.
       ]);
     });
     yield* Effect.acquireRelease(
@@ -245,6 +222,8 @@ it.live.each([
         tenantId,
       },
     ]);
+    // The governed Actions run under the Tenant's real access fence.
+    yield* writeTestTenantScopes(coreDatabase, { principalId: originalPrincipalId, tenantId });
     yield* coreDatabase.insert(principalAuthBindings).values([
       {
         authenticationNamespaceId: staffAuthenticationNamespaceId,
@@ -299,7 +278,7 @@ it.live.each([
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
     );
-    const resolvedOriginal = yield* provideContextAccess(authentication.resolveTenantContext(originalHeaders));
+    const resolvedOriginal = yield* provideAccessGate(authentication.resolveTenantContext(originalHeaders));
     expect(resolvedOriginal.state).toBe('authenticated');
     if (resolvedOriginal.state !== 'authenticated') {
       throw new Error('The live original session did not resolve');
@@ -469,7 +448,7 @@ it.live.each([
       password,
       new Headers({ origin: configuration.baseUrl }),
     );
-    const secondAdministratorContext = yield* provideContextAccess(
+    const secondAdministratorContext = yield* provideAccessGate(
       authentication.resolveTenantContext(
         new Headers({
           cookie: cookieHeader(secondAdministratorSignIn.setCookieHeaders),
@@ -512,7 +491,7 @@ it.live.each([
         Context.add(SupportImpersonationStoreService, makeSupportImpersonationStore(authDatabase)),
       ),
     );
-    const started = yield* provideContextAccess(
+    const started = yield* provideAccessGate(
       providePrincipalManagementRepository(
         support
           .start({
@@ -546,7 +525,7 @@ it.live.each([
       .set({ impersonationActionId: null })
       .where(eq(session.id, impersonationSession.id));
     const incompleteImpersonation = yield* Effect.flip(
-      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
+      provideAccessGate(authentication.resolveTenantContext(impersonatedHeaders)),
     );
     expect(Predicate.isTagged(incompleteImpersonation, 'OntosIdentityForbiddenError')).toBe(true);
     yield* authDatabase
@@ -558,14 +537,14 @@ it.live.each([
       .set({ impersonationReason: 'Tampered support reason' })
       .where(eq(session.id, impersonationSession.id));
     const mismatchedImpersonationReason = yield* Effect.flip(
-      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
+      provideAccessGate(authentication.resolveTenantContext(impersonatedHeaders)),
     );
     expect(Predicate.isTagged(mismatchedImpersonationReason, 'OntosIdentityForbiddenError')).toBe(true);
     yield* authDatabase
       .update(session)
       .set({ impersonationReason: 'Investigating a tenant support request' })
       .where(eq(session.id, impersonationSession.id));
-    const impersonated = yield* provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders));
+    const impersonated = yield* provideAccessGate(authentication.resolveTenantContext(impersonatedHeaders));
     expect(impersonated.state).toBe('authenticated');
     if (impersonated.state === 'authenticated') {
       expect(impersonated.principal.authMethod).toBe('support_impersonation');
@@ -586,12 +565,12 @@ it.live.each([
         }),
       );
     }
-    supportPermissionAllowed = false;
+    supportAnswers['core.identity.support.impersonate'] = 'denied';
     const revokedImpersonation = yield* Effect.flip(
-      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
+      provideAccessGate(authentication.resolveTenantContext(impersonatedHeaders)),
     );
     expect(Predicate.isTagged(revokedImpersonation, 'OntosIdentityForbiddenError')).toBe(true);
-    const stopped = yield* provideContextAccess(
+    const stopped = yield* provideAccessGate(
       providePrincipalManagementRepository(
         support
           .stop({

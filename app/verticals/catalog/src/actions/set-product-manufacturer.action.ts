@@ -82,6 +82,14 @@ export const handleSetProductManufacturer = Effect.fn('SetProductManufacturerAct
 
 export const setProductManufacturerAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-manufacturer.set',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-product-manufacturer.access.v1',
@@ -97,7 +105,7 @@ export const setProductManufacturerAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: CATALOG_MODULE_KEY,
       role: 'action',

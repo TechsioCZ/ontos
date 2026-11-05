@@ -1,5 +1,6 @@
 import { OperationContextUnavailable, requireModuleOperation } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
+import type { Crypto } from 'effect';
 import { DateTime, Effect, Schema } from 'effect';
 import type {
   CustomerPriceGroupAssignmentStorePort,
@@ -24,8 +25,7 @@ export interface PriceGroupActionServices {
 export const priceGroupActionServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-  compositionRevision: string,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable> => {
+): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> => {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return Effect.fail(
@@ -38,9 +38,8 @@ export const priceGroupActionServicesForTransaction = (
   const trustedScope = { ...scope, legalEntityId };
   return Effect.gen(function* makePriceGroupActionServices() {
     const catalog = yield* priceGroupCatalogPortFromEnvironment({
-      compositionRevision,
       requestCorrelation: scope.correlationId,
-      scope,
+      subject: { _tag: 'Assertion', scope },
     });
     return {
       catalog,
@@ -85,9 +84,8 @@ const withRequiredPriceGroupCatalog = (
 export const assignCustomerPriceGroupServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-  compositionRevision: string,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable> =>
-  priceGroupActionServicesForTransaction(invoker, scope, compositionRevision).pipe(
+): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
+  priceGroupActionServicesForTransaction(invoker, scope).pipe(
     Effect.map((services) =>
       withRequiredPriceGroupCatalog(
         services,
@@ -99,9 +97,8 @@ export const assignCustomerPriceGroupServicesForTransaction = (
 export const assignCounterpartyPriceGroupServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-  compositionRevision: string,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable> =>
-  priceGroupActionServicesForTransaction(invoker, scope, compositionRevision).pipe(
+): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
+  priceGroupActionServicesForTransaction(invoker, scope).pipe(
     Effect.map((services) =>
       withRequiredPriceGroupCatalog(
         services,
@@ -113,9 +110,8 @@ export const assignCounterpartyPriceGroupServicesForTransaction = (
 export const migrateCustomerPriceGroupServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-  compositionRevision: string,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable> =>
-  priceGroupActionServicesForTransaction(invoker, scope, compositionRevision).pipe(
+): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
+  priceGroupActionServicesForTransaction(invoker, scope).pipe(
     Effect.map((services) =>
       withRequiredPriceGroupCatalog(
         services,
@@ -127,9 +123,8 @@ export const migrateCustomerPriceGroupServicesForTransaction = (
 export const migrateCounterpartyPriceGroupServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-  compositionRevision: string,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable> =>
-  priceGroupActionServicesForTransaction(invoker, scope, compositionRevision).pipe(
+): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
+  priceGroupActionServicesForTransaction(invoker, scope).pipe(
     Effect.map((services) =>
       withRequiredPriceGroupCatalog(
         services,

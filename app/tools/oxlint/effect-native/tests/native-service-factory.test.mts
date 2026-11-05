@@ -103,13 +103,26 @@ describe('recognizes the native definition service argument without admitting ha
       `Runtime.defineRead({}, handler, ${directCallback}, resolver);`,
   );
   accept(`${nativeImports}registerRead({}, handler, Effect.fn('native')(${callback}), resolver);`);
+  // A v2 read declares descriptor, handler and service factory only; its legacy target resolvers are optional.
+  accept(`${nativeImports}registerRead({}, handler, ${callback});`);
+  accept(
+    `${nativeImports}registerRead({}, handler, function* makeServices(transaction, scope, revision, listAccess) { return {}; });`,
+  );
   reject(1, `${nativeImports}registerRead({}, ${directCallback}, serviceFactory, resolver);`);
   reject(
     1,
     `import { defineRead as registerRead } from './lookalike.ts';\nregisterRead({}, handler, ${callback}, resolver);`,
   );
   reject(1, `${nativeImports}registerRead(...descriptors, handler, ${callback}, resolver);`);
-  reject(1, `${nativeImports}registerRead({}, handler, ${callback});`);
+  // A read factory never receives a fifth runtime argument, and an Action factory never a fourth.
+  reject(
+    1,
+    `${nativeImports}registerRead({}, handler, function* makeServices(transaction, scope, revision, listAccess, extra) { return {}; });`,
+  );
+  reject(
+    1,
+    `${nativeImports}defineAction({}, handler, function* makeServices(transaction, scope, revision, listAccess) { return {}; });`,
+  );
   reject(1, `${nativeImports}registerRead({}, handler, ${callback}, resolver, resultResolver, policies, extra);`);
   reject(1, `${nativeImports}defineAction({}, handler, ${callback}, decodedSuccess, postAttempt, extra);`);
   reject(1, `${nativeImports}registerRead({}, handler, serviceFactory, ${callback});`);

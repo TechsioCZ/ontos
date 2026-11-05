@@ -19,7 +19,7 @@ import type {
 
 export const aresLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'party.registry.api.ares-lookup',
   moduleKey: 'party.registry',
   role: 'api',
@@ -113,6 +113,16 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
 
 export const aresLookupRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'party.registry.ares-subject.lookup',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'party-identity', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // No field group: ARES answers the public business register for a legal entity (O38), which is
+    // not personal data; a sole trader's registration data would need its own class before one exists.
     accessKind: 'detail',
     entrypoint: aresLookupEntrypoint,
     evidencePolicy: {
@@ -122,7 +132,6 @@ export const aresLookupRead = defineRead(
     inputSchema: AresLookupRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.ares-lookup',
     resultSchema: AresLookupResponseSchema,
@@ -140,5 +149,4 @@ export const aresLookupRead = defineRead(
         Effect.catch(mapAresFailure),
       ),
   () => AresSubjectService.pipe(Effect.map((service) => ({ lookup: service.subject }))),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

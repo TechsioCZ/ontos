@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug remove-variant-attribute-override
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/remove-variant-attribute-override.ts';
 
 export { RemoveVariantAttributeOverridePayloadSchema } from '../actions/remove-variant-attribute-override.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RemoveVariantAttributeOverrideActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveVariantAttributeOverrideActionInvalidProblem',
@@ -24,6 +26,7 @@ export const RemoveVariantAttributeOverrideActionForbiddenProblemSchema = makePr
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -135,7 +138,7 @@ export const RemoveVariantAttributeOverrideActionApi = HttpApi.make('RemoveVaria
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-variant-attribute-override', {
         error: actionErrors,
         payload: Schema.toEncoded(RemoveVariantAttributeOverridePayloadSchema),
-        success: RemoveVariantAttributeOverrideResultSchema,
+        success: [ActionProposalAcceptedSchema, RemoveVariantAttributeOverrideResultSchema],
       }),
     )
     .middleware(RemoveVariantAttributeOverrideActionSchemaErrorMiddleware),

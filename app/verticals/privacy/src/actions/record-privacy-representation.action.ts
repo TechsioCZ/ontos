@@ -35,6 +35,14 @@ const handleRecordPrivacyRepresentation = Effect.fn('RecordPrivacyRepresentation
 });
 export const recordPrivacyRepresentationAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.privacy-representation.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'subjects', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-privacy-representation.access.v1',
@@ -46,7 +54,7 @@ export const recordPrivacyRepresentationAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-privacy-representation',
       moduleKey: 'privacy.core',
       role: 'action',

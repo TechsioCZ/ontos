@@ -63,10 +63,7 @@ const recoverRenameAttributeDefinition = Effect.fn('RenameAttributeDefinitionRec
 
 const renameAttributeDefinitionRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.rename-attribute-definition-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.rename-attribute-definition-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -74,6 +71,14 @@ const renameAttributeDefinitionRecoveryEntrypoint = defineTenantModuleEntrypoint
 
 export const renameAttributeDefinitionRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.rename-attribute-definition-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'attribute-definition', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: renameAttributeDefinitionRecoveryEntrypoint,
     evidencePolicy: {
@@ -83,7 +88,6 @@ export const renameAttributeDefinitionRecoveryRead = defineRead(
     inputSchema: RenameAttributeDefinitionRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.rename-attribute-definition-recovery',
     resultSchema: RenameAttributeDefinitionRecoveryResponseSchema,
@@ -95,5 +99,4 @@ export const renameAttributeDefinitionRecoveryRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

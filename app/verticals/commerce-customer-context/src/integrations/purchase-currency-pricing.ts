@@ -7,17 +7,14 @@ import type {
   CurrentSupportedCurrenciesResponse,
 } from '@app/pricing-contracts/current-supported-currencies';
 import { executeCurrentSupportedCurrenciesWithAuthorization } from '@app/pricing-contracts/current-supported-currencies/client';
-import { Effect, Match, Option, Redacted, Schema } from 'effect';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
+import { Crypto, Effect, Match, Redacted, Schema } from 'effect';
 
 import {
   PurchaseCurrencyDependencyUnavailable,
   unavailablePurchaseCurrencyDependency,
 } from '../../shared/domain/purchase-currency-dependency.ts';
-import {
-  PurchaseCurrencyPricingGatewayCredentialService,
-  unavailablePurchaseCurrencyPricingGatewayCredentialIssuer,
-} from '../../shared/domain/purchase-currency-pricing-gateway-credential.ts';
-import type { PurchaseCurrencyPricingGatewayCredentialIssuer } from '../../shared/domain/purchase-currency-pricing-gateway-credential.ts';
 import type { PurchaseCurrencyPricingPortService } from '../../shared/domain/purchase-currency-pricing-port.ts';
 import { PricingCurrencySupportSchema } from '../../shared/domain/purchase-currency-resolution.ts';
 
@@ -91,29 +88,36 @@ const requestPayload = (
     tenantId: input.tenantId,
   }).pipe(Effect.mapError((cause) => unavailable('The exact Pricing request context is invalid', cause)));
 
+type DelegatedGatewayAcquisition = typeof acquireDelegatedGatewayContext;
+
 const makePricingPort = (input: {
+  readonly acquire: DelegatedGatewayAcquisition;
+  readonly crypto: Crypto.Crypto;
   readonly execute: CurrentSupportedCurrenciesExecutor;
-  readonly issuer: PurchaseCurrencyPricingGatewayCredentialIssuer;
   readonly requestContext: {
-    readonly compositionRevision: string;
-    readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly subject: GatewayDelegationSubject;
   };
 }): PurchaseCurrencyPricingPortService => ({
   resolveCurrent: (request) =>
     requestPayload(request).pipe(
       Effect.flatMap((payload) =>
-        input.issuer
-          .issue({
-            audience: 'pricing',
-            compositionRevision: input.requestContext.compositionRevision,
-            requestCorrelation: input.requestContext.requestCorrelation,
-          })
+        input
+          .acquire(
+            {
+              audience: 'pricing',
+              legalEntityScope: 'tenant',
+              requestCorrelation: input.requestContext.requestCorrelation,
+              subject: input.requestContext.subject,
+            },
+            input.crypto,
+          )
           .pipe(
-            Effect.flatMap(({ baseUrl, credential }) =>
-              input.execute(payload, credential, input.requestContext.requestCorrelation, {
-                baseUrl,
-                compositionRevision: input.requestContext.compositionRevision,
+            Effect.mapError((cause) => unavailable('The Pricing gateway credential could not be issued', cause)),
+            Effect.flatMap((issued) =>
+              input.execute(payload, Redacted.make(issued.authorization), input.requestContext.requestCorrelation, {
+                baseUrl: new URL(issued.apiBaseUrl),
+                compositionRevision: issued.compositionRevision,
               }),
             ),
             Effect.mapError((cause) =>
@@ -131,22 +135,16 @@ const makePricingPort = (input: {
     ),
 });
 
-export const purchaseCurrencyPricingPortFromEnvironment = (
-  requestContext: {
-    readonly compositionRevision: string;
-    readonly legalEntityId: string;
-    readonly requestCorrelation: string;
+export const purchaseCurrencyPricingPortFromEnvironment = Effect.fn('PurchaseCurrencyPricing.portFromEnvironment')(
+  function* purchaseCurrencyPricingPortFromEnvironment(
+    requestContext: {
+      readonly requestCorrelation: string;
+      readonly subject: GatewayDelegationSubject;
+    },
+    execute: CurrentSupportedCurrenciesExecutor = executeAuthorizedCurrentSupportedCurrencies,
+    acquire: DelegatedGatewayAcquisition = acquireDelegatedGatewayContext,
+  ) {
+    const crypto = yield* Crypto.Crypto;
+    return makePricingPort({ acquire, crypto, execute, requestContext });
   },
-  execute: CurrentSupportedCurrenciesExecutor = executeAuthorizedCurrentSupportedCurrencies,
-): Effect.Effect<PurchaseCurrencyPricingPortService> =>
-  Effect.serviceOption(PurchaseCurrencyPricingGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      makePricingPort({
-        execute,
-        issuer: Option.isSome(issuerOption)
-          ? issuerOption.value
-          : unavailablePurchaseCurrencyPricingGatewayCredentialIssuer,
-        requestContext,
-      }),
-    ),
-  );
+);

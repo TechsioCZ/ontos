@@ -63,10 +63,7 @@ const recoverChangeProductRelationship = Effect.fn('ChangeProductRelationshipRec
 
 const changeProductRelationshipRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: {
-    kind: 'context_permission',
-    permission: 'commerce.catalog.read.change-product-relationship-recovery',
-  },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.change-product-relationship-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -74,6 +71,14 @@ const changeProductRelationshipRecoveryEntrypoint = defineTenantModuleEntrypoint
 
 export const changeProductRelationshipRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.change-product-relationship-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-relationship', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: changeProductRelationshipRecoveryEntrypoint,
     evidencePolicy: {
@@ -83,7 +88,6 @@ export const changeProductRelationshipRecoveryRead = defineRead(
     inputSchema: ChangeProductRelationshipRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.change-product-relationship-recovery',
     resultSchema: ChangeProductRelationshipRecoveryResponseSchema,
@@ -95,5 +99,4 @@ export const changeProductRelationshipRecoveryRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

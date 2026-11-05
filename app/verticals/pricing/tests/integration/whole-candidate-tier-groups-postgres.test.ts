@@ -26,10 +26,6 @@ import {
 import { PricingZeroFloorCurrentAuthorizationSetSchema } from '@app/pricing-contracts/domain/line-composition';
 import { QuantityBasisCompatibilityResponseSchema } from '@app/catalog/api/quantity-basis-compatibility';
 import {
-  makeCurrentPricingDecisionExternalOwnerEvidenceLivePort,
-  currentPricingDecisionExternalOwnerEvidencePortFromEnvironment,
-} from '../../src/integrations/current-pricing-decision-external-owner-evidence-live.ts';
-import {
   currentPricingDecisionWholeEvaluationAdaptersForScope,
   makeCurrentPricingDecisionWholeComposition,
 } from '../../src/integrations/current-pricing-decision-whole-evaluation-adapters.ts';
@@ -46,14 +42,20 @@ import {
   PricingExternalOwnerEvidenceValidation,
 } from '../../src/services/external-owner-evidence-validation.service.ts';
 import { CommercialFeeSetAuthoritySchema } from '../../src/services/commercial-fee-persistence.service.ts';
+import { OwnerGatewayConnectionError } from '../../src/integrations/owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from '../../src/integrations/owner-gateway-connection.ts';
 import {
-  CommercialContextGatewayCredentialService,
-  PricingCommercialContextUnavailable,
-} from '../../shared/domain/commercial-context-gateway-credential.ts';
-import { CatalogSelectionGatewayCredentialService } from '../../shared/domain/catalog-selection-gateway-credential.ts';
+  executeCatalog,
+  executeCatalogCompatibility,
+  executeCustomer,
+  executeMarket,
+  makeCurrentPricingDecisionExternalOwnerEvidenceLivePort,
+} from '../../src/integrations/current-pricing-decision-external-owner-evidence-live.ts';
+import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 import { JoinedPrerequisites1225 } from '../support/joined-prerequisites-1225.ts';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import type { JoinedObservation1225 } from '../support/joined-prerequisites-1225.ts';
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
 import { assessPricingQuantityBasis } from '../../src/services/quantity-unit-package-basis.service.ts';
 import {
   unitPriceCalculationAttempt,
@@ -112,8 +114,10 @@ import { executeQuantityBasisCompatibilityWithAuthorization } from '@app/catalog
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
+  GatewayDelegatedContextRequestSchema,
   SupportedGatewayContextClaimsSchema,
   decodeSupportedGatewayContextClaims,
+  shellGatewayContextContract,
 } from '@app/shared-contracts';
 import { PriceIdentityKeySchema, PricePositiveDecimalSchema } from '@app/pricing-contracts/domain/price-definition';
 import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/price-source-provenance';
@@ -131,6 +135,7 @@ import { sumQuantityTierNormalizedQuantities } from '@app/pricing-contracts/doma
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
   Clock,
+  ConfigProvider,
   Context,
   Config,
   Crypto,
@@ -139,6 +144,7 @@ import {
   Effect,
   FileSystem,
   Layer,
+  Match,
   Option,
   Queue,
   Redacted,
@@ -147,7 +153,14 @@ import {
 } from 'effect';
 import type { Cause } from 'effect';
 import { ChildProcess } from 'effect/process';
-import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -158,14 +171,31 @@ import { currencySupportPersistenceForScope } from '../../src/persistence/curren
 import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
 import { selectQuantityTier } from '../../src/services/quantity-tier-selection.service.ts';
 
+// The fixture Shell admits only a relayed requester assertion, never an Originator subject.
+const isAssertionSubject = (subject: (typeof GatewayDelegatedContextRequestSchema.Type)['subject']): boolean =>
+  Match.value(subject).pipe(
+    Match.tag('Assertion', () => true),
+    Match.tag('Originator', () => false),
+    Match.exhaustive,
+  );
+
 // Closed private process DTOs are decoded locally; no foreign private source import.
 const protocolVersion = 'ontos.catalog.whole-candidate.fixture.v1' as const;
+const wholeCandidatePrincipalId = '66666666-6666-4666-8666-666666661262';
+const wholeCandidateScope = verifiedTestScope({
+  correlationId: 'whole-candidate-tier-groups-1262',
+  legalEntityId: '33333333-3333-4333-8333-333333331262',
+  principalId: wholeCandidatePrincipalId,
+  tenantId: '22222222-2222-4222-8222-222222221262',
+});
+
 const version = protocolVersion;
 const legalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'));
 const WholeCandidateCatalogBootstrapSchema = Schema.Struct({
   actor: TrustedPrincipalContextSchema,
   composition: ActiveApplicationCompositionSnapshotSchema,
   databaseName: Schema.String.check(Schema.isPattern(/^ontos_test_[a-z0-9_]+$/u)),
+  deniedPrincipalId: TrustedPrincipalContextSchema.fields.principalId,
   issuer: Schema.String,
   jwks: Schema.String,
   legalEntityId: legalEntityIdSchema,
@@ -376,7 +406,6 @@ const evaluateNativeWhole1225 = Effect.fn('WholeCandidate.joinedConsumer')(funct
     scope,
     actualRevision,
   ).pipe(
-    Effect.provideService(CatalogSelectionGatewayCredentialService, config.catalogIssuer),
     Effect.provideService(PricingExternalOwnerEvidenceValidation, makePricingExternalOwnerEvidenceValidationService()),
   );
   const context = yield* Layer.build(adapters);
@@ -652,10 +681,18 @@ const componentServicesForScope = (
 type ComponentServices = Effect.Success<ReturnType<typeof componentServicesForScope>>;
 const componentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.fixture.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: componentPermission },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.test.whole-candidate-components',
       moduleKey: 'commerce.pricing',
       role: 'api',
@@ -664,7 +701,6 @@ const componentRead = defineRead(
     inputSchema: ComponentReadInputSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.pricing',
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.test.whole-candidate-components',
     resultSchema: Schema.Union([QuantityTierSelectionResultSchema, PricingCommercialTotalReadySchema]),
@@ -731,7 +767,6 @@ const componentRead = defineRead(
       ),
     ),
   componentServicesForScope,
-  () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
 );
 
 // The native runtime executes only this local test Read; this is not a production Pricing API declaration.
@@ -753,19 +788,27 @@ const componentReadOwner = defineVerticalRuntimeRegistration({
 const nativeReadRuntime = (
   runtimeConnectionString: string,
   composition: typeof ActiveApplicationCompositionSnapshotSchema.Type,
+  selectableLegalEntityIds: readonly string[],
 ) => {
   const database = Layer.effect(DatabaseConfig, parseDatabaseConfig({ DATABASE_URL: runtimeConnectionString }));
   const persistence = CorePersistenceLive.pipe(Layer.provide(database));
   const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
   const gate = ModuleStateGateLive.pipe(Layer.provide(states));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
-  const scopes = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
+  const access = makeTestAccessGateLayers({
+    selectableLegalEntityIds,
+    spec: { defaultAnswer: { outcome: 'ALLOWED' } },
+  });
+  const scopes = OperationalScopeResolverLive.pipe(
+    Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
+  );
   const common = Layer.mergeAll(
     persistence,
     ContextAccessLive,
     gate,
     gateway,
     scopes,
+    access,
     staffAuthenticationNamespaceRegistryLayer(['pricing']),
     makeActiveApplicationCompositionLayer(Effect.succeed(composition)),
   );
@@ -1188,51 +1231,64 @@ const exerciseRealCatalogConsumer1262 = Effect.fn('CatalogConsumer1262.exercise'
         .then(observeResponse)
         .then(undefined, failCatalog);
     let credentialIndex = 0;
-    const catalogIssuer = {
-      issue: (requested: Parameters<CatalogSelectionGatewayCredentialIssuer['issue']>[0]) =>
-        Effect.sync(() => {
-          expect(requested).toEqual({
-            audience: 'catalog',
-            compositionRevision: input.endpoint.compositionRevision,
-            legalEntityId: input.legalEntityId,
-            requestCorrelation: input.correlation,
-          });
-          const credential = input.credentials[credentialIndex];
-          credentialIndex += 1;
-          assert(credential !== undefined);
-          return { baseUrl: input.endpoint.baseUrl, credential };
-        }),
-    };
+    const catalogAcquire: OwnerGatewayConnectionAcquire = (requested) =>
+      Effect.sync(() => {
+        expect({
+          audience: requested.audience,
+          compositionRevision: requested.compositionRevision,
+          legalEntityScope: requested.legalEntityScope,
+          requestCorrelation: requested.requestCorrelation,
+        }).toEqual({
+          audience: 'catalog',
+          compositionRevision: input.endpoint.compositionRevision,
+          legalEntityScope: 'subject',
+          requestCorrelation: input.correlation,
+        });
+        const credential = input.credentials[credentialIndex];
+        credentialIndex += 1;
+        assert(credential !== undefined);
+        return { baseUrl: input.endpoint.baseUrl, credential };
+      });
     // Await the actual Catalog response before demonstrating another owner's inability,
     // so parallel fail-fast cannot turn an unperformed Catalog request into a passing test.
-    const unavailableMarket = {
-      issue: () =>
-        Deferred.await(catalogComplete).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new PricingCommercialContextUnavailable({
-                code: 'pricing_commercial_context_unavailable',
-                reason: 'Explicit non-Catalog owner prerequisite is unavailable in #1262',
-                retryable: true,
-              }),
-            ),
+    const unavailableMarketAcquire: OwnerGatewayConnectionAcquire = () =>
+      Deferred.await(catalogComplete).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new OwnerGatewayConnectionError({
+              reason: 'Explicit non-Catalog owner prerequisite is unavailable in #1262',
+            }),
           ),
         ),
-    };
+      );
     const validation = makePricingExternalOwnerEvidenceValidationService();
-    const compositionContext = yield* Layer.build(
-      makeActiveApplicationCompositionLayer(Effect.succeed(input.composition)),
-    );
-    const live = yield* currentPricingDecisionExternalOwnerEvidencePortFromEnvironment({
-      compositionRevision: input.endpoint.compositionRevision,
-      legalEntityId: input.legalEntityId,
-      requestCorrelation: input.correlation,
-      tenantId: input.tenantId,
-    }).pipe(
-      Effect.provideService(CatalogSelectionGatewayCredentialService, catalogIssuer),
-      Effect.provideService(CommercialContextGatewayCredentialService, unavailableMarket),
-      Effect.provideService(PricingExternalOwnerEvidenceValidation, validation),
-      Effect.provideContext(compositionContext),
+    const live = makeCurrentPricingDecisionExternalOwnerEvidenceLivePort(
+      {
+        compositionRevision: input.endpoint.compositionRevision,
+        legalEntityId: input.legalEntityId,
+        requestCorrelation: input.correlation,
+        scope: verifiedTestScope({
+          correlationId: input.correlation,
+          legalEntityId: input.legalEntityId,
+          principalId: wholeCandidatePrincipalId,
+          tenantId: input.tenantId,
+        }),
+        tenantId: input.tenantId,
+      },
+      {
+        applicationComposition: { load: Effect.succeed(input.composition) },
+        catalog: {
+          acquire: catalogAcquire,
+          execute: executeCatalog,
+          executeCompatibility: executeCatalogCompatibility,
+        },
+        customerContext: {
+          acquire: () => Effect.die('Guest does not request Profile credentials'),
+          execute: executeCustomer,
+        },
+        market: { acquire: unavailableMarketAcquire, execute: executeMarket },
+        validation,
+      },
     );
     const composition = makeCurrentPricingDecisionWholeComposition();
     const { line } = unit;
@@ -1831,6 +1887,7 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
       actor: fixture.manager,
       composition,
       databaseName: isolated.connections.runtime.database,
+      deniedPrincipalId: fixture.denied.principalId,
       issuer,
       jwks,
       legalEntityId: WholeCandidateCatalogProducedSchema.fields.legalEntityId.make(fixture.legalEntityId),
@@ -1910,7 +1967,7 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
       'required',
     );
     const readContext = yield* Layer.build(
-      nativeReadRuntime(isolated.connections.runtime.connectionString, composition),
+      nativeReadRuntime(isolated.connections.runtime.connectionString, composition, [fixture.legalEntityId]),
     );
     const runtime = Context.get(readContext, ReadRuntime);
     const readTier = Effect.fn('WholeCandidate.readTierThroughCore')(function* readTier(
@@ -2128,26 +2185,107 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
       resultingUnitPrice: { amount: '75.000000000', currencyCode: 'CZK' },
     });
     const issuerCrypto1225 = yield* Crypto.Crypto;
-    const issuer1225: CatalogSelectionGatewayCredentialIssuer = {
-      issue: () =>
-        Effect.gen(function* issueActualCatalogAssertion1225() {
-          return { ...endpoint, credential: Redacted.make(yield* authorization(yield* DateTime.now)) };
-        }).pipe(
-          Effect.orDie,
-          Effect.provideService(Clock.Clock, nativeClock),
-          Effect.provideService(Crypto.Crypto, issuerCrypto1225),
-        ),
-    };
+    const catalogAssertion1225 = Effect.gen(function* issueActualCatalogAssertion1225() {
+      return { ...endpoint, credential: Redacted.make(yield* authorization(yield* DateTime.now)) };
+    }).pipe(
+      Effect.orDie,
+      Effect.provideService(Clock.Clock, nativeClock),
+      Effect.provideService(Crypto.Crypto, issuerCrypto1225),
+    );
+    const issuer1225: OwnerGatewayConnectionAcquire = () => catalogAssertion1225;
+    // Stands in for the Shell the joined read reaches through Pricing's own module credential: the
+    // delegated issuance route admits only a Catalog Assertion request for this release, and the
+    // Shell-relative owner path it answers forwards to the actual Catalog receiver.
+    const catalogPath1225 = '/catalog-api';
+    const shellContext1225 = yield* Layer.build(NodeHttpServer.layerTest);
+    const shell1225 = Context.get(shellContext1225, HttpServer.HttpServer);
+    const client = yield* HttpClient.HttpClient;
+    yield* shell1225.serve(
+      Effect.gen(function* fixtureShell1225() {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const url = new URL(request.url, 'https://shell.fixture');
+        if (url.pathname.startsWith(`${catalogPath1225}/`)) {
+          const headers: Record<string, string> = {};
+          for (const name of ['accept', 'authorization', 'content-type', 'idempotency-key', 'x-correlation-id']) {
+            const value = request.headers[name];
+            if (value !== undefined) {
+              headers[name] = value;
+            }
+          }
+          const target = HttpClientRequest.make(request.method)(
+            new URL(`${url.pathname.slice(catalogPath1225.length)}${url.search}`, endpoint.baseUrl),
+            { headers },
+          );
+          const forward =
+            request.method === 'GET'
+              ? target
+              : HttpClientRequest.bodyText(target, yield* request.text, headers['content-type']);
+          const forwarded = yield* client
+            .execute(forward)
+            .pipe(Effect.mapError(() => unavailable('fixture-shell-forward')));
+          return HttpServerResponse.fromClientResponse(forwarded);
+        }
+        const payload = yield* request.json.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)),
+          Effect.orElseSucceed(() => null),
+        );
+        if (
+          url.pathname !== shellGatewayContextContract.issueDelegatedGatewayContextPath ||
+          request.headers['x-api-key'] !== 'pricing-module-api-key-1225' ||
+          payload === null ||
+          payload.audience !== 'catalog' ||
+          payload.compositionRevision !== composition.composition.revision ||
+          !isAssertionSubject(payload.subject)
+        ) {
+          return HttpServerResponse.text('Delegated gateway context refused by the fixture Shell', { status: 403 });
+        }
+        const issued = yield* catalogAssertion1225;
+        return yield* HttpServerResponse.json({
+          apiBaseUrl: catalogPath1225,
+          compositionRevision: payload.compositionRevision,
+          // The owner assertion carries its own expiry; this only keeps the delegated answer live.
+          expiresAt: 2_000_000_000,
+          token: Redacted.value(issued.credential).replace(/^Bearer /u, ''),
+        });
+      }),
+    );
+    const shellAddress1225 = yield* Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Int }))(shell1225.address);
+    const callerShell1225 = yield* Layer.build(
+      ConfigProvider.layerAdd(
+        ConfigProvider.fromUnknown({
+          ONTOS_GATEWAY_MODULE_API_KEY: 'pricing-module-api-key-1225',
+          ONTOS_SHELL_GATEWAY_BASE_URL: new URL(
+            shellGatewayContextContract.apiPrefix,
+            `http://127.0.0.1:${shellAddress1225.port}`,
+          ).toString(),
+        }),
+        { asPrimary: true },
+      ),
+    );
+    // The joined read is served for a redeemed Pricing assertion, so its handler can act for this
+    // requester toward Catalog; a spread copy of the manager would carry no gateway provenance.
+    const joinedPrincipal1225 = trustVerifiedGatewayPrincipalContext(
+      { ...fixture.manager, legalEntityId: fixture.legalEntityId },
+      composition.composition.revision,
+      { assertion: Redacted.make('TEST:1225:redeemed-pricing-assertion'), audience: 'pricing' },
+    );
     const live1225 = makeCurrentPricingDecisionExternalOwnerEvidenceLivePort(
       {
         compositionRevision: composition.composition.revision,
         legalEntityId: fixture.legalEntityId,
         requestCorrelation: 'TEST:1225:joined',
+        scope: verifiedTestScope({
+          correlationId: 'TEST:1225:joined',
+          legalEntityId: fixture.legalEntityId,
+          principalId: wholeCandidatePrincipalId,
+          tenantId: fixture.tenantId,
+        }),
         tenantId: fixture.tenantId,
       },
       {
         applicationComposition: { load: Effect.succeed(composition) },
         catalog: {
+          acquire: issuer1225,
           execute: (payload, credential, correlation, options) =>
             executePricingPurposeEquivalenceWithAuthorization(
               payload,
@@ -2162,21 +2300,18 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
               correlation,
               options,
             ),
-          issuer: issuer1225,
         },
         customerContext: {
+          acquire: () => Effect.die('Guest does not request Profile credentials'),
           execute: () => Effect.die('Guest does not request Profile evidence'),
-          issuer: { issue: () => Effect.die('Guest does not request Profile credentials') },
         },
         market: {
+          acquire: () =>
+            Effect.succeed({
+              baseUrl: new URL('http://127.0.0.1:1225'),
+              credential: Redacted.make('TEST:1225:declared-market-prerequisite'),
+            }),
           execute: (payload) => declaredMarketPrerequisite1225(payload, nativeClock),
-          issuer: {
-            issue: () =>
-              Effect.succeed({
-                baseUrl: new URL('http://127.0.0.1:1225'),
-                credential: Redacted.make('TEST:1225:declared-market-prerequisite'),
-              }),
-          },
         },
         validation: makePricingExternalOwnerEvidenceValidationService(),
       },
@@ -2264,21 +2399,20 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
       const result = yield* runtime
         .runRead({
           input: { ...firstPrice, effectiveAt: operationTime, quantity: '1', wholeRequest: request },
-          principal: { ...fixture.manager, legalEntityId: fixture.legalEntityId },
+          principal: joinedPrincipal1225,
           registration: componentRead,
           transport: { correlationId: yield* nextId },
         })
         .pipe(
           Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
           Effect.provideService(JoinedPrerequisites1225, {
-            catalogIssuer: issuer1225,
             external: live1225,
             observe: (value) => {
               observed.push(value);
             },
             purchaseContextEvidence,
           }),
-          Effect.provideContext(readContext),
+          Effect.provideContext(Context.merge(callerShell1225, readContext)),
         );
       const total = yield* Schema.decodeUnknownEffect(Schema.toType(PricingCommercialTotalReadySchema))(result);
       expect(total.pricingNetCommercialTotal).toEqual({ amount: scenario.expectedTotal, currencyCode: 'CZK' });
@@ -2347,15 +2481,16 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
         subject: request.subject,
       };
       const gateway = makePricingCurrentDecisionCatalogOwnerFinalFenceGateway({
+        acquire: issuer1225,
         equivalence: (payload, credential, correlation, options) =>
           executePricingPurposeEquivalenceWithAuthorization(payload, Redacted.value(credential), correlation, options),
-        issuer: issuer1225,
         quantity: (payload, credential, correlation, options) =>
           executeQuantityBasisCompatibilityWithAuthorization(payload, Redacted.value(credential), correlation, options),
       });
       const retainedPhaseInput = {
         candidateRef,
         compositionRevision: composition.composition.revision,
+        scope: wholeCandidateScope,
         sources,
         typedSources,
         verificationContext,
@@ -2377,6 +2512,7 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
             candidateRef,
             compositionRevision: composition.composition.revision,
             observations: phaseOne.observations,
+            scope: wholeCandidateScope,
             through: phaseOne.completedAt,
             typedSources,
             verificationContext,
@@ -2399,6 +2535,7 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
         candidateRef,
         compositionRevision: composition.composition.revision,
         observations: phaseOne.observations,
+        scope: wholeCandidateScope,
         through: phaseOne.completedAt,
         typedSources,
         verificationContext,
@@ -2526,14 +2663,13 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
     const freshFailure = yield* runtime
       .runRead({
         input: { ...firstPrice, effectiveAt: freshPricingAt, quantity: '1', wholeRequest: freshWholeRequest },
-        principal: { ...fixture.manager, legalEntityId: fixture.legalEntityId },
+        principal: joinedPrincipal1225,
         registration: componentRead,
         transport: { correlationId: yield* nextId },
       })
       .pipe(
         Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(composition) }),
         Effect.provideService(JoinedPrerequisites1225, {
-          catalogIssuer: issuer1225,
           external: live1225,
           observe: (value) => {
             freshObserved.push(value);
@@ -2547,7 +2683,7 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
             },
           },
         }),
-        Effect.provideContext(readContext),
+        Effect.provideContext(Context.merge(callerShell1225, readContext)),
         Effect.flip,
       );
     expect(Schema.is(ReadHandlerUnavailable)(freshFailure)).toBe(true);

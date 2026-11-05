@@ -1,14 +1,22 @@
 import type {
-  ContextAccessService,
   InstalledModuleCatalog,
   ModuleEntrypointAccess,
   OntosShellContributions,
+  OperationalScope,
   TenantModuleStateServiceContract,
 } from '@app/core-runtime';
 import { decideModuleStateAccess, isReservedShellRouteRoot } from '@app/core-runtime';
-import { Context, Effect, Layer, Schema } from 'effect';
+import type { GateInput } from '@app/core-runtime/access/enforcement';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
 import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/api.ts';
+import type { ShellAccessGate } from './shell-access-decisions.ts';
+import {
+  isScopeMismatch,
+  isVisibleDecision,
+  shellAccessOutcome,
+  shellLegalEntityScope,
+} from './shell-access-decisions.ts';
 import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
@@ -35,15 +43,12 @@ const ShellCompositionUnavailableErrorConstructor = Schema.TaggedError<ShellComp
 );
 export { ShellCompositionUnavailableErrorConstructor as ShellCompositionUnavailableError };
 
-export interface ShellCompositionContext {
-  readonly legalEntityId?: string;
-  readonly principalId: string;
-  readonly tenantId: string;
-}
+/** Every Shell composition question is asked of the trusted request scope, never of loose ids (O66). */
+export type ShellCompositionContext = OperationalScope;
 
 export interface ShellCompositionSources {
+  readonly access: ShellAccessGate;
   readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
-  readonly contextAccess: Pick<ContextAccessService, 'modules'>;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
 
@@ -217,72 +222,117 @@ const resolvePageSelection = (catalog: InstalledModuleCatalog, input: ShellModul
     : selected;
 };
 
-const resolveTargetPermission = Effect.fn('ShellComposition.resolveTargetPermission')(function* resolveTargetPermission(
-  sources: ShellCompositionSources,
-  context: ShellCompositionContext & {
-    readonly legalEntityId: string;
-    readonly moduleId: string;
-  },
-) {
-  const [permission, ...unexpected] = yield* sources.contextAccess.modules({
-    legalEntityId: context.legalEntityId,
-    moduleIds: [context.moduleId],
-    principalId: context.principalId,
-    tenantId: context.tenantId,
-  });
-  if (unexpected.length > 0 || permission === undefined || permission.key !== context.moduleId) {
-    return { outcome: 'unavailable' } as const;
-  }
-  if (permission.decision === 'unavailable') {
-    return { outcome: 'unavailable' } as const;
-  }
-  if (permission.decision === 'denied') {
-    return { outcome: 'forbidden' } as const;
-  }
-  return null;
+/**
+ * One page open, or one navigation item, as the access gate asks it: the contribution's own
+ * declaration (one entrypoint, one capability), in the context that contribution belongs to.
+ */
+const pageGateInput = (scope: ShellCompositionContext, page: ShellPageContribution, now: Date): GateInput => ({
+  carrier: { accessDeclaration: page.accessDeclaration },
+  legalEntityScope: shellLegalEntityScope(page.accessDeclaration),
+  now,
+  scope,
 });
+
+/**
+ * Only a protected page is asked of the gate (CUTOVER-PLAN §3.2): a page that is merely
+ * `authenticated_principal` or `public` carries no declaration and is visible to any authenticated
+ * person, exactly as it was before the cutover. Asking the gate for it would turn a missing
+ * declaration into a denial the classification never asked for.
+ */
+const isProtectedPage = (page: ShellPageContribution): boolean => page.entrypoint.authorization.kind === 'protected';
 
 export const makeShellComposition = (sources: ShellCompositionSources) => {
   const compose = Effect.fn('makeShellComposition.compose')(function* composeShellEffect(
     context: ShellCompositionContext,
   ) {
-    if (context.legalEntityId === undefined) {
-      return { navigation: [], state: 'selection_required' } as const;
-    }
     const catalog = yield* loadCatalog(sources);
     const { moduleIds } = catalog;
     const records = yield* loadStates(sources, context, moduleIds);
     const states = new Map(records.map(({ moduleKey, state }) => [moduleKey, state]));
-    const decisions = yield* sources.contextAccess.modules({
-      legalEntityId: context.legalEntityId,
-      moduleIds,
-      principalId: context.principalId,
-      tenantId: context.tenantId,
-    });
-    if (decisions.length !== moduleIds.length || decisions.some(({ key }, index) => key !== moduleIds[index])) {
-      return yield* new ShellCompositionUnavailableErrorConstructor();
-    }
-    const permissionByModule = new Map(decisions.map(({ decision, key }) => [key, decision]));
     const pages = pageByContributionKey(catalog);
-    const navigation = catalog.contracts.flatMap((contract) => {
+    const entries = catalog.contracts.flatMap((contract) => {
       const moduleId = contract.manifest.module.id;
       const state = states.get(moduleId);
-      const permission = permissionByModule.get(moduleId);
-      if (state === undefined || !isVisibleState(state) || permission === undefined || permission === 'denied') {
+      if (state === undefined || !isVisibleState(state)) {
         return [];
       }
-      return contract.manifest.publicSurface.shellContributions.navigation.map((contribution) => {
-        const page = pages.get(contribution.pageKey);
-        const unavailable = permission === 'unavailable' || page === undefined;
-        return withOptionalProperty(
-          {
-            appId: contract.deployment.appId,
-            enabled: !unavailable,
-            groupKey: contribution.groupKey,
-          },
-          !unavailable,
+      return contract.manifest.publicSurface.shellContributions.navigation.map((contribution) => ({
+        contract,
+        contribution,
+        moduleId,
+        page: pages.get(contribution.pageKey),
+        state,
+      }));
+    });
+    const now = yield* DateTime.nowAsDate;
+    const gated = entries.flatMap((entry) =>
+      entry.page === undefined || !isProtectedPage(entry.page) ? [] : [{ ...entry, page: entry.page }],
+    );
+    // One page composition, one engine snapshot: every protected navigation item travels in ONE
+    // CheckBulk (CUTOVER-PLAN §5.3 risk 6, E-BATCH), never one decision call per navigation button.
+    const decisions = yield* sources.access.decideMany(gated.map(({ page }) => pageGateInput(context, page, now)));
+    if (decisions.length !== gated.length) {
+      return yield* new ShellCompositionUnavailableErrorConstructor();
+    }
+    const decisionOf = new Map(
+      gated.flatMap((entry, index) => {
+        const decision = decisions[index];
+        return decision === undefined ? [] : [[String(entry.contribution.contributionKey), decision] as const];
+      }),
+    );
+    const navigation = entries.flatMap(({ contract, contribution, moduleId, page, state }) => {
+      if (page === undefined) {
+        // A navigation item whose page contribution is absent stays visible but unavailable.
+        return [
+          withOptionalProperty(
+            { appId: contract.deployment.appId, enabled: false, groupKey: contribution.groupKey },
+            false,
+            'href',
+            '',
+            {
+              label: contract.manifest.module.displayName,
+              moduleId,
+              order: Number(contribution.order),
+              state,
+              unavailable: true,
+              writable: state === 'active',
+            },
+          ),
+        ];
+      }
+      if (!isProtectedPage(page)) {
+        // An unprotected page carries no capability to ask: it is visible whenever the module is
+        // installed and its contribution resolves (CUTOVER-PLAN §3.2).
+        return [
+          withOptionalProperty(
+            { appId: contract.deployment.appId, enabled: true, groupKey: contribution.groupKey },
+            true,
+            'href',
+            page.routePath,
+            {
+              label: contract.manifest.module.displayName,
+              moduleId,
+              order: Number(contribution.order),
+              state,
+              unavailable: false,
+              writable: state === 'active',
+            },
+          ),
+        ];
+      }
+      const decision = decisionOf.get(String(contribution.contributionKey));
+      const unavailable = decision === undefined || decision.outcome === 'UNAVAILABLE';
+      if (!unavailable && decision !== undefined && !isVisibleDecision(decision)) {
+        // A definite denial contributes no navigation at all.
+        return [];
+      }
+      const enabled = !unavailable && decision?.outcome === 'ALLOWED';
+      return [
+        withOptionalProperty(
+          { appId: contract.deployment.appId, enabled, groupKey: contribution.groupKey },
+          enabled,
           'href',
-          page?.routePath ?? '',
+          page.routePath,
           {
             label: contract.manifest.module.displayName,
             moduleId,
@@ -291,9 +341,20 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
             unavailable,
             writable: state === 'active',
           },
-        );
-      });
+        ),
+      ];
     });
+    if (
+      navigation.length === 0 &&
+      gated.length > 0 &&
+      gated.every((entry) => {
+        const decision = decisionOf.get(String(entry.contribution.contributionKey));
+        return decision !== undefined && isScopeMismatch(decision);
+      })
+    ) {
+      // Nothing is visible because nothing was asked in a company context: ask for a company (O28).
+      return { navigation: [], state: 'selection_required' } as const;
+    }
     const composition = yield* Schema.decodeEffect(ShellCompositionSchema)({
       compositionRevision: catalog.composition.revision,
       navigation: navigation.toSorted(
@@ -335,9 +396,6 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
       readonly moduleId?: string;
     },
   ) {
-    if (context.legalEntityId === undefined) {
-      return { outcome: 'selection_required' } as const;
-    }
     const catalog = yield* loadCatalog(sources);
     if (input.compositionRevision !== undefined && input.compositionRevision !== catalog.composition.revision) {
       return { outcome: 'reload_required' } as const;
@@ -376,14 +434,12 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     if (decideModuleStateAccess(state, access) === 'deny') {
       return { outcome: 'not_found' } as const;
     }
-    const permission = yield* resolveTargetPermission(sources, {
-      legalEntityId: context.legalEntityId,
-      moduleId,
-      principalId: context.principalId,
-      tenantId: context.tenantId,
-    });
-    if (permission !== null) {
-      return permission;
+    const now = yield* DateTime.nowAsDate;
+    if (isProtectedPage(page)) {
+      const outcome = shellAccessOutcome(yield* sources.access.decide(pageGateInput(context, page, now)));
+      if (outcome !== 'allowed') {
+        return { outcome } as const;
+      }
     }
     return {
       appId: contract.deployment.appId,

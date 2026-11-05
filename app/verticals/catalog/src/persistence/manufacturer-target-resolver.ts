@@ -1,12 +1,12 @@
 import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { PartyDetailResponse } from '@app/party-registry/api/client';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import type { LegalEntityRef } from '@app/core-runtime/resources/legal-entity';
 import { requireModuleOperation, legalEntityDetailRead } from '@app/core-runtime';
 import type { OperationalScope, ReadRuntimeService } from '@app/core-runtime';
-import { Redacted, Effect, Option, Predicate, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import type { Crypto } from 'effect';
-import { acquireOwnerGatewayContext } from '../integrations/server-owner-gateway.ts';
 
 import type { ManufacturerTarget } from '../../shared/domain/manufacturer-relation.ts';
 import { ManufacturerTargetAbsent } from './manufacturer-target-absent.ts';
@@ -217,14 +217,19 @@ export const manufacturerTargetResolverForCoreRead = (
           Object.defineProperty(new ManufacturerTargetUnavailable(), 'cause', { configurable: true, value: cause }),
         ),
         Effect.flatMap(() =>
-          acquireOwnerGatewayContext(scope, crypto, {
-            audience: 'party-registry',
-            operationKey: 'party.registry.api.party-detail',
-          }),
+          acquireDelegatedGatewayContext(
+            {
+              audience: 'party-registry',
+              legalEntityScope: 'subject',
+              requestCorrelation: scope.correlationId,
+              subject: { _tag: 'Assertion', scope },
+            },
+            crypto,
+          ),
         ),
         Effect.flatMap((issued) =>
-          executePartyDetailWithAuthorization(payload, Redacted.value(issued.authorization), scope.correlationId, {
-            baseUrl: issued.apiUrl,
+          executePartyDetailWithAuthorization(payload, issued.authorization, scope.correlationId, {
+            baseUrl: issued.apiBaseUrl,
             compositionRevision: issued.compositionRevision,
           }),
         ),

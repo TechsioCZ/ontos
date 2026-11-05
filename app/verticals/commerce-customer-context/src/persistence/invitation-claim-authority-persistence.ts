@@ -1,8 +1,5 @@
-import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
-import type { CustomerPermissionTarget } from '../permissions/authorization.ts';
 import { defineScopedRoutine } from '@app/core-runtime';
 import type {
-  ContextAccessService,
   OperationalScope,
   ScopedRoutineDefinition,
   ScopedRoutineInputValues,
@@ -253,24 +250,8 @@ const counterpartyRef = (tenantId: string, resourceId: string): CounterpartyRef 
 const proofReference = (value: string) =>
   Schema.decodeEffect(InvitationClaimProofReferenceSchema)(value).pipe(Effect.mapError(unavailable));
 
-const invitationTarget = (
-  tenantId: string,
-  legalEntityId: string,
-  counterpartyId: string,
-  scope: CounterpartyPermissionScope,
-): CustomerPermissionTarget =>
-  scope.kind === 'counterparty'
-    ? { counterpartyId, kind: 'counterparty', legalEntityId, tenantId }
-    : {
-        counterpartyId,
-        kind: 'counterparty_storefront',
-        legalEntityId,
-        storefrontId: scope.storefrontKey,
-        tenantId,
-      };
-
 const requireInviterAuthority = (
-  ownerScope: Pick<ClaimAuthorityOwnerScope, 'contextAccess' | 'currentOwnerAccess'>,
+  ownerScope: Pick<ClaimAuthorityOwnerScope, 'currentOwnerAccess'>,
   input: {
     readonly counterpartyRef: CounterpartyRef;
     readonly inviter: PrincipalRef;
@@ -278,49 +259,9 @@ const requireInviterAuthority = (
     readonly scope: CounterpartyPermissionScope;
   },
 ): Effect.Effect<void, CounterpartyAccessDomainError> => {
-  const check = ownerScope.contextAccess.ownerPermissions;
-  if (check === undefined) {
-    return Effect.fail(unavailable());
-  }
-  const target = {
-    legalEntityId: input.legalEntityId,
-    principal: input.inviter,
-    targets: [
-      {
-        target: customerOwnerPermissionTarget({
-          permission: accessManagementPermission,
-          target: invitationTarget(
-            input.counterpartyRef.tenantId,
-            input.legalEntityId,
-            input.counterpartyRef.resourceId,
-            input.scope,
-          ),
-        }),
-      },
-    ],
-  };
-  const checked =
-    input.scope.kind === 'storefront'
-      ? check({ ...target, trustedStorefrontId: input.scope.storefrontKey })
-      : check(target);
-  const verifyCoreAuthority = checked.pipe(
-    Effect.flatMap(([decision]) => {
-      if (decision?.decision === 'allowed') {
-        return Effect.void;
-      }
-      return Effect.fail(
-        decision?.decision === 'denied'
-          ? violation(
-              'inviter_authority_denied',
-              'The invitation grantor no longer has current administrative authority',
-            )
-          : unavailable(),
-      );
-    }),
-  );
   if (ownerScope.currentOwnerAccess === undefined) {
-    // Invitation authority is owner-governed. Missing current-owner state must fail closed;
-    // Core's relationship projection is not a substitute for the owner grant ledger.
+    // Invitation authority is owner-governed (O67-Q1). Missing current-owner state must fail
+    // closed: the owner's grant ledger is the only authority there is.
     return Effect.fail(unavailable());
   }
   return ownerScope
@@ -332,7 +273,7 @@ const requireInviterAuthority = (
       scope: input.scope,
     })
     .pipe(
-      Effect.flatMap((decision) => {
+      Effect.flatMap((decision): Effect.Effect<void, CounterpartyAccessDomainError> => {
         if (decision === 'DENIED') {
           return Effect.fail(
             violation(
@@ -344,7 +285,7 @@ const requireInviterAuthority = (
         if (decision === 'UNAVAILABLE') {
           return Effect.fail(unavailable());
         }
-        return verifyCoreAuthority;
+        return Effect.void;
       }),
     );
 };
@@ -356,7 +297,6 @@ interface ProofLifecycleOwnerScope {
 }
 
 interface ClaimAuthorityOwnerScope {
-  readonly contextAccess: Pick<ContextAccessService, 'ownerPermissions'>;
   readonly crypto: Crypto.Crypto;
   readonly currentOwnerAccess?: CurrentOwnerAccessDecisionReader | undefined;
   readonly transaction: InvitationClaimScopedRoutineInvoker;
@@ -513,7 +453,7 @@ const validateConsumption = Effect.fn('InvitationClaimAuthorityPersistence.valid
 export const verifyCounterpartyInvitationClaimAuthorityForOwnerScope = Effect.fn(
   'InvitationClaimAuthorityPersistence.verifyClaimAuthority',
 )(function* verifyClaimAuthority(
-  ownerScope: Pick<ClaimAuthorityOwnerScope, 'contextAccess' | 'currentOwnerAccess' | 'transaction'>,
+  ownerScope: Pick<ClaimAuthorityOwnerScope, 'currentOwnerAccess' | 'transaction'>,
   input: CounterpartyInvitationClaimPreflightInput,
 ): Effect.fn.Return<void, CounterpartyAccessDomainError> {
   yield* validatePreflightTenant(input);
@@ -657,14 +597,12 @@ const claimAuthorityForOwnerScope = (
 
 export const counterpartyInvitationClaimServicesForTransaction = (
   transaction: InvitationClaimScopedRoutineInvoker,
-  contextAccess: Pick<ContextAccessService, 'ownerPermissions'>,
   crypto: Crypto.Crypto,
   delivery: { readonly stage: ProofLifecycleOwnerScope['stageDelivery'] },
   currentOwnerAccess?: CurrentOwnerAccessDecisionReader,
 ) =>
   Object.freeze({
     claimAuthority: claimAuthorityForOwnerScope({
-      contextAccess,
       crypto,
       currentOwnerAccess,
       transaction,

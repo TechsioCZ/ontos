@@ -10,7 +10,7 @@ import {
 
 const projectOwnerCandidatesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'projects.core.api.project-owner-candidates',
   moduleKey: 'projects.core',
   role: 'api',
@@ -18,6 +18,30 @@ const projectOwnerCandidatesEntrypoint = defineTenantModuleEntrypoint({
 
 export const projectOwnerCandidatesRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'projects.core.project.owner-candidates.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'projects', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    // O83 (audit A1): candidate names identify people who are not the caller, so the search returns
+    // them only to a holder of this class (O2, O19). The opaque principal ids stay as references. The
+    // path is the runtime's projection path: an array path applies to every element (Core's field
+    // projection), which is the same set of fields the decision names as `candidates[].displayName`.
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: ['candidates.displayName'],
+        key: 'projects.core.project.owner-candidates.personal.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
     entrypoint: projectOwnerCandidatesEntrypoint,
     evidencePolicy: {
@@ -27,32 +51,19 @@ export const projectOwnerCandidatesRead = defineRead(
     inputSchema: ProjectOwnerCandidatesRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'projects.core',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'projects.core.api.project-owner-candidates',
     resultSchema: ProjectOwnerCandidatesResponseSchema,
     schemaVersion: '1',
   },
   (input, context: ReadHandlerContext<Effect.Success<ReturnType<typeof projectOwnerEligibilityService>>>) =>
-    context.services.candidates(input.prefix, input.query).pipe(
+    context.services.candidates(input.query).pipe(
       Effect.catchTag('PrincipalCandidatesUnavailable', () =>
         Effect.fail(
           new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner candidates are unavailable' }),
         ),
       ),
-      Effect.flatMap((results) => {
-        if (results.some(({ decision }) => decision === 'unavailable')) {
-          return Effect.fail(
-            new ReadHandlerUnavailable({
-              code: 'read_handler_unavailable',
-              reason: 'Owner eligibility is unavailable',
-            }),
-          );
-        }
-        const candidates = results.flatMap(({ candidate, decision }) => (decision === 'allowed' ? [candidate] : []));
-        return Effect.succeed({ evidence: { resultCount: candidates.length }, result: { candidates } });
-      }),
+      Effect.map((candidates) => ({ evidence: { resultCount: candidates.length }, result: { candidates } })),
     ),
   (transaction, scope) => projectOwnerEligibilityService(transaction, scope),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

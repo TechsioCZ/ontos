@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import { executeCustomerPriceGroupResolutionWithAuthorization } from '@app/commerce-customer-context/api/customer-price-group-resolution/client';
 import {
   PriceGroupAssignmentResolutionRequestSchema,
@@ -7,15 +8,12 @@ import type {
   PriceGroupAssignmentResolutionRequest,
   PriceGroupAssignmentResolutionResponse,
 } from '@app/pricing-contracts/domain/price-group-interpretation';
-import { Effect, Option, Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema, Crypto } from 'effect';
 
-import {
-  CommercePriceGroupResolutionGatewayCredentialService,
-  unavailableCommercePriceGroupResolutionGatewayCredentialIssuer,
-} from '../../shared/domain/commerce-price-group-resolution-gateway-credential.ts';
-import type { CommercePriceGroupResolutionGatewayCredentialIssuer } from '../../shared/domain/commerce-price-group-resolution-gateway-credential.ts';
 import { PriceGroupInterpretationDependencyFailure } from '../services/price-group-interpretation.service.ts';
 import type { CommercePriceGroupResolutionPort } from '../services/price-group-interpretation.service.ts';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
 type CommerceResolutionClientEffect = ReturnType<typeof executeCustomerPriceGroupResolutionWithAuthorization>;
 type CommerceResolutionClientFailure =
@@ -27,7 +25,7 @@ type CommerceResolutionExecutor = (
   options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<unknown, CommerceResolutionClientFailure>;
 
-const executeAuthorizedCommerceResolution: CommerceResolutionExecutor = (
+export const executeAuthorizedCommerceResolution: CommerceResolutionExecutor = (
   payload,
   credential,
   requestCorrelation,
@@ -59,15 +57,16 @@ const sameProfile = (
   left.resourceType === right.resourceType &&
   left.tenantId === right.tenantId;
 
-const makeCommerceResolutionPort = (dependencies: {
+export const makeCommerceResolutionPort = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
     readonly tenantId: string;
   };
   readonly execute: CommerceResolutionExecutor;
-  readonly issuer: CommercePriceGroupResolutionGatewayCredentialIssuer;
 }): CommercePriceGroupResolutionPort => ({
   resolve: Effect.fn('CommercePriceGroupResolutionPort.resolve')(function* resolve(input) {
     if (input.sellingLegalEntityId !== dependencies.context.legalEntityId) {
@@ -80,12 +79,13 @@ const makeCommerceResolutionPort = (dependencies: {
     if (payload.profile.tenantId !== dependencies.context.tenantId) {
       return yield* failure('UNVERIFIABLE', 'Commerce assignment request is outside the trusted Tenant');
     }
-    const { baseUrl, credential } = yield* dependencies.issuer
-      .issue({
+    const { baseUrl, credential } = yield* dependencies
+      .acquire({
         audience: 'commerce-customer-context',
         compositionRevision: dependencies.context.compositionRevision,
-        legalEntityId: dependencies.context.legalEntityId,
+        legalEntityScope: 'subject',
         requestCorrelation: dependencies.context.requestCorrelation,
+        scope: dependencies.context.scope,
       })
       .pipe(
         Effect.mapError((cause) =>
@@ -122,23 +122,22 @@ const makeCommerceResolutionPort = (dependencies: {
   }),
 });
 
-export const commercePriceGroupResolutionPortFromEnvironment = (
+export const commercePriceGroupResolutionPortFromEnvironment = Effect.fn(
+  'commercePriceGroupResolutionPortFromEnvironment',
+)(function* commercePriceGroupResolutionPortFromEnvironment(
   context: {
     readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
+    readonly scope: OperationalScope;
     readonly tenantId: string;
   },
   execute: CommerceResolutionExecutor = executeAuthorizedCommerceResolution,
-): Effect.Effect<CommercePriceGroupResolutionPort> =>
-  Effect.serviceOption(CommercePriceGroupResolutionGatewayCredentialService).pipe(
-    Effect.map((issuerOption) =>
-      makeCommerceResolutionPort({
-        context,
-        execute,
-        issuer: Option.isSome(issuerOption)
-          ? issuerOption.value
-          : unavailableCommercePriceGroupResolutionGatewayCredentialIssuer,
-      }),
-    ),
-  );
+): Effect.fn.Return<CommercePriceGroupResolutionPort, never, Crypto.Crypto> {
+  const crypto = yield* Crypto.Crypto;
+  return makeCommerceResolutionPort({
+    acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+    context,
+    execute,
+  });
+});

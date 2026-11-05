@@ -29,6 +29,12 @@ const originMatchesTenant = (origin: typeof SavedAddressOriginSchema.Type, tenan
   origin.kind === 'COMMERCE_ONLY' ||
   (origin.partyRef.tenantId === tenantId && origin.contactPointRef.tenantId === tenantId);
 
+/** A command that writes a Commerce-only address states its postal address; only reads may omit it (O58). */
+const originStatesItsPostalAddress = (origin: typeof SavedAddressOriginSchema.Type) =>
+  origin.kind !== 'COMMERCE_ONLY' || origin.postalAddress !== undefined
+    ? undefined
+    : 'A Commerce-only Saved Address must state its postal address';
+
 export const AddSavedAddressPayloadSchema = Schema.Struct({
   label: Schema.optional(AddressLabelSchema),
   origin: SavedAddressOriginSchema,
@@ -36,11 +42,12 @@ export const AddSavedAddressPayloadSchema = Schema.Struct({
   purposes: SavedAddressPurposesSchema,
   reason: AddressActionReasonSchema,
 }).check(
-  Schema.makeFilter(({ origin, profile }) =>
-    originMatchesTenant(origin, profileTenantId(profile))
-      ? undefined
-      : 'The address source and profile must belong to the same Tenant',
-  ),
+  Schema.makeFilter(({ origin, profile }) => {
+    if (!originMatchesTenant(origin, profileTenantId(profile))) {
+      return 'The address source and profile must belong to the same Tenant';
+    }
+    return originStatesItsPostalAddress(origin);
+  }),
 );
 export type AddSavedAddressPayload = typeof AddSavedAddressPayloadSchema.Type;
 export const AddSavedAddressResultSchema = Schema.Struct({
@@ -63,9 +70,10 @@ export const UpdateSavedAddressPayloadSchema = Schema.Struct({
     if (savedAddressRef.tenantId !== tenantId || (origin !== undefined && !originMatchesTenant(origin, tenantId))) {
       return 'The address, source, and profile must belong to the same Tenant';
     }
-    return sourceTransition === undefined || (origin !== undefined && sourceTransition.toKind === origin.kind)
-      ? undefined
-      : 'An explicit source transition must name the supplied address source as its target';
+    if (sourceTransition !== undefined && (origin === undefined || sourceTransition.toKind !== origin.kind)) {
+      return 'An explicit source transition must name the supplied address source as its target';
+    }
+    return origin === undefined ? undefined : originStatesItsPostalAddress(origin);
   }),
 );
 export type UpdateSavedAddressPayload = typeof UpdateSavedAddressPayloadSchema.Type;

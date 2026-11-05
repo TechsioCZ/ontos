@@ -36,7 +36,9 @@ import {
 } from '../../src/modules/tenant-module-state-service.ts';
 import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
 import { OperationAuthenticationRequired, OperationContextUnavailable } from '../../src/operations/errors.ts';
+import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { allowTenantPermissions, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
@@ -138,10 +140,10 @@ const cleanup = withDatabase((database) =>
       actionInvocations,
       principalAuthBindings,
       principals,
-      tenants,
     ]) {
       yield* database.executor.delete(table).where(inArray(table.tenantId, tenantIds));
     }
+    // Core retains access intent (D27): each Tenant's scope and fence, and so the Tenant, stay across runs.
   }),
 );
 
@@ -149,22 +151,25 @@ const setup = Effect.gen(function* initializeTenantModuleStateFixtures() {
   yield* cleanup;
   yield* withDatabase((database) =>
     Effect.gen(function* insertTenantModuleStateFixtures() {
-      yield* database.executor.insert(tenants).values([
-        {
-          defaultLocale: 'en',
-          name: 'Tenant module state one',
-          slug: `tenant-module-state-${tenantOne}`,
-          status: 'active',
-          tenantId: tenantOne,
-        },
-        {
-          defaultLocale: 'en',
-          name: 'Tenant module state two',
-          slug: `tenant-module-state-${tenantTwo}`,
-          status: 'active',
-          tenantId: tenantTwo,
-        },
-      ]);
+      yield* database.executor
+        .insert(tenants)
+        .values([
+          {
+            defaultLocale: 'en',
+            name: 'Tenant module state one',
+            slug: `tenant-module-state-${tenantOne}`,
+            status: 'active',
+            tenantId: tenantOne,
+          },
+          {
+            defaultLocale: 'en',
+            name: 'Tenant module state two',
+            slug: `tenant-module-state-${tenantTwo}`,
+            status: 'active',
+            tenantId: tenantTwo,
+          },
+        ])
+        .onConflictDoNothing();
       yield* database.executor.insert(principals).values([
         {
           displayName: 'Tenant module state principal one',
@@ -203,6 +208,9 @@ const setup = Effect.gen(function* initializeTenantModuleStateFixtures() {
           tenantId: tenantTwo,
         },
       ]);
+      // The governed module-state Action runs under each Tenant's real access fence.
+      yield* writeTestTenantScopes(database.executor, { principalId: principalOne, tenantId: tenantOne });
+      yield* writeTestTenantScopes(database.executor, { principalId: principalTwo, tenantId: tenantTwo });
     }),
   );
 });
@@ -213,7 +221,12 @@ const Fixtures = Layer.mergeAll(
   NodeCrypto.layer,
 );
 
-const moduleStateRuntimeOptions = { ...openActionRuntimeOptions, contextAccess: allowTenantPermissions };
+// The protected module-state Action decides at the one gate; this suite proves module state, not authority.
+const moduleStateRuntimeOptions = {
+  ...openActionRuntimeOptions,
+  accessDecision: makeScriptedBoundAccessGate('allowed').bound,
+  contextAccess: allowTenantPermissions,
+};
 
 const allowedPermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),

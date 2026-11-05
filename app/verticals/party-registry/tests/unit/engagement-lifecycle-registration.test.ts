@@ -52,11 +52,8 @@ for (const [slug, action, payloadSchema, resultSchema] of cases) {
     assert.equal(descriptor.resultSchema, resultSchema);
     assert.equal(descriptor.legalEntityScope, 'required');
     assert.equal(descriptor.idempotency, 'required');
-    assert.equal(descriptor.resourcePermission?.kind, 'resource');
+    assert.equal(descriptor.accessTarget === undefined, false);
     assert.equal(descriptor.entrypoint.access, 'write');
-    assert.deepEqual(descriptor.entrypoint.authorization, {
-      kind: 'action_execution',
-      provisioning: 'tenant_membership_default',
-    });
+    assert.deepEqual(descriptor.entrypoint.authorization, { kind: 'protected' });
   });
 }

@@ -63,7 +63,7 @@ const recoverCreateProductUnit = Effect.fn('CreateProductUnitRecoveryRead.recove
 
 const createProductUnitRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.create-product-unit-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.create-product-unit-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const createProductUnitRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const createProductUnitRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.create-product-unit-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-unit', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: createProductUnitRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const createProductUnitRecoveryRead = defineRead(
     inputSchema: CreateProductUnitRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.create-product-unit-recovery',
     resultSchema: CreateProductUnitRecoveryResponseSchema,
@@ -90,5 +97,4 @@ export const createProductUnitRecoveryRead = defineRead(
     recoverCreateProductUnit(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

@@ -176,7 +176,9 @@ it('declares tenant-authorized idempotent Actions and prevents value overwrite t
   for (const action of [addContactPointAction, updateContactPointAction, endContactPointAction]) {
     expect(action.descriptor.legalEntityScope).toBe('optional');
     expect(action.descriptor.idempotency).toBe('required');
-    expect(action.descriptor.tenantPermission).not.toBe(undefined);
+    expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(action.descriptor.accessDeclaration?.kind).toBe('action');
+    expect(action.descriptor.accessTarget).toBeDefined();
   }
   expect(() =>
     Schema.decodeSync(AddContactPointPayloadSchema)({
@@ -207,11 +209,17 @@ it('declares tenant-authorized idempotent Actions and prevents value overwrite t
     }),
   ).toThrow();
 });
-it('governs contact reads with tenant Party authority even when Legal Entity context is optional', () => {
-  for (const read of [partyContactPointsRead, partyContactPointDetailRead]) {
-    expect(read.descriptor.legalEntityScope).toBe('optional');
-    expect(read.descriptor.permissionTarget).toBe('tenant');
-  }
+it('governs contact reads with their own contact-point declarations even when Legal Entity context is optional', () => {
+  expect(partyContactPointsRead.descriptor.legalEntityScope).toBe('optional');
+  expect(partyContactPointDetailRead.descriptor.legalEntityScope).toBe('optional');
+  expect(partyContactPointDetailRead.descriptor.accessActor).toEqual({
+    callers: ['commerce-customer-context'],
+    reason: expect.any(String),
+    subject: 'rights',
+  });
+  expect(
+    [partyContactPointsRead, partyContactPointDetailRead].map((read) => read.descriptor.accessDeclaration?.key),
+  ).toEqual(['party.registry.contact-point.list', 'party.registry.contact-point.read']);
 });
 it('publishes stable references instead of mutable contact data', () => {
   const contactPointRef = {

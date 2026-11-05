@@ -57,10 +57,7 @@ describe('Commerce Customer Group contracts', () => {
     for (const action of actions) {
       expect(action.descriptor.idempotency).toBe('required');
       expect(action.descriptor.legalEntityScope).toBe('required');
-      expect(action.descriptor.entrypoint.authorization).toEqual({
-        kind: 'action_execution',
-        provisioning: 'explicit',
-      });
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
   });
 
@@ -82,9 +79,13 @@ describe('Commerce Customer Group contracts', () => {
     ).toThrow();
   });
 
-  it('declares exact Resource authorization for assignment and lifecycle changes', () => {
-    expect(assignCustomerGroupAction.descriptor.resourcePermission?.kind).toBe('resource');
-    expect(archiveCustomerGroupAction.descriptor.resourcePermission?.kind).toBe('resource');
+  it('declares one scope-wide capability for assignment and lifecycle changes', () => {
+    for (const action of [assignCustomerGroupAction, archiveCustomerGroupAction]) {
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      // Negative control: the per-record Resource target was removed, so the capability is scope-wide
+      // until targets/team selectors arrive (Q2, O62.4). The v2 declaration is the only carrier left.
+      expect(action.descriptor.accessDeclaration?.selectors).toEqual([]);
+    }
   });
 
   it('derives update classification instead of accepting caller semantic labels', () => {
@@ -134,21 +135,29 @@ describe('Commerce Customer Group contracts', () => {
   });
 
   it('uses governed resource reads and a distinct historical-read entrypoint', () => {
-    expect(customerGroupDetailRead.descriptor.permissionTarget).toBe('resource');
+    // The legacy Resource target is gone (O62.4): each read names its own v2 capability and declares
+    // no selectors, so the one gate decides the scope-wide capability itself.
+    expect(customerGroupDetailRead.descriptor.accessDeclaration?.key).toBe(
+      'commerce.customer-context.customer-group.read',
+    );
+    expect(customerGroupDetailRead.descriptor.accessDeclaration?.selectors).toEqual([]);
     expect(customerGroupMembersRead.descriptor.accessKind).toBe('list');
     expect(customerGroupHistoryRead.descriptor.entrypoint.access).toBe('historical_read');
-    expect(customerGroupHistoryRead.descriptor.entrypoint.authorization).toEqual({
-      kind: 'context_permission',
-      permission: 'customer.group.history.read',
-    });
-    expect(effectiveCustomerGroupMembershipsRead.descriptor.permissionTarget).toBe('resource');
-    expect(effectiveCustomerGroupMembershipSetV1Read.descriptor.permissionTarget).toBe('resource');
+    expect(customerGroupHistoryRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(effectiveCustomerGroupMembershipsRead.descriptor.accessDeclaration?.key).toBe(
+      'commerce.customer-context.customer-group-membership.read-effective',
+    );
+    expect(effectiveCustomerGroupMembershipSetV1Read.descriptor.accessDeclaration?.key).toBe(
+      'commerce.customer-context.customer-group-membership.read-set-v1',
+    );
     expect(effectiveCustomerGroupMembershipSetV1Read.descriptor.entrypoint.access).toBe('historical_read');
-    expect(verifyEffectiveCustomerGroupMembershipSetV1Read.descriptor.permissionTarget).toBe('resource');
+    expect(verifyEffectiveCustomerGroupMembershipSetV1Read.descriptor.accessDeclaration?.key).toBe(
+      'commerce.customer-context.customer-group-membership.verify-set-v1',
+    );
     expect(verifyEffectiveCustomerGroupMembershipSetV1Read.descriptor.entrypoint.access).toBe('historical_read');
 
     expect(customerGroupDetailRead.descriptor.accessKind).toBe('detail');
-    expect(customerGroupMembersRead.descriptor.permissionTarget).toBe('resource');
+    expect(customerGroupMembersRead.descriptor.accessDeclaration?.selectors).toEqual([]);
   });
 
   it('accepts caller-selected time only through the authorized history contract', () => {
@@ -168,10 +177,7 @@ describe('Commerce Customer Group contracts', () => {
     expect('effectiveAt' in currentMembers).toBe(false);
     expect(currentProfileGroups.asOf).toBe(callerTime);
     expect(historical.asOf).toBe(callerTime);
-    expect(effectiveCustomerGroupMembershipsRead.descriptor.entrypoint.authorization).toEqual({
-      kind: 'context_permission',
-      permission: 'customer.group.history.read',
-    });
+    expect(effectiveCustomerGroupMembershipsRead.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(customerGroupHistoryRead.descriptor.policies).toEqual([]);
     expect(effectiveCustomerGroupMembershipsRead.descriptor.policies).toEqual([]);
   });

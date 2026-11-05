@@ -84,10 +84,7 @@ const services = (
 });
 
 it('exposes an authenticated Guest-only contract without caller-authored policy inputs', () => {
-  expect(guestPaymentTermsResolutionEntrypoint.authorization).toEqual({
-    kind: 'context_permission',
-    permission: 'module.access',
-  });
+  expect(guestPaymentTermsResolutionEntrypoint.authorization).toEqual({ kind: 'protected' });
   expect(Schema.is(GuestPaymentTermsResolutionRequestSchema)(request)).toBe(true);
   expect('eligiblePaymentTermRefs' in GuestPaymentTermsResolutionRequestSchema.fields).toBe(false);
   expect('policyFallbackRefs' in GuestPaymentTermsResolutionRequestSchema.fields).toBe(false);

@@ -356,3 +356,10 @@ it.effect('rejects a changed independently assessed digest before persisting an 
     expect(persisted).toBe(false);
   }),
 );
+
+it('declares the Commerce Market Catalog recovery caller under the retiring user rights', () => {
+  expect(marketRetirementReservationRecoveryRead.descriptor.accessActor).toMatchObject({
+    callers: ['commerce-market-catalog'],
+    subject: 'rights',
+  });
+});

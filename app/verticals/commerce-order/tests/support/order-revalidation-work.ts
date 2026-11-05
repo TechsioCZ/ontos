@@ -71,11 +71,9 @@ export const runOrderRevalidation = Effect.fn('OrderRevalidationWork.run')(funct
       }),
   };
   const harness = yield* makeActionTestHarness({
-    actionPermission: 'allowed',
-    legalEntityPermission: 'allowed',
+    access: 'allowed',
     ownerRegistration: commerceOrderRegistration,
     services: [bindActionTestServices(revalidateOrderCommitmentAction, services)],
-    tenantPermission: 'allowed',
   });
   yield* harness.runtime
     .runAction({

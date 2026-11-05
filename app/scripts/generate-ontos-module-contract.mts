@@ -472,7 +472,12 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
     if (owner.manifest.publicSurface.operationContracts !== undefined) {
       Object.assign(publicSurface, { operationContracts: safeRuntime.operationContracts });
     }
-    const manifest = { activation: owner.manifest.activation, module: owner.manifest.module, publicSurface };
+    const manifest = {
+      activation: owner.manifest.activation,
+      module: owner.manifest.module,
+      originatorActions: owner.manifest.originatorActions ?? [],
+      publicSurface,
+    };
     if (safeRuntime.requirements !== undefined) {
       Object.assign(manifest, { requirements: safeRuntime.requirements });
     }

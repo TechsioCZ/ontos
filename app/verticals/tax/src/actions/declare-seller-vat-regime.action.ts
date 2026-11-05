@@ -58,6 +58,14 @@ export const handleDeclareSellerVatRegime = Effect.fn('DeclareSellerVatRegimeAct
 
 export const declareSellerVatRegimeAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.seller-vat-regime-declaration.declare',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'seller-vat-regime', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.tax.declare-seller-vat-regime.access.v1',
@@ -69,7 +77,7 @@ export const declareSellerVatRegimeAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.tax.declare-seller-vat-regime',
       moduleKey: 'commerce.tax',
       role: 'action',

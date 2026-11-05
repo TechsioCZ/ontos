@@ -43,6 +43,14 @@ const handle = (
 
 export const createNonHumanPrincipalAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'core.identity.principal.create-non-human',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.create-non-human-principal.access.v1',
@@ -53,10 +61,7 @@ export const createNonHumanPrincipalAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.create-non-human-principal',
       moduleKey: 'core.identity',
       role: 'action',
@@ -68,7 +73,6 @@ export const createNonHumanPrincipalAction = defineAction(
     policies: [],
     resultSchema: CreateNonHumanPrincipalResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handle,
   (transaction, scope) => {

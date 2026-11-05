@@ -2,12 +2,12 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug update-customer-group
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpdateCustomerGroupPayloadSchema, UpdateCustomerGroupResultSchema } from '../actions/update-customer-group.ts';
 
 export { UpdateCustomerGroupPayloadSchema } from '../actions/update-customer-group.ts';
-
 export const UpdateCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateCustomerGroupActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const UpdateCustomerGroupActionForbiddenProblemSchema = makeProblemDetail
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -146,7 +147,7 @@ export const updateCustomerGroupActionGroupDefinition = HttpApiGroup.make('updat
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/update-customer-group', {
       error: actionErrors,
       payload: Schema.toEncoded(UpdateCustomerGroupPayloadSchema),
-      success: UpdateCustomerGroupResultSchema,
+      success: [ActionProposalAcceptedSchema, UpdateCustomerGroupResultSchema],
     }),
   )
   .middleware(UpdateCustomerGroupActionSchemaErrorMiddleware);

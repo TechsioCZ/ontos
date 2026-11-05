@@ -41,9 +41,15 @@ const ActionIdempotencyKeyRequiredValue = actionErrorSchema('ActionIdempotencyKe
 export type ActionIdempotencyKeyRequired = InstanceType<typeof ActionIdempotencyKeyRequiredValue>;
 export { ActionIdempotencyKeyRequiredValue as ActionIdempotencyKeyRequired };
 
+/**
+ * A refusal of execution. `action_approval_required` is the same refusal for a person who may propose
+ * but not run the Action (O67-Q9): the generated HTTP runners already map this tag to 403, and the
+ * reason codes name exactly which cell was missing (`reasons`).
+ */
 const ActionPermissionDeniedValue = actionErrorSchema('ActionPermissionDenied', {
-  code: Schema.Literal('action_permission_denied'),
+  code: Schema.Literals(['action_approval_required', 'action_permission_denied']),
   ...safeReason,
+  reasons: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ActionPermissionDenied = InstanceType<typeof ActionPermissionDeniedValue>;
 export { ActionPermissionDeniedValue as ActionPermissionDenied };

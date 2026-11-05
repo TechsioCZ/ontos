@@ -72,12 +72,14 @@ All later business generators read the generated module-ID marker and patch only
 Use the category generator before authoring each supported public artifact:
 
 ```bash
-mise exec -- pnpm scaffold:microvertical-page -- --vertical property-registry --page overview --authorization context_permission --permission module.access [--url /custom/path]
-mise exec -- pnpm scaffold:public-component -- --vertical property-registry --name unit-card --authorization context_permission --permission module.access
-mise exec -- pnpm scaffold:module-api -- --vertical property-registry --name resource-api --authorization context_permission --permission module.access
-mise exec -- pnpm scaffold:search-provider -- --vertical property-registry --name unit-search --resource unit --authorization context_permission --permission resource.read
-mise exec -- pnpm scaffold:report -- --vertical property-registry --name unit-inventory --resource unit --authorization context_permission --permission resource.read
+mise exec -- pnpm scaffold:microvertical-page -- --vertical property-registry --page overview --authorization protected [--access-risk routine|sensitive|critical] [--url /custom/path]
+mise exec -- pnpm scaffold:public-component -- --vertical property-registry --name unit-card --authorization protected [--access-risk routine|sensitive|critical]
+mise exec -- pnpm scaffold:module-api -- --vertical property-registry --name resource-api --authorization protected [--access-risk routine|sensitive|critical]
+mise exec -- pnpm scaffold:search-provider -- --vertical property-registry --name unit-search --resource unit --authorization protected [--access-risk routine|sensitive|critical]
+mise exec -- pnpm scaffold:report -- --vertical property-registry --name unit-inventory --resource unit --authorization protected [--access-risk routine|sensitive|critical]
 ```
+
+An `--authorization protected` artifact carries an `accessDeclaration`; `--access-risk` (default `sensitive`) sets its risk tier and `--access-selectors` its record scopes. A search provider's manifest descriptor names the declaration key of its own governed search read in `accessKey`, so the Shell decides the provider through the same gate. The carrier contract is in [Granular Authorization](./AUTHORIZATION.md).
 
 The page name is a stable lower-kebab identity, while `--url` is an optional complete root-relative canonical-path override. When `--url` is omitted, Codesmith derives `/<microvertical>/<page>` from the validated MicroVertical slug. For example, `--vertical contacts --page customers` produces canonical `/contacts/customers`; the locale-aware Shell router exposes it as `/cs/contacts/customers` or `/en/contacts/customers`. Never include a locale prefix in `--url`. A generated page is private and non-indexable, contains only its localized title, and is loaded only after the authenticated Shell/Core gateway resolves that exact governed page entrypoint. Private metadata alone is not an authentication mechanism.
 

@@ -2,12 +2,12 @@
 // @ontos-action-http-owner payment.term-catalog
 // @ontos-action-http-slug create-payment-term
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { CreatePaymentTermPayloadSchema, CreatePaymentTermResultSchema } from '../actions/create-payment-term.ts';
 
 export { CreatePaymentTermPayloadSchema } from '../actions/create-payment-term.ts';
-
 export const CreatePaymentTermActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreatePaymentTermActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const CreatePaymentTermActionForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -132,7 +133,7 @@ export const CreatePaymentTermActionApi = HttpApi.make('CreatePaymentTermActionA
       HttpApiEndpoint.post('execute', '/payment-term-catalog/actions/create-payment-term', {
         error: actionErrors,
         payload: Schema.toEncoded(CreatePaymentTermPayloadSchema),
-        success: CreatePaymentTermResultSchema,
+        success: [ActionProposalAcceptedSchema, CreatePaymentTermResultSchema],
       }),
     )
     .middleware(CreatePaymentTermActionSchemaErrorMiddleware),

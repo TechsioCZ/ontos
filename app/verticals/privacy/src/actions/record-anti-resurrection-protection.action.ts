@@ -66,6 +66,14 @@ export const handleRecordAntiResurrectionProtection = Effect.fn('RecordAntiResur
 
 export const recordAntiResurrectionProtectionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.anti-resurrection-protection.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'privacy-measures', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-anti-resurrection-protection.access.v1',
@@ -77,7 +85,7 @@ export const recordAntiResurrectionProtectionAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-anti-resurrection-protection',
       moduleKey: 'privacy.core',
       role: 'action',

@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { OfficialIdentifierAssertionSchema } from '../domain/identifier-contracts.ts';
+import { OfficialIdentifierAssertionViewSchema } from '../domain/identifier-contracts.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const PartyOfficialIdentifierHistoryRequestSchema = Schema.Struct({
@@ -11,7 +11,7 @@ export const PartyOfficialIdentifierHistoryRequestSchema = Schema.Struct({
 });
 export type PartyOfficialIdentifierHistoryRequest = typeof PartyOfficialIdentifierHistoryRequestSchema.Type;
 export const PartyOfficialIdentifierHistoryResponseSchema = Schema.Struct({
-  items: Schema.Array(OfficialIdentifierAssertionSchema),
+  items: Schema.Array(OfficialIdentifierAssertionViewSchema),
 });
 export type PartyOfficialIdentifierHistoryResponse = typeof PartyOfficialIdentifierHistoryResponseSchema.Type;
 

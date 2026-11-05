@@ -3,6 +3,7 @@ import {
   STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY,
 } from '@app/core-runtime/install/stage-accounts-file';
 import type {
+  StageAccountRole,
   StageAccountsFile,
   StageAccountsFileContents,
   StageAccountsFileError,
@@ -36,7 +37,11 @@ export interface StageAccountResult {
   readonly authUser: 'created' | 'existing' | 'password-reset';
   readonly email: string;
   readonly legalEntityId: string;
+  /** The one account of its tenant that owns it: `bootstrapTenantAccess` creates the tenant for it. */
+  readonly owner: boolean;
   readonly principalId: string;
+  /** The roles the account holds beside its membership; today only the tenant's `full_access` role. */
+  readonly roles: readonly StageAccountRole[];
   readonly tenantId: string;
 }
 

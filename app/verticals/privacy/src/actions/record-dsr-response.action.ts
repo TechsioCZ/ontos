@@ -60,6 +60,14 @@ const handleRecordDsrResponse = Effect.fn('RecordDsrResponseAction.handle')(func
 });
 export const recordDsrResponseAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-response.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'privacy.core.record-dsr-response.access.v1' },
     actionKey: 'privacy.core.record-dsr-response',
     auditEvidenceSchema: PrivacyActionAuditEvidenceSchema,
@@ -68,7 +76,7 @@ export const recordDsrResponseAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-dsr-response',
       moduleKey: 'privacy.core',
       role: 'action',

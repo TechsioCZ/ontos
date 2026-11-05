@@ -18,6 +18,7 @@ import {
 } from '../../src/database/schema.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 import { makePurchasingApprovalNativeFixture } from '../support/purchasing-approval-native.ts';
+import { nativeTestDatabaseContainer } from '../support/native-test-database.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -36,7 +37,7 @@ const journalFingerprint = Effect.fn('ApprovalExpiry.journalFingerprint')(functi
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',
@@ -83,7 +84,7 @@ const copyOwnerBookkeeping = Effect.fn('ApprovalExpiry.copyOwnerBookkeeping')(
         '-i',
         '-e',
         'PGPASSWORD',
-        'ontos-db',
+        yield* nativeTestDatabaseContainer,
         'pg_dump',
         '--host',
         'localhost',
@@ -112,7 +113,7 @@ const copyOwnerBookkeeping = Effect.fn('ApprovalExpiry.copyOwnerBookkeeping')(
         '-i',
         '-e',
         'PGPASSWORD',
-        'ontos-db',
+        yield* nativeTestDatabaseContainer,
         'psql',
         '--host',
         'localhost',

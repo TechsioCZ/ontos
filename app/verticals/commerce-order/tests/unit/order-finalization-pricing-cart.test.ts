@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { FinalCartCandidateSchema } from '@app/commerce-cart-finalization-contracts/final-candidate';
@@ -6,6 +7,8 @@ import {
   ActiveApplicationCompositionSnapshotSchema,
 } from '@app/core-runtime/modules/active-application-composition';
 import { canonicalizeApplicationComposition } from '@app/core-runtime';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import { PricingCommitmentConfirmationBindingSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
 import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { TestClock } from 'effect/testing';
@@ -18,18 +21,27 @@ import {
   OrderFinalizationPricingCart,
   OrderFinalizationPricingCartLive,
 } from '../../src/integrations/order-finalization-pricing-cart.ts';
+import { ActionInvocationIdSchema, callAs } from '../../src/services/order-module-call.ts';
 
 const dependencies = rs.hoisted(() => ({
+  issueConfirmation: rs.fn<() => Effect.Effect<unknown>>(),
   issueGateway: rs.fn<() => Effect.Effect<unknown>>(),
+  verifyConfirmation: rs.fn<() => Effect.Effect<unknown>>(),
   verifyQuotation: rs.fn<() => Effect.Effect<unknown>>(),
 }));
 
 // Replace only the external owner clients, not Order's layer or its verification logic.
-rs.mock('@app/shared-contracts/server/gateway-context-api-key', () => ({
-  issueApiKeyGatewayContext: dependencies.issueGateway,
+rs.mock('@app/shared-contracts/gateway-context-server', () => ({
+  acquireDelegatedGatewayContext: dependencies.issueGateway,
 }));
 rs.mock('@app/pricing-contracts/quotation-verification/client', () => ({
   executeQuotationVerificationWithAuthorization: dependencies.verifyQuotation,
+}));
+rs.mock('@app/pricing-contracts/manage-commitment-confirmation/client', () => ({
+  executeManageCommitmentConfirmationWithAuthorization: dependencies.issueConfirmation,
+}));
+rs.mock('@app/pricing-contracts/commitment-confirmation/client', () => ({
+  executeCommitmentConfirmationVerificationWithAuthorization: dependencies.verifyConfirmation,
 }));
 
 const businessTime = '2026-10-24T11:59:00.000Z';
@@ -37,12 +49,18 @@ const operationTime = '2026-10-24T12:00:00.000Z';
 const verificationTime = '2026-10-24T12:00:02.000Z';
 const validUntil = '2026-10-24T13:00:00.000Z';
 const quotationRef = 'quotation:order-finalization';
-const scope = Schema.decodeUnknownSync(OrderFinalizationContextSchema)({
-  buyerPrincipalId: '11111111-1111-4111-8111-111111111111',
-  correlationId: 'order-quotation-verification',
-  legalEntityId: '22222222-2222-4222-8222-222222222222',
-  tenantId: '33333333-3333-4333-8333-333333333333',
-});
+const scope = callAs(
+  Schema.decodeUnknownSync(OrderFinalizationContextSchema)({
+    buyerPrincipalId: '11111111-1111-4111-8111-111111111111',
+    correlationId: 'order-quotation-verification',
+    legalEntityId: '22222222-2222-4222-8222-222222222222',
+    tenantId: '33333333-3333-4333-8333-333333333333',
+  }),
+  {
+    _tag: 'Originator',
+    actionInvocationId: Schema.decodeUnknownSync(ActionInvocationIdSchema)('80000000-0000-4000-8000-0000000000b2'),
+  },
+);
 const ref = (moduleId: string, resourceType: string, resourceId: string) => ({
   moduleId,
   resourceId,
@@ -192,12 +210,11 @@ const testLayer = OrderFinalizationPricingCartLive.pipe(
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
         ONTOS_COMMERCE_CART_API_BASE_URL: 'https://cart.unit.invalid',
-        ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: 'unit-api-key',
         ONTOS_PRICING_API_BASE_URL: 'https://pricing.unit.invalid',
-        ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.unit.invalid',
       }),
     ),
   ),
+  Layer.provide(NodeCrypto.layer),
 );
 
 // This owner-client double supplies the Quotation projection consumed by Order. Pricing's
@@ -244,9 +261,9 @@ const verify = (response: ReturnType<typeof ownerResponse> | ReturnType<typeof e
     dependencies.issueGateway.mockReturnValue(
       Effect.succeed({
         apiBaseUrl: '/pricing-api',
+        authorization: 'Bearer unit-pricing-assertion',
         compositionRevision: composition.revision,
         expiresAt: Date.parse(validUntil) / 1000,
-        token: 'unit-pricing-assertion',
       }),
     );
     dependencies.verifyQuotation.mockReset();
@@ -254,6 +271,62 @@ const verify = (response: ReturnType<typeof ownerResponse> | ReturnType<typeof e
     const service = yield* OrderFinalizationPricingCart;
     return yield* service.verifyQuotation({ candidate, quotationRef }, scope);
   }).pipe(Effect.provide(testLayer));
+
+it.effect('refuses a parked proposal instead of advancing confirmation verification', () =>
+  Effect.gen(function* proposalIsNotConfirmation() {
+    yield* TestClock.setTime(Date.parse(verificationTime));
+    dependencies.issueGateway.mockReset();
+    dependencies.issueGateway.mockReturnValue(
+      Effect.succeed({
+        apiBaseUrl: '/pricing-api',
+        authorization: 'Bearer unit-pricing-assertion',
+        compositionRevision: composition.revision,
+        expiresAt: Date.parse(validUntil) / 1000,
+      }),
+    );
+    dependencies.issueConfirmation.mockReset();
+    dependencies.issueConfirmation.mockReturnValue(
+      Schema.decodeUnknownEffect(ActionProposalAcceptedSchema)({
+        _tag: 'ActionProposalAccepted',
+        expiresAt: validUntil,
+        proposalId: '99999999-9999-4999-8999-999999999999',
+      }).pipe(Effect.orDie),
+    );
+    dependencies.verifyConfirmation.mockReset();
+    const binding = yield* Schema.decodeUnknownEffect(PricingCommitmentConfirmationBindingSchema)({
+      attemptRef: 'attempt:proposal-rejection',
+      decisionBundleHash: 'decision-bundle-hash',
+      decisionBundleRef: 'decision-bundle:proposal-rejection',
+      decisionBundleVersion: '1',
+      purchase: {
+        ...ownerResponse(operationTime).quotation.binding,
+        currencyCode: 'CZK',
+        lines: [{ occurrenceId: 'line:1', quantity: { amount: '1', unitRef }, selection }],
+        monetaryBoundary: 'PRE_TAX',
+        subject: {
+          kind: 'AUTHENTICATED',
+          purchaseContext: { contextRef: 'purchase:1', contextRevision: '1' },
+          subjectEvidenceRef: 'subject-evidence:1',
+          subjectRef: profileRef,
+        },
+      },
+    });
+    const service = yield* OrderFinalizationPricingCart;
+    const failure = yield* service
+      .issueAndVerifyQuotationConfirmation(
+        {
+          binding,
+          idempotencyKey: 'proposal-is-not-execution',
+          quotationRef,
+        },
+        scope,
+      )
+      .pipe(Effect.flip);
+    expect(failure.code).toBe('order_commitment_unavailable');
+    expect(dependencies.issueConfirmation).toHaveBeenCalledTimes(1);
+    expect(dependencies.verifyConfirmation).not.toHaveBeenCalled();
+  }).pipe(Effect.provide(testLayer)),
+);
 
 describe('Order finalization Quotation issuance time', () => {
   it.effect(
@@ -324,7 +397,7 @@ describe('Order finalization expired Quotation', () => {
 // replacements outlive this file and would leak into whatever runs next. Remove them and drop the
 // modules they replaced, so the next file evaluates the real implementations.
 afterAll(() => {
-  rs.doUnmock('@app/shared-contracts/server/gateway-context-api-key');
+  rs.doUnmock('@app/shared-contracts/gateway-context-server');
   rs.doUnmock('@app/pricing-contracts/quotation-verification/client');
   rs.resetModules();
 });

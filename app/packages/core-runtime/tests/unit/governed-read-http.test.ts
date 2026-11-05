@@ -32,6 +32,7 @@ import { ReadResultValidationError } from '../../src/reads/read-result-validatio
 import { ReadRuntime } from '../../src/reads/runtime.ts';
 import type { ReadRuntimeService } from '../../src/reads/runtime.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
+import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
 
 const problem = <const Kind extends string, const Status extends number>(kind: Kind, status: Status) => ({
   kind,
@@ -145,6 +146,7 @@ it('preserves the explicit Policy denial HTTP status', () => {
 
 const registration = defineRead(
   {
+    accessDeclaration: fixtureReadAccess('core.shell'),
     accessKind: 'detail',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',

@@ -63,7 +63,7 @@ const recoverReviseSetComposition = Effect.fn('ReviseSetCompositionRecoveryRead.
 
 const reviseSetCompositionRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.revise-set-composition-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.revise-set-composition-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const reviseSetCompositionRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const reviseSetCompositionRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.revise-set-composition-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'set-composition', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: reviseSetCompositionRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const reviseSetCompositionRecoveryRead = defineRead(
     inputSchema: ReviseSetCompositionRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.revise-set-composition-recovery',
     resultSchema: ReviseSetCompositionRecoveryResponseSchema,
@@ -92,5 +99,4 @@ export const reviseSetCompositionRecoveryRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

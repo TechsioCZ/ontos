@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug create-configuration-unit
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/create-configuration-unit.ts';
 
 export { CreateConfigurationUnitPayloadSchema } from '../actions/create-configuration-unit.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CreateConfigurationUnitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateConfigurationUnitActionInvalidProblem',
@@ -24,6 +26,7 @@ export const CreateConfigurationUnitActionForbiddenProblemSchema = makeProblemDe
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const CreateConfigurationUnitActionApi = HttpApi.make('CreateConfiguratio
       HttpApiEndpoint.post('execute', '/catalog/actions/create-configuration-unit', {
         error: actionErrors,
         payload: Schema.toEncoded(CreateConfigurationUnitPayloadSchema),
-        success: CreateConfigurationUnitResultSchema,
+        success: [ActionProposalAcceptedSchema, CreateConfigurationUnitResultSchema],
       }),
     )
     .middleware(CreateConfigurationUnitActionSchemaErrorMiddleware),

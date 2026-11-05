@@ -128,6 +128,14 @@ const handleChangePrincipalBindingStatus = Effect.fn('ChangePrincipalBindingStat
 
 export const changePrincipalBindingStatusAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'core.identity.principal-binding.change-status',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'identity', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'core.identity.change-principal-binding-status.access.v1',
@@ -139,7 +147,7 @@ export const changePrincipalBindingStatusAction = defineAction(
     domainEvents: principalBindingLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'core.identity.change-principal-binding-status',
       moduleKey: 'core.identity',
       role: 'action',
@@ -151,7 +159,6 @@ export const changePrincipalBindingStatusAction = defineAction(
     policies: [],
     resultSchema: ChangePrincipalBindingStatusResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
   },
   handleChangePrincipalBindingStatus,
   Effect.fn('ChangePrincipalBindingStatusAction.services')(function* makeServices(transaction) {

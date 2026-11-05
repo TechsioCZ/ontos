@@ -22,7 +22,7 @@ interface SellerVatRegimeHistoryServices {
 
 const sellerVatRegimeHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'tax.evidence.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.tax.api.seller-vat-regime-history',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -57,6 +57,14 @@ export const readSellerVatRegimeHistory = (
 
 export const sellerVatRegimeHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.seller-vat-regime-declaration.read-history',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'seller-vat-regime', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: sellerVatRegimeHistoryEntrypoint,
     evidencePolicy: {
@@ -66,7 +74,6 @@ export const sellerVatRegimeHistoryRead = defineRead(
     inputSchema: SellerVatRegimeHistoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.tax.api.seller-vat-regime-history',
     resultSchema: SellerVatRegimeHistoryResponseSchema,
@@ -74,5 +81,4 @@ export const sellerVatRegimeHistoryRead = defineRead(
   },
   readSellerVatRegimeHistory,
   (transaction, scope) => Effect.succeed({ declarations: sellerVatRegimeDeclarationsForScope(transaction, scope) }),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

@@ -48,6 +48,7 @@ export interface OutboxClaim {
   readonly deliveryId: string;
   readonly domainEventId: string;
   readonly messageId: string;
+  readonly originatorInvocationId?: string;
   readonly payloadJson: unknown;
   readonly producerModuleKey: string;
   readonly retryPolicy: OutboxWorkerRetryPolicy;
@@ -111,12 +112,14 @@ const loadClaimInvocationEvidence = Effect.fnUntraced(function* loadClaimInvocat
     })
     .from(actionInvocations)
     .where(and(eq(actionInvocations.actionInvocationId, actionInvocationId), eq(actionInvocations.tenantId, tenantId)));
+  // The event's own action invocation is the originator of asynchronous work: a call it makes acts for that requester (D7).
+  const originated = { originatorInvocationId: actionInvocationId };
   if (invocation === undefined) {
-    return {} as const;
+    return originated;
   }
   return withOptionalProperty(
     withOptionalProperty(
-      {},
+      originated,
       invocation.actorPrincipalId !== null,
       'actorPrincipalId',
       invocation.actorPrincipalId ?? '',

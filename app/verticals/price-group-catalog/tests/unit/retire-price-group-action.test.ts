@@ -1,7 +1,5 @@
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
-import type { OwnerPermissionAccessTarget } from '@app/core-runtime';
-
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -26,11 +24,6 @@ import type {
   PriceGroupCatalogPersistence,
   RetirePriceGroupInput,
 } from '../../src/persistence/price-group-catalog-persistence.ts';
-
-const permissionRequest = (targets: readonly OwnerPermissionAccessTarget[] | undefined) => {
-  const first = targets?.[0];
-  return first === undefined ? undefined : { permission: first.definition.key, target: first.target };
-};
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const compositionRevision = 'b'.repeat(64);
@@ -88,34 +81,16 @@ const services = (
   validateCompatibility: unused,
 });
 
-it('requires the exact Price Group permission from the payload and forbids Legal Entity scope', () => {
-  const resolve = getActionOwnerPermissionTargetResolver(retirePriceGroupAction);
+it('declares the retirement capability as scope-wide and forbids Legal Entity scope', () => {
   expect(retirePriceGroupAction.descriptor.legalEntityScope).toBe('forbidden');
-  expect(permissionRequest(resolve?.(payload, scope))).toEqual({
-    permission: 'pricing.price_group.retire',
-    target: {
-      kind: 'price_group',
-      priceGroupId: priceGroupRef.resourceId,
-      pricingCatalogId: tenantId,
-      tenantId,
-    },
+  expect(retirePriceGroupAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(retirePriceGroupAction.descriptor.accessDeclaration).toMatchObject({
+    key: 'pricing.price-group-catalog.price-group.retire',
+    kind: 'action',
+    selectors: [],
   });
-
-  const foreignTenantId = '88888888-8888-4888-8888-888888888888';
-  expect(
-    permissionRequest(
-      resolve?.(
-        {
-          ...payload,
-          expectedCurrent: {
-            ...payload.expectedCurrent,
-            priceGroupRef: { ...priceGroupRef, tenantId: foreignTenantId },
-          },
-        },
-        scope,
-      ),
-    ),
-  ).toMatchObject({ target: { pricingCatalogId: foreignTenantId, tenantId: foreignTenantId } });
+  // O67-Q2: retirement is decided by the one gate in the Tenant context, with no per-group target.
+  expect(getActionOwnerPermissionTargetResolver(retirePriceGroupAction)).toBeUndefined();
 });
 
 it.effect('persists a scheduled terminal transition and records separate trusted evidence with its linked outbox', () =>

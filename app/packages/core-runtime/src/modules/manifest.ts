@@ -2,6 +2,14 @@ import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from './manifest-constants.ts';
 import { Predicate, Result, Schema } from 'effect';
 import { HttpApi } from 'effect/http-api';
 
+import {
+  AccessDeclarationSchema,
+  AccessFieldGroupSchema,
+  AccessKeySyntaxSchema,
+  AccessActorSchema,
+  AccessWorkloadSchema,
+  accessCarrierIssue,
+} from '../authorization/access-declaration.ts';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
 import type { AnyReadRegistration } from '../reads/definition.ts';
@@ -11,6 +19,7 @@ import { BusinessPermissionDescriptorSchema, defineBusinessPermission } from '..
 import type { BusinessPermissionDescriptor } from '../permissions/business-permission.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
+import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 import {
   OntosModuleIdSchema,
@@ -89,6 +98,10 @@ export const OntosModuleActivationSchema = Schema.Struct({
 });
 
 export const OntosActionContractSchema = Schema.Struct({
+  accessActor: Schema.optionalKey(AccessActorSchema),
+  accessDeclaration: Schema.optionalKey(AccessDeclarationSchema),
+  accessFieldGroups: Schema.optionalKey(Schema.Array(AccessFieldGroupSchema)),
+  accessWorkload: Schema.optionalKey(AccessWorkloadSchema),
   actionKey: OntosModuleIdSchema,
   auditProfile: Schema.Literals(['minimal', 'sensitive', 'standard']),
   entrypoint: ModuleEntrypointSchema,
@@ -96,7 +109,7 @@ export const OntosActionContractSchema = Schema.Struct({
   legalEntityScope: Schema.Literals(['forbidden', 'optional', 'required']),
   owningModuleId: OntosModuleIdSchema,
   schemaVersion: Schema.String.check(Schema.isPattern(schemaVersionPattern)),
-});
+}).check(Schema.makeFilter((descriptor) => accessCarrierIssue(descriptor)));
 
 export const OntosApiContractSchema = Schema.Struct({
   key: OntosModuleIdSchema,
@@ -133,8 +146,20 @@ export const OntosPublicEventContractSchema = Schema.Struct({
 });
 
 export const OntosSearchDescriptorSchema = Schema.Struct({
+  /**
+   * The declaration key of the governed search read that backs this provider (CUTOVER-PLAN §3.2).
+   * The Shell decides the provider with `decideMany` over these keys instead of a coarse filter.
+   */
   accessFiltering: OntosAccessFilteringSchema,
+  accessKey: Schema.optionalKey(AccessKeySyntaxSchema),
   key: OntosModuleIdSchema,
+  /**
+   * The scope this provider's decision runs in (O78): the same vocabulary as the provider read's own
+   * `legalEntityScope`, which it must equal. A `tenant_scope` provider is `'optional'`, a
+   * resource-permission provider is `'required'`. Transitional while `accessFiltering` still exists;
+   * required once C03b removes it.
+   */
+  legalEntityScope: Schema.optionalKey(Schema.Literals(LEGAL_ENTITY_SCOPES)),
   owningModuleId: OntosModuleIdSchema,
   requestFilters: Schema.optionalKey(Schema.Array(Schema.Literals(['includeArchived', 'role']))),
   resourceType: OntosModuleIdSchema,
@@ -146,6 +171,8 @@ export const OntosReportDescriptorSchema = Schema.Struct({
   dimensions: Schema.Array(nonEmptyString),
   key: OntosModuleIdSchema,
   label: nonEmptyString,
+  /** The scope this report is decided in (O78); it must equal its report read's own scope. */
+  legalEntityScope: Schema.optionalKey(Schema.Literals(LEGAL_ENTITY_SCOPES)),
   owningModuleId: OntosModuleIdSchema,
   resourceTypes: Schema.Array(OntosModuleIdSchema),
 });
@@ -183,6 +210,11 @@ export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
 export const OntosSerializedModuleManifestSchema = Schema.Struct({
   activation: OntosModuleActivationSchema,
   module: OntosModuleIdentitySchema,
+  /**
+   * The Action keys whose recorded invocations this module may act for when it delegates an Originator
+   * subject. Absent means none: the Shell refuses every Originator delegation this module makes.
+   */
+  originatorActions: Schema.optionalKey(Schema.Array(OntosModuleIdSchema)),
   publicSurface: OntosSerializedPublicSurfaceSchema,
   requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
 }).check(
@@ -265,6 +297,8 @@ export interface OntosAuthoredPublicSurface {
 export interface OntosModuleManifestInput {
   readonly activation: OntosModuleActivation;
   readonly module: OntosModuleIdentity;
+  /** See `OntosSerializedModuleManifestSchema.originatorActions`. */
+  readonly originatorActions?: readonly string[];
   readonly publicSurface: OntosAuthoredPublicSurface;
   readonly requirements?: OntosModuleRequirements;
 }
@@ -419,7 +453,7 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
   input: Input,
   publicSurface: PublicSurface,
 ): void => {
-  assertExactKeys(input, ['activation', 'module', 'publicSurface', 'requirements'], 'manifest');
+  assertExactKeys(input, ['activation', 'module', 'originatorActions', 'publicSurface', 'requirements'], 'manifest');
   assertExactKeys(
     publicSurface,
     [
@@ -477,6 +511,10 @@ const validateSearchDescriptorReferences = (
   if ((descriptor.accessFiltering === 'tenant_scope') !== (descriptor.tenantPermission !== undefined)) {
     throw invalidManifest('tenant-scoped search requires exactly one explicit Tenant permission declaration');
   }
+  // O27: a search provider is decided by the declaration of a read in the same module.
+  if (descriptor.accessKey !== undefined && !descriptor.accessKey.startsWith(`${moduleId}.`)) {
+    throw invalidManifest(`search descriptor access key ${descriptor.accessKey} must belong to module ${moduleId}`);
+  }
   if (
     descriptor.requestFilters !== undefined &&
     new Set(descriptor.requestFilters).size !== descriptor.requestFilters.length
@@ -491,7 +529,7 @@ const validateSearchDescriptorReferences = (
  */
 export const defineOntosModuleManifest = <const Input extends OntosModuleManifestInput>(
   input: Input,
-): OntosModuleManifest<Input> => {
+): OntosModuleManifest<Input> & { readonly originatorActions: readonly string[] } => {
   validateOntosModuleManifestFields(input, input.publicSurface);
   exactDecode(OntosModuleIdentitySchema, input.module);
   exactDecode(OntosModuleActivationSchema, input.activation);
@@ -502,6 +540,8 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     throw invalidManifest('activation defaultState must be included in supportedStates');
   }
   assertUnique(input.activation.supportedStates, 'activation state');
+  const originatorActions = (input.originatorActions ?? []).map((key) => exactDecode(OntosModuleIdSchema, key));
+  assertUnique(originatorActions, 'originator Action key');
 
   validateOntosModuleExecutableReferences(
     input.publicSurface.actions,
@@ -637,6 +677,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     ...input,
     activation: freezePlain({ ...input.activation, supportedStates: [...input.activation.supportedStates] }),
     module: freezePlain({ ...input.module }),
+    originatorActions: Object.freeze(originatorActions),
     publicSurface: Object.freeze(publicSurface),
   };
   if (input.requirements !== undefined) {

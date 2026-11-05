@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug upsert-dsr-owner-task
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { UpsertDsrOwnerTaskPayloadSchema, UpsertDsrOwnerTaskResultSchema } from '../actions/upsert-dsr-owner-task.ts';
 
 export { UpsertDsrOwnerTaskPayloadSchema } from '../actions/upsert-dsr-owner-task.ts';
-
 export const UpsertDsrOwnerTaskActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpsertDsrOwnerTaskActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const UpsertDsrOwnerTaskActionForbiddenProblemSchema = makeProblemDetails
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const upsertDsrOwnerTaskActionGroupDefinition = HttpApiGroup.make('upsert
     HttpApiEndpoint.post('execute', '/privacy/actions/upsert-dsr-owner-task', {
       error: actionErrors,
       payload: Schema.toEncoded(UpsertDsrOwnerTaskPayloadSchema),
-      success: UpsertDsrOwnerTaskResultSchema,
+      success: [ActionProposalAcceptedSchema, UpsertDsrOwnerTaskResultSchema],
     }),
   )
   .middleware(UpsertDsrOwnerTaskActionSchemaErrorMiddleware);

@@ -114,6 +114,14 @@ export const handleCompensateCurrencySupportRecovery = Effect.fn('CompensateCurr
 
 export const compensateCurrencySupportRecoveryAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.currency-support.compensate-recovery',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'currency-support', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.compensate-currency-support-recovery.access.v1',
@@ -125,7 +133,7 @@ export const compensateCurrencySupportRecoveryAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.compensate-currency-support-recovery',
       moduleKey: MODULE_KEY,
       role: 'action',

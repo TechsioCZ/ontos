@@ -14,7 +14,7 @@ const MODULE_KEY = 'commerce.pricing' as const;
 const isIssuanceInvocationRequest = Schema.is(CommitmentConfirmationVerificationRequestSchema.members[1]);
 const entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.commitment-confirmation-verification',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -82,6 +82,19 @@ const readConfirmation = Effect.fn('PricingCommitmentConfirmation.readVerificati
 
 export const commitmentConfirmationVerificationRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'Order finalization verifies a commitment confirmation for the buyer it acts for.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.pricing.commitment-confirmation.verify',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'commercial-commitments', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint,
     evidencePolicy: {
@@ -91,7 +104,6 @@ export const commitmentConfirmationVerificationRead = defineRead(
     inputSchema: CommitmentConfirmationVerificationRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.commitment-confirmation-verification',
     resultSchema: CommitmentConfirmationVerificationResponseSchema,
@@ -99,5 +111,4 @@ export const commitmentConfirmationVerificationRead = defineRead(
   },
   readConfirmation,
   commitmentConfirmationProductionForScope,
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

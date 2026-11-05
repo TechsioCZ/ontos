@@ -7,18 +7,19 @@ import {
 } from '../support/enrollment-application-composition.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
-import { v1 } from '@authzed/authzed-node';
-
 import {
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
 } from '@app/core-runtime';
+import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/http';
 import { eq, like, sql } from 'drizzle-orm';
 import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { layer as nodeServicesLayer } from '@effect/platform-node/NodeServices';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -38,9 +39,6 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
-import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
-import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import {
   commerceCustomerContextActionRuntimeAwaitingOwnerPreparation,
   commercePortalAuthRealmLive,
@@ -443,6 +441,7 @@ const continuationLive = Effect.fnUntraced(function* continuationLive(
     ),
   );
   const registryLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
+    Layer.provide(nodeCryptoLayer),
     Layer.provide(
       Layer.mergeAll(
         accountLookupLive,
@@ -1534,10 +1533,7 @@ it.live(
         );
         // No Action grants at all: the budget below is spent before any governed Action runs, so
         // this Principal never needs authorization to exhaust it.
-        const realm = yield* makeCounterpartyInvitationRealm(fixture, {
-          recipientActionKeys: [],
-          storefrontActionKeys: [],
-        });
+        const realm = yield* makeCounterpartyInvitationRealm(fixture);
         const capture = makeCapturingCounterpartyInvitationProofDelivery();
         const issued = yield* issueCounterpartyAccessInvitation(
           realm,
@@ -1850,9 +1846,6 @@ it.live(
  * caller, and the Attempt is left carrying no owner transition and no account.
  */
 
-const START_ACTION_KEY = 'commerce.customer-context.start-portal-enrollment';
-const CLAIM_ACTION_KEY = 'commerce.customer-context.claim-portal-enrollment-transition';
-const RECORD_ACTION_KEY = 'commerce.customer-context.record-portal-enrollment-outcome';
 const GOVERNED_START_ISSUER = 'http://gateway.enrollment-start-redemption.test';
 const GOVERNED_START_KEY_ID = 'enrollment-start-redemption';
 
@@ -1866,6 +1859,8 @@ interface GovernedStartSubject {
 /**
  * The Core rows an ordinary governed start reads: the Tenant, the enrolling Principal, the Selling
  * Legal Entity the journey names, the Commerce module state and the Principal's auth binding.
+ * The Tenant, Legal Entity and Principals are retained on close, because the access intent a
+ * scenario grants pins them and Core never removes access intent.
  */
 const seedGovernedStartSubject = Effect.fnUntraced(function* seedGovernedStartSubject(tenantId: string) {
   const connections = yield* loadDatabaseConnectionPair();
@@ -1884,9 +1879,6 @@ const seedGovernedStartSubject = Effect.fnUntraced(function* seedGovernedStartSu
       actionInvocations,
       principalAuthBindings,
       tenantModuleStates,
-      legalEntities,
-      principals,
-      tenants,
     ]) {
       yield* admin.executor.delete(table).where(eq(table.tenantId, subject.tenantId));
     }
@@ -1932,42 +1924,33 @@ const seedGovernedStartSubject = Effect.fnUntraced(function* seedGovernedStartSu
   return subject;
 });
 
-/** Tenant membership and the execute grant for each governed Action a scenario runs. */
-const seedGovernedStartAuthorization = Effect.fnUntraced(function* seedGovernedStartAuthorization(
-  subject: GovernedStartSubject,
-  actionKeys: readonly string[] = [START_ACTION_KEY, CLAIM_ACTION_KEY],
-) {
-  const configuration = yield* loadSpiceDbConfig();
-  const client = newSpiceDbGrpcClient(configuration);
-  const principalSubject = v1.SubjectReference.create({
-    object: v1.ObjectReference.create({ objectId: subject.principalId, objectType: 'principal' }),
+/** The platform services the v2 access seed reads the catalog and mints its ids with. */
+const tenantAccessServices = Layer.mergeAll(nodeServicesLayer, nodeCryptoLayer);
+
+/** The capabilities of the governed Actions an enrollment start and its record settlement run. */
+const GOVERNED_START_CAPABILITY_KEYS = [
+  'commerce.customer-context.portal-enrollment.start',
+  'commerce.customer-context.portal-enrollment-transition.claim',
+  'commerce.customer-context.portal-enrollment-outcome.record',
+];
+
+/** Tenant and company membership plus a role of the governed start's Actions, for each subject. */
+const seedGovernedStartAuthorization = (subject: GovernedStartSubject, ...others: readonly GovernedStartSubject[]) => {
+  const holderOf = ({ principalId }: GovernedStartSubject) => ({
+    capabilityKeys: GOVERNED_START_CAPABILITY_KEYS,
+    principalId,
   });
-  const tenantObject = v1.ObjectReference.create({ objectId: subject.tenantId, objectType: 'tenant' });
-  const relationships = [
-    v1.Relationship.create({ relation: 'member', resource: tenantObject, subject: principalSubject }),
-    ...actionKeys.map((actionKey) =>
-      v1.Relationship.create({
-        relation: 'executor',
-        resource: v1.ObjectReference.create({
-          objectId: toSpiceDbActionObjectId(actionKey),
-          objectType: 'action',
-        }),
-        subject: principalSubject,
+  return environmentTestAccessTarget.pipe(
+    Effect.flatMap((target) =>
+      grantTestTenantRoleAccess({
+        ...target,
+        holders: [holderOf(subject), ...others.map(holderOf)],
+        legalEntityIds: [subject.legalEntityId],
+        tenantId: subject.tenantId,
       }),
     ),
-  ];
-  const write = (operation: v1.RelationshipUpdate_Operation) =>
-    Effect.promise(
-      async () =>
-        await client.promises.writeRelationships(
-          v1.WriteRelationshipsRequest.create({
-            updates: relationships.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
-          }),
-        ),
-    );
-  yield* write(v1.RelationshipUpdate_Operation.TOUCH);
-  yield* Effect.addFinalizer(() => write(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.asVoid, Effect.orDie));
-});
+  );
+};
 
 /**
  * A second Principal sharing the first's Tenant and Legal Entity, for a scenario where two
@@ -1986,7 +1969,7 @@ const seedSecondGovernedStartPrincipal = Effect.fnUntraced(function* seedSecondG
     principalId: randomUUID(),
     tenantId,
   };
-  // Rows live and die with the Tenant fixture's own cleanup, which removes them in dependency order.
+  // The auth binding is removed with the Tenant fixture's own cleanup; the Principal is retained with it.
   yield* admin.executor.insert(principals).values({
     displayName: 'Enrollment start redemption second customer',
     kind: 'human',
@@ -2132,7 +2115,7 @@ it.live(
         expect(refused.status).toBe(400);
         expect(presented).toHaveLength(3);
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 
@@ -2277,7 +2260,7 @@ it.live(
         // The address' durable budget row, removed again on scope close.
         expect(yield* enrollmentStartBudgetKeys(email)).toHaveLength(1);
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 
@@ -2300,9 +2283,8 @@ it.live(
           yield* enrollmentApplicationCompositionRevision,
         );
         const first = yield* seedGovernedStartSubject(tenantId);
-        yield* seedGovernedStartAuthorization(first);
         const second = yield* seedSecondGovernedStartPrincipal(tenantId, first.legalEntityId);
-        yield* seedGovernedStartAuthorization(second);
+        yield* seedGovernedStartAuthorization(first, second);
         const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
         const runtime = yield* authenticatedRuntime(
           gateway,
@@ -2367,7 +2349,7 @@ it.live(
           yield* readEnrollmentAcceptanceOperations(fixture, firstStarted.attempt.portalEnrollmentAttemptId),
         ).toHaveLength(1);
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 
@@ -2468,7 +2450,7 @@ it.live(
         expect(attempt.accountSubject).toBeUndefined();
         expect(attempt.state).toBe('IN_PROGRESS');
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 
@@ -2491,7 +2473,7 @@ it.live(
           yield* enrollmentApplicationCompositionRevision,
         );
         const subject = yield* seedGovernedStartSubject(tenantId);
-        yield* seedGovernedStartAuthorization(subject, [RECORD_ACTION_KEY]);
+        yield* seedGovernedStartAuthorization(subject);
         let deliveryAvailable = false;
         const deliveryFetch: typeof fetch = () =>
           Promise.resolve(
@@ -2651,7 +2633,7 @@ it.live(
           },
         ]);
       }),
-    ),
+    ).pipe(Effect.provide(tenantAccessServices)),
   180_000,
 );
 

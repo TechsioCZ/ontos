@@ -44,6 +44,14 @@ const handleMatchParty = Effect.fn('MatchPartyAction.handleMatchParty')(
 
 export const matchPartyAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.party-match.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'identity-review', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.match-party.access.v1',
@@ -54,10 +62,7 @@ export const matchPartyAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.match-party',
       moduleKey: 'party.registry',
       role: 'action',
@@ -69,7 +74,6 @@ export const matchPartyAction = defineAction(
     policies: [],
     resultSchema: MatchPartyResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleMatchParty,
   (transaction, scope) =>

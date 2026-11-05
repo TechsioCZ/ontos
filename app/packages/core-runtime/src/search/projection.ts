@@ -2,7 +2,10 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { Clock, DateTime, Effect, Option, Predicate, Result, Schema } from 'effect';
+import { searchRowVisible } from './visibility.ts';
+import type { CoreSearchAuthorization, CoreSearchTextField } from './visibility.ts';
 import { Hex } from 'effect/encoding';
+import { PrincipalIdSchema } from '../access/ids.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
@@ -15,6 +18,7 @@ export { CoreSearchProjectionStore } from './projection-store.ts';
 export { CoreSearchQueryRuntime } from './query-runtime.ts';
 export type { CoreSearchProjectionStoreService } from './projection-store.ts';
 export type { CoreSearchQueryRuntimeService } from './query-runtime.ts';
+export type { CoreSearchAuthorization, CoreSearchTextField } from './visibility.ts';
 
 const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const stableKey = Schema.String.check(
@@ -90,6 +94,8 @@ export const CoreSearchAliasSchema = Schema.Struct({
 export const CoreSearchProjectionDocumentSchema = Schema.Struct({
   aliases: Schema.optionalKey(Schema.Array(CoreSearchAliasSchema).check(Schema.isMaxLength(100))),
   archived: Schema.Boolean,
+  /** The owner-authored assignee; a private index fact used only for row visibility. */
+  assignedPrincipalId: Schema.optionalKey(PrincipalIdSchema),
   facets: Schema.Array(CoreSearchFacetSchema).check(Schema.isMaxLength(50)),
   matchedRef: Schema.optionalKey(CoreSearchResourceRefSchema),
   matchedSubjectRef: Schema.optionalKey(CoreSearchResourceRefSchema),
@@ -466,14 +472,26 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
     },
   );
   // Match the PostgreSQL scope guard, including tenant-global queries and tenant-wide authority.
-  const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = (input, scope) =>
+  const queryCandidates: CoreSearchProjectionStoreService['queryCandidates'] = (input, scope, authorization) =>
     coreSearchQueryMatchesScope(input, scope)
       ? Effect.sync(() =>
           [
             ...(units.get(projectionUnitKey(input.tenantId, input.moduleId, input.resourceType))?.values() ?? []),
-          ].flatMap(({ document }) =>
-            document === undefined || document.selectedLegalEntityId !== input.selectedLegalEntityId ? [] : [document],
-          ),
+          ].flatMap(({ document }) => {
+            if (document === undefined || document.selectedLegalEntityId !== input.selectedLegalEntityId) {
+              return [];
+            }
+            const listAccess = authorization?.listAccess;
+            if (listAccess === undefined) {
+              return [document];
+            }
+            return searchRowVisible(listAccess, {
+              assignedPrincipalId: document.assignedPrincipalId,
+              recordKey: document.ref.resourceId,
+            })
+              ? [document]
+              : [];
+          }),
         )
       : Effect.fail(
           new CoreSearchProjectionUnavailable({
@@ -531,13 +549,20 @@ type MutableProjectionHit = {
   -readonly [Key in keyof CoreSearchProjectionHit]: CoreSearchProjectionHit[Key];
 };
 
-const toHit = (document: CoreSearchProjectionDocument): CoreSearchProjectionHit => {
+/**
+ * Result metadata never repeats text the caller's field grants deny (O17, O25). The placeholder keeps
+ * the declared hit shape so the owner's read decodes, and the read's own field projection removes it
+ * for the caller who lacks the grant.
+ */
+const REDACTED_SEARCH_TITLE = '[redacted]';
+
+const toHit = (document: CoreSearchProjectionDocument, titleVisible: boolean): CoreSearchProjectionHit => {
   const hit: MutableProjectionHit = {
     archived: document.archived,
     facets: document.facets,
     metadata: document.metadata,
     ref: document.ref,
-    title: document.title,
+    title: titleVisible ? document.title : REDACTED_SEARCH_TITLE,
   };
   if (document.aliases === undefined && document.matchedRef !== undefined) {
     hit.matchedRef = document.matchedRef;
@@ -561,8 +586,9 @@ const matchDocument = (
   document: CoreSearchProjectionDocument,
   needle: string,
   effectiveAt: number,
+  hiddenTextFields: ReadonlySet<CoreSearchTextField>,
 ): CoreSearchProjectionHit | undefined => {
-  const hit = toHit(document);
+  const hit = toHit(document, !hiddenTextFields.has('title'));
   const matches = (values: readonly string[]) => values.some((value) => normalize(value).includes(needle));
   const activeValues = (
     values: readonly (typeof CoreSearchTemporalSearchableTextSchema.Type)[] = [],
@@ -577,11 +603,21 @@ const matchDocument = (
     }
     return active;
   };
-  if (matches([document.title, ...document.searchableText, ...activeValues(document.temporalSearchableText)])) {
+  // A denied surface is not a surface: it never contributes a matching term, so a hidden name
+  // cannot be guessed, narrowed by prefix or confirmed through the result count.
+  const visibleText = [
+    ...(hiddenTextFields.has('title') ? [] : [document.title]),
+    ...(hiddenTextFields.has('searchableText') ? [] : document.searchableText),
+    ...(hiddenTextFields.has('temporalSearchableText') ? [] : activeValues(document.temporalSearchableText)),
+  ];
+  if (matches(visibleText)) {
     return hit;
   }
   const alias = document.aliases?.find((candidate) =>
-    matches([...candidate.searchableText, ...activeValues(candidate.temporalSearchableText)]),
+    matches([
+      ...(hiddenTextFields.has('searchableText') ? [] : candidate.searchableText),
+      ...(hiddenTextFields.has('temporalSearchableText') ? [] : activeValues(candidate.temporalSearchableText)),
+    ]),
   );
   if (alias === undefined) {
     return undefined;
@@ -596,11 +632,17 @@ export const createCoreSearchQueryRuntime: Effect.Effect<
 > = Effect.gen(function* createCoreSearchQueryRuntimeService() {
   const store = yield* CoreSearchProjectionStore;
   const search: CoreSearchQueryRuntimeService['search'] = Effect.fn('CoreSearchQueryRuntime.search')(
-    function* searchCoreSearchProjection(input: UnparsedCoreSearchInput, scope: OperationalScope) {
+    function* searchCoreSearchProjection(
+      input: UnparsedCoreSearchInput,
+      scope: OperationalScope,
+      authorization?: CoreSearchAuthorization,
+    ) {
       const query = yield* Schema.decodeUnknownEffect(CoreSearchQuerySchema)(input).pipe(
         Effect.mapError((cause) => invalid('Core Search query does not match its declared contract', cause)),
       );
-      const documents = yield* store.queryCandidates(query, scope);
+      const documents = yield* store.queryCandidates(query, scope, authorization);
+      const hiddenTextFields = new Set(authorization?.hiddenTextFields);
+      const titleVisible = !hiddenTextFields.has('title');
       const needle = normalize(query.query);
       const requestedFacets = query.facets ?? [];
       const effectiveAt =
@@ -612,15 +654,20 @@ export const createCoreSearchQueryRuntime: Effect.Effect<
           document.selectedLegalEntityId === query.selectedLegalEntityId &&
           matchesFacets(document, requestedFacets, effectiveAt)
         ) {
-          const hit = matchDocument(document, needle, effectiveAt);
+          const hit = matchDocument(document, needle, effectiveAt, hiddenTextFields);
           if (hit !== undefined) {
             hits.push(hit);
           }
         }
       }
+      // Ordering is authority too: a hidden title may not decide which hit comes first, so a denied
+      // title falls back to the resource key the caller may read.
+      const byResourceKey = (left: CoreSearchProjectionHit, right: CoreSearchProjectionHit) =>
+        left.ref.resourceId.localeCompare(right.ref.resourceId);
       return hits.toSorted(
-        (left, right) =>
-          left.title.localeCompare(right.title) || left.ref.resourceId.localeCompare(right.ref.resourceId),
+        titleVisible
+          ? (left, right) => left.title.localeCompare(right.title) || byResourceKey(left, right)
+          : byResourceKey,
       );
     },
   );

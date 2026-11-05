@@ -79,6 +79,14 @@ const ACTION_KEY = 'commerce.catalog.move-product-category';
 
 export const moveProductCategoryAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-category.move',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-category', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.move-product-category.access.v1',
@@ -90,7 +98,7 @@ export const moveProductCategoryAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

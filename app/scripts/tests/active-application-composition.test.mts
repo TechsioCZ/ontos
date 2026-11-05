@@ -84,10 +84,18 @@ const moduleContract = (input: {
       shellContributions: {
         ...emptyContributions,
         search: input.search.map((contributionKey) => ({
+          accessDeclaration: {
+            key: `${input.moduleId}.parties.search`,
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'parties', level: 'basic' },
+            risk: 'sensitive',
+            selectors: ['all'],
+          },
           contributionKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'protected' },
             entrypointKey: contributionKey,
             moduleKey: input.moduleId,
             role: 'search',
@@ -452,7 +460,6 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
     expect(yield* otherModeWorkerSetups(zeropsYaml, topology, 'host')).toEqual([
       'party-registry-worker',
       CUSTOMER_CONTEXT_WORKER,
-      'price-group-catalog-worker',
       'inventory-worker',
       'privacy-worker',
       'commerce-order-worker',
@@ -461,7 +468,6 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
     expect(yield* modeWorkerSetups(zeropsYaml, topology, 'dedicated', members)).toEqual([
       'party-registry-worker',
       CUSTOMER_CONTEXT_WORKER,
-      'price-group-catalog-worker',
       'inventory-worker',
       'privacy-worker',
     ]);

@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug acknowledge-privacy-notice
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/acknowledge-privacy-notice.ts';
 
 export { AcknowledgePrivacyNoticePayloadSchema } from '../actions/acknowledge-privacy-notice.ts';
-
 export const AcknowledgePrivacyNoticeActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AcknowledgePrivacyNoticeActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const AcknowledgePrivacyNoticeActionForbiddenProblemSchema = makeProblemD
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -148,7 +149,7 @@ export const acknowledgePrivacyNoticeActionGroupDefinition = HttpApiGroup.make('
     HttpApiEndpoint.post('execute', '/privacy/actions/acknowledge-privacy-notice', {
       error: actionErrors,
       payload: Schema.toEncoded(AcknowledgePrivacyNoticePayloadSchema),
-      success: AcknowledgePrivacyNoticeResultSchema,
+      success: [ActionProposalAcceptedSchema, AcknowledgePrivacyNoticeResultSchema],
     }),
   )
   .middleware(AcknowledgePrivacyNoticeActionSchemaErrorMiddleware);

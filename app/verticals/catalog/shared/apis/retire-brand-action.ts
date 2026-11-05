@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug retire-brand
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { RetireBrandPayloadSchema, RetireBrandResultSchema } from '../actions/retire-brand.ts';
 
 export { RetireBrandPayloadSchema } from '../actions/retire-brand.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RetireBrandActionInvalidProblemSchema = makeProblemDetailsSchema('RetireBrandActionInvalidProblem', 400);
 export const RetireBrandActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -18,6 +20,7 @@ export const RetireBrandActionForbiddenProblemSchema = makeProblemDetailsSchema(
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -118,7 +121,7 @@ export const RetireBrandActionApi = HttpApi.make('RetireBrandActionApi').add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-brand', {
         error: actionErrors,
         payload: Schema.toEncoded(RetireBrandPayloadSchema),
-        success: RetireBrandResultSchema,
+        success: [ActionProposalAcceptedSchema, RetireBrandResultSchema],
       }),
     )
     .middleware(RetireBrandActionSchemaErrorMiddleware),

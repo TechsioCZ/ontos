@@ -143,6 +143,14 @@ export const handleRecordDsrDeadline = Effect.fn('RecordDsrDeadlineAction.handle
 });
 export const recordDsrDeadlineAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-deadline.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'privacy.core.record-dsr-deadline.access.v1' },
     actionKey: 'privacy.core.record-dsr-deadline',
     auditEvidenceSchema: PrivacyActionAuditEvidenceSchema,
@@ -151,7 +159,7 @@ export const recordDsrDeadlineAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-dsr-deadline',
       moduleKey: 'privacy.core',
       role: 'action',

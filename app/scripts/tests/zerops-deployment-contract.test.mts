@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
@@ -11,8 +13,14 @@ import {
   materializeZeropsEnvironment,
   SPICEDB_ENDPOINT_VARIABLE,
 } from '../materialize-zerops-environment.mts';
+import { generateOutboxWorkerDeployment } from '../generate-outbox-worker-deployment.mjs';
 import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
-import { OWNER_RUNTIME_CONFIGURATIONS } from '../ops/owner-runtime-configuration.mts';
+import {
+  gatewayModuleBindingsProblem,
+  OWNER_RUNTIME_CONFIGURATIONS,
+  requestServiceHoldsModuleCredential,
+  SHELL_GATEWAY_BASE_URL_VARIABLE,
+} from '../ops/owner-runtime-configuration.mts';
 
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const commerceCustomerContextSetup = 'commerce-customer-context';
@@ -140,16 +148,8 @@ it('binds Commerce to the independently deployed Price Group Catalog API base', 
   expect(priceGroupCatalog).toContain(`path: '/price-group-catalog-api/price-group-catalog/readiness'`);
 });
 
-const ORDER_RUNTIME_SETUPS = ['commerce-order', 'commerce-order-worker', OUTBOX_WORKER_HOST.stageSetup];
-/** Operator-issued per-environment values every Order runtime references from the `migrator` service. */
-const ORDER_MIGRATOR_KEYS = [
-  'ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY',
-  'ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY',
-  'ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID',
-  'ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID',
-  'ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID',
-];
-
+const ORDER_MODULE_SETUPS = ['commerce-order', 'commerce-order-worker'] as const;
+const ORDER_RUNTIME_SETUPS = [...ORDER_MODULE_SETUPS, OUTBOX_WORKER_HOST.stageSetup];
 it('binds Commerce Order, its worker and the host to every internal owner API base Order calls', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
 
@@ -169,47 +169,75 @@ it('binds Commerce Order, its worker and the host to every internal owner API ba
   }
 });
 
-it('gives only the Order runtimes the Order gateway keys and admitted Principals, as migrator references', () => {
+it('gives the Order runtimes the Order module credential and no other owner credential', () => {
   const environments = serviceEnvironments();
-  const staffNamespace = 'ontos.staff.better-auth.v1';
 
-  for (const setup of ORDER_RUNTIME_SETUPS) {
-    const environment = environments.get(setup) ?? {};
-    for (const key of ORDER_MIGRATOR_KEYS) {
-      expect(environment[key]).toBe(`\${migrator_${key}}`);
-    }
-    expect(environment).toMatchObject({
-      ONTOS_ORDER_CCC_VERIFIER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
-      ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
-      ONTOS_ORDER_PRICING_VERIFIER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
-    });
+  for (const setup of ORDER_MODULE_SETUPS) {
+    expect(environments.get(setup)?.ONTOS_GATEWAY_MODULE_API_KEY).toBe(
+      `\${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER}`,
+    );
   }
-  for (const key of ORDER_MIGRATOR_KEYS) {
-    const holders = [...environments]
-      .filter(([, environment]) =>
-        Object.entries(environment).some(([name, value]) => name === key || value.includes(key)),
-      )
-      .map(([setup]) => setup);
-    expect(holders).toStrictEqual(ORDER_RUNTIME_SETUPS);
-  }
+  // The Outbox Worker host receives each hosted owner's credential under its own per-unit name instead.
+  expect(environments.get(OUTBOX_WORKER_HOST.stageSetup)?.ONTOS_GATEWAY_MODULE_API_KEY).toBeUndefined();
 });
 
-/** An owner's own service and, when it has an Outbox Worker, that worker and the host that also runs it. */
+/** An owner's own service and, when it has an Outbox Worker, that worker. The shared host carries no module credential. */
 const ownerRuntimeSetups = (unitId: string, setups: ReadonlySet<string>) =>
-  setups.has(`${unitId}-worker`) ? [unitId, `${unitId}-worker`, OUTBOX_WORKER_HOST.stageSetup] : [unitId];
+  setups.has(`${unitId}-worker`) ? [unitId, `${unitId}-worker`] : [unitId];
 
-it('gives each Order-flow owner its own credentials and per-environment values only as migrator references', () => {
+/** Every non-test source file under `verticals/`, skipping installed packages and test folders. */
+const verticalSourceFiles = (directory: string): readonly string[] =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return entry.name === 'node_modules' || entry.name === 'tests' ? [] : verticalSourceFiles(entryPath);
+    }
+    return /\.m?ts$/u.test(entry.name) && !/\.test\./u.test(entry.name) ? [entryPath] : [];
+  });
+
+/** The vertical units whose production code calls another module through the delegated gateway client. */
+const delegatedCallerUnits = (): readonly string[] => {
+  const verticals = fileURLToPath(new URL('../../verticals/', import.meta.url));
+  const callers = new Set(
+    verticalSourceFiles(verticals)
+      .filter((file) => {
+        const source = readFileSync(file, 'utf-8');
+        return (
+          source.includes("'@app/shared-contracts/gateway-context-server'") &&
+          source.includes('acquireDelegatedGatewayContext')
+        );
+      })
+      .map((file) => path.relative(verticals, file).split(path.sep)[0] ?? ''),
+  );
+  return EffectArray.sort([...callers], Order.String);
+};
+
+it('gives every module that calls another module its own module credential, and no other module one', () => {
   const environments = serviceEnvironments();
   const setups = new Set(environments.keys());
+  const configured = EffectArray.sort(
+    OWNER_RUNTIME_CONFIGURATIONS.map(({ unitId }) => unitId),
+    Order.String,
+  );
 
-  expect(OWNER_RUNTIME_CONFIGURATIONS.map(({ unitId }) => unitId)).toStrictEqual([
-    'commerce-cart',
-    'commerce-customer-context',
-    'commerce-order',
-    'pricing',
-  ]);
-  for (const { callerNamespaces, credentialVariables, operatorValues, unitId } of OWNER_RUNTIME_CONFIGURATIONS) {
+  expect(configured).toStrictEqual(delegatedCallerUnits());
+  for (const configuration of OWNER_RUNTIME_CONFIGURATIONS) {
+    const { credentialVariables, moduleCredentialVariable, operatorValues, unitId } = configuration;
     const expected = ownerRuntimeSetups(unitId, setups);
+    const moduleReference = `\${migrator_${moduleCredentialVariable}}`;
+    const moduleHolders = [...environments]
+      .filter(([, environment]) => environment.ONTOS_GATEWAY_MODULE_API_KEY === moduleReference)
+      .map(([setup]) => setup);
+    // A `worker-only` unit's request service receives no module credential; its Outbox Worker alone holds it.
+    expect(moduleHolders).toStrictEqual(
+      requestServiceHoldsModuleCredential(configuration) ? expected : expected.filter((setup) => setup !== unitId),
+    );
+    // Only the deployments that hold the module credential call other modules, so only they get the Shell base.
+    for (const setup of moduleHolders) {
+      expect(environments.get(setup)?.[SHELL_GATEWAY_BASE_URL_VARIABLE]).toContain(
+        'shellsuperapp:3020/shell-super-app-api',
+      );
+    }
     for (const key of [...credentialVariables, ...operatorValues.map(({ variable }) => variable)]) {
       const holders = [...environments]
         .filter(([, environment]) =>
@@ -221,12 +249,96 @@ it('gives each Order-flow owner its own credentials and per-environment values o
         expect(environments.get(setup)?.[key]).toBe(`\${migrator_${key}}`);
       }
     }
-    for (const setup of expected) {
-      for (const namespace of callerNamespaces) {
-        expect(environments.get(setup)?.[namespace]).toBe('ontos.staff.better-auth.v1');
-      }
-    }
   }
+});
+
+/** The hosted owners whose workers hold a module credential, with the host entry binding of each. */
+const HOSTED_OWNER_CREDENTIALS = [
+  { binding: 'partyRegistryOutboxWorkerEntry', variable: 'ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY' },
+  {
+    binding: 'commerceCustomerContextOutboxWorkerEntry',
+    variable: 'ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT',
+  },
+  { binding: 'commerceOrderOutboxWorkerEntry', variable: 'ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER' },
+] as const;
+
+it.effect('hands the stage host each hosted owner credential under its own name and never the shared one', () =>
+  Effect.gen(function* hostReceivesPerUnitCredentials() {
+    const source = readFileSync(zeropsYamlPath, 'utf-8');
+    const generated = yield* Effect.promise(() =>
+      Promise.resolve(generateOutboxWorkerDeployment(fileURLToPath(new URL('../../', import.meta.url)), source)),
+    );
+    const hostEnvironment = serviceEnvironments().get(OUTBOX_WORKER_HOST.stageSetup);
+
+    expect(hostEnvironment?.ONTOS_GATEWAY_MODULE_API_KEY).toBeUndefined();
+    for (const { binding, variable } of HOSTED_OWNER_CREDENTIALS) {
+      expect(hostEnvironment?.[variable]).toBe(`\${migrator_${variable}}`);
+      // The host entry runs that owner's layer under its own variable; the host runtime maps the shared name onto it.
+      expect(generated.hostEntry).toMatch(
+        new RegExp(`hostedOutboxWorkerEntry\\(\\s*${binding},\\s*'${variable}',?\\s*\\)`, 'u'),
+      );
+    }
+    // Inventory and Privacy hold no module credential, so their entries run without one.
+    expect(generated.hostEntry).toContain('\n    inventoryOutboxWorkerEntry,\n');
+    expect(generated.hostEntry).toContain('\n    privacyOutboxWorkerEntry,\n');
+    expect(readFileSync(new URL('../outbox-worker-host.generated.mts', import.meta.url), 'utf-8')).toBe(
+      generated.hostEntry,
+    );
+  }),
+);
+
+const bindingFor = (sourceAppId: string, providerKeyId = `key-${sourceAppId}`) => ({
+  compositionRevision: 'a'.repeat(64),
+  providerKeyId,
+  sourceAppId,
+  sourceBuildMarker: `build-${sourceAppId}`,
+});
+const expectedBindings = OWNER_RUNTIME_CONFIGURATIONS.map(({ unitId }) => bindingFor(unitId));
+
+it('accepts exactly one Shell binding per module credential, all for one composition revision', () => {
+  expect(gatewayModuleBindingsProblem(JSON.stringify(expectedBindings))).toBeUndefined();
+  expect(gatewayModuleBindingsProblem('not json')).toMatch(/JSON array/u);
+  expect(gatewayModuleBindingsProblem(JSON.stringify(expectedBindings.slice(1)))).toMatch(/exactly one binding/u);
+  expect(gatewayModuleBindingsProblem(JSON.stringify([...expectedBindings, bindingFor('privacy')]))).toMatch(
+    /exactly one binding/u,
+  );
+  expect(
+    gatewayModuleBindingsProblem(
+      JSON.stringify(expectedBindings.map((binding) => ({ ...binding, providerKeyId: 'shared-key' }))),
+    ),
+  ).toMatch(/own provider key/u);
+  expect(
+    gatewayModuleBindingsProblem(
+      JSON.stringify(
+        expectedBindings.map((binding, index) =>
+          index === 0 ? { ...binding, compositionRevision: 'b'.repeat(64) } : binding,
+        ),
+      ),
+    ),
+  ).toMatch(/same composition revision/u);
+});
+
+it('gives the Shell the module bindings from the migrator and no other service', () => {
+  const environments = serviceEnvironments();
+  const holders = [...environments]
+    .filter(([, environment]) =>
+      Object.values(environment).some((value) => value.includes('ONTOS_GATEWAY_MODULE_BINDINGS')),
+    )
+    .map(([setup]) => setup);
+
+  expect(environments.get('shellsuperapp')?.ONTOS_GATEWAY_MODULE_BINDINGS).toBe(
+    `\${migrator_ONTOS_GATEWAY_MODULE_BINDINGS}`,
+  );
+  expect(holders).toStrictEqual(['shellsuperapp']);
+});
+
+it('retires the per-owner gateway keys, grant lists, principal IDs and caller namespaces', () => {
+  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+
+  expect(zeropsYaml).not.toMatch(
+    /_GATEWAY_API_KEY|_SERVICE_API_KEY|_SERVICE_GRANTS|_PRINCIPAL_ID|_NAMESPACE_ID|CONSUMER_LEGAL_ENTITY|CONSUMER_TENANT/u,
+  );
+  expect(zeropsYaml).not.toContain('ONTOS_GATEWAY_RELAY_');
 });
 
 it('binds Customer Context, Cart and Pricing to the internal owner API bases they call', () => {
@@ -313,18 +425,15 @@ it('declares the Inventory public URL for Cloudflare proof', () => {
   expect(workflow).toContain('ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid');
 });
 
-it('starts a dedicated Price Group worker that drains durable pending projections after restart', () => {
+it('declares no dedicated Price Group worker once the module has no Outbox Worker left (O62)', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
-  const worker = serviceBlock(zeropsYaml, 'price-group-catalog-worker');
-
-  expect(worker).toContain(
-    `zerops:materialize --app '${priceGroupCatalogSetup}' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker`,
-  );
-  expect(worker).toContain(`OUTBOX_WORKER_HEALTH_PORT: '4108'`);
-  expect(worker).toContain(runtimeDatabaseUrl);
-  expect(worker).toContain(`path: '/live'`);
-  expect(worker).toContain(`exec node worker.mjs`);
-  expect(worker).not.toContain('npm run serve');
+  // Price Group Catalog's only worker was the legacy business-permission containment mirror; with it
+  // gone the module has no dedicated worker and no hosted entry, and no stale service may remain.
+  expect(zeropsYaml).not.toContain(`setup: 'price-group-catalog-worker'`);
+  const imports = readFileSync(zeropsImportPath, 'utf-8');
+  expect(imports).not.toContain('hostname: pricegroupcatalogworker');
+  const hostEntry = readFileSync(new URL('../outbox-worker-host.generated.mts', import.meta.url), 'utf-8');
+  expect(hostEntry).not.toContain('priceGroupCatalogOutboxWorkerEntry');
 });
 
 it('runs every owner worker in one Outbox Worker host service beside the dedicated workers', () => {
@@ -340,11 +449,7 @@ it('runs every owner worker in one Outbox Worker host service beside the dedicat
   expect(host).toContain("start: sh -c 'cd app/.zerops/runtime/outbox-worker-host");
   expect(host.match(/path: '\/live'/gu)).toHaveLength(2);
   // The dedicated Outbox Worker mode keeps deploying each owner's own worker.
-  for (const worker of [
-    PARTY_REGISTRY_WORKER_SETUP,
-    'commerce-customer-context-worker',
-    'price-group-catalog-worker',
-  ]) {
+  for (const worker of [PARTY_REGISTRY_WORKER_SETUP, 'commerce-customer-context-worker']) {
     expect(serviceBlock(zeropsYaml, worker)).toContain('--worker');
   }
 });

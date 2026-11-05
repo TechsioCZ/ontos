@@ -220,6 +220,14 @@ export const PartyContactPointSchema = Schema.Struct({
   verification: ContactPointVerificationSchema,
 });
 export type PartyContactPoint = typeof PartyContactPointSchema.Type;
+/**
+ * A contact point as a read answers it: the value is a governed field class, so a caller without the
+ * value capability receives the record without it (O17, O58).
+ */
+export const PartyContactPointViewSchema = Schema.Struct({
+  ...PartyContactPointSchema.fields,
+  value: Schema.optionalKey(ContactPointValueSchema),
+});
 
 export interface NormalizedChannel {
   readonly displayValue: string;

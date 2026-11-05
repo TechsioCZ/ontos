@@ -15,6 +15,7 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import { HttpServerRequest, HttpServerResponse, FetchHttpClient } from 'effect/http';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createCatalogDeniedAccess } from './live-access-authority.ts';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { deriveActualCatalogCompositionSnapshot } from './actual-catalog-composition.fixture.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -516,6 +517,7 @@ export const makeProductAxisAllowanceFixture = Effect.fn('ProductAxisAllowance.m
     yield* isolated.assertClonedSchema();
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
+        access: 'allowed',
         actionKeys: [governVariantAllowedValuesAction.descriptor.actionKey],
         adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
         allowedAudiences: ['catalog'],
@@ -529,7 +531,11 @@ export const makeProductAxisAllowanceFixture = Effect.fn('ProductAxisAllowance.m
       }),
       (value) => value.close().pipe(Effect.orDie),
     );
-    const fixtureContext = yield* Layer.build(fixture.layer);
+    // The one access gate this receiver scripts (the native database carries no v2 access intent and
+    // reaches no engine), plus the per-principal refusal its suite names (see `live-access-authority`).
+    const deniedAccess = createCatalogDeniedAccess();
+    const accessLayer = fixture.layer.pipe(Layer.provide(deniedAccess.layer));
+    const fixtureContext = yield* Layer.build(accessLayer);
     const permissions = yield* makeContextPermissionRelationshipMutationLive();
     const principal = { principalId: fixture.manager.principalId, tenantId: fixture.tenantId };
     const targets = [
@@ -625,7 +631,7 @@ export const makeProductAxisAllowanceFixture = Effect.fn('ProductAxisAllowance.m
         ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
       ),
       Layer.provide(redemption),
-      Layer.provide(fixture.layer),
+      Layer.provide(accessLayer),
       Layer.provide(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({ ONTOS_GATEWAY_ISSUER: tokenIssuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }),
@@ -641,7 +647,7 @@ export const makeProductAxisAllowanceFixture = Effect.fn('ProductAxisAllowance.m
               .add(catalogApi.groups.governVariantAllowedValuesAction),
           ).pipe(
             Layer.provide(handlers),
-            Layer.provideMerge(fixture.layer),
+            Layer.provideMerge(accessLayer),
             Layer.provide(HttpServer.layerServices),
             Layer.provide(NodeCrypto.layer),
           ),
@@ -765,6 +771,7 @@ export const makeProductAxisAllowanceFixture = Effect.fn('ProductAxisAllowance.m
       authorization,
       baseUrl,
       composition,
+      deniedAccess,
       fixture,
       nativeFetch,
       nativeRead,

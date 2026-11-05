@@ -330,11 +330,7 @@ it.effect(
         reason: 'Retire the eligible product rule',
         stableRuleRef: ref('commerce.assortment', 'commerce.assortment.stable-rule', 'stable-rule-1'),
       });
-      const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
-        ownerPermissionDecisions: ['denied'],
-        ownerRegistration: assortmentRegistration,
-      });
+      const harness = yield* makeActionTestHarness({ access: 'denied', ownerRegistration: assortmentRegistration });
       const failure = yield* harness.runtime
         .runAction({
           payload,
@@ -354,7 +350,6 @@ it.effect(
         .pipe(Effect.flip);
       const snapshot = harness.snapshot();
       expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
-      expect(snapshot.ownerPermissionTargets).toHaveLength(1);
       expect(snapshot.permissionDenials).toHaveLength(1);
       expect(snapshot.stages).not.toContain('handler_executed');
       expect(snapshot.committed).toHaveLength(0);
@@ -403,11 +398,7 @@ it.effect('never treats an actual ELIGIBLE decision as permission to execute reg
       reason: 'Administer the eligible context Boundary',
       subject,
     });
-    const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      ownerPermissionDecisions: ['denied'],
-      ownerRegistration: assortmentRegistration,
-    });
+    const harness = yield* makeActionTestHarness({ access: 'denied', ownerRegistration: assortmentRegistration });
     const failure = yield* harness.runtime
       .runAction({
         payload,
@@ -425,8 +416,6 @@ it.effect('never treats an actual ELIGIBLE decision as permission to execute reg
       .pipe(Effect.flip);
     const snapshot = harness.snapshot();
     expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
-    expect(snapshot.ownerPermissionTargets).toHaveLength(1);
-    expect(snapshot.ownerPermissionTargets[0]).toMatchObject({ definition: { key: 'assortment.boundary.create' } });
     expect(snapshot.permissionDenials).toHaveLength(1);
     expect(snapshot.stages).not.toContain('handler_executed');
     expect(snapshot.committed).toHaveLength(0);

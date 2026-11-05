@@ -93,6 +93,21 @@ const handleEnsureRetailCustomerProfile = Effect.fn('EnsureRetailCustomerProfile
 );
 export const ensureRetailCustomerProfileAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason:
+        'Customer-context enrollment continuation ensures the retail customer profile for the subject it acts for',
+      subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
+    },
+    accessDeclaration: {
+      key: 'commerce.customer-context.retail-customer-profile.ensure',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.ensure-retail-customer-profile.access.v1',
@@ -105,7 +120,7 @@ export const ensureRetailCustomerProfileAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.ensure-retail-customer-profile',
       moduleKey: MODULE_KEY,
       role: 'action',

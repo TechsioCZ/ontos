@@ -235,3 +235,16 @@ export const PartyCorrectionDetailSchema = Schema.Struct({
   resultingAssertion: Schema.OptionFromNullOr(PartyCorrectionAssertionValueSchema),
   targetAssertionId: TargetAssertionIdSchema,
 });
+/**
+ * A correction as the read answers it: the evidence and the authority are governed field classes, so
+ * a caller without those capabilities receives the correction without them (O17, O58).
+ */
+export const PartyCorrectionDetailViewSchema = Schema.Struct({
+  ...PartyCorrectionDetailSchema.fields,
+  actingPrincipalId: Schema.optionalKey(PartyCorrectionDetailSchema.fields.actingPrincipalId),
+  approvingPrincipalId: Schema.optionalKey(PartyCorrectionDetailSchema.fields.approvingPrincipalId),
+  evidenceRefs: Schema.optionalKey(PartyCorrectionDetailSchema.fields.evidenceRefs),
+  originalAssertion: Schema.optionalKey(PartyCorrectionDetailSchema.fields.originalAssertion),
+  reasonDetail: Schema.optionalKey(PartyCorrectionDetailSchema.fields.reasonDetail),
+  resultingAssertion: Schema.optionalKey(PartyCorrectionDetailSchema.fields.resultingAssertion),
+});

@@ -15,7 +15,7 @@ import {
 import { findMatchDecision } from '../services/party-matching-persistence.service.ts';
 
 const partyMatchDecisionEntrypoint = defineTenantModuleEntrypoint({
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-match-decision',
   moduleKey: 'party.registry',
@@ -37,6 +37,35 @@ const matchDecisionUnavailable = (cause: unknown) =>
   );
 export const partyMatchDecisionRead = defineRead(
   {
+    // No accessTarget: the request names either the decision record or its Action invocation, so one
+    // immutable record key is not derivable for every call. The declaration is therefore scope-wide
+    // rather than record-scoped (O9, O74): its own scope-wide decision is the parent read its evidence
+    // field class rides, so the group needs no record target.
+    accessDeclaration: {
+      key: 'party.registry.party-match.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'identity-review', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    accessFieldGroups: [
+      {
+        fieldClass: 'personal_data',
+        fields: [
+          'evidenceEvaluation',
+          'evidenceExplanation.evidenceRefs',
+          'evidenceExplanation.normalizedValue',
+          'evidenceExplanation.reason',
+        ],
+        key: 'party.registry.party-match-decision-evidence.read',
+        kind: 'field_read',
+        modes: ['run'],
+        placement: { group: 'sensitive-fields', level: 'extended' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     accessKind: 'detail',
     entrypoint: partyMatchDecisionEntrypoint,
     evidencePolicy: {
@@ -46,7 +75,6 @@ export const partyMatchDecisionRead = defineRead(
     inputSchema: PartyMatchDecisionRequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: 'party.registry',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'party.registry.api.party-match-decision',
     resultSchema: PartyMatchDecisionResponseSchema,
@@ -98,5 +126,4 @@ export const partyMatchDecisionRead = defineRead(
       find: (input: { readonly actionInvocationId?: string; readonly decisionId?: string }) =>
         findMatchDecision(transaction, scope.tenantId, input),
     }),
-  () => ({ kind: 'tenant', permission: 'review_party_identity' }),
 );

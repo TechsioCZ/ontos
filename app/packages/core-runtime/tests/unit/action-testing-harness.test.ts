@@ -13,6 +13,7 @@ import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { ACTION_RUNTIME_STAGES } from '../../src/actions/runtime.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { bindActionTestServices, makeActionTestHarness } from '../../src/testing/actions.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -24,6 +25,7 @@ const principal = {
 
 const lifecycleAction = defineAction(
   {
+    accessDeclaration: fixtureActionAccess('test.counter'),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'test.counter.read.v1',
@@ -144,6 +146,7 @@ it.effect(
     }
     const serviceAction = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('test.service'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'test.service.read.v1',
@@ -267,6 +270,7 @@ it.effect('uses the genuine approved owner/build revision instead of the histori
     const action = defineAction(
       {
         ...lifecycleAction.descriptor,
+        accessDeclaration: fixtureActionAccess(moduleId),
         actionKey: `${moduleId}.bound`,
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',

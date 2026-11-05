@@ -1,9 +1,7 @@
-import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { expect, it } from 'effect-rstest';
 import { Crypto, Effect, Layer, Predicate } from 'effect';
-import { getReadHandler } from '@app/core-runtime/testing/reads';
+import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
-  BusinessPermissionRelationshipMutation,
   ContextAccess,
   PrincipalEligibility,
   unavailablePrincipalEligibility,
@@ -18,7 +16,6 @@ import {
   unavailableCounterpartyInvitationProofDelivery,
   unavailableCounterpartyInvitationProofLifecycle,
 } from '../../shared/domain/access-port.ts';
-import { counterpartyAccessReadPermissionTarget } from '../../src/api/access-read-support.ts';
 import {
   counterpartyAccessInvitationReadRead,
   readCounterpartyAccessInvitationFromServices,
@@ -108,9 +105,6 @@ const testCrypto = Crypto.make({
   digest: () => Effect.succeed(new Uint8Array(32)),
   randomBytes: (size) => new Uint8Array(size),
 });
-const unusedBusinessPermissionMutationLayer = Layer.succeed(BusinessPermissionRelationshipMutation, {
-  mutate: () => Effect.void,
-});
 const unusedContextAccessLayer = Layer.succeed(ContextAccess, {
   legalEntities: () => Effect.succeed([]),
   modules: () => Effect.succeed([]),
@@ -133,7 +127,6 @@ const unusedInvitationProofLifecycleLayer = Layer.succeed(
 );
 const testCryptoLayer = Layer.succeed(Crypto.Crypto, testCrypto);
 const unusedAccessDependencies = Layer.mergeAll(
-  unusedBusinessPermissionMutationLayer,
   unusedContextAccessLayer,
   unusedPrincipalEligibilityLayer,
   unusedInvitationClaimAuthorityLayer,
@@ -455,47 +448,3 @@ it.effect('fails closed when the invitation handler lacks Legal Entity context',
     expect(counterpartyCommerceAccessCheckRead.descriptor.legalEntityScope).toBe('required');
   }).pipe(provideUnusedAccessPort),
 );
-
-it('derives safe counterparty targets and only forwards gateway-verified Storefront identity', () => {
-  expect(counterpartyAccessReadPermissionTarget({ counterpartyRef, scope }, operationalScope)).toEqual({
-    kind: 'owner_permission',
-    ownerPermission: customerOwnerPermissionTarget({
-      permission: 'counterparty.access.read',
-      target: {
-        counterpartyId: counterpartyRef.resourceId,
-        kind: 'counterparty',
-        legalEntityId,
-        tenantId,
-      },
-    }),
-  });
-
-  const storefrontTarget = counterpartyAccessReadPermissionTarget(
-    { counterpartyRef, scope: storefrontScope },
-    operationalScope,
-  );
-  expect(storefrontTarget.ownerPermission.target).toEqual({
-    counterpartyId: counterpartyRef.resourceId,
-    kind: 'counterparty_storefront',
-    legalEntityId,
-    storefrontId: storefrontScope.storefrontKey,
-    tenantId,
-  });
-  expect(storefrontTarget).not.toHaveProperty('trustedStorefrontId');
-
-  const trustedStorefrontTarget = counterpartyAccessReadPermissionTarget(
-    { counterpartyRef, scope: storefrontScope },
-    { ...operationalScope, trustedStorefrontId: storefrontScope.storefrontKey },
-  );
-  expect(trustedStorefrontTarget).toHaveProperty('trustedStorefrontId', storefrontScope.storefrontKey);
-
-  const mismatchedStorefrontTarget = counterpartyAccessReadPermissionTarget(
-    { counterpartyRef, scope: storefrontScope },
-    { ...operationalScope, trustedStorefrontId: 'storefront-2' },
-  );
-  expect(mismatchedStorefrontTarget).toHaveProperty('trustedStorefrontId', 'storefront-2');
-  expect(mismatchedStorefrontTarget.ownerPermission.target).toHaveProperty(
-    'storefrontId',
-    storefrontScope.storefrontKey,
-  );
-});

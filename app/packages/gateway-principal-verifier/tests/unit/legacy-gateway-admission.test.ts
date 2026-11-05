@@ -11,6 +11,7 @@ import {
   makeAuthenticationNamespaceRegistry,
 } from '@app/core-runtime/auth/external-identity-admission';
 import { makeOperationalScopeResolver } from '@app/core-runtime/operations/context';
+import { makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
 import { ActiveApplicationCompositionService, OperationAuthenticationRequired } from '@app/core-runtime';
 import { ConfigProvider, Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -162,7 +163,7 @@ it.effect('maps a verified staff v1 assertion before Core resolves a migrated no
 
     const resolver = yield* makeOperationalScopeResolver(
       { load: () => Effect.succeed(activeStaffBinding) },
-      { legalEntities: () => Effect.succeed([]) },
+      makeTestOperationalScopeAccess({ legalEntityIds: () => [] }),
     );
     const scope = yield* resolver
       .resolve({
@@ -198,7 +199,7 @@ it.effect('rejects a mapped v1 assertion whose binding IDs belong to another nam
             bindingAuthenticationNamespaceId: externalNamespace,
           }),
       },
-      { legalEntities: () => Effect.succeed([]) },
+      makeTestOperationalScopeAccess({ legalEntityIds: () => [] }),
     );
     const failure = yield* resolver
       .resolve({
@@ -228,7 +229,7 @@ it.effect('does not fall back to a namespace-less v1 context for a migrated staf
     const principal = yield* verifyWithoutMapping(fixture.token, fixture.environment);
     const resolver = yield* makeOperationalScopeResolver(
       { load: () => Effect.succeed(activeStaffBinding) },
-      { legalEntities: () => Effect.succeed([]) },
+      makeTestOperationalScopeAccess({ legalEntityIds: () => [] }),
     );
     const failure = yield* resolver
       .resolve({

@@ -518,7 +518,7 @@ export const ISSUE_890_OWNER_EVIDENCE_MAP = [
     proofKind: PRODUCTION_SERVICE_PROOF_KIND,
     status: 'proved',
     testRefs: [
-      'app/scripts/scaffolding/tests/permission-generator.test.mts',
+      // The Permission scaffold (and its generator test) was retired by the authorization v2 cutover.
       'app/verticals/pricing/tests/unit/actor-bound-result-lookup-security.test.ts',
       'app/verticals/pricing/tests/unit/current-pricing-decision-read.test.ts',
       'app/verticals/pricing/tests/unit/pricing-read-access-boundary.test.ts',

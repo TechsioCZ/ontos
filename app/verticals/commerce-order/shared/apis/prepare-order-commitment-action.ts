@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.order
 // @ontos-action-http-slug prepare-order-commitment
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/prepare-order-commitment.ts';
 
 export { PrepareOrderCommitmentPayloadSchema } from '../actions/prepare-order-commitment.ts';
-
 export const PrepareOrderCommitmentActionInvalidProblemSchema = makeProblemDetailsSchema(
   'PrepareOrderCommitmentActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const PrepareOrderCommitmentActionForbiddenProblemSchema = makeProblemDet
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -146,7 +147,7 @@ export const prepareOrderCommitmentActionGroupDefinition = HttpApiGroup.make('pr
     HttpApiEndpoint.post('execute', '/commerce-order/actions/prepare-order-commitment', {
       error: actionErrors,
       payload: Schema.toEncoded(PrepareOrderCommitmentPayloadSchema),
-      success: PrepareOrderCommitmentResultSchema,
+      success: [ActionProposalAcceptedSchema, PrepareOrderCommitmentResultSchema],
     }),
   )
   .middleware(PrepareOrderCommitmentActionSchemaErrorMiddleware);

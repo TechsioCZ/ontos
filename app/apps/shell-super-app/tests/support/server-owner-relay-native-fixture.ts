@@ -150,18 +150,14 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
     }
     if (input.relaySource !== undefined) {
       Object.assign(environment, {
-        ONTOS_GATEWAY_RELAY_API_KEY: Redacted.value(input.relaySource.apiKey),
+        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(input.relaySource.apiKey),
         ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
       });
     }
-    if (input.appId === CUSTOMER_CONTEXT_APP_ID && input.relaySource !== undefined) {
-      Object.assign(environment, {
-        ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: Redacted.value(input.relaySource.apiKey),
-      });
-    }
-    if (input.sourceBindings !== undefined) {
-      Object.assign(environment, { ONTOS_GATEWAY_RELAY_SOURCE_BINDINGS: Redacted.value(input.sourceBindings) });
-    }
+    // The Shell requires an explicit enrolment; a deployment with no module credential enrols none.
+    Object.assign(environment, {
+      ONTOS_GATEWAY_MODULE_BINDINGS: Redacted.value(input.sourceBindings ?? Redacted.make('[]')),
+    });
     return environment;
   },
 );
@@ -441,102 +437,6 @@ export const allocateLoopbackPort = Effect.fn('ServerOwnerRelayNative.allocateLo
   },
 );
 
-const PackagedRetailWorkerArtifactSchema = Schema.Struct({
-  appId: Schema.Literal(CUSTOMER_CONTEXT_APP_ID),
-  entry: Schema.Literal('worker.mjs'),
-  ownerBuildIdentities: Schema.Array(
-    Schema.Struct({
-      appId: Schema.Literal(CUSTOMER_CONTEXT_APP_ID),
-      buildMarker: IdentitySchema.fields.buildMarker,
-      sourceRevision: IdentitySchema.fields.sourceRevision,
-      unitId: Schema.Literal('app/commerce-customer-context'),
-    }),
-  ),
-  schemaVersion: Schema.Literal(2),
-  serviceId: Schema.Literal('commerce-customer-context-worker'),
-  sourceRevision: IdentitySchema.fields.sourceRevision,
-});
-
-export const loadPackagedRetailWorker = Effect.fn('ServerOwnerRelayNative.loadPackagedRetailWorker')(
-  function* loadPackagedRetailWorker(input: {
-    readonly expected: {
-      readonly appId: string;
-      readonly buildMarker: string;
-      readonly sourceRevision: string;
-      readonly unitId: string;
-    };
-    readonly relativeDirectory: string;
-  }) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const directory = path.resolve(input.relativeDirectory);
-    const artifact = yield* fs
-      .readFileString(path.join(directory, 'worker-artifact.json'))
-      .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(PackagedRetailWorkerArtifactSchema))));
-    const [owner] = artifact.ownerBuildIdentities;
-    if (
-      artifact.ownerBuildIdentities.length !== 1 ||
-      owner === undefined ||
-      owner.appId !== input.expected.appId ||
-      owner.buildMarker !== input.expected.buildMarker ||
-      owner.sourceRevision !== input.expected.sourceRevision ||
-      owner.unitId !== input.expected.unitId ||
-      artifact.sourceRevision !== owner.sourceRevision
-    ) {
-      return yield* new PackagedOwnerStartupError({ reason: 'Actual worker and API immutable identities disagree' });
-    }
-    yield* fs.stat(path.join(directory, artifact.entry));
-    return { artifact, directory };
-  },
-);
-
-export const startPackagedRetailWorker = Effect.fn('ServerOwnerRelayNative.startPackagedRetailWorker')(
-  function* startPackagedRetailWorker(input: {
-    readonly compositionReadToken?: Redacted.Redacted;
-    readonly compositionUrl: string;
-    readonly packaged: Effect.Success<ReturnType<typeof loadPackagedRetailWorker>>;
-  }) {
-    const environment = {
-      APP_ENV_PATH: '/dev/null',
-      DATABASE_URL: Redacted.value(yield* Config.Redacted('DATABASE_URL')),
-      NODE_ENV: 'production',
-      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: input.compositionUrl,
-      PATH: yield* Config.String('PATH'),
-      SPICEDB_CA_CERT: yield* Config.String('SPICEDB_CA_CERT'),
-      SPICEDB_ENDPOINT: yield* Config.String('SPICEDB_ENDPOINT'),
-      SPICEDB_PRESHARED_KEY: Redacted.value(yield* Config.Redacted('SPICEDB_PRESHARED_KEY')),
-    };
-    if (input.compositionReadToken !== undefined) {
-      Object.assign(environment, {
-        ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN: Redacted.value(input.compositionReadToken),
-      });
-    }
-    const child = yield* ChildProcess.make('node', [input.packaged.artifact.entry], {
-      cwd: input.packaged.directory,
-      env: environment,
-      extendEnv: false,
-      forceKillAfter: '3 seconds',
-      stderr: 'pipe',
-      stdin: 'ignore',
-      stdout: 'pipe',
-    });
-    const diagnostics: Redacted.Redacted[] = [];
-    for (const stream of [child.stdout, child.stderr]) {
-      yield* stream.pipe(
-        Stream.decodeText(),
-        Stream.splitLines,
-        Stream.runForEach((line) =>
-          Effect.sync(() => {
-            diagnostics.push(Redacted.make(line));
-          }),
-        ),
-        Effect.forkScoped,
-      );
-    }
-    return { child, diagnostics };
-  },
-);
-
 const PostalFactoryResultSchema = Schema.Struct({
   compositionRevision: Schema.String,
   factory: Schema.Literals(['delivery', 'invoice']),
@@ -644,8 +544,8 @@ export const runRegisteredPostalFactoryProbe = Effect.fn('ServerOwnerRelayNative
         NODE_ENV: 'production',
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: input.compositionUrl,
         ONTOS_GATEWAY_ISSUER: input.gateway.issuer,
+        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(input.relaySource.apiKey),
         ONTOS_GATEWAY_PUBLIC_JWKS: input.gateway.publicJwks,
-        ONTOS_GATEWAY_RELAY_API_KEY: Redacted.value(input.relaySource.apiKey),
         ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
         PATH: yield* Config.String('PATH'),
         SPICEDB_CA_CERT: yield* Config.String('SPICEDB_CA_CERT'),

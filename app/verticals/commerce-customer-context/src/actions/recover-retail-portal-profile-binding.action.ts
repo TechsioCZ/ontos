@@ -3,14 +3,13 @@
 // @ontos-action-slug recover-retail-portal-profile-binding
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { reconcileAccessPortalAfterAttempt } from '@app/core-runtime/access/portal';
+import { Effect } from 'effect';
 import {
-  LegalEntityIdSchema,
   RetailPortalBindingActionRejected,
+  retailPortalBindingEventFields,
   retailPortalBindingPayloadMatchesTrustedScope,
-  retailPortalBindingPermissionMutationPayloads,
   retailPortalBindingResultMatches,
-  retailPortalBindingStagedPermissionMutations,
 } from '../../shared/actions/bind-retail-portal-profile.ts';
 import {
   RecoverRetailPortalProfileBindingPayloadSchema,
@@ -20,18 +19,16 @@ import type {
   RecoverRetailPortalProfileBindingPayload,
   RecoverRetailPortalProfileBindingResult,
 } from '../../shared/actions/recover-retail-portal-profile-binding.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { retailPortalBindingServicesForVerifiedScope } from '../profile-service-factory.ts';
 import {
-  RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxPayloadSchema as AuthorizationMutationRequestedEventSchema,
-  createRecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxMessage as createAuthorizationMutationRequestedOutboxMessage,
-} from './recover-retail-portal-profile-binding-commerce-customer-context-retail-portal-profile-binding-recovery-authorization-mutation-requested-v1.outbox-message.ts';
-import type { RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxPayload } from './recover-retail-portal-profile-binding-commerce-customer-context-retail-portal-profile-binding-recovery-authorization-mutation-requested-v1.outbox-message.ts';
+  RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveredV1OutboxPayloadSchema as BindingRecoveredEventSchema,
+  createRecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveredV1OutboxMessage as createBindingRecoveredOutboxMessage,
+} from './recover-retail-portal-profile-binding.commerce-customer-context-retail-portal-profile-binding-recovered-v1.outbox-message.ts';
 import { recordProfileResourceLookup } from './profile-action-data-access.ts';
 
 const MODULE_KEY = 'commerce.customer-context';
 const domainEvents = {
-  'commerce.customer-context.retail-portal-profile-binding-recovery-authorization-mutation-requested.v1':
-    AuthorizationMutationRequestedEventSchema,
+  'commerce.customer-context.retail-portal-profile-binding-recovered.v1': BindingRecoveredEventSchema,
 } as const;
 export interface RecoverRetailPortalProfileBindingServices {
   readonly recover: (
@@ -63,10 +60,7 @@ const validateRecoveryPayload = (
     return bindingScopeConflict();
   }
   const trustedScope = { legalEntityId, tenantId: context.scope.tenantId };
-  if (!retailPortalBindingPayloadMatchesTrustedScope(payload, trustedScope)) {
-    return bindingScopeConflict();
-  }
-  return legalEntityId;
+  return retailPortalBindingPayloadMatchesTrustedScope(payload, trustedScope) ? undefined : bindingScopeConflict();
 };
 
 const validateRecoveryResult = (
@@ -82,37 +76,15 @@ const validateRecoveryResult = (
         retryable: false,
       });
 
-const recoveryAuthorizationEventPayload = (
-  result: RecoverRetailPortalProfileBindingResult,
-  payload: RecoverRetailPortalProfileBindingPayload,
-  legalEntityId: RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxPayload['legalEntityId'],
-  mutationId: RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxPayload['mutationId'],
-  permissionMutations: NonNullable<RecoverRetailPortalProfileBindingResult['permissionMutations']>,
-): RecoverRetailPortalProfileBindingCommerceCustomerContextRetailPortalProfileBindingRecoveryAuthorizationMutationRequestedV1OutboxPayload => ({
-  bindingRef: result.bindingRef,
-  catalogVersion: '1',
-  legalEntityId,
-  mutationId,
-  operation: 'grant',
-  permissionMutations: retailPortalBindingPermissionMutationPayloads(permissionMutations),
-  principalRef: payload.principalRef,
-  profileRef: payload.profileRef,
-  schemaVersion: '1',
-  sellingLegalEntityRef: payload.sellingLegalEntityRef,
-  transition: 'recovery',
-});
-
 const handle = Effect.fn('RecoverRetailPortalProfileBindingAction.handle')(
   function* handleRecoverRetailPortalProfileBindingEffect(
     payload: RecoverRetailPortalProfileBindingPayload,
     context: ActionHandlerContext<typeof domainEvents, RecoverRetailPortalProfileBindingServices>,
   ) {
-    const payloadValidation = validateRecoveryPayload(payload, context);
-    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- This local validator returns either the trusted legal-entity string or a yieldable domain rejection; runtime classification preserves that fail-closed union.
-    if (typeof payloadValidation !== 'string') {
-      return yield* payloadValidation;
+    const payloadError = validateRecoveryPayload(payload, context);
+    if (payloadError !== undefined) {
+      return yield* payloadError;
     }
-    const legalEntityId = payloadValidation;
     const result = yield* context.services.recover(payload, context);
     const resultError = validateRecoveryResult(result, payload, context);
     if (resultError !== undefined) {
@@ -128,39 +100,29 @@ const handle = Effect.fn('RecoverRetailPortalProfileBindingAction.handle')(
       result.bindingRef,
       `retail-binding-recovery:${result.bindingRef.resourceId}:${payload.expectedRevision}`,
     );
-    const permissionMutations = retailPortalBindingStagedPermissionMutations(result.permissionMutations);
-    if (permissionMutations === undefined && result.authorizationState === 'ACTIVE') {
-      return result;
-    }
-    if (permissionMutations === undefined) {
-      return yield* new RetailPortalBindingActionRejected({
-        code: 'OUTCOME_INDETERMINATE',
-        reason: 'The binding authorization intent set was not durably staged',
-        retryable: true,
-      });
-    }
-    const decodedLegalEntityId = yield* Schema.decodeEffect(LegalEntityIdSchema)(legalEntityId).pipe(Effect.orDie);
-    const eventPayload = recoveryAuthorizationEventPayload(
-      result,
-      payload,
-      decodedLegalEntityId,
-      context.actionInvocationId,
-      permissionMutations,
-    );
+    const eventPayload = { ...retailPortalBindingEventFields(result, payload), state: 'ACTIVE' as const };
     const event = yield* context.addDomainEvent({
-      eventType: 'commerce.customer-context.retail-portal-profile-binding-recovery-authorization-mutation-requested.v1',
+      eventType: 'commerce.customer-context.retail-portal-profile-binding-recovered.v1',
       payloadJson: eventPayload,
       producerModuleKey: MODULE_KEY,
       subjectModuleKey: MODULE_KEY,
       subjectResourceId: result.bindingRef.resourceId,
       subjectResourceType: result.bindingRef.resourceType,
     });
-    yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
+    yield* context.addOutboxMessage(event, createBindingRecoveredOutboxMessage(eventPayload));
     return result;
   },
 );
 export const recoverRetailPortalProfileBindingAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.retail-portal-profile-binding.recover',
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'portal-access', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.recover-retail-portal-profile-binding.access.v1',
@@ -171,7 +133,7 @@ export const recoverRetailPortalProfileBindingAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.recover-retail-portal-profile-binding',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -186,10 +148,13 @@ export const recoverRetailPortalProfileBindingAction = defineAction(
   },
   handle,
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
+    retailPortalBindingServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(
         ({ recoverRetailPortalProfileBinding }): RecoverRetailPortalProfileBindingServices =>
           recoverRetailPortalProfileBinding,
       ),
     ),
+  undefined,
+  // The binding committed the bound person's portal access with it; the engine follows once it committed.
+  reconcileAccessPortalAfterAttempt(),
 );

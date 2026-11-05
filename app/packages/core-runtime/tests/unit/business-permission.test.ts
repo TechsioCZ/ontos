@@ -6,7 +6,6 @@ import {
   defineBusinessPermission,
   defineBusinessPermissionCatalog,
 } from '../../src/permissions/business-permission.ts';
-import { canTransitionAuthorizationMutation } from '../../src/permissions/authorization-mutation.ts';
 
 const readPermission = defineBusinessPermission({
   allowedScopeKinds: ['counterparty', 'counterparty_storefront'],
@@ -79,11 +78,4 @@ it('rejects empty, repeated and malformed scope declarations', () => {
   for (const allowedScopeKinds of [[], ['fixture_parent', 'fixture_parent'], ['invalid scope']]) {
     expect(() => defineBusinessPermission({ ...readPermission, allowedScopeKinds })).toThrow();
   }
-});
-
-it('allows only explicit authorization projection state transitions', () => {
-  expect(canTransitionAuthorizationMutation('PENDING_GRANT', 'ACTIVE')).toBe(true);
-  expect(canTransitionAuthorizationMutation('ACTIVE', 'REVOKED')).toBe(false);
-  expect(canTransitionAuthorizationMutation('PENDING_REVOKE', 'REVOKED')).toBe(true);
-  expect(canTransitionAuthorizationMutation('RECONCILIATION_REQUIRED', 'ACTIVE')).toBe(true);
 });

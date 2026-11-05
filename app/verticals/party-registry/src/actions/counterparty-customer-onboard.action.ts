@@ -201,6 +201,14 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
 
 export const counterpartyCustomerOnboardAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.counterparty.onboard',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'counterparties', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.counterparty-customer-onboard.access.v1',
@@ -215,13 +223,12 @@ export const counterpartyCustomerOnboardAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.counterparty-customer-onboard',
       moduleKey: 'party.registry',
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityPermission: 'manage_counterparty',
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
     payloadSchema: CounterpartyCustomerOnboardPayloadSchema,

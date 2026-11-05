@@ -50,10 +50,7 @@ const context = (services: PaymentTermAffectedUseAssessmentServices) => ({
 });
 
 it('requires catalog-wide read authority before exact affected-use resource access', () => {
-  expect(paymentTermAffectedUseAssessmentEntrypoint.authorization).toEqual({
-    kind: 'context_permission',
-    permission: 'payment.term_catalog.read',
-  });
+  expect(paymentTermAffectedUseAssessmentEntrypoint.authorization).toEqual({ kind: 'protected' });
 });
 
 it.effect('denies a cross-Tenant Payment Term before consulting the assessment service', () =>

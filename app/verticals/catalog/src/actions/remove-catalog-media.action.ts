@@ -97,6 +97,14 @@ const handleRemoveCatalogMedia = Effect.fn('RemoveCatalogMediaAction.handle')(fu
 
 export const removeCatalogMediaAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.catalog-media.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.remove-catalog-media.access.v1',
@@ -108,7 +116,7 @@ export const removeCatalogMediaAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

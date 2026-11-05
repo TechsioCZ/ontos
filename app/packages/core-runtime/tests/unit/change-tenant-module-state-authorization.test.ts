@@ -1,22 +1,24 @@
-import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
 
 /**
- * `core.modules.change-tenant-module-state` is provisioned to every tenant member as a
- * `tenant_membership_default` action, so the tenant-permission gate is the only thing separating a member from
- * tenant-wide module administration: quarantine, archive, suspend, and activating a module the tenant never
- * enabled.
+ * `core.modules.tenant-module.change-state` is tenant configuration administration (O37): it carries its
+ * own `admin` capability on the one gate, so neither a tenant member nor an agent reaches it through a
+ * membership default, and no legacy tenant-role stopgap remains on the descriptor.
  */
-
-it.effect('requires tenant administration to change tenant module state', () =>
-  Effect.gen(function* moduleStateRequiresAdministration() {
-    const payload = yield* Schema.decodeEffect(changeTenantModuleStateAction.descriptor.payloadSchema)({
-      moduleKey: 'commerce.inventory',
-      newState: 'suspended',
-      reason: 'Probe',
-    });
-    expect(changeTenantModuleStateAction.descriptor.tenantPermission?.(payload)).toBe('manage_identity');
-  }),
-);
+it('declares its own admin capability and keeps no tenant-role gate', () => {
+  const { descriptor } = changeTenantModuleStateAction;
+  expect(descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+  expect(descriptor.accessDeclaration).toMatchObject({
+    key: 'core.modules.tenant-module.change-state',
+    kind: 'admin',
+    modes: ['run'],
+    placement: { group: 'modules', level: 'manage' },
+    risk: 'critical',
+    selectors: [],
+  });
+  // A tenant-wide, irreversible state change is human-only: an agent policy of `never` is derived.
+  expect('tenantPermission' in descriptor).toBe(false);
+  expect(descriptor.accessWorkload).toBeUndefined();
+});

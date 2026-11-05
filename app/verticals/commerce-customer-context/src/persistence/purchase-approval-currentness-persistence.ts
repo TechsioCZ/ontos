@@ -1,12 +1,4 @@
-import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
-import type { CustomerPermissionRequest } from '../permissions/authorization.ts';
-import { ContextAccess } from '@app/core-runtime';
-import type {
-  ContextAccessService,
-  OperationalScope,
-  ScopedRoutineInvoker,
-  ScopedTransactionExecutor,
-} from '@app/core-runtime';
+import type { OperationalScope, ScopedRoutineInvoker, ScopedTransactionExecutor } from '@app/core-runtime';
 import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { Effect, DateTime, Layer, Option, Predicate, Schema } from 'effect';
 
@@ -302,35 +294,15 @@ const buyerPermission = Effect.fn('PurchaseApprovalCurrentnessPersistence.buyerP
     transaction: ScopedTransactionExecutor,
     snapshot: Pick<CurrentApprovalFacts, 'proposal'>,
     scope: PurchaseApprovalCurrentnessTrustedScope,
-    // eslint-disable-next-line effect-native/no-dependency-parameters -- This owner-local helper receives the already-yielded Core access service while remaining directly testable; expires: 2027-09-10.
-    contextAccess: ContextAccessService,
     // Decision paths keep the owner access row locked; read-only observation must not block nested owner reads.
     lock: boolean,
   ) =>
     Effect.gen(function* readBuyerPermission() {
-      const check = contextAccess.ownerPermissions;
-      if (check === undefined) {
-        return yield* currentnessRejected('Core buyer authorization is unavailable');
-      }
+      // The buyer's Counterparty grant is owner-local Postgres state and the only authority here
+      // (O67-Q1); there is no second permission store to consult (O62).
       const counterparty = yield* Schema.decodeUnknownEffect(PurchaseLimitCounterpartyRefSchema)(
         snapshot.proposal.identity.counterpartyRef,
       ).pipe(Effect.mapError(mapCurrentnessError(INVALID_COUNTERPARTY_REFERENCE)));
-      const target: CustomerPermissionRequest = {
-        permission: 'counterparty.purchase.submit',
-        target: {
-          counterpartyId: counterparty.resourceId,
-          kind: 'counterparty_storefront',
-          legalEntityId: scope.legalEntityId,
-          storefrontId: scope.storefrontId,
-          tenantId: scope.tenantId,
-        },
-      };
-      const [core] = yield* check({
-        legalEntityId: scope.legalEntityId,
-        principal: snapshot.proposal.identity.buyer,
-        targets: [{ target: customerOwnerPermissionTarget({ ...target, trustedStorefrontId: scope.storefrontId }) }],
-        trustedStorefrontId: scope.storefrontId,
-      });
       const ownerScope = {
         legalEntityId: scope.legalEntityId,
         tenantId: yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(
@@ -347,10 +319,10 @@ const buyerPermission = Effect.fn('PurchaseApprovalCurrentnessPersistence.buyerP
         principal: snapshot.proposal.identity.buyer,
         scope: { kind: 'storefront', storefrontKey: scope.storefrontId },
       });
-      if (core?.decision === 'unavailable' || owner === 'UNAVAILABLE' || core === undefined) {
+      if (owner === 'UNAVAILABLE') {
         return yield* currentnessRejected('Current buyer authorization is unavailable');
       }
-      return core.decision === 'allowed' && owner === 'ALLOWED' ? ('ALLOWED' as const) : ('DENIED' as const);
+      return owner === 'ALLOWED' ? ('ALLOWED' as const) : ('DENIED' as const);
     }),
 );
 
@@ -375,7 +347,6 @@ export const readOrderBuyerPermissionForVerifiedSubject = Effect.fn(
   ) {
     return yield* denied('The verified Order buyer does not belong to the authenticated operation scope');
   }
-  const contextAccess = yield* ContextAccess;
   return yield* buyerPermission(
     transaction,
     { proposal },
@@ -385,7 +356,6 @@ export const readOrderBuyerPermissionForVerifiedSubject = Effect.fn(
       storefrontId: proposal.context.storefrontId,
       tenantId: actualScope.tenantId,
     },
-    contextAccess,
     options?.lock ?? true,
   );
 });
@@ -592,8 +562,6 @@ const loadCurrentApprovalFacts = Effect.fn('PurchaseApprovalCurrentnessPersisten
     snapshot: CurrentApprovalFacts,
     scope: PurchaseApprovalCurrentnessTrustedScope,
     // eslint-disable-next-line effect-native/no-dependency-parameters -- This helper receives already-yielded services before resolving the shared owner-current evidence bundle; expires: 2027-09-10.
-    contextAccess: ContextAccessService,
-    // eslint-disable-next-line effect-native/no-dependency-parameters -- This helper receives already-yielded services before resolving the shared owner-current evidence bundle; expires: 2027-09-10.
     purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPortService,
     profileDependencies: Pick<ProfilePersistenceDependencies, 'resolveCounterpartyRole'>,
     profileActorPrincipalId: string = scope.principalId,
@@ -605,7 +573,7 @@ const loadCurrentApprovalFacts = Effect.fn('PurchaseApprovalCurrentnessPersisten
     const [profile, buyer, externalFacts, policyState] = yield* Effect.all(
       [
         currentProfile(transaction, snapshot, scope, profileDependencies, profileActorPrincipalId),
-        buyerPermission(transaction, snapshot, scope, contextAccess, true),
+        buyerPermission(transaction, snapshot, scope, true),
         currentExternalFacts(purchaseLimitCurrentness, snapshot, scope, transaction, now),
         readCurrentPurchaseLimitPolicyState(transaction, {
           counterpartyRef,
@@ -632,8 +600,6 @@ const purchaseApprovalCurrentnessForTransaction = (
     readonly trustedStorefrontId: string;
   },
   // eslint-disable-next-line effect-native/no-dependency-parameters -- This owner-local constructor receives already-yielded Core and currentness services before closing the transaction-scoped adapter; expires: 2027-09-10.
-  contextAccess: ContextAccessService,
-  // eslint-disable-next-line effect-native/no-dependency-parameters -- This owner-local constructor receives already-yielded Core and currentness services before closing the transaction-scoped adapter; expires: 2027-09-10.
   purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPortService,
   profileDependencies: Pick<ProfilePersistenceDependencies, 'resolveCounterpartyRole'>,
   // eslint-disable-next-line effect-native/no-dependency-parameters -- This owner-local constructor receives already-yielded Core and currentness services before closing the transaction-scoped adapter; expires: 2027-09-10.
@@ -656,7 +622,6 @@ const purchaseApprovalCurrentnessForTransaction = (
           scopedTransaction,
           snapshot,
           trustedScope,
-          contextAccess,
           purchaseLimitCurrentness,
           profileDependencies,
         );
@@ -670,7 +635,7 @@ const purchaseApprovalCurrentnessForTransaction = (
             binding: claimed.finalBinding,
             claimed,
             request: snapshot.request,
-            scope: trustedScope,
+            scope,
           })
           .pipe(
             Effect.flatMap((evidence) =>
@@ -715,7 +680,6 @@ const purchaseApprovalCurrentnessForTransaction = (
           scopedTransaction,
           snapshot,
           trustedScope,
-          contextAccess,
           purchaseLimitCurrentness,
           profileDependencies,
         );
@@ -794,7 +758,6 @@ export const resolveOrderPurchaseApprovalRevalidation = Effect.fn(
     tenantId: actualScope.tenantId,
   };
   yield* assertClaimedTarget(claimed, snapshot, businessScope);
-  const contextAccess = yield* ContextAccess;
   if (!sameCurrentPurchaseValue(currentOrderEvidence.bundlePurchaseValue, snapshot.proposal.purchaseValue)) {
     return yield* currentnessRejected('The genuine final Order purchase value no longer matches the approved proposal');
   }
@@ -818,6 +781,7 @@ export const resolveOrderPurchaseApprovalRevalidation = Effect.fn(
   const profileDependencies = {
     resolveCounterpartyRole: roleResolverFactory.make({
       legalEntityId: actualScope.legalEntityId,
+      operationalScope: actualScope,
       requestCorrelation: actualScope.correlationId,
       tenantId: actualScope.tenantId,
     }),
@@ -833,7 +797,6 @@ export const resolveOrderPurchaseApprovalRevalidation = Effect.fn(
         transaction,
         snapshot,
         businessScope,
-        contextAccess,
         purchaseLimitCurrentness,
         profileDependencies,
         actualScope.principalId,
@@ -892,8 +855,6 @@ export const purchaseApprovalCurrentnessFactoryLive = Layer.effect(
           readonly legalEntityId: string;
           readonly trustedStorefrontId: string;
         },
-        // eslint-disable-next-line effect-native/no-dependency-parameters -- The factory receives this already-yielded Core service before closing the owner-local Action adapter; expires: 2027-09-10.
-        contextAccess: ContextAccessService,
         // eslint-disable-next-line effect-native/no-dependency-parameters -- The factory receives this already-yielded currentness port before closing the owner-local Action adapter; expires: 2027-09-10.
         purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPortService,
         // eslint-disable-next-line effect-native/no-dependency-parameters -- The factory receives this already-yielded evaluation source before closing the owner-local Action adapter; expires: 2027-09-10.
@@ -904,11 +865,11 @@ export const purchaseApprovalCurrentnessFactoryLive = Layer.effect(
         return purchaseApprovalCurrentnessForTransaction(
           scopedTransaction,
           scope,
-          contextAccess,
           purchaseLimitCurrentness.forOperation?.(scopedTransaction, scope) ?? purchaseLimitCurrentness,
           {
             resolveCounterpartyRole: roleResolverFactory.make({
               legalEntityId: scope.legalEntityId,
+              operationalScope: scope,
               requestCorrelation: scope.correlationId,
               tenantId: scope.tenantId,
             }),

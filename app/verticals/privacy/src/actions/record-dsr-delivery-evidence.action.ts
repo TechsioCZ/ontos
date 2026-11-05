@@ -98,6 +98,14 @@ export const handleRecordDsrDeliveryEvidence = Effect.fn('RecordDsrDeliveryEvide
 });
 export const recordDsrDeliveryEvidenceAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-delivery-evidence.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr-delivery', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-dsr-delivery-evidence.access.v1',
@@ -109,7 +117,7 @@ export const recordDsrDeliveryEvidenceAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-dsr-delivery-evidence',
       moduleKey: 'privacy.core',
       role: 'action',

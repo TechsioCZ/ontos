@@ -75,8 +75,6 @@ export const MODULE_MANIFEST_API_SLOT_START = '// <generated-module-manifest-api
 export const MODULE_MANIFEST_API_SLOT_END = '// </generated-module-manifest-apis>';
 export const MODULE_MANIFEST_OPERATION_SLOT_START = '// <generated-module-manifest-operation-contracts>';
 export const MODULE_MANIFEST_OPERATION_SLOT_END = '// </generated-module-manifest-operation-contracts>';
-export const MODULE_MANIFEST_PERMISSION_SLOT_START = '// <generated-module-manifest-business-permissions>';
-export const MODULE_MANIFEST_PERMISSION_SLOT_END = '// </generated-module-manifest-business-permissions>';
 export const MODULE_MANIFEST_COMPONENT_SLOT_START = '// <generated-module-manifest-components>';
 export const MODULE_MANIFEST_COMPONENT_SLOT_END = '// </generated-module-manifest-components>';
 export const MODULE_MANIFEST_REPORT_SLOT_START = '// <generated-module-manifest-reports>';
@@ -130,24 +128,34 @@ export const createScaffoldErrorTools = <Failure,>(
   return { scaffoldError, trySync };
 };
 
-interface VerticalActionScaffoldConfig {
+interface VerticalActionScaffoldConfig extends ActionAccessScaffoldConfig {
   readonly action: string;
-  readonly authorization: 'action_execution';
+  readonly authorization: 'protected';
   readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
   readonly module?: never;
-  readonly provisioning: 'explicit' | 'tenant_membership_default';
   readonly scope?: never;
   readonly vertical: string;
 }
 
-interface CoreActionScaffoldConfig {
+interface CoreActionScaffoldConfig extends ActionAccessScaffoldConfig {
   readonly action: string;
-  readonly authorization: 'action_execution';
+  readonly authorization: 'protected';
   readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
   readonly module: string;
-  readonly provisioning: 'explicit' | 'tenant_membership_default';
   readonly scope: 'core';
   readonly vertical?: never;
+}
+
+/**
+ * The access carrier of a new Action (O62): either an `accessDeclaration` (a human capability) or a
+ * trusted-workload marker (O29/O59), never both. Both shapes are final: an Action is always
+ * `protected`, so the generator never writes an unprotected Action.
+ */
+interface ActionAccessScaffoldConfig {
+  readonly accessRisk?: AccessDeclarationRisk | undefined;
+  readonly accessSelectors?: readonly AccessDeclarationSelector[] | undefined;
+  readonly accessWorkload?: string | undefined;
+  readonly accessWorkloadKeys?: readonly string[] | undefined;
 }
 
 export type ActionScaffoldConfig = CoreActionScaffoldConfig | VerticalActionScaffoldConfig;
@@ -155,6 +163,11 @@ export type ActionScaffoldConfig = CoreActionScaffoldConfig | VerticalActionScaf
 export interface ActionHttpScaffoldConfig {
   readonly action: string;
   readonly domainProblems?: readonly string[];
+  /**
+   * Opt-in proposal-only mode: upgrade the parked-proposal transport of existing artifacts instead of
+   * rendering them. The full scaffold stays the default for a fresh endpoint.
+   */
+  readonly proposalOnly?: boolean | undefined;
   readonly resultSchema?: string;
   readonly schemaModule?: string;
   readonly vertical: string;
@@ -203,43 +216,47 @@ export interface OutboxWorkerScaffoldConfig {
   readonly worker: string;
 }
 
-export const ReadScaffoldAuthorizationSchema = Schema.Literals([
-  'authenticated_principal',
-  'context_permission',
-  'public',
-]);
+/** `protected` carries an `accessDeclaration`; the other two carry no access metadata at all. */
+export const ReadScaffoldAuthorizationSchema = Schema.Literals(['authenticated_principal', 'protected', 'public']);
 export type ReadScaffoldAuthorization = typeof ReadScaffoldAuthorizationSchema.Type;
 
+/**
+ * The declaration a protected read carries. Risk is authored per descriptor; a record-scoped
+ * declaration (`--access-selectors`) also needs a single-record target, so only a detail read — an
+ * API read of one record — can express one (a list, search or report row is decided per row, O25).
+ */
+interface ReadAccessScaffoldConfig {
+  readonly accessRisk?: AccessDeclarationRisk | undefined;
+  readonly accessSelectors?: readonly AccessDeclarationSelector[] | undefined;
+}
+
 export interface PageScaffoldConfig {
+  readonly accessRisk?: AccessDeclarationRisk | undefined;
   readonly authorization: ReadScaffoldAuthorization;
   readonly page: string;
-  readonly permission?: string;
   readonly url?: string;
   readonly vertical: string;
 }
 
-export interface GovernedContributionScaffoldConfig {
+export interface GovernedContributionScaffoldConfig extends ReadAccessScaffoldConfig {
   readonly authorization: ReadScaffoldAuthorization;
   readonly name: string;
-  readonly permission?: string;
   readonly resource?: string;
   readonly vertical: string;
 }
 
-export interface CoreReadScaffoldConfig {
+export interface CoreReadScaffoldConfig extends ReadAccessScaffoldConfig {
   readonly authorization: ReadScaffoldAuthorization;
   readonly core: true;
   readonly module: string;
   readonly name: string;
-  readonly permission?: string;
 }
 
+/** The search descriptor decides its provider by the declaration key of its governed search read. */
 export interface SearchProviderAccessScaffoldConfig {
-  readonly accessFiltering: 'resource_permission' | 'tenant_scope';
   readonly legalEntityScope: 'optional' | 'required';
   readonly name: string;
   readonly requestFilters: readonly ('includeArchived' | 'role')[];
-  readonly tenantPermission?: 'read_party_identity';
   readonly vertical: string;
 }
 
@@ -260,25 +277,6 @@ export interface PolicyScaffoldConfig {
 
 export interface ResourceScaffoldConfig {
   readonly resource: string;
-  readonly vertical: string;
-}
-
-export interface PermissionScaffoldConfig {
-  readonly permission: string;
-  readonly scope:
-    | 'assortment_binding'
-    | 'assortment_boundary'
-    | 'assortment_configuration'
-    | 'assortment_decision'
-    | 'assortment_rule'
-    | 'counterparty'
-    | 'counterparty_storefront'
-    | 'inventory_resource'
-    | 'module'
-    | 'price_group'
-    | 'pricing_catalog'
-    | 'retail_profile'
-    | 'tax_selling_legal_entity';
   readonly vertical: string;
 }
 
@@ -334,10 +332,6 @@ export interface PolicyScaffoldResult {
 
 export interface ResourceScaffoldResult {
   readonly resourcePath: string;
-}
-
-export interface PermissionScaffoldResult {
-  readonly permissionPath: string;
 }
 
 export interface RetireContributionScaffoldResult {
@@ -860,6 +854,105 @@ export const toCamelCase = (slug: string): string => {
 export const toTitle = (slug: string): string => words(slug).map(capitalise).join(' ');
 export const topicToSlug = (topic: string): string => topic.replaceAll('.', '-');
 
+/** The risk tiers a generated access declaration may use (core-runtime owns the canonical schema). */
+export const ACCESS_DECLARATION_RISKS = ['routine', 'sensitive', 'critical'] as const;
+export type AccessDeclarationRisk = (typeof ACCESS_DECLARATION_RISKS)[number];
+
+/** The record slots a declaration may be granted on; `[]` is a scope-wide capability (Q2). */
+export const ACCESS_DECLARATION_SELECTORS = ['all', 'assigned', 'entrusted', 'team'] as const;
+export type AccessDeclarationSelector = (typeof ACCESS_DECLARATION_SELECTORS)[number];
+
+/** A generated descriptor defaults to a scope-wide sensitive capability; the caller may narrow it. */
+export const DEFAULT_ACCESS_RISK: AccessDeclarationRisk = 'sensitive';
+
+const ACCESS_DECLARATION_KEY_PATTERN = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*){2,}$/u;
+
+/**
+ * `<module>.<resource>.<verb>[.<qualifier>]`: Codesmith slugs lead with the verb, so the first
+ * segment is the verb and the rest names the resource. A dangerous verb (`delete`, `retire`,
+ * `export`) therefore stays in the verb segments where the catalog requires a higher risk tier.
+ */
+export const toAccessDeclarationKey = (moduleId: string, slug: string, fallbackVerb: string): string => {
+  const [first = slug, ...rest] = words(slug);
+  const verb = rest.length > 0 ? first : fallbackVerb;
+  const resource = rest.length > 0 ? rest.join('-') : slug;
+  const key = `${moduleId}.${resource}.${verb}`;
+  return ACCESS_DECLARATION_KEY_PATTERN.test(key)
+    ? key
+    : raiseScaffoldFailure(`generated access key ${key} is not a stable lowercase dotted identity`);
+};
+
+/** Reads name their own kind as the verb, so the whole slug stays the resource. */
+export const toReadAccessDeclarationKey = (moduleId: string, slug: string, verb: string): string => {
+  const key = `${moduleId}.${slug}.${verb}`;
+  return ACCESS_DECLARATION_KEY_PATTERN.test(key)
+    ? key
+    : raiseScaffoldFailure(`generated access key ${key} is not a stable lowercase dotted identity`);
+};
+
+export interface AccessDeclarationTemplate {
+  readonly group: string;
+  readonly key: string;
+  readonly kind: 'action' | 'read';
+  readonly level: 'basic' | 'extended' | 'manage';
+  readonly modes: readonly string[];
+  readonly risk: AccessDeclarationRisk;
+  readonly selectors: readonly AccessDeclarationSelector[];
+}
+
+/** The record key a scaffolded non-empty selector set names on the payload or input (O9). */
+export const SCAFFOLD_RECORD_KEY_FIELD = 'recordId';
+
+/**
+ * Renders the `accessDeclaration` a new protected descriptor must carry. It is metadata only: it
+ * grants nothing until an admin adopts it, and a declaration is required for a protected entrypoint.
+ */
+export const renderAccessDeclaration = (template: AccessDeclarationTemplate, indent: string): string => {
+  if (!ACCESS_DECLARATION_RISKS.some((risk) => risk === template.risk)) {
+    return raiseScaffoldFailure(`access declaration risk ${template.risk} is not a supported tier`);
+  }
+  if (!template.selectors.every((selector) => ACCESS_DECLARATION_SELECTORS.some((known) => known === selector))) {
+    return raiseScaffoldFailure(`access declaration selectors ${template.selectors.join(', ')} are not supported`);
+  }
+  const modes = template.modes.map((mode) => `'${mode}'`).join(', ');
+  const selectors = template.selectors.map((selector) => `'${selector}'`).join(', ');
+  return [
+    `${indent}accessDeclaration: {`,
+    `${indent}  key: '${template.key}',`,
+    `${indent}  kind: '${template.kind}',`,
+    `${indent}  modes: [${modes}],`,
+    `${indent}  placement: { group: '${template.group}', level: '${template.level}' },`,
+    `${indent}  risk: '${template.risk}',`,
+    `${indent}  selectors: [${selectors}],`,
+    `${indent}},`,
+    '',
+  ].join('\n');
+};
+
+/**
+ * The exact `authorization` literal of a generated read, page or component (CUTOVER-PLAN §4.2):
+ * `protected` carries its capability in `accessDeclaration`, the other two carry none.
+ */
+export const renderReadAuthorizationLiteral = (classification: string): string => `{ kind: '${classification}' }`;
+
+/**
+ * Renders the single-record target a record-scoped declaration needs (O9, O27): the immutable
+ * record id the payload or input already carries, named by the module that owns the record.
+ */
+export const renderAccessTarget = (moduleId: string, indent: string): string => {
+  const recordKey = `input.${SCAFFOLD_RECORD_KEY_FIELD}`;
+  return `${indent}accessTarget: (input) => ({ moduleKey: '${moduleId}', recordKey: ${recordKey} }),`;
+};
+
+const escapedLiteral = (value: string): string => value.replaceAll("'", String.raw`\'`);
+
+/** Renders the trusted-workload marker that replaces a human capability (O29, O59, O73). */
+export const renderAccessWorkload = (reason: string, workloads: readonly string[], indent: string): string => {
+  const keys = workloads.map((workload) => `'${escapedLiteral(workload)}'`).join(', ');
+  const marker = `{ reason: '${escapedLiteral(reason)}', workloads: [${keys}] }`;
+  return `${indent}accessWorkload: ${marker},`;
+};
+
 const isModuleReadImport = (candidate: string): boolean =>
   /^import \{ [a-z][A-Za-z0-9]*Read \} from '\.\/src\/api\/[a-z][a-z0-9-]*\.read\.ts';$/u.test(candidate);
 
@@ -870,7 +963,7 @@ export const isModuleRegistrationImport = (candidate: string): boolean =>
 
 export const isModuleManifestImport = (candidate: string): boolean =>
   isModuleReadImport(candidate) ||
-  /^(?:import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';|import \{ [A-Z][A-Za-z0-9]*Api \} from '\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts';|import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';|import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';|import \{ [a-z][A-Za-z0-9]*ResourceDescriptor \} from '\.\/shared\/resources\/[a-z][a-z0-9-]*\.ts';|import \{ [a-z][A-Za-z0-9]*Permission \} from '\.\/shared\/permissions\/[a-z][a-z0-9-]*\.ts';)$/u.test(
+  /^(?:import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';|import \{ [A-Z][A-Za-z0-9]*Api \} from '\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts';|import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';|import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';|import \{ [a-z][A-Za-z0-9]*ResourceDescriptor \} from '\.\/shared\/resources\/[a-z][a-z0-9-]*\.ts';)$/u.test(
     candidate,
   );
 
@@ -1588,7 +1681,7 @@ export const validRuntimeDeclarationViews = (
     ownerImport(backend, 'VerticalRuntimeRegistrationInput', CORE_RUNTIME_PACKAGE, true),
     ownerAnnotation(backend, manifestName, "VerticalRuntimeRegistrationInput['manifest']"),
     ownerAnnotation(backend, declarationName, 'VerticalRuntimeRegistrationInput'),
-    ownerObjectView(fullManifest, manifest, manifestName, ['activation', 'publicSurface']),
+    ownerObjectView(fullManifest, manifest, manifestName, ['activation', 'publicSurface'], ['originatorActions']),
     ownerObjectView(
       fullPublicSurface,
       manifest,

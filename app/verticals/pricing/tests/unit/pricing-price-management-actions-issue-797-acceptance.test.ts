@@ -403,8 +403,12 @@ describe('Pricing Price Management Actions issue #797 acceptance', () => {
     expect(publicActionKeys.toSorted()).toEqual(expectedActionKeys);
     expect(runtimeActionKeys.toSorted()).toEqual(expectedActionKeys);
     expect(pricingManifest.publicSurface.actions.map(({ descriptor }) => descriptor.entrypoint.authorization)).toEqual(
-      expectedActionKeys.map(() => ({ kind: 'action_execution', provisioning: 'explicit' })),
+      expectedActionKeys.map(() => ({ kind: 'protected' })),
     );
+    // Every manifest Action carries its own declared capability (O62, O67-Q2).
+    expect(
+      pricingManifest.publicSurface.actions.map(({ descriptor }) => descriptor.accessDeclaration === undefined),
+    ).toEqual(expectedActionKeys.map(() => false));
     expect(
       runtimeActions.map(({ descriptor }) => ({
         auditProfile: descriptor.auditProfile,

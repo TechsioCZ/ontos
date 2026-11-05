@@ -14,6 +14,7 @@ import {
 } from '../generate-zerops-provider-deployment.mts';
 
 const root = path.resolve(import.meta.dirname, '../..');
+const PARTY_REGISTRY = 'party-registry';
 const invalidMigrationOwner = 'Invalid or duplicate topology migration owner';
 const toolchain = { node: '26.7.0', pnpm: '12.4.2' };
 const ledgerSource = "zerops:\n  - setup: 'ledger'\n\n  - setup: 'shellsuperapp'\n";
@@ -125,7 +126,7 @@ it.effect('keeps provider startup independent of composition availability', () =
       port: 4101,
     };
     const partyRegistry = {
-      id: 'party-registry',
+      id: PARTY_REGISTRY,
       package: '@app/party-registry',
       path: 'verticals/party-registry',
       port: 4102,
@@ -229,10 +230,40 @@ const provider = (id: string, port: number) => ({ id, package: `@app/${id}`, pat
 
 const databaseUrls = (section: string) => section.match(/^ {8}[A-Z_]*DATABASE_URL: .*$/gmu) ?? [];
 
+it.effect('gives the internal API bases only to the deployments that hold the module credential', () =>
+  Effect.gen(function* apiBasesFollowCredentialHolders() {
+    const generated = yield* generateZeropsProviderDeployment(
+      "zerops:\n  - setup: 'commerce-customer-context'\n\n  - setup: 'shellsuperapp'\n",
+      { shell: SHELL, verticals: [provider('commerce-customer-context', 4101), provider(PARTY_REGISTRY, 4102)] },
+      toolchain,
+    );
+    const customerContextStart = generated.indexOf("  - setup: 'commerce-customer-context'");
+    const partyRegistryStart = generated.indexOf(`  - setup: '${PARTY_REGISTRY}'`);
+    const customerContextBlock = generated.slice(customerContextStart, partyRegistryStart);
+    const partyRegistryBlock = generated.slice(
+      partyRegistryStart,
+      generated.indexOf('  # </generated', partyRegistryStart),
+    );
+
+    // Party Registry is worker-only: its request service neither calls other modules nor holds the credential.
+    expect(partyRegistryBlock).not.toContain('ONTOS_GATEWAY_MODULE_API_KEY');
+    expect(partyRegistryBlock).not.toContain('ONTOS_PARTY_REGISTRY_API_BASE_URL');
+    expect(partyRegistryBlock).not.toContain('ONTOS_PRIVACY_API_BASE_URL');
+    expect(partyRegistryBlock).not.toContain('ONTOS_SHELL_GATEWAY_BASE_URL');
+    // A service-and-worker unit's request service holds its credential and calls its APIs.
+    expect(customerContextBlock).toContain(
+      `ONTOS_GATEWAY_MODULE_API_KEY: \${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}`,
+    );
+    expect(customerContextBlock).toContain(
+      "ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'",
+    );
+  }),
+);
+
 it.effect('binds Party Registry to its dedicated request identity and every other provider to the shared role', () =>
   Effect.gen(function* providerDatabaseIdentities() {
     const party = {
-      id: 'party-registry',
+      id: PARTY_REGISTRY,
       package: '@app/party-registry',
       path: 'verticals/party-registry',
       port: 4102,
@@ -253,12 +284,12 @@ it.effect('binds Party Registry to its dedicated request identity and every othe
     expect(databaseUrls(ledgerSection)).toStrictEqual([
       `        DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`,
     ]);
-    // Zerops environment keys stay sorted, so the dedicated URL sits between NODE_ENV and PORT.
-    expect(partySection).toMatch(/NODE_ENV: production\n {8}PARTY_REGISTRY_DATABASE_URL: [^\n]+\n {8}PORT: '4102'/u);
+    // Zerops environment keys stay sorted, so the dedicated URL sits directly before PORT.
+    expect(partySection).toMatch(/ {8}PARTY_REGISTRY_DATABASE_URL: [^\n]+\n {8}PORT: '4102'/u);
   }),
 );
 
-it.effect('binds Commerce Order to the internal API base of each owner it calls and its caller identities', () =>
+it.effect('binds Commerce Order to the internal API base of each owner it calls and to its module credential', () =>
   Effect.gen(function* commerceOrderEnvironment() {
     const generated = yield* generateZeropsProviderDeployment(
       "zerops:\n  - setup: 'commerce-order'\n\n  - setup: 'shellsuperapp'\n",
@@ -276,17 +307,9 @@ it.effect('binds Commerce Order to the internal API base of each owner it calls 
     expect(order).toContain("        ONTOS_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'\n");
     expect(order).toContain("        ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'\n");
     expect(order).toContain(
-      `        ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: \${migrator_ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY}\n`,
+      `        ONTOS_GATEWAY_MODULE_API_KEY: \${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER}\n`,
     );
-    expect(order).toContain(
-      `        ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY: \${migrator_ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY}\n`,
-    );
-    expect(order).toContain(
-      `        ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID: \${migrator_ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID}\n`,
-    );
-    expect(order).toContain(
-      "        ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID: 'ontos.staff.better-auth.v1'\n",
-    );
+    expect(order).not.toMatch(/_GATEWAY_API_KEY|_PRINCIPAL_ID|_NAMESPACE_ID|_SERVICE_GRANTS/u);
     // An owner the topology does not deploy gets no base, rather than an address nothing serves.
     expect(order).not.toContain('ONTOS_TAX_API_BASE_URL');
     expect(ledgerSection).not.toContain('ONTOS_ORDER_');
@@ -313,16 +336,38 @@ it.effect('binds each Order-flow owner to its own credentials, per-environment v
       `        ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: \${migrator_ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET}\n`,
     );
     expect(section('pricing')).toContain(
-      `        ONTOS_PRICING_ORDER_PRINCIPAL_ID: \${migrator_ONTOS_PRICING_ORDER_PRINCIPAL_ID}\n`,
+      `        ONTOS_GATEWAY_MODULE_API_KEY: \${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PRICING}\n`,
     );
-    expect(section('pricing')).toContain("        ONTOS_PRICING_ORDER_NAMESPACE_ID: 'ontos.staff.better-auth.v1'\n");
     expect(section(CART)).toContain("        ONTOS_CATALOG_API_BASE_URL: 'http://catalog:4105/catalog-api'\n");
     expect(section(CART)).toContain(
-      `        ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS: \${migrator_ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS}\n`,
+      `        ONTOS_GATEWAY_MODULE_API_KEY: \${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CART}\n`,
     );
-    // Neither owner carries another owner's credentials, and Catalog reads none of them.
-    expect(section('pricing')).not.toContain('ONTOS_CART_');
-    expect(section(CART)).not.toContain('ONTOS_PRICING_');
-    expect(section('catalog')).not.toContain('migrator_');
+    // Neither owner carries another owner's module credential, and Catalog reads none of them.
+    expect(section('pricing')).not.toContain('ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CART');
+    expect(section(CART)).not.toContain('ONTOS_GATEWAY_MODULE_API_KEY_PRICING');
+    // Catalog holds only its own module credential; it calls Shell, reads no owner base.
+    expect(section('catalog')).toContain(
+      `        ONTOS_GATEWAY_MODULE_API_KEY: \${migrator_ONTOS_GATEWAY_MODULE_API_KEY_CATALOG}\n`,
+    );
+    expect(section('catalog')).not.toContain('ONTOS_GATEWAY_MODULE_API_KEY_PRICING');
   }),
+);
+
+it.effect(
+  'keeps the Party Registry module credential and API bases off its request service, which only its Outbox Worker needs',
+  () =>
+    Effect.gen(function* partyRegistryCredentialScope() {
+      const generated = yield* generateZeropsProviderDeployment(
+        `zerops:\n  - setup: '${PARTY_REGISTRY}'\n\n  - setup: 'shellsuperapp'\n`,
+        { shell: SHELL, verticals: [provider(PARTY_REGISTRY, 4102)] },
+        toolchain,
+      );
+      const section =
+        generated
+          .split(/(?=^ {2}- setup: )/mu)
+          .find((candidate) => candidate.startsWith(`  - setup: '${PARTY_REGISTRY}'`)) ?? '';
+
+      expect(section).not.toContain('ONTOS_GATEWAY_MODULE_API_KEY');
+      expect(section).not.toContain('ONTOS_SHELL_GATEWAY_BASE_URL');
+    }),
 );

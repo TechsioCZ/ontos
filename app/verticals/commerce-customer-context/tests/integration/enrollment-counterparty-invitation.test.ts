@@ -11,6 +11,7 @@ import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/http';
 import { eq, sql } from 'drizzle-orm';
 import { Config, Context, Deferred, Effect, Fiber, Layer, Option, Redacted, Schema } from 'effect';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -94,9 +95,10 @@ import {
   readCounterpartyInvitationClaimProof,
   readCounterpartyInvitationRow,
   prepareCounterpartyInvitationClaimPayload,
-  revokeCounterpartyInvitationClaimExecutor,
+  revokeCounterpartyInvitationRecipientAccess,
 } from '../support/counterparty-invitation-acceptance.ts';
 import type { CounterpartyInvitationRealm } from '../support/counterparty-invitation-acceptance.ts';
+import type { CounterpartyPermissionCode } from '../../shared/domain/permission-catalog.ts';
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
@@ -123,8 +125,6 @@ const KEY_ID = 'enrollment-counterparty-invitation';
 const PORTAL_PASSWORD = 'P'.repeat(24);
 const DISPLAY_NAME = 'Counterparty invitation recipient';
 
-const START_ACTION_KEY = 'commerce.customer-context.start-portal-enrollment';
-const CLAIM_TRANSITION_ACTION_KEY = 'commerce.customer-context.claim-portal-enrollment-transition';
 const CLAIM_INVITATION_ACTION_KEY = 'commerce.customer-context.claim-counterparty-access-invitation';
 
 const BINDING_RESERVED_OUTCOME_CODE = 'principal_binding_reserved';
@@ -450,20 +450,18 @@ interface InvitationScenario {
  */
 const invitationScenario = Effect.fnUntraced(function* invitationScenario(options: {
   readonly advanceBinding: 'ACTIVATED' | 'RESERVED_ONLY';
+  readonly intendedPermissions?: readonly [CounterpartyPermissionCode, ...CounterpartyPermissionCode[]];
   readonly loseFirstCommittedClaimAnswer?: true;
-  readonly omitClaimExecutor?: true;
   readonly preflightDecoration?: Layer.Layer<ActionAuthorizationPreflight, never, ActionAuthorizationPreflight>;
 }) {
   const tenantId = randomUUID();
   const compositionRevision = yield* enrollmentApplicationCompositionRevision;
   const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
-  const realm = yield* makeCounterpartyInvitationRealm(fixture, {
-    recipientActionKeys: options.omitClaimExecutor === true ? [] : [CLAIM_INVITATION_ACTION_KEY],
-    storefrontActionKeys: [START_ACTION_KEY, CLAIM_TRANSITION_ACTION_KEY],
-  });
+  // The recipient starts with no access intent at all: no membership, no role.
+  const realm = yield* makeCounterpartyInvitationRealm(fixture);
   const capture = makeCapturingCounterpartyInvitationProofDelivery();
   const email = `counterparty-invitation-${randomUUID()}@example.test`;
-  const invitation = yield* issueCounterpartyAccessInvitation(realm, capture, email);
+  const invitation = yield* issueCounterpartyAccessInvitation(realm, capture, email, options.intendedPermissions);
   yield* removePortalAccountsOnClose(email);
 
   const gateway = yield* makeAcceptanceGatewayIssuer(ISSUER, KEY_ID);
@@ -543,15 +541,30 @@ const invitationScenario = Effect.fnUntraced(function* invitationScenario(option
   return { continuation: harness.continuation, scenario };
 });
 
-/** One fresh, single-use assertion for the recipient's own portal session. */
+/**
+ * One fresh, single-use assertion for the recipient's own portal session, as the Shell issues it before the
+ * claim: a Tenant assertion, because the recipient is no member of the Selling Legal Entity it may not yet
+ * select.
+ */
 const recipientAssertion = (scenario: InvitationScenario) =>
   issueAcceptanceGatewayAssertion(scenario.fixture.admin, scenario.gateway, AUDIENCE, {
     authBindingId: scenario.realm.recipientAuthBindingId,
     authContextRef: `portal-session:${scenario.realm.recipientPrincipalId}`,
     authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
     authMethod: 'session',
-    legalEntityId: scenario.realm.legalEntityId,
     principalId: scenario.realm.recipientPrincipalId,
+    tenantId: scenario.realm.tenantId,
+  });
+
+/** An assertion naming the Selling Legal Entity, for the recipient or the administrator. */
+const companyAssertion = (scenario: InvitationScenario, holder: 'inviter' | 'recipient') =>
+  issueAcceptanceGatewayAssertion(scenario.fixture.admin, scenario.gateway, AUDIENCE, {
+    authBindingId: holder === 'inviter' ? scenario.realm.inviterAuthBindingId : scenario.realm.recipientAuthBindingId,
+    authContextRef: `portal-session:${holder === 'inviter' ? scenario.realm.inviterPrincipalId : scenario.realm.recipientPrincipalId}`,
+    authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+    authMethod: 'session',
+    legalEntityId: scenario.realm.legalEntityId,
+    principalId: holder === 'inviter' ? scenario.realm.inviterPrincipalId : scenario.realm.recipientPrincipalId,
     tenantId: scenario.realm.tenantId,
   });
 
@@ -582,6 +595,7 @@ const sweepingContinuation = Effect.fnUntraced(function* sweepingContinuation(sc
     runWorker: scenario.fixture.runWorker,
   });
   const registryLive = CommerceEnrollmentOwnerEffectRegistryLive.pipe(
+    Layer.provide(nodeCryptoLayer),
     Layer.provide(
       Layer.mergeAll(
         ContextAccessLive,
@@ -620,10 +634,8 @@ const completeAcceptedInvitation = Effect.fn('InvitationTests.completeAcceptedIn
   function* completeAcceptedInvitation(scenario: InvitationScenario) {
     const proof = yield* readCounterpartyInvitationClaimProof(scenario.fixture, scenario.realm, scenario.invitationId);
     const claims = yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId);
-    const { cycle, matched } = yield* scenario.fixture.progressInvitationClaim();
-    expect(matched.deliveriesCreated).toBeGreaterThan(0);
-    expect(cycle.failed).toBe(0);
-    expect(cycle.succeeded).toBeGreaterThan(0);
+    // The owner claim is final in the Action's own transaction (O62, O67-Q1): there is no
+    // out-of-band SpiceDB projection left that a reconciliation worker would have to finish.
     expect(
       (yield* readCounterpartyInvitationRow(scenario.fixture, scenario.realm, scenario.invitationId)).lifecycle,
     ).toBe('CLAIMED');
@@ -648,6 +660,79 @@ const completeAcceptedInvitation = Effect.fn('InvitationTests.completeAcceptedIn
   },
 );
 
+/** The two permissions the follow-up scenario invites with: buying, and reading the Counterparty's access. */
+const INVITED_PURCHASE_PERMISSION = 'counterparty.purchase.submit';
+const INVITED_ACCESS_READ_PERMISSION = 'counterparty.access.read';
+
+const counterpartyRefOf = (realm: CounterpartyInvitationRealm) => ({
+  moduleId: 'party.registry',
+  resourceId: realm.counterpartyResourceId,
+  resourceType: 'party.registry.counterparty',
+  tenantId: realm.tenantId,
+});
+
+/** The governed Counterparty access check, asked for the caller's own permission. */
+const accessCheckRequest = (scenario: InvitationScenario, permission: string, assertion: string) =>
+  new Request(`${ORIGIN}/reads/counterparty-commerce-access-check`, {
+    body: JSON.stringify({
+      counterpartyRef: counterpartyRefOf(scenario.realm),
+      permission,
+      scope: { kind: 'counterparty' },
+    }),
+    headers: {
+      authorization: `Bearer ${assertion}`,
+      'content-type': 'application/json',
+      'x-correlation-id': `counterparty-invitation-check-${randomUUID()}`,
+    },
+    method: 'POST',
+  });
+
+/** The governed revoke of one of the recipient's grants, made by the Counterparty's administrator. */
+const revokeGrantRequest = (scenario: InvitationScenario, permission: string, assertion: string) =>
+  new Request(`${ORIGIN}/commerce-customer-context/actions/revoke-counterparty-commerce-access`, {
+    body: JSON.stringify({
+      counterpartyRef: counterpartyRefOf(scenario.realm),
+      permission,
+      reason: 'The buyer left the Counterparty',
+      recipient: { principalId: scenario.realm.recipientPrincipalId, tenantId: scenario.realm.tenantId },
+      scope: { kind: 'counterparty' },
+    }),
+    headers: {
+      authorization: `Bearer ${assertion}`,
+      'content-type': 'application/json',
+      'idempotency-key': randomUUID(),
+      'x-correlation-id': `counterparty-invitation-revoke-${randomUUID()}`,
+    },
+    method: 'POST',
+  });
+
+/** The recipient's access intent as Core holds it: its memberships and the roles it was assigned. */
+const recipientAccessIntent = Effect.fnUntraced(function* recipientAccessIntent(scenario: InvitationScenario) {
+  const memberships = yield* scenario.fixture.admin
+    .execute<{ readonly status: string }>(
+      sql`select membership.status from core.access_memberships membership
+        where membership.tenant_id = ${scenario.realm.tenantId}::uuid
+          and membership.principal_id = ${scenario.realm.recipientPrincipalId}::uuid
+        order by membership.status`,
+      'objects',
+    )
+    .pipe(Effect.orDie);
+  const assignments = yield* scenario.fixture.admin
+    .execute<{ readonly role: string; readonly status: string }>(
+      sql`select role.name as role, assignment.status from core.access_assignments assignment
+        join core.access_roles role on role.tenant_id = assignment.tenant_id and role.role_id = assignment.role_id
+        where assignment.tenant_id = ${scenario.realm.tenantId}::uuid
+          and assignment.principal_id = ${scenario.realm.recipientPrincipalId}::uuid
+        order by role.name, assignment.status`,
+      'objects',
+    )
+    .pipe(Effect.orDie);
+  return {
+    assignments: assignments.map(({ role, status }) => ({ role, status })),
+    memberships: memberships.map(({ status }) => status),
+  };
+});
+
 const generatedClaimRequest = (body: ClaimCounterpartyAccessInvitationPayload, assertion: string) =>
   new Request(`${ORIGIN}/commerce-customer-context/actions/claim-counterparty-access-invitation`, {
     body: JSON.stringify(body),
@@ -661,11 +746,11 @@ const generatedClaimRequest = (body: ClaimCounterpartyAccessInvitationPayload, a
   });
 
 it.live(
-  'durably rejects a valid invitation claim without an explicit executor grant and consumes no owner proof',
+  'refuses a direct claim from a recipient no redemption admitted, and consumes no owner proof',
   () =>
     Effect.scoped(
-      Effect.gen(function* refusesMissingClaimExecutor() {
-        const { scenario } = yield* invitationScenario({ advanceBinding: 'ACTIVATED', omitClaimExecutor: true });
+      Effect.gen(function* refusesUnadmittedRecipient() {
+        const { scenario } = yield* invitationScenario({ advanceBinding: 'ACTIVATED' });
         const claimPayload = yield* prepareCounterpartyInvitationClaimPayload(
           scenario.fixture,
           scenario.realm,
@@ -681,7 +766,9 @@ it.live(
           scenario.realm,
           scenario.invitationId,
         );
-        const assertion = yield* recipientAssertion(scenario);
+        // The generated claim Action, called directly with a company assertion, bypasses the claim route
+        // that admits a recipient: the recipient is no member of the company, so it cannot act there.
+        const assertion = yield* companyAssertion(scenario, 'recipient');
         const response = yield* Effect.promise(
           async () => await scenario.runtime.handler(generatedClaimRequest(claimPayload, assertion)),
         );
@@ -697,43 +784,35 @@ it.live(
           0,
         );
         const rows = yield* scenario.fixture.admin.execute<{
-          readonly completed: boolean;
           readonly grants: string;
-          readonly outbox: string;
-          readonly rejected: string;
-          readonly status: string;
+          readonly invocations: string;
+          readonly memberships: string;
         }>(
           sql`
-      select invocation.status, invocation.completed_at is not null as completed,
-        (select count(*)::text from core.audit_events audit
-          where audit.action_invocation_id = invocation.action_invocation_id
-            and audit.event_type = 'action.rejected'
-                and audit.outcome = 'denied'
-                and audit.outcome_stage = 'authz'
-                and audit.outcome_code = 'spicedb_permission_denied') as rejected,
-        (select count(*)::text from core.outbox_messages message
-          join core.domain_events event on event.domain_event_id = message.domain_event_id
-          where event.action_invocation_id = invocation.action_invocation_id) as outbox,
+      select
+        (select count(*)::text from core.action_invocations invocation
+          where invocation.tenant_id = ${scenario.realm.tenantId}::uuid
+            and invocation.action_key = ${CLAIM_INVITATION_ACTION_KEY}) as invocations,
         (select count(*)::text from commerce_customer_context.counterparty_commerce_access_grants access_grant
           where access_grant.tenant_id = ${scenario.realm.tenantId}::uuid
-            and access_grant.principal_id = ${scenario.realm.recipientPrincipalId}::uuid) as grants
-      from core.action_invocations invocation
-      where invocation.tenant_id = ${scenario.realm.tenantId}::uuid
-        and invocation.action_key = ${CLAIM_INVITATION_ACTION_KEY}
+            and access_grant.principal_id = ${scenario.realm.recipientPrincipalId}::uuid) as grants,
+        (select count(*)::text from core.access_memberships membership
+          where membership.tenant_id = ${scenario.realm.tenantId}::uuid
+            and membership.principal_id = ${scenario.realm.recipientPrincipalId}::uuid) as memberships
     `,
           'objects',
         );
-        expect(rows).toEqual([{ completed: true, grants: '0', outbox: '0', rejected: '1', status: 'rejected' }]);
+        expect(rows).toEqual([{ grants: '0', invocations: '0', memberships: '0' }]);
       }),
     ),
   300_000,
 );
 
 it.live(
-  'rejects an executor revoked concurrently after the real invitation preflight allowed',
+  'rejects a claim whose admitted recipient lost its access after the real invitation preflight allowed',
   () =>
     Effect.scoped(
-      Effect.gen(function* revokesExecutorDuringClaim() {
+      Effect.gen(function* revokesCapabilityDuringClaim() {
         const prepared = Deferred.makeUnsafe<null>();
         const released = Deferred.makeUnsafe<null>();
         yield* Effect.addFinalizer(() => Deferred.succeed(released, null));
@@ -768,33 +847,34 @@ it.live(
             }),
           ),
         });
-        const claimPayload = yield* prepareCounterpartyInvitationClaimPayload(
-          scenario.fixture,
-          scenario.realm,
-          scenario,
-        );
-        const beforeProof = yield* readCounterpartyInvitationClaimProof(
-          scenario.fixture,
-          scenario.realm,
-          scenario.invitationId,
-        );
-        const revoke = Effect.gen(function* revokeExactExecutor() {
+        const revoke = Effect.gen(function* revokeClaimCapability() {
           yield* Deferred.await(prepared);
-          yield* revokeCounterpartyInvitationClaimExecutor(scenario.realm);
-          // Only an acknowledged real SpiceDB revocation releases the actual permit to Core.
+          // An administrator ends every assignment the recipient holds — the invitee role its redemption was
+          // admitted with — while the claim the route dispatched waits after its preflight.
+          yield* revokeCounterpartyInvitationRecipientAccess(scenario.realm);
+          // Only a reconciled v2 revocation releases the actual permit to Core.
           yield* Deferred.succeed(released, null);
         }).pipe(Effect.ensuring(Deferred.succeed(released, null)));
         const revoker = yield* revoke.pipe(Effect.forkChild);
         const assertion = yield* recipientAssertion(scenario);
         const response = yield* Effect.promise(
-          async () => await scenario.runtime.handler(generatedClaimRequest(claimPayload, assertion)),
+          async () =>
+            await scenario.runtime.handler(
+              claimInvitationRequest(
+                scenario.attemptId,
+                { claimProofReference: scenario.claimProofReference, invitationSecret: scenario.secret },
+                { assertion, cookie: scenario.session.cookie },
+              ),
+            ),
         );
-        expect(response.status).toBe(403);
+        // A refused Action says nothing about the invitation, so the claim stays retryable.
+        expect(response.status).toBe(503);
         yield* Fiber.join(revoker);
         expect(permittedInvocation).toBeDefined();
         expect(
-          yield* readCounterpartyInvitationClaimProof(scenario.fixture, scenario.realm, scenario.invitationId),
-        ).toStrictEqual(beforeProof);
+          (yield* readCounterpartyInvitationClaimProof(scenario.fixture, scenario.realm, scenario.invitationId))
+            .lifecycle,
+        ).not.toBe('CONSUMED');
         expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
           0,
         );
@@ -826,7 +906,10 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* claimsTheInvitation() {
-        const { continuation, scenario } = yield* invitationScenario({ advanceBinding: 'ACTIVATED' });
+        const { continuation, scenario } = yield* invitationScenario({
+          advanceBinding: 'ACTIVATED',
+          intendedPermissions: [INVITED_PURCHASE_PERMISSION, INVITED_ACCESS_READ_PERMISSION],
+        });
 
         // The start really created the provider account the journey then binds.
         expect(yield* portalAccountsFor(scenario.email)).toHaveLength(1);
@@ -853,16 +936,8 @@ it.live(
         );
         expect(response.status).toBe(200);
 
-        const pending = claimTransitionRow(
-          yield* readEnrollmentAcceptanceOperations(scenario.fixture, scenario.attemptId),
-        );
-        expect(pending).toMatchObject({
-          outcome_code: 'counterparty_invitation_claim_pending',
-          status: 'FAILED',
-        });
-        expect(yield* readEnrollmentAcceptanceAttempt(scenario.fixture, scenario.attemptId)).toMatchObject({
-          state: 'RECONCILIATION_REQUIRED',
-        });
+        // The owner claim and its grants are final in the Action's own transaction (O62, O67-Q1), so the
+        // claim journals SUCCEEDED in the same request: there is no pending mirror left to reconcile.
         const originalProof = yield* readCounterpartyInvitationClaimProof(
           scenario.fixture,
           scenario.realm,
@@ -873,114 +948,37 @@ it.live(
           lifecycle: 'CONSUMED',
         });
         expect(originalProof.attestation_reference).not.toBeNull();
-        expect(pending?.result_reference).toBe(originalProof.attestation_reference);
-        expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
-          1,
-        );
-
-        const readClaimIdentity = () =>
-          scenario.fixture.admin
-            .execute<{
-              readonly actor_principal_id: string;
-              readonly owner_invocation_id: string;
-              readonly reconciliation_ref: string | null;
-              readonly revision: number;
-            }>(
-              sql`select actor_principal_id, owner_invocation_id, reconciliation_ref, revision
-            from commerce_customer_context.portal_enrollment_owner_operations
-            where tenant_id = ${scenario.realm.tenantId}::uuid
-              and portal_enrollment_attempt_id = ${scenario.attemptId}::uuid
-              and transition_key = ${CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY}`,
-              'objects',
-            )
-            .pipe(Effect.orDie);
-        const [originalIdentity] = yield* readClaimIdentity();
-        if (originalIdentity === undefined) {
-          return yield* Effect.die('The accepted pending claim has no durable owner invocation');
-        }
-        expect(originalIdentity.actor_principal_id).toBe(scenario.realm.recipientPrincipalId);
-
-        // Core invocation/audit evidence is immutable and distinct from the mutable owner-operation row.
-        // Fingerprints retain equality evidence without exposing provider/request payloads.
-        const readCoreClaimEvidence = () =>
-          scenario.fixture.admin
-            .execute<{
-              readonly action_invocation_id: string;
-              readonly audit_fingerprint: string;
-              readonly failed_audits: number;
-              readonly invocation_fingerprint: string;
-              readonly principal_id: string;
-              readonly status: string;
-            }>(
-              sql`select invocation.action_invocation_id, invocation.principal_id, invocation.status,
-              md5(to_jsonb(invocation)::text) as invocation_fingerprint,
-              (select md5(coalesce(jsonb_agg(to_jsonb(audit) order by audit.audit_event_id)::text, '[]'))
-                 from core.audit_events audit
-                 where audit.action_invocation_id = invocation.action_invocation_id) as audit_fingerprint,
-              (select count(*)::integer from core.audit_events audit
-                 where audit.action_invocation_id = invocation.action_invocation_id
-                   and audit.event_type in ('action.failed', 'action.rejected')) as failed_audits
-            from core.action_invocations invocation
-            where invocation.tenant_id = ${scenario.realm.tenantId}::uuid
-              and invocation.action_key = ${CLAIM_INVITATION_ACTION_KEY}
-            order by invocation.action_invocation_id`,
-              'objects',
-            )
-            .pipe(Effect.orDie);
-        const originalCoreEvidence = yield* readCoreClaimEvidence();
-        expect(originalCoreEvidence).toHaveLength(1);
-        expect(originalCoreEvidence[0]?.principal_id).toBe(scenario.realm.recipientPrincipalId);
-
-        const { cycle, matched } = yield* scenario.fixture.progressInvitationClaim();
-        expect(matched.deliveriesCreated).toBeGreaterThan(0);
-        expect(cycle.failed).toBe(0);
-        expect(cycle.succeeded).toBeGreaterThan(0);
-        expect(
-          yield* readCounterpartyInvitationClaimProof(scenario.fixture, scenario.realm, scenario.invitationId),
-        ).toStrictEqual(originalProof);
-
-        // Accepted-pending recovery reads the original attestation. An unusable secret proves this
-        // mounted request cannot succeed by redeeming or dispatching the original proof again.
-        const reconciliationAssertion = yield* recipientAssertion(scenario);
-        const reconciled = yield* Effect.promise(
-          async () =>
-            await scenario.runtime.handler(
-              claimInvitationRequest(
-                scenario.attemptId,
-                {
-                  claimProofReference: scenario.claimProofReference,
-                  invitationSecret: 'not-the-consumed-invitation-secret',
-                },
-                { assertion: reconciliationAssertion, cookie: scenario.session.cookie },
-              ),
-            ),
-        );
-        expect(reconciled.status).toBe(200);
-
-        // The same owner operation may legally reconcile; the original Core evidence may not change.
-        const claimed = claimTransitionRow(
-          yield* readEnrollmentAcceptanceOperations(scenario.fixture, scenario.attemptId),
-        );
-        expect(claimed).toMatchObject({
+        expect(yield* claimTransitionFor(scenario)).toMatchObject({
           outcome_code: 'counterparty_invitation_claimed',
           result_reference: originalProof.attestation_reference,
           status: 'SUCCEEDED',
         });
-        const [reconciledIdentity] = yield* readClaimIdentity();
-        expect(reconciledIdentity).toMatchObject({
-          actor_principal_id: originalIdentity.actor_principal_id,
-          owner_invocation_id: originalIdentity.owner_invocation_id,
-        });
-        expect(reconciledIdentity?.revision).toBeGreaterThan(originalIdentity.revision);
-        expect(reconciledIdentity?.reconciliation_ref).not.toBeNull();
-        expect(reconciledIdentity?.reconciliation_ref).not.toBe(originalIdentity.owner_invocation_id);
-        expect(yield* readCoreClaimEvidence()).toStrictEqual(originalCoreEvidence);
         expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
           1,
         );
-        expect(
-          yield* readCounterpartyInvitationClaimProof(scenario.fixture, scenario.realm, scenario.invitationId),
-        ).toStrictEqual(originalProof);
+        const [claimIdentity] = yield* scenario.fixture.admin
+          .execute<{ readonly actor_principal_id: string }>(
+            sql`select actor_principal_id
+            from commerce_customer_context.portal_enrollment_owner_operations
+            where tenant_id = ${scenario.realm.tenantId}::uuid
+              and portal_enrollment_attempt_id = ${scenario.attemptId}::uuid
+              and transition_key = ${CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY}`,
+            'objects',
+          )
+          .pipe(Effect.orDie);
+        expect(claimIdentity?.actor_principal_id).toBe(scenario.realm.recipientPrincipalId);
+        const coreClaimEvidence = yield* scenario.fixture.admin
+          .execute<{ readonly principal_id: string; readonly status: string }>(
+            sql`select invocation.principal_id, invocation.status
+            from core.action_invocations invocation
+            where invocation.tenant_id = ${scenario.realm.tenantId}::uuid
+              and invocation.action_key = ${CLAIM_INVITATION_ACTION_KEY}`,
+            'objects',
+          )
+          .pipe(Effect.orDie);
+        expect(coreClaimEvidence).toStrictEqual([
+          { principal_id: scenario.realm.recipientPrincipalId, status: 'succeeded' },
+        ]);
 
         // The invitation itself records the recipient's own Principal as its claimant.
         const invitationRow = yield* readCounterpartyInvitationRow(
@@ -1012,6 +1010,53 @@ it.live(
         expect(yield* readEnrollmentAcceptanceAttempt(scenario.fixture, scenario.attemptId)).toMatchObject({
           state: 'COMPLETE',
         });
+
+        // Nobody seeded the recipient: its redemption admitted it with the invitee role, and the claim's own
+        // grants replaced that with the Counterparty portal role in the Selling Legal Entity.
+        expect(yield* recipientAccessIntent(scenario)).toStrictEqual({
+          assignments: [
+            { role: 'Pozvaný zástupce odběratele', status: 'revoked' },
+            { role: 'Zástupce odběratele', status: 'active' },
+            { role: 'Zástupce odběratele', status: 'active' },
+          ],
+          memberships: ['active', 'active'],
+        });
+
+        // A follow-up Counterparty read, with the company assertion the Shell now issues to the member.
+        const followUp = () =>
+          companyAssertion(scenario, 'recipient').pipe(
+            Effect.flatMap((recipientCompanyAssertion) =>
+              Effect.promise(
+                async () =>
+                  await scenario.runtime.handler(
+                    accessCheckRequest(scenario, INVITED_PURCHASE_PERMISSION, recipientCompanyAssertion),
+                  ),
+              ),
+            ),
+          );
+        const allowed = yield* followUp();
+        expect(allowed.status).toBe(200);
+        expect(yield* responseBody(allowed)).toStrictEqual({ decision: 'ALLOWED' });
+
+        // The administrator revokes both grants through the governed Action: the recipient's portal access
+        // ends with them, membership included, and the company no longer admits the recipient at all.
+        for (const permission of [INVITED_PURCHASE_PERMISSION, INVITED_ACCESS_READ_PERMISSION]) {
+          const inviterAssertion = yield* companyAssertion(scenario, 'inviter');
+          const revoked = yield* Effect.promise(
+            async () => await scenario.runtime.handler(revokeGrantRequest(scenario, permission, inviterAssertion)),
+          );
+          expect(revoked.status).toBe(200);
+          expect(yield* responseBody(revoked)).toMatchObject({ outcome: 'REVOKED' });
+        }
+        expect(yield* recipientAccessIntent(scenario)).toStrictEqual({
+          assignments: [
+            { role: 'Pozvaný zástupce odběratele', status: 'revoked' },
+            { role: 'Zástupce odběratele', status: 'revoked' },
+            { role: 'Zástupce odběratele', status: 'revoked' },
+          ],
+          memberships: ['revoked', 'revoked'],
+        });
+        expect((yield* followUp()).status).toBe(403);
         return yield* Effect.void;
       }),
     ),
@@ -1265,7 +1310,7 @@ it.live(
         );
 
         expect(claims).toBe(1);
-        expect(claimedInvitation.lifecycle).toBe('RECONCILIATION_REQUIRED');
+        expect(claimedInvitation.lifecycle).toBe('CLAIMED');
         expect(scenario.droppedClaimAnswers).toStrictEqual([claimedInvitation.claim_proof_reference]);
         expect(yield* claimTransitionFor(scenario)).toMatchObject({
           result_reference: null,
@@ -1292,15 +1337,11 @@ it.live(
         // Settled from the invitation rather than by claiming again: the result reference is the
         // attestation the claim itself stamped, and the reconciliation is journalled as one.
         const settled = yield* claimTransitionFor(scenario);
-        // #1232: recovering an accepted claim cannot turn its still-pending grants into Current access.
         expect(settled).toMatchObject({
-          outcome_code: 'counterparty_invitation_claim_pending',
+          outcome_code: 'counterparty_invitation_claimed',
           result_reference: claimedInvitation.claim_proof_reference,
-          status: 'FAILED',
+          status: 'SUCCEEDED',
         });
-        expect((yield* readEnrollmentAcceptanceAttempt(scenario.fixture, scenario.attemptId)).state).toBe(
-          'RECONCILIATION_REQUIRED',
-        );
         expect(settled?.reconciliation_ref).not.toBeNull();
         expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
           claims,
@@ -1315,7 +1356,7 @@ it.live(
 );
 
 it.live(
-  'settles a lost claim answer from a continuation pass only after Current grants without the recipient',
+  'settles a lost claim answer from a continuation pass without the recipient',
   () =>
     Effect.scoped(
       Effect.gen(function* sweepSettlesALostClaimAnswer() {
@@ -1346,7 +1387,7 @@ it.live(
         );
 
         expect(claims).toBe(1);
-        expect(claimedInvitation.lifecycle).toBe('RECONCILIATION_REQUIRED');
+        expect(claimedInvitation.lifecycle).toBe('CLAIMED');
         expect(scenario.droppedClaimAnswers).toStrictEqual([claimedInvitation.claim_proof_reference]);
         expect(yield* claimTransitionFor(scenario)).toMatchObject({
           result_reference: null,
@@ -1362,15 +1403,12 @@ it.live(
           tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(scenario.realm.tenantId),
         });
 
-        expect(advanced.outcome).toBe('HALTED');
+        expect(advanced.outcome).toBe('COMPLETE');
         expect(yield* claimTransitionFor(scenario)).toMatchObject({
-          outcome_code: 'counterparty_invitation_claim_pending',
+          outcome_code: 'counterparty_invitation_claimed',
           result_reference: claimedInvitation.claim_proof_reference,
-          status: 'FAILED',
+          status: 'SUCCEEDED',
         });
-        expect((yield* readEnrollmentAcceptanceAttempt(scenario.fixture, scenario.attemptId)).state).toBe(
-          'RECONCILIATION_REQUIRED',
-        );
         expect((yield* claimTransitionFor(scenario))?.reconciliation_ref).not.toBeNull();
         expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
           claims,
@@ -1427,12 +1465,9 @@ it.live(
         );
         expect(keyed.status).toBe(200);
         expect(yield* claimTransitionFor(scenario)).toMatchObject({
-          outcome_code: 'counterparty_invitation_claim_pending',
-          status: 'FAILED',
+          outcome_code: 'counterparty_invitation_claimed',
+          status: 'SUCCEEDED',
         });
-        expect((yield* readEnrollmentAcceptanceAttempt(scenario.fixture, scenario.attemptId)).state).toBe(
-          'RECONCILIATION_REQUIRED',
-        );
         expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
           1,
         );
@@ -1487,12 +1522,9 @@ it.live(
 
         expect(retried.status).toBe(200);
         expect(yield* claimTransitionFor(scenario)).toMatchObject({
-          outcome_code: 'counterparty_invitation_claim_pending',
-          status: 'FAILED',
+          outcome_code: 'counterparty_invitation_claimed',
+          status: 'SUCCEEDED',
         });
-        expect((yield* readEnrollmentAcceptanceAttempt(scenario.fixture, scenario.attemptId)).state).toBe(
-          'RECONCILIATION_REQUIRED',
-        );
         expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
           1,
         );

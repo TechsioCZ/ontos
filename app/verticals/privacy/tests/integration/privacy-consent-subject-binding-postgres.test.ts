@@ -232,6 +232,7 @@ it.live('binds native Consent history to one exact Subject across valid competin
   Effect.scoped(
     Effect.gen(function* nativeConsentSubjectBinding() {
       const fixture = yield* makeNativeReadTestContext({
+        access: 'allowed',
         contextPermissions: ['privacy.consent.read'],
         moduleId: 'privacy.core',
         ownerFixtureRetention: 'retain-complete-context',
@@ -561,6 +562,7 @@ it.live(
           'objects',
         );
         const fixture = yield* makeNativeReadTestContext({
+          access: 'allowed',
           connections: {
             admin: { connectionString: Redacted.make(isolated.connections.admin.connectionString) },
             runtime: { connectionString: Redacted.make(isolated.connections.runtime.connectionString) },

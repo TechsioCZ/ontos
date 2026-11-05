@@ -136,6 +136,14 @@ export const changeProductRelationshipResultServiceFactory = (
 
 export const changeProductRelationshipAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-relationship.change',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-relationship', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.change-product-relationship.access.v1',
@@ -147,7 +155,7 @@ export const changeProductRelationshipAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey: catalogModuleKey,
       role: 'action',

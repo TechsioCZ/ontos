@@ -203,6 +203,9 @@ const commerceVocabulary = /commerce|storefront|better[-_]?auth/iu;
 const allowedCoreExternalSpecifiers = new Set([
   '@authzed/authzed-node',
   '@effect/platform-node',
+  // The one Node HTTP server module, so a bundle reaching the outbox health server leaves the rest of
+  // the platform package (its Redis and websocket clients) out.
+  '@effect/platform-node/NodeHttpServer',
   '@effect/sql-pg',
   '@noble/hashes/sha2.js',
   '@noble/hashes/utils.js',

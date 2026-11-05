@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug rename-sku
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { RenameSkuPayloadSchema, RenameSkuResultSchema } from '../actions/rename-sku.ts';
 
 export { RenameSkuPayloadSchema } from '../actions/rename-sku.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RenameSkuActionInvalidProblemSchema = makeProblemDetailsSchema('RenameSkuActionInvalidProblem', 400);
 export const RenameSkuActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -15,6 +17,7 @@ export const RenameSkuActionAuthenticationProblemSchema = makeProblemDetailsSche
 );
 export const RenameSkuActionForbiddenProblemSchema = makeProblemDetailsSchema('RenameSkuActionForbiddenProblem', 403, {
   code: Schema.Literals([
+    'action_approval_required',
     'action_permission_denied',
     'module_state_denied',
     'operation_context_denied',
@@ -115,7 +118,7 @@ export const RenameSkuActionApi = HttpApi.make('RenameSkuActionApi').add(
       HttpApiEndpoint.post('execute', '/catalog/actions/rename-sku', {
         error: actionErrors,
         payload: Schema.toEncoded(RenameSkuPayloadSchema),
-        success: RenameSkuResultSchema,
+        success: [ActionProposalAcceptedSchema, RenameSkuResultSchema],
       }),
     )
     .middleware(RenameSkuActionSchemaErrorMiddleware),

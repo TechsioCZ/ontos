@@ -1,4 +1,4 @@
-import { defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import type {
   OrganizationEngagementLifecyclePayload,
@@ -18,16 +18,15 @@ export const engagementLifecycleRegistration = <Payload extends EngagementLifecy
       captureMode: 'metadata_only',
       policyKey: `${actionKey}.access.v1`,
     },
+    // The profile is the record this capability governs (O9, O27).
+    accessTarget: (payload: Payload) => ({ moduleKey: 'party.registry', recordKey: payload.profileRef.resourceId }),
     actionKey,
     auditProfile: 'standard',
     domainErrorSchema: EngagementLifecycleErrorSchema,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: actionKey,
       moduleKey: 'party.registry',
       role: 'action',
@@ -36,13 +35,5 @@ export const engagementLifecycleRegistration = <Payload extends EngagementLifecy
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
     policies: [],
-    resourcePermission: defineActionResourcePermission<Payload>((payload) => ({
-      permission: 'write',
-      resource: {
-        moduleId: payload.profileRef.moduleId,
-        resourceId: payload.profileRef.resourceId,
-        resourceType: payload.profileRef.resourceType,
-      },
-    })),
     schemaVersion: '1',
   }) as const;

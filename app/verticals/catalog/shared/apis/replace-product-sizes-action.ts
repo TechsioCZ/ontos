@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug replace-product-sizes
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ReplaceProductSizesPayloadSchema, ReplaceProductSizesResultSchema } from '../actions/replace-product-sizes.ts';
 
 export { ReplaceProductSizesPayloadSchema } from '../actions/replace-product-sizes.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReplaceProductSizesActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReplaceProductSizesActionInvalidProblem',
@@ -21,6 +23,7 @@ export const ReplaceProductSizesActionForbiddenProblemSchema = makeProblemDetail
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -131,7 +134,7 @@ export const ReplaceProductSizesActionApi = HttpApi.make('ReplaceProductSizesAct
       HttpApiEndpoint.post('execute', '/catalog/actions/replace-product-sizes', {
         error: actionErrors,
         payload: Schema.toEncoded(ReplaceProductSizesPayloadSchema),
-        success: ReplaceProductSizesResultSchema,
+        success: [ActionProposalAcceptedSchema, ReplaceProductSizesResultSchema],
       }),
     )
     .middleware(ReplaceProductSizesActionSchemaErrorMiddleware),

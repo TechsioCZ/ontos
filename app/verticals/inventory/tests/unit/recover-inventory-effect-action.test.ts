@@ -4,7 +4,7 @@ import { Effect, Match, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { IndeterminateInventoryEffectResultSchema } from '../../shared/domain/inventory-effect-recovery.ts';
 import {
   RecoverInventoryEffectActionRejected,
@@ -246,33 +246,21 @@ const recoveredReservationRecord = () => {
 };
 
 describe('Recover Inventory Effect Action', () => {
-  it('declares explicit execution and exact Inventory Resource business permission gates', () => {
+  it('declares the scope-wide recovery capability instead of a per-Position target', () => {
     expect(recoverInventoryEffectAction.descriptor).toMatchObject({
       actionKey: 'commerce.inventory.recover-inventory-effect',
       idempotency: 'required',
       legalEntityScope: 'required',
       owningModuleKey: 'commerce.inventory',
     });
-    expect(recoverInventoryEffectAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
+    expect(recoverInventoryEffectAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    // O67-Q2: recovery is the Action's own capability in the selected access scope.
+    expect(recoverInventoryEffectAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.inventory.inventory-effect.recover',
+      kind: 'action',
+      selectors: [],
     });
-    expect(
-      getActionOwnerPermissionTargetResolver(recoverInventoryEffectAction)?.(payload, actionScope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.recovery.execute',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: positionRef.moduleId,
-          resourceId: positionRef.resourceId,
-          resourceType: positionRef.resourceType,
-        },
-        tenantId,
-      },
-    });
+    expect(getActionOwnerPermissionTargetResolver(recoverInventoryEffectAction)).toBeUndefined();
   });
 
   it.effect('rejects retargeting before consulting recovery authority', () =>

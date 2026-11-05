@@ -13,6 +13,8 @@ import { makeActionRepository } from '../../../../packages/core-runtime/src/acti
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   applicationCompositionAuthority,
   auditEvents,
@@ -26,9 +28,10 @@ import {
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { lockApplicationCompositionPublication } from '../../../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
+import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
+import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
@@ -89,6 +92,7 @@ const { tenantId } = fixture.originalBinding.bindingRef;
 const otherTenantId = '10101010-1010-4010-8010-101010101010';
 const principalId = '19191919-1919-4191-8191-191919191919';
 const authBindingId = '18181818-1818-4181-8181-181818181818';
+const accessScopeId = '17171717-1717-4171-8171-171717171717';
 const authenticationNamespaceId = 'test.inventory-binding-correction.v1';
 const unrelatedBindingId = '20202020-2020-4020-8020-202020202020';
 const unrelatedItemId = '30303030-3030-4030-8030-303030303030';
@@ -215,7 +219,7 @@ const cleanupCoreTenant = (database: TestDatabaseFromClient<typeof coreRelations
       yield* transaction.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
       yield* transaction.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId));
       yield* transaction.delete(principals).where(eq(principals.tenantId, tenantId));
-      yield* transaction.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      // Core retains access intent (D27), so the Tenant and its access scope stay.
     }),
   );
 
@@ -382,13 +386,26 @@ it.live(
             cleanupCoreTenant(coreAdmin),
           ]).pipe(Effect.orDie),
         );
-        yield* coreAdmin.insert(tenants).values({
-          defaultLocale: 'en',
-          name: 'Inventory binding correction Action acceptance',
-          slug: `inventory-binding-correction-${tenantId}`,
-          status: 'active',
-          tenantId,
-        });
+        yield* coreAdmin
+          .insert(tenants)
+          .values({
+            defaultLocale: 'en',
+            name: 'Inventory binding correction Action acceptance',
+            slug: `inventory-binding-correction-${tenantId}`,
+            status: 'active',
+            tenantId,
+          })
+          .onConflictDoNothing();
+        // The runner re-decides the Action under the tenant context scope's shared fence, so seed the
+        // scope with a Ready fence as Core bootstrap does.
+        yield* coreAdmin
+          .insert(accessScopes)
+          .values({ scopeId: accessScopeId, tenantContextId: tenantId, tenantId })
+          .onConflictDoNothing();
+        yield* coreAdmin
+          .insert(accessScopeFences)
+          .values({ revision: 1, scopeId: accessScopeId, state: 'Ready', tenantId })
+          .onConflictDoNothing();
         yield* coreAdmin.insert(principals).values({
           displayName: 'Inventory binding correction operator',
           kind: 'human',
@@ -413,6 +430,7 @@ it.live(
           testOperationalScopeResolver,
           {
             ...openActionRuntimeOptions,
+            accessDecision: makeScriptedBoundAccessGate('allowed').bound,
             contextAccess,
             ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
             ownerRegistration: inventoryRegistration,

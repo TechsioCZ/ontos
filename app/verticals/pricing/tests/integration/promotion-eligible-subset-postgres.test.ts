@@ -600,13 +600,21 @@ const produceMixedCandidate = Effect.fn('test.produceMixedPromotionCandidate')(f
 
 const readEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'pricing.promotion.subset.native_test.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.test.promotion-eligible-subset',
   moduleKey: 'commerce.pricing',
   role: 'api',
 });
 const governedRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.fixture.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'fixtures', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: readEntrypoint,
     evidencePolicy: {
@@ -616,7 +624,6 @@ const governedRead = defineRead(
     inputSchema: PricingRawCompositionReadySchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.pricing',
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.test.promotion-eligible-subset',
     resultSchema: Schema.Struct({ total: Schema.String, values: Schema.Array(Schema.String) }),
@@ -670,7 +677,6 @@ const governedRead = defineRead(
       ),
     ),
   zeroFloorAuthorizationPersistenceForScope,
-  () => ({ kind: 'module', moduleId: 'commerce.pricing' }),
 );
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
@@ -711,6 +717,7 @@ it.live(
           });
           yield* isolated.assertClonedSchema();
           const fixture = yield* makeNativeReadTestContext({
+            access: 'allowed',
             connections: {
               admin: { connectionString: Redacted.make(isolated.connections.admin.connectionString) },
               runtime: { connectionString: Redacted.make(isolated.connections.runtime.connectionString) },

@@ -15,14 +15,8 @@ import {
   AssortmentPolicyPersistenceUnavailable,
   AssortmentPolicyTargetInvariant,
 } from '../../shared/domain/policy-errors.ts';
-import {
-  assortmentConfigurationReadService,
-  configurationPermissionTarget,
-} from '../../src/services/governed-configuration-read.service.ts';
-import {
-  assortmentDecisionExplanationReadService,
-  decisionExplanationPermissionTarget,
-} from '../../src/services/decision-explanation-read.service.ts';
+import { assortmentConfigurationReadService } from '../../src/services/governed-configuration-read.service.ts';
+import { assortmentDecisionExplanationReadService } from '../../src/services/decision-explanation-read.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
@@ -122,9 +116,6 @@ it.effect('requires one exact owner resource and trusted tenant for configuratio
     );
     const result = yield* service.read(configRequest);
     expect(result.configuration.kind).toStrictEqual('REVISION');
-    expect(configurationPermissionTarget(configRequest, scope).permission).toStrictEqual(
-      'assortment.configuration.read',
-    );
     const foreignRequest = Schema.decodeUnknownSync(AssortmentConfigurationRequestSchema)({
       resource: ref(
         'commerce.assortment',
@@ -196,13 +187,6 @@ it.effect('rejects forged, cross-tenant, and wrong-request explanation inputs', 
     expect(Schema.is(AssortmentPolicyTargetInvariant)(wrongError)).toStrictEqual(true);
   }),
 );
-
-it('derives exact decision permission target from trusted request scope', () => {
-  const target = decisionExplanationPermissionTarget(request, scope);
-  expect(target.permission).toStrictEqual('assortment.decision.explain');
-  expect(target.catalogSelection.resourceId).toStrictEqual('product-1');
-  expect(target.subject.kind).toStrictEqual('RETAIL_CUSTOMER_PROFILE');
-});
 
 it.effect('keeps explanation bound to the stored component role as well as its selection', () =>
   Effect.gen(function* explainsComponentIdentity() {

@@ -3,7 +3,7 @@
 // @ontos-action-slug remove-customer-price-group
 /* eslint-disable sonarjs/no-duplicate-string -- Generated audit/event records intentionally repeat the canonical owner module key; expires: 2027-03-01. */
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
   CustomerPriceGroupRemovedAuditEvidenceSchema,
@@ -141,6 +141,14 @@ const handleRemoveCustomerPriceGroup = Effect.fn('RemoveCustomerPriceGroupAction
 
 export const removeCustomerPriceGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-price-group.remove',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-pricing', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.remove-customer-price-group.access.v1',
@@ -154,7 +162,7 @@ export const removeCustomerPriceGroupAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.remove-customer-price-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -164,16 +172,10 @@ export const removeCustomerPriceGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: RemoveCustomerPriceGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<RemoveCustomerPriceGroupPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.profile,
-    })),
     resultSchema: RemoveCustomerPriceGroupResultSchema,
     schemaVersion: '1',
   },
   handleRemoveCustomerPriceGroup,
-  (transaction, scope, compositionRevision) =>
-    priceGroupActionServicesForTransaction(transaction, scope, compositionRevision).pipe(
-      Effect.map(({ now, store }) => ({ now, store })),
-    ),
+  (transaction, scope) =>
+    priceGroupActionServicesForTransaction(transaction, scope).pipe(Effect.map(({ now, store }) => ({ now, store }))),
 );

@@ -379,7 +379,10 @@ it.effect('Counterparty identity survives aliases, current-role expiry and canon
       role: 'CUSTOMER' as const,
       tenantId,
     };
-    const hits = yield* gateway.searchCounterparties(input, counterpartySearchScope);
+    const hits = yield* gateway.searchCounterparties(input, counterpartySearchScope, {
+      hiddenTextFields: [],
+      listAccess: { groups: [] },
+    });
     expect(hits.length).toBe(2);
     expect(hits.map((hit) => hit.counterpartyRef.resourceId)).toEqual(['cp-1', 'cp-2']);
     const normalized = normalizeCounterpartySearchHits(input, hits);
@@ -399,6 +402,7 @@ it.effect('Counterparty identity survives aliases, current-role expiry and canon
           effectiveAt: '2026-10-01T00:00:00.000Z',
         },
         counterpartySearchScope,
+        { hiddenTextFields: [], listAccess: { groups: [] } },
       ),
     ).toEqual([]);
   }),

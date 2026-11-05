@@ -20,11 +20,14 @@ import {
   makeReadRuntimeLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -114,7 +117,14 @@ export const makeCurrentStorefrontNativeFixture = Effect.fn('CurrentStorefrontNa
     const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(states));
     const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
-    const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
+    const accessEnforcement = AccessDecisionLive.pipe(
+      Layer.provideMerge(AccessEnforcementPortsLive),
+      Layer.provide(TenantIntentLoaderLive),
+      Layer.provide(persistence),
+    );
+    const resolver = OperationalScopeResolverLive.pipe(
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessEnforcement)),
+    );
     const source = ActiveApplicationCompositionSourceLive.pipe(
       Layer.provide(
         FetchHttpClient.layer.pipe(
@@ -123,7 +133,16 @@ export const makeCurrentStorefrontNativeFixture = Effect.fn('CurrentStorefrontNa
       ),
     );
     const composition = ActiveApplicationCompositionConfigLive.pipe(Layer.provideMerge(source));
-    const common = Layer.mergeAll(persistence, ContextAccessLive, gate, gateway, resolver, composition, overlay);
+    const common = Layer.mergeAll(
+      persistence,
+      ContextAccessLive,
+      gate,
+      gateway,
+      resolver,
+      composition,
+      overlay,
+      accessEnforcement,
+    );
     // The Registry creates both runtimes from its own published registration and compiled release.
     const runtimes = Layer.mergeAll(
       makeActionRuntimeLive(ultramodernDeliveryUnit, storefrontRegistryRegistration).pipe(

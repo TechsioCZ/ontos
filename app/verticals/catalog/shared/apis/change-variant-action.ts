@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug change-variant
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ChangeVariantPayloadSchema, ChangeVariantResultSchema } from '../actions/change-variant.ts';
 
 export { ChangeVariantPayloadSchema } from '../actions/change-variant.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ChangeVariantActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ChangeVariantActionInvalidProblem',
@@ -21,6 +23,7 @@ export const ChangeVariantActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -131,7 +134,7 @@ export const ChangeVariantActionApi = HttpApi.make('ChangeVariantActionApi').add
       HttpApiEndpoint.post('execute', '/catalog/actions/change-variant', {
         error: actionErrors,
         payload: Schema.toEncoded(ChangeVariantPayloadSchema),
-        success: ChangeVariantResultSchema,
+        success: [ActionProposalAcceptedSchema, ChangeVariantResultSchema],
       }),
     )
     .middleware(ChangeVariantActionSchemaErrorMiddleware),

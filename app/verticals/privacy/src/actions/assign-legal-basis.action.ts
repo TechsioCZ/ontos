@@ -75,6 +75,14 @@ export const handleAssignLegalBasis = Effect.fn('AssignLegalBasisAction.handle')
 
 export const assignLegalBasisAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.legal-basis.assign',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'processing-governance', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.assign-legal-basis.access.v1',
@@ -86,7 +94,7 @@ export const assignLegalBasisAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.assign-legal-basis',
       moduleKey: 'privacy.core',
       role: 'action',

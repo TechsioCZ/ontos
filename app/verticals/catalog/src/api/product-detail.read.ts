@@ -20,7 +20,7 @@ const catalogModuleKey = 'commerce.catalog';
 
 const productDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-detail' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.product-detail',
   moduleKey: catalogModuleKey,
   role: 'api',
@@ -76,6 +76,14 @@ export const readProductDetail = Effect.fn('ProductDetailRead.read')(function* r
 
 export const productDetailRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-detail.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: productDetailEntrypoint,
     evidencePolicy: {
@@ -85,7 +93,6 @@ export const productDetailRead = defineRead(
     inputSchema: ProductDetailRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: catalogModuleKey,
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.product-detail',
     resultSchema: ProductDetailResponseSchema,
@@ -105,5 +112,4 @@ export const productDetailRead = defineRead(
         currentProduct: localizedFactsReadsForScope(transaction, scope).currentProduct,
       })),
     ),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

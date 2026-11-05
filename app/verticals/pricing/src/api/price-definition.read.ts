@@ -11,7 +11,7 @@ import { pricePersistenceForScope } from '../services/price-persistence.service.
 const MODULE_KEY = 'commerce.pricing' as const;
 const priceDefinitionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'pricing.price.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.price-definition',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -54,6 +54,15 @@ export const readPriceDefinition = Effect.fn('PriceDefinitionRead.read')(functio
 
 export const priceDefinitionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.price.read-definition',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'prices', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+
     accessKind: 'detail',
     entrypoint: priceDefinitionEntrypoint,
     evidencePolicy: {
@@ -63,7 +72,6 @@ export const priceDefinitionRead = defineRead(
     inputSchema: PriceDefinitionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.price-definition',
     resultSchema: PriceDefinitionResponseSchema,
@@ -81,5 +89,4 @@ export const priceDefinitionRead = defineRead(
       })),
     ),
   (transaction, scope) => pricePersistenceForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

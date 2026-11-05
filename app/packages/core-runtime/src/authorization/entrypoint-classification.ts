@@ -19,6 +19,15 @@ export const AuthenticatedPrincipalAuthorizationSchema = Schema.Struct({
   kind: Schema.Literal('authenticated_principal'),
 });
 
+/**
+ * A surface gated by its own `accessDeclaration` or `accessWorkload` (CUTOVER-PLAN §4.2). One kind
+ * replaces both `action_execution` and `context_permission`, because the capability now lives only
+ * in the carrier. The two legacy kinds are accepted beside it until L03b removes them (O62, O68).
+ */
+export const ProtectedAuthorizationSchema = Schema.Struct({
+  kind: Schema.Literal('protected'),
+});
+
 export const ContextPermissionAuthorizationSchema = Schema.Struct({
   kind: Schema.Literal('context_permission'),
   permission: stablePermissionSchema,
@@ -41,6 +50,7 @@ export const CapabilityIssuanceAuthorizationSchema = Schema.Struct({
 export const EntrypointAuthorizationSchema = Schema.Union([
   IntentionalPublicAuthorizationSchema,
   AuthenticatedPrincipalAuthorizationSchema,
+  ProtectedAuthorizationSchema,
   ContextPermissionAuthorizationSchema,
   ActionExecutionAuthorizationSchema,
   OwnerLocalBackgroundAuthorizationSchema,
@@ -49,6 +59,10 @@ export const EntrypointAuthorizationSchema = Schema.Union([
 
 export type EntrypointAuthorization = Schema.Schema.Type<typeof EntrypointAuthorizationSchema>;
 export type ActionExecutionAuthorization = Schema.Schema.Type<typeof ActionExecutionAuthorizationSchema>;
+export type ProtectedAuthorization = Schema.Schema.Type<typeof ProtectedAuthorizationSchema>;
+export type OwnerLocalBackgroundAuthorization = Schema.Schema.Type<typeof OwnerLocalBackgroundAuthorizationSchema>;
+export type CapabilityIssuanceAuthorization = Schema.Schema.Type<typeof CapabilityIssuanceAuthorizationSchema>;
+export type ContextPermissionAuthorization = Schema.Schema.Type<typeof ContextPermissionAuthorizationSchema>;
 
 export const decodeEntrypointAuthorization = <Input>(input: Input): EntrypointAuthorization =>
   Object.freeze(

@@ -80,7 +80,7 @@ export const handleVerifyCurrentStorefrontApplicationV1 = Effect.fn('VerifyCurre
 
 const verifyCurrentStorefrontApplicationV1Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: verifyCurrentStorefrontApplicationReadKey,
   moduleKey: storefrontRegistryModuleKey,
   role: 'api',
@@ -88,6 +88,15 @@ const verifyCurrentStorefrontApplicationV1Entrypoint = defineTenantModuleEntrypo
 
 export const verifyCurrentStorefrontApplicationV1Read = defineRead(
   {
+    // Routine: revalidates an observed proof and returns no audit actor or administrative reason.
+    accessDeclaration: {
+      key: 'commerce.storefront-registry.storefront-application.verify-current',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'storefront-applications', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: verifyCurrentStorefrontApplicationV1Entrypoint,
     evidencePolicy: {
@@ -97,14 +106,12 @@ export const verifyCurrentStorefrontApplicationV1Read = defineRead(
     inputSchema: VerifyCurrentStorefrontApplicationV1RequestSchema,
     legalEntityScope: 'optional',
     owningModuleKey: storefrontRegistryModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: verifyCurrentStorefrontApplicationReadKey,
     resultSchema: VerifyCurrentStorefrontApplicationV1ResponseSchema,
     schemaVersion: '1',
   },
   handleVerifyCurrentStorefrontApplicationV1,
-  (transaction, scope, compositionRevision) =>
-    currentStorefrontApplicationPersistenceForScope(transaction, scope, compositionRevision),
-  () => ({ kind: 'module', moduleId: storefrontRegistryModuleKey }),
+  (transaction, scope, compositionRevision, listAccess) =>
+    currentStorefrontApplicationPersistenceForScope(transaction, scope, compositionRevision, listAccess),
 );

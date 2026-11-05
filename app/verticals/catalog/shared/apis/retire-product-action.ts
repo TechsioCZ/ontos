@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug retire-product
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { RetireProductPayloadSchema, RetireProductResultSchema } from '../actions/retire-product.ts';
 
 export { RetireProductPayloadSchema } from '../actions/retire-product.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RetireProductActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetireProductActionInvalidProblem',
@@ -21,6 +23,7 @@ export const RetireProductActionForbiddenProblemSchema = makeProblemDetailsSchem
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const RetireProductActionApi = HttpApi.make('RetireProductActionApi').add
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-product', {
         error: actionErrors,
         payload: Schema.toEncoded(RetireProductPayloadSchema),
-        success: RetireProductResultSchema,
+        success: [ActionProposalAcceptedSchema, RetireProductResultSchema],
       }),
     )
     .middleware(RetireProductActionSchemaErrorMiddleware),

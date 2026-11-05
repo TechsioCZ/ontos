@@ -53,6 +53,14 @@ const ACTION_KEY = 'commerce.catalog.set-product-unit-target-divisibility' as co
 
 export const setProductUnitTargetDivisibilityAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-unit-target-divisibility.set',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product-unit', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-product-unit-target-divisibility.access.v1',
@@ -64,7 +72,7 @@ export const setProductUnitTargetDivisibilityAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

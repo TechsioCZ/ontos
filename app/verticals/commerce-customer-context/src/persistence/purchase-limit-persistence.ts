@@ -1285,6 +1285,7 @@ const approvalEvidenceFactoryForCurrentness = (
     const scopedTransaction = transaction as ScopedTransactionExecutor;
     const resolveCounterpartyRole = roleResolverFactory.make({
       legalEntityId: scope.legalEntityId,
+      operationalScope: scope,
       requestCorrelation: scope.correlationId,
       tenantId: scope.tenantId,
     });

@@ -285,9 +285,6 @@ importers:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
     devDependencies:
-      '@app/commerce-market-catalog':
-        specifier: workspace:*
-        version: link:verticals/commerce-market-catalog
       '@babel/types':
         specifier: 8.0.6
         version: 8.0.6
@@ -706,6 +703,9 @@ importers:
 
   packages/customer-market-retirement-contracts:
     dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../core-runtime
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../shared-contracts
@@ -2455,9 +2455,6 @@ importers:
       '@app/shell-super-app':
         specifier: workspace:*
         version: link:../../apps/shell-super-app
-      '@authzed/authzed-node':
-        specifier: 1.6.1
-        version: 1.6.1
       '@effect/tsgo':
         specifier: 0.67.0
         version: 0.67.0

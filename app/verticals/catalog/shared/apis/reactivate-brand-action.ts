@@ -2,11 +2,13 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug reactivate-brand
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ReactivateBrandPayloadSchema, ReactivateBrandResultSchema } from '../actions/reactivate-brand.ts';
 
 export { ReactivateBrandPayloadSchema } from '../actions/reactivate-brand.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReactivateBrandActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReactivateBrandActionInvalidProblem',
@@ -21,6 +23,7 @@ export const ReactivateBrandActionForbiddenProblemSchema = makeProblemDetailsSch
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -124,7 +127,7 @@ export const ReactivateBrandActionApi = HttpApi.make('ReactivateBrandActionApi')
       HttpApiEndpoint.post('execute', '/catalog/actions/reactivate-brand', {
         error: actionErrors,
         payload: Schema.toEncoded(ReactivateBrandPayloadSchema),
-        success: ReactivateBrandResultSchema,
+        success: [ActionProposalAcceptedSchema, ReactivateBrandResultSchema],
       }),
     )
     .middleware(ReactivateBrandActionSchemaErrorMiddleware),

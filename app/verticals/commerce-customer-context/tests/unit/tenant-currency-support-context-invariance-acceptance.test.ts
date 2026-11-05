@@ -1,9 +1,11 @@
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { PurchaseCurrencyPricingGatewayCredentialService } from '../../shared/domain/purchase-currency-pricing-gateway-credential.ts';
 import { purchaseCurrencyPricingPortFromEnvironment } from '../../src/integrations/purchase-currency-pricing.ts';
+import type { DelegatedAcquire } from '../support/delegated-gateway-acquisition.fixture.ts';
+import { issuedDelegatedContext, originatorSubject } from '../support/delegated-gateway-acquisition.fixture.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const effectiveAt = '2026-09-27T10:00:00.000Z';
@@ -82,29 +84,27 @@ describe('Tenant Currency Support purchase-context invariance', () => {
   it.effect('uses distinct gateway security contexts but one Tenant capability request and root', () => {
     const issued: unknown[] = [];
     const calls: unknown[] = [];
-    const credentialLayer = Layer.succeed(PurchaseCurrencyPricingGatewayCredentialService, {
-      issue: (request) => {
-        issued.push(request);
-        return Effect.succeed({
-          baseUrl: new URL('https://shell.example.test/owner-api'),
-          credential: Redacted.make(`Bearer ${request.requestCorrelation}`),
-        });
-      },
-    });
+    const subject = originatorSubject('a'.repeat(64), '20000000-0000-4000-8000-000000000001');
+    const acquire: DelegatedAcquire = (request) => {
+      issued.push(request);
+      return Effect.succeed(
+        issuedDelegatedContext({ compositionRevision: 'a'.repeat(64), token: request.requestCorrelation }),
+      );
+    };
 
     return Effect.gen(function* contextInvariantSupport() {
       const results = [];
       for (const purchase of purchaseContexts) {
         const port = yield* purchaseCurrencyPricingPortFromEnvironment(
           {
-            compositionRevision: 'a'.repeat(64),
-            legalEntityId: purchase.legalEntityId,
             requestCorrelation: purchase.correlation,
+            subject,
           },
           (payload, credential, correlation) => {
             calls.push({ correlation, credential: Redacted.value(credential), payload });
             return Effect.succeed(ownerResponse);
           },
+          acquire,
         );
         results.push(yield* port.resolveCurrent({ effectiveAt, tenantId }));
       }
@@ -112,8 +112,9 @@ describe('Tenant Currency Support purchase-context invariance', () => {
       expect(issued).toEqual(
         purchaseContexts.map((purchase) => ({
           audience: 'pricing',
-          compositionRevision: 'a'.repeat(64),
+          legalEntityScope: 'tenant',
           requestCorrelation: purchase.correlation,
+          subject,
         })),
       );
       expect(calls).toEqual(
@@ -148,6 +149,6 @@ describe('Tenant Currency Support purchase-context invariance', () => {
           expect(JSON.stringify(calls)).not.toContain(purchaseOnlyValue);
         }
       }
-    }).pipe(Effect.provide(credentialLayer));
+    }).pipe(Effect.provide(nodeCryptoLayer));
   });
 });

@@ -1,7 +1,7 @@
 import { inventoryRegistration } from '../../vertical.registration.ts';
 import { ReadPermissionDenied, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
-import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 
 import {
   InventoryReconciliationEvidenceDomainPolicyProblemSchema,
@@ -24,6 +24,7 @@ import {
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import { makeTestBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -79,38 +80,24 @@ it('defines the existing owner evidence lookups plus repository-backed privacy o
   expect(requestContract).not.toContain('sql');
 });
 
-it('binds inventory.audit.read to the exact requested owner Resource', () => {
-  expect(inventoryReconciliationEvidenceRead.descriptor.permissionTarget).toBe('owner_permission');
+it('decides the audit read through its own declaration, with no legacy permission target', () => {
+  // The one gate decides the read's own scope-wide capability (O62); the legacy positional resolver is
+  // gone, and the owner Resource the read names is proven by the handler before it reads evidence.
+  expect(inventoryReconciliationEvidenceRead.descriptor.accessDeclaration).toMatchObject({
+    key: 'commerce.inventory.reconciliation-evidence.read',
+    kind: 'read',
+    selectors: [],
+  });
+  expect(Object.keys(inventoryReconciliationEvidenceRead.descriptor)).not.toContain('permissionTarget');
   expect(inventoryReconciliationEvidenceRead.descriptor.legalEntityScope).toBe('required');
+  expect(getReadPermissionTargetResolver(inventoryReconciliationEvidenceRead)).toBeUndefined();
   expect(getReadResourcePermissionTargetResolver(inventoryReconciliationEvidenceRead)).toBeUndefined();
-
-  const resolver = getReadPermissionTargetResolver(inventoryReconciliationEvidenceRead);
-  expect(Predicate.isFunction(resolver)).toBe(true);
-  if (Predicate.isFunction(resolver)) {
-    expect(resolver(input, scope)).toMatchObject({
-      kind: 'owner_permission',
-      ownerPermission: {
-        definition: { key: 'inventory.audit.read' },
-        target: {
-          kind: 'inventory_resource',
-          resource: {
-            moduleId: 'commerce.inventory',
-            resourceId: bindingId,
-            resourceType: 'commerce.inventory.catalog-to-stock-binding',
-            tenantId,
-          },
-          tenantId,
-        },
-      },
-    });
-  }
 });
 
 it.effect('denies the exact owner Resource before resolving transaction-scoped evidence services', () =>
   Effect.gen(function* denyBeforeOwnerResolution() {
-    let businessChecks = 0;
-    let resourceChecks = 0;
     const stages: string[] = [];
+    const gate = makeTestBoundAccessGate();
     const database = {
       executor: yield* makeTestDatabase((text) =>
         Effect.succeed(
@@ -125,25 +112,16 @@ it.effect('denies the exact owner Resource before resolving transaction-scoped e
       openModuleEntrypointGateway,
       { resolve: () => Effect.succeed(scope) },
       {
+        // The gate is the only authority: the retired target checks are never consulted (O62).
         legalEntities: ({ legalEntityIds }) =>
           Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
         modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        ownerPermissions: ({ targets }) => {
-          businessChecks += 1;
-          return Effect.succeed(targets.map((target) => ({ decision: 'denied' as const, key: target.target.key })));
-        },
-        resources: ({ resources }) => {
-          resourceChecks += 1;
-          return Effect.succeed(
-            resources.map((resource) => ({
-              decision: 'allowed' as const,
-              key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-            })),
-          );
-        },
+        ownerPermissions: () => Effect.die('The gate decides; no legacy owner target is checked'),
+        resources: () => Effect.die('The gate decides; no legacy resource target is checked'),
         tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
       },
       {
+        accessDecision: gate.bound,
         onStage: (stage) => {
           stages.push(stage);
         },
@@ -162,8 +140,10 @@ it.effect('denies the exact owner Resource before resolving transaction-scoped e
       .pipe(Effect.flip);
 
     expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-    expect(businessChecks).toBe(1);
-    expect(resourceChecks).toBe(0);
+    expect(gate.accessDecision.askedDecisions).toHaveLength(1);
+    expect(gate.accessDecision.askedDecisions[0]?.carrier.accessDeclaration?.key).toBe(
+      'commerce.inventory.reconciliation-evidence.read',
+    );
     expect(stages).toEqual(['input_decoded', 'scope_validated', 'module_state_checked', 'permission_checked']);
   }),
 );

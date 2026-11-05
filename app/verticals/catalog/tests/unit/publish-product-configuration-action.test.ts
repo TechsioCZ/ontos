@@ -80,7 +80,7 @@ describe('Product Configuration publication Action', () => {
   it.effect('rolls back the Action commit when publication result capture fails', () =>
     Effect.gen(function* rejectPublicationCommit() {
       const harness = yield* makeActionTestHarness({
-        actionPermission: 'allowed',
+        access: 'allowed',
         services: [
           bindActionTestServices(publishProductConfigurationAction, {
             captureResult: () =>
@@ -192,10 +192,7 @@ describe('Product Configuration publication Action', () => {
   );
 
   it('is an explicit governed write with no caller principal', () => {
-    expect(publishProductConfigurationAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
+    expect(publishProductConfigurationAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     expect(publishProductConfigurationAction.descriptor.legalEntityScope).toBe('forbidden');
     expect('principalId' in payload).toBe(false);
   });

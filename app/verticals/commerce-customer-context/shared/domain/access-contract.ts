@@ -1,4 +1,4 @@
-import { AuthorizationMutationStateSchema, PrincipalRefSchema as CorePrincipalRefSchema } from '@app/core-runtime';
+import { PrincipalRefSchema as CorePrincipalRefSchema } from '@app/core-runtime';
 import type { PrincipalRef as CorePrincipalRef } from '@app/core-runtime';
 import { CounterpartyRefSchema as PartyCounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import type { CounterpartyRef as PartyCounterpartyRef } from '@app/party-registry/resources/counterparty';
@@ -51,7 +51,8 @@ export const CounterpartyPermissionScopeSchema = Schema.Union([
 ]);
 export type CounterpartyPermissionScope = typeof CounterpartyPermissionScopeSchema.Type;
 
-const CounterpartyAccessJournalStateSchema = AuthorizationMutationStateSchema;
+/** The owner grant row is the whole authority, so a grant is either ACTIVE or REVOKED (O62). */
+const CounterpartyAccessGrantStateSchema = Schema.Literals(['ACTIVE', 'REVOKED']);
 
 export const CounterpartyAccessGrantSchema = Schema.Struct({
   catalogVersion: Schema.Literal('1'),
@@ -66,7 +67,7 @@ export const CounterpartyAccessGrantSchema = Schema.Struct({
   revokedAt: Schema.optionalKey(AccessInstantSchema),
   revokedBy: Schema.optionalKey(PrincipalRefSchema),
   scope: CounterpartyPermissionScopeSchema,
-  state: CounterpartyAccessJournalStateSchema,
+  state: CounterpartyAccessGrantStateSchema,
 });
 export type CounterpartyAccessGrant = typeof CounterpartyAccessGrantSchema.Type;
 
@@ -146,13 +147,7 @@ export const decideCounterpartyPermission = (
       grant.permission === input.permission &&
       scopeContains(grant.scope, input.scope),
   );
-  if (matching.some(({ state }) => state === 'ACTIVE')) {
-    return 'ALLOWED';
-  }
-  if (matching.some(({ state }) => state === 'RECONCILIATION_REQUIRED')) {
-    return 'UNAVAILABLE';
-  }
-  return 'DENIED';
+  return matching.some(({ state }) => state === 'ACTIVE') ? 'ALLOWED' : 'DENIED';
 };
 
 export const canRevokeAdministratorGrant = (

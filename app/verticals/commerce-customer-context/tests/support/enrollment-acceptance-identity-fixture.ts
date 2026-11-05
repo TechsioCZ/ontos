@@ -26,6 +26,8 @@ import { trustResolvedSystemPrincipalContext } from '../../../../packages/core-r
 import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   auditEvents,
   coreRelations,
@@ -48,6 +50,7 @@ import {
 } from '../../../../packages/core-runtime/src/operations/context.ts';
 import type { OperationalScopeResolverService } from '../../../../packages/core-runtime/src/operations/context.ts';
 import { ContextAccess } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
+import { allowedAccessLayers } from './access-gate.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { ActionPermission } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import { ExternalIdentityClient } from '../../../../packages/shared-contracts/src/external-identity-client.ts';
@@ -226,10 +229,10 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
         actionInvocations,
         principalAuthBindings,
         principals,
-        tenants,
       ]) {
         yield* admin.executor.delete(table).where(eq(table.tenantId, tenantId));
       }
+      // Core retains access intent (D27), so the Tenant and its access scope stay.
     });
     yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
     yield* admin.executor.insert(tenants).values({
@@ -239,6 +242,13 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
       status: 'active',
       tenantId,
     });
+    // The runner re-decides every Action under its access scope's shared fence. Seed the tenant
+    // context scope with a Ready fence, as Core bootstrap does.
+    const accessScopeId = randomUUID();
+    yield* admin.executor.insert(accessScopes).values({ scopeId: accessScopeId, tenantContextId: tenantId, tenantId });
+    yield* admin.executor
+      .insert(accessScopeFences)
+      .values({ revision: 1, scopeId: accessScopeId, state: 'Ready', tenantId });
     yield* admin.executor.insert(principals).values({
       displayName: 'Enrollment identity acceptance actor',
       kind: 'system',
@@ -253,8 +263,9 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
       Layer.provide(TenantModuleStateServiceLive),
       Layer.provide(runtimeDatabaseLive),
     );
+    const accessGateLive = allowedAccessLayers();
     const scopeResolverLive = OperationalScopeResolverLive.pipe(
-      Layer.provide(Layer.mergeAll(runtimeDatabaseLive, AcceptanceContextAccessLive)),
+      Layer.provide(Layer.mergeAll(runtimeDatabaseLive, AcceptanceContextAccessLive, accessGateLive)),
     );
     const actionRuntimeLive = makeActionRuntimeLive(compositionSnapshot.composition.shell.deployment).pipe(
       Layer.provide(
@@ -267,6 +278,7 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
           scopeResolverLive,
           AcceptanceContextAccessLive,
           runtimeDatabaseLive,
+          accessGateLive,
         ),
       ),
     );

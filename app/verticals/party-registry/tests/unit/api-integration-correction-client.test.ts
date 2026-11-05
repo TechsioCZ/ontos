@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
@@ -181,7 +181,7 @@ it.effect('public clients discover the first assertion and submit a governed cor
       );
       expect(after.currentFactAssertions[0]?.assertionId).toBe(replacementAssertionId);
       expect(
-        Option.getOrElse(after.factHistory, () => []).some(
+        (after.factHistory ?? []).some(
           ({ assertionId, state }) => assertionId === originalAssertionId && state === 'SUPERSEDED',
         ),
       ).toBe(true);

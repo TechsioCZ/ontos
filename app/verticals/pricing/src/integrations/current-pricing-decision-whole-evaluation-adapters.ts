@@ -2570,6 +2570,7 @@ const scopedAdapters = (
     compositionRevision,
     legalEntityId: scope.legalEntityId,
     requestCorrelation: scope.correlationId,
+    scope,
     tenantId: scope.tenantId,
   };
   return Effect.all(
@@ -2587,6 +2588,7 @@ const scopedAdapters = (
       priceGroupCompatibility: priceGroupCompatibilityPortFromEnvironment({
         compositionRevision,
         requestCorrelation: scope.correlationId,
+        scope,
         tenantId: scope.tenantId,
       }),
       tier: quantityTierPersistenceForScope(transaction, scope),

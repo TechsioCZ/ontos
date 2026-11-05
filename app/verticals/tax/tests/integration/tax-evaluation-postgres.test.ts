@@ -179,6 +179,7 @@ const evaluationHttp = Effect.fn('TaxEvaluationTest.evaluationHttp')(function* e
   scope: OperationalScope,
 ) {
   const harness = yield* makeReadTestHarness({
+    access: 'allowed',
     executeOwnerQuery: (query) =>
       runtimeClient.withTransaction(
         runtimeClient
@@ -195,7 +196,6 @@ const evaluationHttp = Effect.fn('TaxEvaluationTest.evaluationHttp')(function* e
     operationTime,
     ownerAuthorizationDecision: 'allowed',
     ownerRegistration: taxRegistration,
-    permissionDecision: 'allowed',
     scope,
   });
   const builtContext = yield* Layer.build(harness.layer);

@@ -4,7 +4,7 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import {
-  CounterpartyPartyProjectionSchema,
+  CounterpartyPartyProjectionViewSchema,
   CounterpartyIsoTimestampSchema,
   LegalEntityRefSchema,
   CounterpartyRolePeriodSchema,
@@ -20,7 +20,7 @@ export const CounterpartyReadResponseSchema = Schema.Struct({
   createdAt: CounterpartyIsoTimestampSchema,
   currentRoles: Schema.Array(CounterpartyRolePeriodSchema),
   legalEntityRef: LegalEntityRefSchema,
-  party: CounterpartyPartyProjectionSchema,
+  party: CounterpartyPartyProjectionViewSchema,
 });
 export type CounterpartyReadResponse = typeof CounterpartyReadResponseSchema.Type;
 

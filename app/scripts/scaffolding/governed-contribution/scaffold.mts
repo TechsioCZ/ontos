@@ -46,6 +46,7 @@ import {
   MODULE_REGISTRATION_SEARCH_SLOT_START,
   createOrAcceptGeneratedMutationEffect,
   createMutationEffect,
+  DEFAULT_ACCESS_RISK,
   asJsonObject,
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
@@ -57,28 +58,32 @@ import {
   maskNonCode,
   raiseScaffoldFailure,
   readGeneratedSlotEntries,
+  renderAccessDeclaration,
+  renderAccessTarget,
+  renderReadAuthorizationLiteral,
   requireCanonicalSlug,
+  SCAFFOLD_RECORD_KEY_FIELD,
   replaceGeneratedSlotEntry,
   resolveContainedPath,
   scaffoldFailure,
   stabilizeGovernedHttpApiAdditionSlot,
   toCamelCase,
   toPascalCase,
+  toReadAccessDeclarationKey,
   toTitle,
   tryScaffold,
   updateMutation,
   withExactDependencies,
 } from '../shared.mts';
+import { renderLegacyReadPermissionResolver, renderLegacyReadPermissionTarget } from '../read-permission-compat.mts';
 import { governedApiBinding, hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { planActionBoundaryScaffold, renderActionGatewayClient } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
   hasGeneratedGovernedClientContract,
-  hasGeneratedModuleApiReadContract,
   hasGeneratedModuleApiContract,
   hasNamedImportBinding,
   hasGeneratedProviderApiContract,
-  hasGeneratedProviderReadContract,
   hasGeneratedOperationPrincipalContract,
   hasUniqueExactNamedImport,
   tokenizeGovernedClient,
@@ -376,7 +381,12 @@ const discoverPublicContractPackage = Effect.fn('GovernedContributionScaffold.di
 const renderPublicContractShim = (specifier: string): string =>
   `${generatedHeader(MODULE_API_KIND)}\n// @ontos-public-contract ${specifier}\nexport * from '${specifier}';\n`;
 
-const renderApiContract = (name: string): string => {
+const apiRequestSchema = (config: ReadAuthorizationConfig): string =>
+  (config.accessSelectors ?? []).length === 0
+    ? 'Schema.Struct({})'
+    : `Schema.Struct({\n  ${SCAFFOLD_RECORD_KEY_FIELD}: Schema.String.check(Schema.isUUID())\n})`;
+
+const renderApiContract = (name: string, config: ReadAuthorizationConfig): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader(MODULE_API_KIND)}
@@ -384,7 +394,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-export const ${type}RequestSchema = Schema.Struct({});
+export const ${type}RequestSchema = ${apiRequestSchema(config)};
 export type ${type}Request = typeof ${type}RequestSchema.Type;
 export const ${type}ResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
 
@@ -427,32 +437,58 @@ export const ${value} = HttpApi.make('${value}').add(
 `;
 };
 
-const renderReadAuthorization = (
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+type ReadAuthorizationConfig = Pick<
+  GovernedContributionScaffoldConfig,
+  'accessRisk' | 'accessSelectors' | 'authorization'
+>;
+
+const renderReadAuthorization = (config: ReadAuthorizationConfig): string =>
+  renderReadAuthorizationLiteral(config.authorization);
+
+/** Only a protected read carries a declaration; the two unprotected kinds must not (O62). */
+const renderReadAccessDeclaration = (
+  config: ReadAuthorizationConfig,
+  moduleId: string,
+  slug: string,
+  verb: string,
 ): string => {
-  if (config.authorization === 'context_permission') {
-    if (config.permission === undefined || !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(config.permission)) {
-      return raiseScaffoldFailure('context_permission authorization requires a stable --permission value');
-    }
-    return `{ kind: 'context_permission', permission: '${config.permission}' }`;
+  if (config.authorization !== 'protected') {
+    return '';
   }
-  if (config.permission !== undefined) {
-    return raiseScaffoldFailure('--permission is valid only for context_permission authorization');
-  }
-  return `{ kind: '${config.authorization}' }`;
+  const selectors = config.accessSelectors ?? [];
+  const declaration = renderAccessDeclaration(
+    {
+      group: slug,
+      key: toReadAccessDeclarationKey(moduleId, slug, verb),
+      kind: 'read',
+      level: 'basic',
+      modes: ['run'],
+      risk: config.accessRisk ?? DEFAULT_ACCESS_RISK,
+      selectors,
+    },
+    '    ',
+  );
+  return selectors.length === 0 ? declaration : `${declaration}${renderAccessTarget(moduleId, '    ')}\n`;
 };
 
-const readAuthorizationExpectation = (
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
-) =>
-  config.permission === undefined
-    ? { kind: config.authorization }
-    : { kind: config.authorization, permission: config.permission };
+/** The Shell contribution of a protected read repeats that read's declaration on one manifest line (O62). */
+const renderContributionAccessDeclaration = (
+  config: ReadAuthorizationConfig,
+  moduleId: string,
+  slug: string,
+  verb: string,
+): string => {
+  if (config.authorization !== 'protected') {
+    return '';
+  }
+  const selectors = (config.accessSelectors ?? []).map((selector) => `'${selector}'`).join(', ');
+  return `accessDeclaration: { key: '${toReadAccessDeclarationKey(moduleId, slug, verb)}', kind: 'read', modes: ['run'], placement: { group: '${slug}', level: 'basic' }, risk: '${config.accessRisk ?? DEFAULT_ACCESS_RISK}', selectors: [${selectors}] }, `;
+};
 
 const renderModuleApiRead = (
   vertical: OntosVerticalMetadata,
   name: string,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: ReadAuthorizationConfig,
 ): string => {
   const type = toPascalCase(name);
   return `${generatedHeader(MODULE_API_KIND)}
@@ -470,7 +506,7 @@ const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
 
 export const ${toCamelCase(name)}Read = defineRead(
   {
-    accessKind: 'detail',
+${renderReadAccessDeclaration(config, vertical.moduleId, name, 'read')}    accessKind: 'detail',
     entrypoint: ${toCamelCase(name)}Entrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -479,15 +515,13 @@ export const ${toCamelCase(name)}Read = defineRead(
     inputSchema: ${type}RequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: '${vertical.moduleId}',
-    permissionTarget: 'module',
-    policies: [],
+${renderLegacyReadPermissionTarget(config.authorization)}    policies: [],
     readKey: '${vertical.moduleId}.api.${name}',
     resultSchema: ${type}ResponseSchema,
     schemaVersion: '1',
   },
   () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }),
-  () => Effect.succeed({}),
-  () => ({ kind: 'module', moduleId: '${vertical.moduleId}' }),
+  () => Effect.succeed({})${renderLegacyReadPermissionResolver(config.authorization, vertical.moduleId)}
 );
 `;
 };
@@ -576,7 +610,7 @@ const renderProvider = (
   kind: ProviderContributionKind,
   vertical: OntosVerticalMetadata,
   name: string,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: ReadAuthorizationConfig,
 ): string => {
   const type = toPascalCase(name);
   const role = kind === REPORT_KIND ? REPORT_KIND : 'search';
@@ -606,7 +640,7 @@ const load${type} = (_input: ${inputType}) =>
 
 export const ${toCamelCase(name)}Read = defineRead(
   {
-    accessKind: '${kind === REPORT_KIND ? REPORT_KIND : 'search'}',
+${renderReadAccessDeclaration(config, vertical.moduleId, name, role)}    accessKind: '${kind === REPORT_KIND ? REPORT_KIND : 'search'}',
     entrypoint: ${toCamelCase(name)}Entrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -615,8 +649,7 @@ export const ${toCamelCase(name)}Read = defineRead(
     inputSchema: ${inputSchema},
     legalEntityScope: 'required',
     owningModuleKey: '${vertical.moduleId}',
-    permissionTarget: 'module',
-    policies: [],
+${renderLegacyReadPermissionTarget(config.authorization)}    policies: [],
     readKey: '${vertical.moduleId}.${role}.${name}',
     resultSchema: ${resultSchema},
     schemaVersion: '1',
@@ -628,8 +661,7 @@ export const ${toCamelCase(name)}Read = defineRead(
         result,
       })),
     ),
-  () => Effect.succeed({ load: load${type} }),
-  () => ({ kind: 'module', moduleId: '${vertical.moduleId}' }),
+  () => Effect.succeed({ load: load${type} })${renderLegacyReadPermissionResolver(config.authorization, vertical.moduleId, { resultResolverFollows: kind === SEARCH_PROVIDER_KIND })}
 ${kind === SEARCH_PROVIDER_KIND ? '  (result) => result.map(({ ref }) => ref),\n' : ''});
 `;
 };
@@ -1006,7 +1038,7 @@ const slotLine = (
   vertical: OntosVerticalMetadata,
   name: string,
   resource: string | undefined,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: ReadAuthorizationConfig,
 ): GovernedContributionSlots => {
   const key = `${vertical.moduleId}.${name}`;
   if (kind === PUBLIC_COMPONENT_KIND) {
@@ -1016,7 +1048,7 @@ const slotLine = (
         [
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START,
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END,
-          `publicComponentContribution({ componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' }, expose: './${toPascalCase(name)}' }),`,
+          `publicComponentContribution({ ${renderContributionAccessDeclaration({ ...config, accessSelectors: [] }, vertical.moduleId, name, 'view')}componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' }, expose: './${toPascalCase(name)}' }),`,
         ],
       ],
       registration: [
@@ -1058,12 +1090,12 @@ const slotLine = (
         [
           MODULE_MANIFEST_SEARCH_SLOT_START,
           MODULE_MANIFEST_SEARCH_SLOT_END,
-          `{ accessFiltering: 'resource_permission', key: '${key}', owningModuleId: '${vertical.moduleId}', resourceType: '${resourceKey}' },`,
+          `{ accessFiltering: 'resource_permission', accessKey: '${toReadAccessDeclarationKey(vertical.moduleId, name, 'search')}', key: '${key}', owningModuleId: '${vertical.moduleId}', resourceType: '${resourceKey}' },`,
         ],
         [
           MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
           MODULE_MANIFEST_SHELL_SEARCH_SLOT_END,
-          `searchContribution({ contributionKey: '${vertical.moduleId}.search.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.search.${name}', moduleKey: '${vertical.moduleId}', role: 'search', scope: 'tenant' }, searchKey: '${key}' }),`,
+          `searchContribution({ ${renderContributionAccessDeclaration(config, vertical.moduleId, name, 'search')}contributionKey: '${vertical.moduleId}.search.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.search.${name}', moduleKey: '${vertical.moduleId}', role: 'search', scope: 'tenant' }, searchKey: '${key}' }),`,
         ],
       ],
       registration: [
@@ -1085,7 +1117,7 @@ const slotLine = (
       [
         MODULE_MANIFEST_SHELL_REPORT_SLOT_START,
         MODULE_MANIFEST_SHELL_REPORT_SLOT_END,
-        `reportContribution({ contributionKey: '${vertical.moduleId}.report.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.report.${name}', moduleKey: '${vertical.moduleId}', role: 'report', scope: 'tenant' }, reportKey: '${key}' }),`,
+        `reportContribution({ ${renderContributionAccessDeclaration(config, vertical.moduleId, name, 'report')}contributionKey: '${vertical.moduleId}.report.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.report.${name}', moduleKey: '${vertical.moduleId}', role: 'report', scope: 'tenant' }, reportKey: '${key}' }),`,
       ],
     ],
     registration: [
@@ -1128,8 +1160,8 @@ const directStringArrayProperty = (source: string, property: string): readonly s
   return index === undefined ? undefined : readStringArray(tokens, index + 3);
 };
 
-// Owners may adapt accessFiltering/tenantPermission and report label/dimensions. These describe
-// presentation and report shape; the generated provider identity and resource ownership stay fixed.
+// Owners may adapt the report label/dimensions and request filters. These describe presentation and
+// report shape; the generated provider identity, access key and resource ownership stay fixed.
 const acceptsAdaptedProviderDescriptor = (start: string, current: string, expected: string): boolean => {
   if (start !== MODULE_MANIFEST_SEARCH_SLOT_START && start !== MODULE_MANIFEST_REPORT_SLOT_START) {
     return false;
@@ -1152,11 +1184,9 @@ const acceptsAdaptedProviderDescriptor = (start: string, current: string, expect
   ) {
     return false;
   }
-  const accessFiltering = directStringProperty(current, 'accessFiltering');
-  return (
-    accessFiltering === 'resource_permission' ||
-    (accessFiltering === 'tenant_scope' && directStringProperty(current, 'tenantPermission') !== undefined)
-  );
+  // Search descriptors carry the deciding access key beside the coarse filter; reports carry none.
+  const expectedAccessKey = directStringProperty(expected, 'accessKey');
+  return expectedAccessKey === undefined || directStringProperty(current, 'accessKey') === expectedAccessKey;
 };
 
 const structurallyMatchesGeneratedEntry = (current: string, expected: string): boolean => {
@@ -1341,11 +1371,45 @@ const planOperationBoundary = Effect.fn('GovernedContributionScaffold.planOperat
   },
 );
 
+const readRole = (kind: typeof MODULE_API_KIND | ProviderContributionKind): 'api' | 'report' | 'search' => {
+  if (kind === MODULE_API_KIND) {
+    return 'api';
+  }
+  return kind === REPORT_KIND ? 'report' : 'search';
+};
+
+/** Line-anchored proof: a comment or a string literal never owns a whole line on its own. */
+const hasExactLine = (source: string, text: string): boolean => source.split('\n').some((line) => line.trim() === text);
+
+/**
+ * Codesmith owns these reads, so an existing file is accepted only while its identity, its
+ * classification and the declaration that classifies it are still exactly what the generator
+ * writes; the handler body stays the owner's to implement. Proven here rather than through the
+ * boundary tooling, whose v2 vocabulary lands with the contract-final lane (O62).
+ */
+const acceptsGeneratedRead = (
+  kind: typeof MODULE_API_KIND | ProviderContributionKind,
+  vertical: OntosVerticalMetadata,
+  name: string,
+  config: ReadAuthorizationConfig,
+): ((current: string) => boolean) => {
+  const role = readRole(kind);
+  const identity = `${vertical.moduleId}.${role}.${name}`;
+  return (current) =>
+    current.startsWith(`${generatedHeader(kind)}\n`) &&
+    hasExactLine(current, `export const ${toCamelCase(name)}Read = defineRead(`) &&
+    hasExactLine(current, `authorization: ${renderReadAuthorization(config)},`) &&
+    hasExactLine(current, `entrypointKey: '${identity}',`) &&
+    hasExactLine(current, `readKey: '${identity}',`) &&
+    current.split('\n').some((line) => line.trim().startsWith("legalEntityScope: '")) &&
+    hasExactLine(current, 'accessDeclaration: {') === (config.authorization === 'protected');
+};
+
 const acceptsGovernedArtifact = (
   kind: typeof MODULE_API_KIND | ProviderContributionKind,
   vertical: OntosVerticalMetadata,
   name: string,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: ReadAuthorizationConfig,
 ): ((current: string) => boolean) => {
   if (kind === MODULE_API_KIND) {
     return (current) =>
@@ -1355,15 +1419,7 @@ const acceptsGovernedArtifact = (
   if (!isProviderContribution(kind)) {
     return () => false;
   }
-  return (current) =>
-    current.startsWith(`${generatedHeader(kind)}\n`) &&
-    hasGeneratedProviderReadContract(
-      current,
-      vertical.moduleId,
-      name,
-      kind === REPORT_KIND ? 'report' : 'search',
-      readAuthorizationExpectation(config),
-    );
+  return acceptsGeneratedRead(kind, vertical, name, config);
 };
 
 const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport')(function* planGovernedTransport(
@@ -1479,7 +1535,7 @@ const renderGovernedContributionArtifact = (
     return renderPublicComponent(name);
   }
   if (kind === MODULE_API_KIND) {
-    return renderApiContract(name);
+    return renderApiContract(name, config);
   }
   return renderProvider(kind, vertical, name, config);
 };
@@ -1741,9 +1797,7 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       const readMutation = yield* createOrAcceptGeneratedMutationEffect(
         readPath,
         readSource,
-        (current) =>
-          current.startsWith(`${generatedHeader(MODULE_API_KIND)}\n`) &&
-          hasGeneratedModuleApiReadContract(current, vertical.moduleId, name, readAuthorizationExpectation(config)),
+        acceptsGeneratedRead(MODULE_API_KIND, vertical, name, config),
       );
       mutations.push(...EffectArray.getSomes([readMutation]));
     }

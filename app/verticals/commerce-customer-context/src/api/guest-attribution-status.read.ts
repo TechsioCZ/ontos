@@ -39,7 +39,7 @@ const readGuestAttributionStatusFromServices = (
 
 const guestAttributionStatusEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.guest-attribution-status',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -47,6 +47,14 @@ const guestAttributionStatusEntrypoint = defineTenantModuleEntrypoint({
 
 export const guestAttributionStatusRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.guest-attribution.read-status',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: guestAttributionStatusEntrypoint,
     evidencePolicy: {
@@ -56,7 +64,6 @@ export const guestAttributionStatusRead = defineRead(
     inputSchema: GuestAttributionStatusRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.customer-context.api.guest-attribution-status',
     resultSchema: GuestAttributionStatusResponseSchema,
@@ -73,5 +80,4 @@ export const guestAttributionStatusRead = defineRead(
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ guestAttributionStatus }): GuestAttributionStatusServices => guestAttributionStatus),
     ),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

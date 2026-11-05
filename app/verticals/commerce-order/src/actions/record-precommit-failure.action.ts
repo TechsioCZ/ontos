@@ -24,6 +24,14 @@ const handleRecordPrecommitFailure = Effect.fn('RecordPrecommitFailure.handle')(
 });
 export const recordPrecommitFailureAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.order.commitment.record-precommit-failure',
+      kind: 'action',
+      modes: ['run', 'propose'],
+      placement: { group: 'order-finalization', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.order.record-precommit-failure.access.v1',
@@ -34,7 +42,7 @@ export const recordPrecommitFailureAction = defineAction(
     domainEvents: orderCommitmentDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.order.record-precommit-failure',
       moduleKey: 'commerce.order',
       role: 'action',

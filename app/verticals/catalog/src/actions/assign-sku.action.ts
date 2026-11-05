@@ -47,6 +47,14 @@ const handleAssignSku = Effect.fn('AssignSkuAction.handle')(function* handleAssi
 
 export const assignSkuAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.sku.assign',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.assign-sku.access.v1',
@@ -58,7 +66,7 @@ export const assignSkuAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

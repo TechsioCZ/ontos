@@ -106,10 +106,11 @@ holding any other Principal's assertion, the shared Storefront Client Principal 
 answered exactly as an absent Attempt is. A request made before that binding is active answers `409
 enrollment_binding_pending`. The redemption is the claimability gate as well as the secret check:
 the owner routine locks the invitation, refuses anything but a current invitation with a staged,
-unexpired proof, and stamps the claimant from the authenticated scope. The Counterparty Access
-Grants the invitation intends are the claim Action's own outbox and
-`reconcile-counterparty-access-invitation-claim-authorization-mutation.worker.ts`; the journey
-records the claim and nothing more. `journey: EXISTING_ACCOUNT` creates no account either:
+unexpired proof, and stamps the claimant from the authenticated scope. The claim Action writes the
+Counterparty Access Grants the invitation intends final in its own transaction; the journey records
+the claim and nothing more. The recipient runs that Action in the Selling Legal Entity, so it must
+already be a member of that company's access scope with a role granting
+`commerce.customer-context.counterparty-access-invitation.claim`. `journey: EXISTING_ACCOUNT` creates no account either:
 its journey definition drops the `provider.account.create` step and declares `provider.account.verify`
 in its place, so the start must be made by the authenticated owner of that account — it requires a
 live Commerce portal session whose subject holds the presented address (`401` without one, and the

@@ -1,4 +1,4 @@
-import { NodeHttpServer } from '@effect/platform-node';
+import { make as makeNodeHttpServer } from '@effect/platform-node/NodeHttpServer';
 import { Clock, Effect, Match, Option, Ref } from 'effect';
 import type { Scope } from 'effect';
 import { HttpServerRequest, HttpServerResponse } from 'effect/http';
@@ -92,7 +92,7 @@ export const serveOutboxWorkerHealth: (
   options: { readonly port: number },
 ) => Effect.Effect<OutboxWorkerHealthServer, ServeError, Scope.Scope> = Effect.fn('OutboxWorkerHealth.serve')(
   function* serveOutboxWorkerHealthEffect(health, options) {
-    const server = yield* NodeHttpServer.make(createNodeHealthServer, {
+    const server = yield* makeNodeHttpServer(createNodeHealthServer, {
       host: '0.0.0.0',
       port: options.port,
     });

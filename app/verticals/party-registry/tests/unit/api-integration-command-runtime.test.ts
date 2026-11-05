@@ -1053,9 +1053,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
       const assertion = yield* makeAssertion();
       const correlationId = 'x'.repeat(200);
       const harness = yield* makeActionTestHarness({
+        access: 'allowed',
         ownerRegistration: partyRegistryBackendRegistration,
-        actionPermission: 'allowed',
-        tenantPermission: 'allowed',
       });
       const app = yield* mountApp(harness, assertion.environment);
       const response = yield* handle(
@@ -1333,9 +1332,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* persistPermissionDenial() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        access: 'denied',
         ownerRegistration: partyRegistryBackendRegistration,
-        actionPermission: 'denied',
-        tenantPermission: 'allowed',
       });
       const app = yield* mountApp(harness, assertion.environment);
 
@@ -1357,9 +1355,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* rollBackDomainConflict() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        access: 'allowed',
         ownerRegistration: partyRegistryBackendRegistration,
-        actionPermission: 'allowed',
-        tenantPermission: 'allowed',
         services: [
           bindActionTestServices(archivePartyAction, {
             transition: () =>
@@ -1395,9 +1392,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         resourceId: 'a4000000-0000-4000-8000-000000000002',
       };
       const harness = yield* makeActionTestHarness({
+        access: 'allowed',
         ownerRegistration: partyRegistryBackendRegistration,
-        actionPermission: 'allowed',
-        tenantPermission: 'allowed',
         services: [
           bindActionTestServices(archivePartyAction, {
             transition: () =>
@@ -1436,9 +1432,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* rejectCommittedCommandReplay() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        access: 'allowed',
         ownerRegistration: partyRegistryBackendRegistration,
-        actionPermission: 'allowed',
-        tenantPermission: 'allowed',
       });
       const app = yield* mountApp(harness, assertion.environment);
 
@@ -1508,9 +1503,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         yield* forEachSequential(cases, (item) =>
           Effect.gen(function* verifySafeFailureResponse() {
             const harness = yield* makeActionTestHarness({
+              access: 'allowed',
               ownerRegistration: partyRegistryBackendRegistration,
-              actionPermission: 'allowed',
-              tenantPermission: 'allowed',
               services: [item.service],
             });
             const app = yield* mountApp(harness, assertion.environment);
@@ -1542,9 +1536,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* rejectInsufficientPartyEvidence() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        access: 'allowed',
         ownerRegistration: partyRegistryBackendRegistration,
-        actionPermission: 'allowed',
-        tenantPermission: 'allowed',
         services: [
           bindActionTestServices(createPartyAction, {
             createOrMatch: () =>
@@ -1581,9 +1574,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
       const assertion = yield* makeAssertion();
       let executions = 0;
       const harness = yield* makeActionTestHarness({
+        access: 'allowed',
         ownerRegistration: partyRegistryBackendRegistration,
-        actionPermission: 'allowed',
-        tenantPermission: 'allowed',
         services: [
           bindActionTestServices(createPartyAction, {
             createOrMatch: () =>
@@ -1655,8 +1647,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* resolveOpenInvocationWithoutRetry() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        access: 'allowed',
         ownerRegistration: partyRegistryBackendRegistration,
-        actionPermission: 'allowed',
         services: [
           bindActionTestServices(archivePartyAction, {
             transition: () =>
@@ -1666,7 +1658,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               }),
           }),
         ],
-        tenantPermission: 'allowed',
       });
       const app = yield* mountApp(harness, assertion.environment);
 
@@ -1697,9 +1688,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         const decisionResourceId = yield* nextUuid;
         let executions = 0;
         const harness = yield* makeActionTestHarness({
+          access: 'allowed',
           ownerRegistration: partyRegistryBackendRegistration,
-          actionPermission: 'allowed',
-          tenantPermission: 'allowed',
           commitAcknowledgement: 'indeterminate-once',
           services: [
             bindActionTestServices(createPartyAction, {
@@ -1851,9 +1841,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     Effect.gen(function* acceptBrowserHeaders() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness({
+        access: 'allowed',
         ownerRegistration: partyRegistryBackendRegistration,
-        actionPermission: 'allowed',
-        tenantPermission: 'allowed',
       });
       const decision: typeof PartyMatchDecisionRecordSchema.Type = {
         caseRef: null,

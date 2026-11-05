@@ -3,14 +3,14 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { DuplicateCandidateDetailSchema } from '../domain/matching-contracts.ts';
+import { DuplicateCandidateDetailViewSchema } from '../domain/matching-contracts.ts';
 import { DuplicateCandidateCaseRefSchema } from '../resources/duplicate-candidate-case.ts';
 
 export const DuplicateCandidateDetailRequestSchema = Schema.Struct({
   caseRef: DuplicateCandidateCaseRefSchema,
 });
 export type DuplicateCandidateDetailRequest = typeof DuplicateCandidateDetailRequestSchema.Type;
-export const DuplicateCandidateDetailResponseSchema = DuplicateCandidateDetailSchema;
+export const DuplicateCandidateDetailResponseSchema = DuplicateCandidateDetailViewSchema;
 export type DuplicateCandidateDetailResponse = typeof DuplicateCandidateDetailResponseSchema.Type;
 
 export const DuplicateCandidateDetailAuthenticationProblemSchema = makeProblemDetailsSchema(

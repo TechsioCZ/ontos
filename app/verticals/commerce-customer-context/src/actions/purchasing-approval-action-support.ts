@@ -1,6 +1,10 @@
-import type { CustomerPermissionRequest } from '../permissions/authorization.ts';
-import type { ActionHandlerContext, CoreSearchResourceRef, OperationalScope } from '@app/core-runtime';
-import { ContextAccess, CoreSearchResourceRefSchema, OperationContextUnavailable } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  CoreSearchResourceRef,
+  OperationalScope,
+  OwnerAccessFacts,
+} from '@app/core-runtime';
+import { CoreSearchResourceRefSchema, OperationContextUnavailable } from '@app/core-runtime';
 import { DateTime, Effect, Option, Schema, SchemaGetter } from 'effect';
 import { PurchaseApprovalCurrentnessFactory } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import type { PurchaseApprovalCurrentnessService } from '../../shared/domain/purchase-approval-currentness-port.ts';
@@ -13,6 +17,7 @@ import {
 import type { PurchaseApprovalRequest } from '../../shared/domain/purchasing-approval.ts';
 import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-approval-persistence.ts';
 import type { PurchasingApprovalWorkflowService } from '../persistence/purchasing-approval-persistence.ts';
+import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 type PurchasingApprovalDataAccessContext = Pick<
   ActionHandlerContext<Readonly<Record<string, never>>, unknown>,
@@ -90,39 +95,14 @@ export const recordPurchasingApprovalRequestResources = (
     { concurrency: 1, discard: true },
   );
 
-export const purchasingApprovalPermissionTarget = (input: {
+/**
+ * The purchasing-approval owner rule target: the counterparty whose own approval grant the overlay
+ * checks, storefront-scoped when the request carries a Storefront (O67-Q1, O70).
+ */
+export const purchasingApprovalOwnerFacts = (input: {
   readonly counterpartyRef: CoreSearchResourceRef;
-  readonly permission:
-    | 'counterparty.approval.decide'
-    | 'counterparty.approval_hierarchy.manage'
-    | 'counterparty.approval.request.manage'
-    | 'counterparty.purchase.submit';
-  readonly scope: OperationalScope;
   readonly storefrontId: string | null;
-}): CustomerPermissionRequest => {
-  const resolved: CustomerPermissionRequest = {
-    permission: input.permission,
-    target:
-      input.storefrontId === null
-        ? {
-            counterpartyId: input.counterpartyRef.resourceId,
-            kind: 'counterparty',
-            legalEntityId: input.scope.legalEntityId ?? '',
-            tenantId: input.scope.tenantId,
-          }
-        : {
-            counterpartyId: input.counterpartyRef.resourceId,
-            kind: 'counterparty_storefront',
-            legalEntityId: input.scope.legalEntityId ?? '',
-            storefrontId: input.storefrontId,
-            tenantId: input.scope.tenantId,
-          },
-  };
-  if (input.storefrontId !== null && input.scope.trustedStorefrontId !== undefined) {
-    return { ...resolved, trustedStorefrontId: input.scope.trustedStorefrontId };
-  }
-  return resolved;
-};
+}): OwnerAccessFacts => counterpartyOwnerFacts(input.counterpartyRef.resourceId, input.storefrontId);
 
 export const trustedPurchasingContext = (
   counterpartyRef: CoreSearchResourceRef,
@@ -169,25 +149,18 @@ export const purchasingApprovalCurrentnessServicesForScope = (
     {
       currentness: Effect.all(
         {
-          contextAccess: ContextAccess,
           currentnessFactory: PurchaseApprovalCurrentnessFactory,
           evaluationSourceFactory: PurchaseLimitEvaluationSourceFactory,
           purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPort,
         },
-        { concurrency: 4 },
+        { concurrency: 3 },
       ).pipe(
-        Effect.flatMap(({ contextAccess, currentnessFactory, evaluationSourceFactory, purchaseLimitCurrentness }) =>
+        Effect.flatMap(({ currentnessFactory, evaluationSourceFactory, purchaseLimitCurrentness }) =>
           hasPurchasingApprovalScope(scope)
             ? evaluationSourceFactory.make(transaction, scope).pipe(
                 Effect.mapError(purchaseApprovalEvaluationUnavailable),
                 Effect.map((evaluationSource) =>
-                  currentnessFactory.make(
-                    transaction,
-                    scope,
-                    contextAccess,
-                    purchaseLimitCurrentness,
-                    evaluationSource,
-                  ),
+                  currentnessFactory.make(transaction, scope, purchaseLimitCurrentness, evaluationSource),
                 ),
               )
             : Effect.void,

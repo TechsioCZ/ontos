@@ -1,15 +1,7 @@
-import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
-import { CorrectStockPositionPayloadSchema } from '../../shared/actions/correct-stock-position.ts';
-import { CreateInventoryReservationPayloadSchema } from '../../shared/actions/create-inventory-reservation.ts';
-import { EstablishCommitmentProtectionPayloadSchema } from '../../shared/actions/establish-commitment-protection.ts';
-import { ReleaseInventoryReservationPayloadSchema } from '../../shared/actions/release-inventory-reservation.ts';
-import { StockIssuePayloadSchema } from '../../shared/actions/stock-issue.ts';
-import { StockReceiptPayloadSchema } from '../../shared/actions/stock-receipt.ts';
 import { correctStockPositionAction } from '../../src/actions/correct-stock-position.action.ts';
 import { createInventoryReservationAction } from '../../src/actions/create-inventory-reservation.action.ts';
 import { establishCommitmentProtectionAction } from '../../src/actions/establish-commitment-protection.action.ts';
@@ -17,211 +9,80 @@ import { releaseInventoryReservationAction } from '../../src/actions/release-inv
 import { stockIssueAction } from '../../src/actions/stock-issue.action.ts';
 import { stockReceiptAction } from '../../src/actions/stock-receipt.action.ts';
 
-const compositionRevision = 'a'.repeat(64);
-
-const tenantId = '11111111-1111-4111-8111-111111111111';
-const scope = trustVerifiedGatewayPrincipalContext(
+/**
+ * Staff Inventory writes are scope-wide capabilities (O67-Q2): the Action's declaration is the whole
+ * authorization question, decided by the one access gate inside the selected access scope. The retired
+ * `businessPermission`/`resourcePermission` targets no longer carry a per-resource grant.
+ */
+const governedWrites = [
   {
-    authBindingId: '22222222-2222-4222-8222-222222222222',
-    authContextRef: 'test:inventory-action-business-permissions',
-    authMethod: 'api_key',
-    correlationId: 'inventory-action-business-permissions',
-    principalId: '33333333-3333-4333-8333-333333333333',
-    tenantId,
+    action: createInventoryReservationAction,
+    capabilityKey: 'commerce.inventory.inventory-reservation.create',
+    legalEntityScope: 'required',
+    risk: 'routine',
   },
-  compositionRevision,
-);
-const reservationRef = {
-  moduleId: 'commerce.inventory',
-  resourceId: '44444444-4444-4444-8444-444444444444',
-  resourceType: 'commerce.inventory.inventory-reservation',
-  tenantId,
-} as const;
-const protectionRef = {
-  moduleId: 'commerce.inventory',
-  resourceId: '55555555-5555-4555-8555-555555555555',
-  resourceType: 'commerce.inventory.commitment-protection',
-  tenantId,
-} as const;
-const positionRef = {
-  moduleId: 'commerce.inventory',
-  resourceId: '66666666-6666-4666-8666-666666666666',
-  resourceType: 'commerce.inventory.stock-position',
-  tenantId,
-} as const;
-const unitRef = {
-  moduleId: 'commerce.catalog',
-  resourceId: '77777777-7777-4777-8777-777777777777',
-  resourceType: 'commerce.catalog.product-unit',
-  tenantId,
-} as const;
-const stockItemRef = {
-  moduleId: 'commerce.inventory',
-  resourceId: '88888888-8888-4888-8888-888888888888',
-  resourceType: 'commerce.inventory.stock-item',
-  tenantId,
-} as const;
-const catalogSelection = {
-  productRef: {
-    moduleId: 'commerce.catalog',
-    resourceId: '99999999-9999-4999-8999-999999999999',
-    resourceType: 'commerce.catalog.product',
-    tenantId,
+  {
+    action: releaseInventoryReservationAction,
+    capabilityKey: 'commerce.inventory.inventory-reservation.release',
+    legalEntityScope: 'required',
+    risk: 'critical',
   },
-  variantRef: {
-    moduleId: 'commerce.catalog',
-    resourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    resourceType: 'commerce.catalog.variant',
-    tenantId,
+  {
+    action: establishCommitmentProtectionAction,
+    capabilityKey: 'commerce.inventory.commitment-protection.establish',
+    legalEntityScope: 'required',
+    risk: 'critical',
   },
-} as const;
-const reservationPayload = Schema.decodeUnknownSync(CreateInventoryReservationPayloadSchema)({
-  attemptId: 'attempt-1',
-  commerceContext: {
-    channel: 'B2C',
-    commerceMarketRef: {
-      moduleId: 'commerce.market-catalog',
-      resourceId: 'market-primary',
-      resourceType: 'commerce.market-catalog.market',
-      tenantId,
-    },
-    customerConfigurationId: 'customer-configuration:primary',
-    evidenceRef: 'commerce-context:current',
-    observedAt: '2026-09-25T00:00:00.000Z',
-    sellingLegalEntityRef: {
-      moduleId: 'core.identity',
-      resourceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-      resourceType: 'core.identity.legal-entity',
-      tenantId,
-    },
-    status: 'CURRENT_OWNER_VERIFIED',
-    storefrontRef: { appId: 'storefront-primary', tenantId },
-    tenantId,
+  {
+    action: stockReceiptAction,
+    capabilityKey: 'commerce.inventory.stock-position.receive',
+    legalEntityScope: 'required',
+    risk: 'critical',
   },
-  customerConfigurationId: 'customer-configuration:primary',
-  demands: [
-    {
-      catalogSelection,
-      exactSelectionMeaning: { id: 'catalog-selection:variant', kind: 'PRODUCT_VARIANT' },
-      purchaseDemandOccurrenceId: 'demand-occurrence-1',
-      quantity: '1',
-      unitRef,
-    },
-  ],
-  effectId: 'reservation-effect-1',
-  reservationRef,
-});
-const releasePayload = Schema.decodeUnknownSync(ReleaseInventoryReservationPayloadSchema)({
-  attemptId: 'attempt-1',
-  releaseEffectId: 'release-effect-1',
-  reservationRef,
-  scope: { _tag: 'WHOLE_RESERVATION' },
-});
-const protectionPayload = Schema.decodeUnknownSync(EstablishCommitmentProtectionPayloadSchema)({
-  confirmationRef: {
-    moduleId: 'commerce.inventory',
-    resourceId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-    resourceType: 'commerce.inventory.reservation-confirmation',
-    tenantId,
+  {
+    action: stockIssueAction,
+    capabilityKey: 'commerce.inventory.stock-position.issue',
+    legalEntityScope: 'required',
+    risk: 'critical',
   },
-  effectId: 'protection-effect-1',
-  protectionRef,
-});
-const physicalStockPayload = {
-  customerConfigurationId: 'customer-configuration:primary',
-  effectId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-  positionRef,
-  quantity: { amount: '1', unitRef },
-  reason: { code: 'FULFILLMENT', reference: 'order:1' },
-  stockItemRef,
-};
-const receiptPayload = Schema.decodeUnknownSync(StockReceiptPayloadSchema)(physicalStockPayload);
-const issuePayload = Schema.decodeUnknownSync(StockIssuePayloadSchema)(physicalStockPayload);
-const correctionPayload = Schema.decodeUnknownSync(CorrectStockPositionPayloadSchema)({
-  correctionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
-  customerConfigurationId: 'customer-configuration:primary',
-  evidence: {
-    _tag: 'EXTERNAL_SOURCE_ASSERTION',
-    sourceAssertionId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+  {
+    action: correctStockPositionAction,
+    capabilityKey: 'commerce.inventory.stock-position.correct',
+    legalEntityScope: 'forbidden',
+    risk: 'critical',
   },
-  expectedPositionRevision: 1,
-  positionRef,
-  reason: { code: 'AUTHORITATIVE_COUNT', reference: 'count:1' },
-});
+] as const;
 
-const inventoryResourceTarget = (resource: typeof reservationRef | typeof protectionRef | typeof positionRef) => ({
-  kind: 'inventory_resource' as const,
-  resource: {
-    moduleId: resource.moduleId,
-    resourceId: resource.resourceId,
-    resourceType: resource.resourceType,
-  },
-  tenantId: resource.tenantId,
-});
-
-describe('Inventory Action business permissions', () => {
-  it('binds stable public writes to the exact durable Inventory Resource', () => {
-    expect(
-      getActionOwnerPermissionTargetResolver(createInventoryReservationAction)?.(reservationPayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.reservation.establish',
-      target: inventoryResourceTarget(reservationRef),
-    });
-    expect(
-      getActionOwnerPermissionTargetResolver(releaseInventoryReservationAction)?.(releasePayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.reservation.release',
-      target: inventoryResourceTarget(reservationRef),
-    });
-    expect(
-      getActionOwnerPermissionTargetResolver(establishCommitmentProtectionAction)?.(protectionPayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.commitment_protection.establish',
-      target: inventoryResourceTarget(protectionRef),
-    });
-    expect(
-      getActionOwnerPermissionTargetResolver(stockReceiptAction)?.(receiptPayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.stock.receipt',
-      target: inventoryResourceTarget(positionRef),
-    });
-    expect(
-      getActionOwnerPermissionTargetResolver(stockIssueAction)?.(issuePayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.stock.issue',
-      target: inventoryResourceTarget(positionRef),
-    });
-    expect(
-      getActionOwnerPermissionTargetResolver(correctStockPositionAction)?.(correctionPayload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.stock.correct',
-      target: inventoryResourceTarget(positionRef),
-    });
+describe('Inventory Action capabilities', () => {
+  it('binds stable public writes to their own scope-wide capability', () => {
+    for (const { action, capabilityKey, legalEntityScope, risk } of governedWrites) {
+      expect(action.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+      expect(action.descriptor.accessDeclaration).toMatchObject({
+        key: capabilityKey,
+        kind: 'action',
+        risk,
+        selectors: [],
+      });
+      expect(action.descriptor.legalEntityScope).toBe(legalEntityScope);
+    }
   });
 
-  it('keeps Resource permission checks conjunctive with business permission checks', () => {
-    for (const action of [
-      createInventoryReservationAction,
-      releaseInventoryReservationAction,
-      establishCommitmentProtectionAction,
-      stockReceiptAction,
-      stockIssueAction,
-      correctStockPositionAction,
-    ]) {
-      expect(action.descriptor.ownerPermissions).toBeDefined();
-      expect(action.descriptor.resourcePermission).toBeDefined();
+  it('keeps no per-resource permission target beside the capability', () => {
+    for (const { action } of governedWrites) {
+      // O67-Q2: the retired targets are removed from the descriptor.
+      expect(action.descriptor).not.toHaveProperty('ownerPermissions');
+      expect(action.descriptor).not.toHaveProperty('resourcePermission');
     }
+    // The retired resolver is gone from every one of them; the one gate is the sole authority.
+    expect(
+      [
+        getActionOwnerPermissionTargetResolver(createInventoryReservationAction),
+        getActionOwnerPermissionTargetResolver(releaseInventoryReservationAction),
+        getActionOwnerPermissionTargetResolver(establishCommitmentProtectionAction),
+        getActionOwnerPermissionTargetResolver(stockReceiptAction),
+        getActionOwnerPermissionTargetResolver(stockIssueAction),
+        getActionOwnerPermissionTargetResolver(correctStockPositionAction),
+      ].filter((resolver) => resolver !== undefined),
+    ).toEqual([]);
   });
 });

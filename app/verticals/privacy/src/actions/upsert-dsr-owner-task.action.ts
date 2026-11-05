@@ -57,6 +57,14 @@ export const handleUpsertDsrOwnerTask = Effect.fn('UpsertDsrOwnerTaskAction.hand
 });
 export const upsertDsrOwnerTaskAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-owner-task.upsert',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'dsr', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'privacy.core.upsert-dsr-owner-task.access.v1' },
     actionKey: 'privacy.core.upsert-dsr-owner-task',
     auditEvidenceSchema: PrivacyActionAuditEvidenceSchema,
@@ -65,7 +73,7 @@ export const upsertDsrOwnerTaskAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.upsert-dsr-owner-task',
       moduleKey: 'privacy.core',
       role: 'action',

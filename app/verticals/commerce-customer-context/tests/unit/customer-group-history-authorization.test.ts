@@ -1,9 +1,12 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Option, Predicate } from 'effect';
 
-import { toContextPermissionAccessKey } from '@app/core-runtime';
-import type { ContextAccessDecision } from '@app/core-runtime';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
+import {
+  makeTestBoundAccessGate,
+  testAccessSpecOf,
+} from '../../../../packages/core-runtime/src/testing/access-gate.ts';
+import type { TestAccessOutcome } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { customerGroupDetailRead } from '../../src/api/customer-group-detail.read.ts';
@@ -33,11 +36,10 @@ const scope = {
 };
 
 const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHarness(
-  decideContextPermission?: (permission: string) => ContextAccessDecision,
+  access: TestAccessOutcome = 'allowed',
 ) {
   let dataAccessEvidence = 0;
   let groupRoutineCalls = 0;
-  const queriedContextPermissions: string[] = [];
   const query = (text: string) => {
     if (text.includes('transaction_timestamp')) {
       return Effect.succeed([{ operation_at: new Date('2026-09-21T10:00:00.000Z') }]);
@@ -69,7 +71,7 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
     return Effect.succeed([]);
   };
   const database = { executor: yield* makeTestDatabase(query) };
-  const baseContextAccess = {
+  const contextAccess = {
     legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
       Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
     modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
@@ -92,37 +94,23 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
     tenants: ({ tenantIds }: { readonly tenantIds: readonly string[] }) =>
       Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
   };
-  const contextAccess =
-    decideContextPermission === undefined
-      ? baseContextAccess
-      : {
-          ...baseContextAccess,
-          contextPermissions: ({
-            targets,
-          }: {
-            readonly targets: readonly { readonly moduleId: string; readonly permission: string }[];
-          }) =>
-            Effect.succeed(
-              targets.map((target) => {
-                queriedContextPermissions.push(target.permission);
-                return {
-                  decision: decideContextPermission(target.permission),
-                  key: toContextPermissionAccessKey(target),
-                };
-              }),
-            ),
-        };
+  // The v2 gate is the only authority for a protected read; it is scripted so the suite proves the
+  // runner's denied and unavailable paths without a SpiceDB behind them.
+  const gate = makeTestBoundAccessGate(testAccessSpecOf(access));
   const runtime = makeReadRuntime(
     database,
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(scope) },
     contextAccess,
-    { ownerRegistration: commerceCustomerContextRegistration },
+    {
+      accessDecision: gate.bound,
+      ownerRegistration: commerceCustomerContextRegistration,
+    },
   );
   return {
     dataAccessEvidence: () => dataAccessEvidence,
+    gate,
     groupRoutineCalls: () => groupRoutineCalls,
-    queriedContextPermissions,
     runtime,
   };
 });
@@ -135,40 +123,37 @@ const runHistory = (harness: Effect.Success<ReturnType<typeof makeHarness>>) =>
     transport: { correlationId: scope.correlationId },
   });
 
-it.effect('denies customer group history before transaction services or persistence', () =>
+it.effect('denies customer group history at the gate before transaction services or persistence', () =>
   Effect.gen(function* denyCustomerGroupHistoryPermission() {
-    const harness = yield* makeHarness((permission) =>
-      permission === 'customer.group.history.read' ? 'denied' : 'allowed',
-    );
+    const harness = yield* makeHarness('denied');
     const failure = yield* Effect.flip(runHistory(harness));
 
     expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
     expect(harness.groupRoutineCalls()).toBe(0);
     expect(harness.dataAccessEvidence()).toBe(1);
-    expect(harness.queriedContextPermissions).toEqual(['customer.group.history.read']);
+    // The gate is asked about the history read's own declaration, not the ordinary group read.
+    expect(
+      [...harness.gate.accessDecision.askedDecisions, ...harness.gate.accessDecision.askedLists].map(
+        (question) => question.carrier.accessDeclaration?.key,
+      ),
+    ).toEqual(['commerce.customer-context.customer-group.read-history']);
   }),
 );
 
-it.effect('fails closed on indeterminate or missing customer group history permission', () =>
+it.effect('fails closed on an unavailable customer group history gate', () =>
   Effect.gen(function* unavailableCustomerGroupHistoryPermission() {
-    const indeterminate = yield* makeHarness(() => 'unavailable');
-    const missing = yield* makeHarness();
+    const harness = yield* makeHarness('unavailable');
+    const failure = yield* Effect.flip(runHistory(harness));
 
-    const indeterminateFailure = yield* Effect.flip(runHistory(indeterminate));
-    const missingFailure = yield* Effect.flip(runHistory(missing));
-
-    expect(Predicate.isTagged(indeterminateFailure, 'ReadPermissionUnavailable')).toBe(true);
-    expect(Predicate.isTagged(missingFailure, 'ReadPermissionUnavailable')).toBe(true);
-    expect(indeterminate.groupRoutineCalls()).toBe(0);
-    expect(missing.groupRoutineCalls()).toBe(0);
-    expect(indeterminate.dataAccessEvidence()).toBe(0);
-    expect(missing.dataAccessEvidence()).toBe(0);
+    expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
+    expect(harness.groupRoutineCalls()).toBe(0);
+    expect(harness.dataAccessEvidence()).toBe(0);
   }),
 );
 
-it.effect('keeps ordinary customer group reads on their independent read permission', () =>
+it.effect('keeps ordinary customer group reads on their own declaration', () =>
   Effect.gen(function* allowOrdinaryCustomerGroupReadPermission() {
-    const harness = yield* makeHarness((permission) => (permission === 'customer.group.read' ? 'allowed' : 'denied'));
+    const harness = yield* makeHarness('allowed');
     const failure = yield* Effect.flip(
       harness.runtime.runRead({
         input: { groupRef },
@@ -179,7 +164,9 @@ it.effect('keeps ordinary customer group reads on their independent read permiss
     );
 
     expect(harness.groupRoutineCalls()).toBe(1);
-    expect(harness.queriedContextPermissions).toEqual(['customer.group.read']);
+    expect(harness.gate.accessDecision.askedDecisions.map((input) => input.carrier.accessDeclaration?.key)).toEqual([
+      'commerce.customer-context.customer-group.read',
+    ]);
     expect(Predicate.isTagged(failure, 'ReadHandlerNotFound')).toBe(true);
   }),
 );

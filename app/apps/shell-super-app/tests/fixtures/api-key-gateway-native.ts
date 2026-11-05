@@ -50,12 +50,12 @@ const unavailable = (cause?: unknown) =>
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 export interface ApiKeyGatewayNativeFixtureOptions {
   readonly ownedDatabase: ShellNativeOwnedDatabase;
-  readonly relaySource?: { readonly sourceAppId: 'commerce-market-catalog' };
+  readonly relaySource?: { readonly sourceAppId: typeof ShellNativeRelaySourceSchema.Type.sourceAppId };
   readonly snapshotJson: string;
 }
 export const ShellNativeRelaySourceSchema = Schema.Struct({
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
-  sourceAppId: Schema.Literal('commerce-market-catalog'),
+  sourceAppId: Schema.Literals(['commerce-customer-context', 'commerce-market-catalog']),
   sourceBuildMarker: Schema.String.check(Schema.isMinLength(1)),
 });
 export const ShellNativeChildReadySchema = Schema.Struct({
@@ -411,6 +411,7 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         DATABASE_URL: Redacted.value(authRuntime.runtimeConnectionString),
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
         ONTOS_GATEWAY_ISSUER: issuer,
+        ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
         ONTOS_GATEWAY_PRIVATE_JWK: privateJwk,
         ONTOS_GATEWAY_PUBLIC_JWKS: publicJwks,
         ONTOS_SHELL_NATIVE_RELAY_SOURCE: yield* Schema.encodeEffect(

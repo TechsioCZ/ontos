@@ -3,7 +3,12 @@ import { Array as EffectArray, Effect, FileSystem, ManagedRuntime, Order, Path, 
 import { Command, Flag } from 'effect/cli';
 import { parse } from 'yaml';
 
-import { CALLER_NAMESPACE_ID, ownerRuntimeConfiguration, unitApiBaseUrl } from './ops/owner-runtime-configuration.mts';
+import {
+  GATEWAY_MODULE_API_KEY_VARIABLE,
+  ownerRuntimeConfiguration,
+  requestServiceHoldsModuleCredential,
+  unitApiBaseUrl,
+} from './ops/owner-runtime-configuration.mts';
 import {
   PARTY_REGISTRY_REQUEST_SECRET,
   migratorSecretReference,
@@ -75,10 +80,10 @@ const zeropsHostname = (id: string) => id.replaceAll('-', '');
 const internalApiBaseUrl = ({ id, port }: ProviderUnit) => unitApiBaseUrl(`http://${zeropsHostname(id)}:${port}`, id);
 
 /**
- * The internal API bases one provider calls; a dependency the topology does not deploy is omitted.
- * The owner's Outbox Worker copies them, so a worker-only base is set on the owner too.
+ * The internal API bases one unit calls; a dependency the topology does not deploy is omitted.
+ * The Outbox Worker generator reads this too, for a `worker-only` unit whose worker alone calls them.
  */
-const providerApiEnvironment = (
+export const apiDependencyEnvironment = (
   id: string,
   units: ReadonlyMap<string, ProviderUnit>,
 ): readonly (readonly [string, string])[] =>
@@ -87,23 +92,46 @@ const providerApiEnvironment = (
     return unit === undefined ? [] : [[variable, `'${internalApiBaseUrl(unit)}'`] as const];
   });
 
+/**
+ * The internal API bases of one provider's request service. Only a deployment that holds the module
+ * credential calls other modules, so a `worker-only` unit's request service receives none of them.
+ */
+const providerApiEnvironment = (
+  id: string,
+  units: ReadonlyMap<string, ProviderUnit>,
+): readonly (readonly [string, string])[] => {
+  const configuration = ownerRuntimeConfiguration(id);
+  return configuration === undefined || !requestServiceHoldsModuleCredential(configuration)
+    ? []
+    : apiDependencyEnvironment(id, units);
+};
+
 const migratorReference = (key: string) => `\${${migratorSecretReference(key)}}`;
 
 /**
- * The credentials, per-environment identities and caller namespaces of one provider. Credentials are
+ * The module credential, other credentials and per-environment values of one provider. Credentials are
  * sensitive `migrator` service secrets and the other values `migrator` variables, both referenced as
- * `${migrator_<KEY>}`, never project variables every service would inherit.
+ * `${migrator_<KEY>}`, never project variables every service would inherit. A `worker-only` provider's
+ * request service omits its module credential; its Outbox Worker receives it from the worker generator.
  */
 const providerIdentityEnvironment = (id: string): readonly (readonly [string, string])[] => {
   const configuration = ownerRuntimeConfiguration(id);
   return configuration === undefined
     ? []
     : [
+        ...(requestServiceHoldsModuleCredential(configuration)
+          ? [[GATEWAY_MODULE_API_KEY_VARIABLE, migratorReference(configuration.moduleCredentialVariable)] as const]
+          : []),
         ...configuration.credentialVariables.map((key) => [key, migratorReference(key)] as const),
         ...configuration.operatorValues.map(({ variable }) => [variable, migratorReference(variable)] as const),
-        ...configuration.callerNamespaces.map((variable) => [variable, `'${CALLER_NAMESPACE_ID}'`] as const),
       ];
 };
+
+/** The topology units a provider can reach by internal address, keyed by topology identifier. */
+const providerUnits = (topology: ProviderTopology): ReadonlyMap<string, ProviderUnit> =>
+  new Map<string, ProviderUnit>(
+    [...(topology.shell === undefined ? [] : [topology.shell]), ...topology.verticals].map((unit) => [unit.id, unit]),
+  );
 
 /** Joins reference-topology providers with their development-overlay ports. */
 export const readZeropsProviderTopology = (root: string) =>
@@ -238,9 +266,7 @@ export const generateZeropsProviderDeployment = (
       }
       ports.add(port);
     }
-    const units = new Map<string, ProviderUnit>(
-      [...(topology.shell === undefined ? [] : [topology.shell]), ...topology.verticals].map((unit) => [unit.id, unit]),
-    );
+    const units = providerUnits(topology);
     const providers = yield* Effect.all(
       topology.verticals.map((vertical) => renderProvider(vertical, units, toolchain)),
     );

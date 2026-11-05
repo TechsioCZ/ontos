@@ -1,3 +1,4 @@
+import type { OperationalScope } from '@app/core-runtime';
 import type {
   PricingMaterialEvidenceAssemblyRequest,
   PricingMaterialEvidenceFenceSource,
@@ -75,6 +76,7 @@ export interface PricingMaterialEvidenceFenceExpectation {
 
 export interface PricingMaterialEvidenceOwnerFenceRequest {
   readonly candidateRef: string;
+  readonly scope: OperationalScope;
   readonly sources: readonly PricingMaterialEvidenceFenceExpectation[];
   /** Carries exact owner-native predicates when the caller retained a lossless owner fence request. */
   readonly verificationRequest?: PricingOwnerMaterialEvidenceFenceGatewayRequest;
@@ -127,6 +129,7 @@ export interface PricingMaterialEvidencePublicationAuthorization {
 
 export interface PricingMaterialEvidenceFinalizationRequest {
   readonly request: PricingMaterialEvidenceAssemblyRequest;
+  readonly scope: OperationalScope;
 }
 
 const stableFacts = (facts: readonly PricingMaterialEvidenceFenceFact[]): readonly PricingMaterialEvidenceFenceFact[] =>
@@ -423,6 +426,7 @@ const observationMatchesExpectation = (
 export const verifyPricingMaterialEvidenceOwnerFence = Effect.fn('PricingMaterialEvidence.verifyOwnerFinalFence')(
   function* verifyPricingMaterialEvidenceOwnerFenceProgram(
     candidateRef: string,
+    scope: OperationalScope,
     sources: readonly PricingSourceEvidenceResult[],
     verificationRequest?: PricingOwnerMaterialEvidenceFenceGatewayRequest,
   ): Effect.fn.Return<
@@ -434,8 +438,8 @@ export const verifyPricingMaterialEvidenceOwnerFence = Effect.fn('PricingMateria
     const ownerFence = yield* PricingMaterialEvidenceOwnerFinalFence;
     const request: PricingMaterialEvidenceOwnerFenceRequest =
       verificationRequest === undefined
-        ? { candidateRef, sources: expectations }
-        : { candidateRef, sources: expectations, verificationRequest };
+        ? { candidateRef, scope, sources: expectations }
+        : { candidateRef, scope, sources: expectations, verificationRequest };
     const evidence = yield* ownerFence.verifyImmediatelyBeforePublication(request);
     if (!Schema.is(PricingInstantSchema)(evidence.observedAt) || evidence.fenceRef.length === 0) {
       return yield* unverifiable(candidateRef, 'Owner final-fence evidence is malformed or untrusted', true);
@@ -486,7 +490,7 @@ export const finalizePricingMaterialEvidenceForPublication = Effect.fn(
   PricingMaterialEvidenceChangedAtFinalFence | PricingMaterialEvidenceFailure,
   PricingMaterialEvidenceOwnerFinalFence
 > {
-  const { request } = input;
+  const { request, scope } = input;
   const materialEvidence = yield* assemblePricingMaterialEvidence(request);
   const typedAuthority = yield* verifiedTypedAuthority(materialEvidence.candidateRef, request);
   const equivalenceEvidence = typedAuthority.sources.flatMap((source) =>
@@ -502,6 +506,7 @@ export const finalizePricingMaterialEvidenceForPublication = Effect.fn(
   const verificationRequest = yield* verifiedTypedRequest(materialEvidence.candidateRef, request, sources);
   const finalFenceEvidence = yield* verifyPricingMaterialEvidenceOwnerFence(
     materialEvidence.candidateRef,
+    scope,
     sources,
     verificationRequest,
   );

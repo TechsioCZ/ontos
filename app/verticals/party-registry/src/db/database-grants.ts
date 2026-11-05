@@ -1,5 +1,5 @@
-import { PARTY_REGISTRY_REQUEST_IDENTITY, TRUST_ROUTINES } from '@app/core-runtime';
-import type { DatabaseRoleGrants } from '@app/core-runtime';
+import { ACCESS_DECISION_REQUEST_GRANTS, PARTY_REGISTRY_REQUEST_IDENTITY, TRUST_ROUTINES } from '@app/core-runtime';
+import type { DatabaseRoleGrants, DatabaseTableGrant } from '@app/core-runtime';
 
 /**
  * Least-privilege grants for the two Party Registry database identities. The bootstrap grants exactly
@@ -55,103 +55,143 @@ const WORKER_SEARCH_TABLES = [
 
 const WORKER_OUTBOX_TABLES = ['core.outbox_deliveries', 'core.outbox_attempts', 'core.worker_checkpoints'] as const;
 
+/**
+ * The Party request identity composes the Core gate's request grants with its own tables: the gate
+ * reads Core's access intent and writes its evidence row in the same transaction as the Party work,
+ * so one role must hold both. A table granted by both sides keeps one entry with the union of its
+ * privileges and, where both sides name columns, the union of those columns; a side that grants the
+ * whole table keeps it table-wide. The Core side never widens a Party grant and vice versa.
+ */
+const composeTableGrants = (
+  base: readonly DatabaseTableGrant[],
+  extra: readonly DatabaseTableGrant[],
+): readonly DatabaseTableGrant[] => {
+  const byTable = new Map(base.map((grant) => [grant.table, grant] as const));
+  for (const grant of extra) {
+    const existing = byTable.get(grant.table);
+    if (existing === undefined) {
+      byTable.set(grant.table, grant);
+      continue;
+    }
+    const privileges = [...new Set([...existing.privileges, ...grant.privileges])];
+    const columns: Partial<Record<'select' | 'insert' | 'update', readonly string[]>> = {};
+    for (const privilege of ['select', 'insert', 'update'] as const) {
+      const left = existing.columns?.[privilege];
+      const right = grant.columns?.[privilege];
+      if (privileges.includes(privilege) && left !== undefined && right !== undefined) {
+        columns[privilege] = [...new Set([...left, ...right])].toSorted();
+      }
+    }
+    const reason = `${existing.reason} ${grant.reason}`;
+    const composed: DatabaseTableGrant =
+      Object.keys(columns).length === 0
+        ? { privileges, reason, table: grant.table }
+        : { columns, privileges, reason, table: grant.table };
+    byTable.set(grant.table, composed);
+  }
+  return [...byTable.values()];
+};
+
 export const PARTY_REGISTRY_REQUEST_DATABASE_GRANTS: DatabaseRoleGrants = {
   schemas: ['party', 'contacts', 'core', 'trust', 'public'],
-  tables: [
-    ...PARTY_TABLES.map((table) => ({
-      table: `party.${table}`,
-      privileges: ['select', 'insert', 'update', 'delete'] as const,
-      reason: 'Party Registry services and Drizzle repositories own and maintain this table under gateway-scoped RLS',
-    })),
-    ...CONTACTS_PROFILE_TABLES.map((table) => ({
-      table: `contacts.${table}`,
-      privileges: ['select', 'insert', 'update', 'delete'] as const,
-      reason: 'Party Registry engagement profile persistence service owns this table under gateway-scoped RLS',
-    })),
-    {
-      table: 'contacts.gateway_assertion_redemptions',
-      privileges: ['select', 'insert'],
-      reason:
-        'Party auth/gateway-assertion-redemption-runtime records single-use gateway assertion jti values; pruning goes through the contacts prune routine',
-    },
-    {
-      table: 'core.tenants',
-      privileges: ['select', 'update'],
-      columns: { select: ['tenant_id', 'status'], update: ['tenant_id'] },
-      reason:
-        'Core operations/context checks tenant status; Core actions/runtime takes the tenant row lock with a no-op update',
-    },
-    {
-      table: 'core.legal_entities',
-      privileges: ['select'],
-      columns: { select: ['legal_entity_id', 'tenant_id', 'status'] },
-      reason: 'Core auth/legal-entity-context and operations/context check legal-entity membership and status',
-    },
-    {
-      table: 'core.principals',
-      privileges: ['select'],
-      columns: { select: ['principal_id', 'tenant_id', 'status'] },
-      reason: 'Core auth/principal-resolver checks the acting principal status',
-    },
-    {
-      table: 'core.principal_auth_bindings',
-      privileges: ['select'],
-      columns: {
-        select: [
-          'principal_auth_binding_id',
-          'tenant_id',
-          'principal_id',
-          'authentication_namespace_id',
-          'subject_type',
-          'status',
-          'binding_revision',
-          'revoked_at',
-        ],
+  tables: composeTableGrants(
+    [
+      ...PARTY_TABLES.map((table) => ({
+        table: `party.${table}`,
+        privileges: ['select', 'insert', 'update', 'delete'] as const,
+        reason: 'Party Registry services and Drizzle repositories own and maintain this table under gateway-scoped RLS',
+      })),
+      ...CONTACTS_PROFILE_TABLES.map((table) => ({
+        table: `contacts.${table}`,
+        privileges: ['select', 'insert', 'update', 'delete'] as const,
+        reason: 'Party Registry engagement profile persistence service owns this table under gateway-scoped RLS',
+      })),
+      {
+        table: 'contacts.gateway_assertion_redemptions',
+        privileges: ['select', 'insert'],
+        reason:
+          'Party auth/gateway-assertion-redemption-runtime records single-use gateway assertion jti values; pruning goes through the contacts prune routine',
       },
-      reason: 'Core auth/principal-resolver resolves the active authentication binding of the acting principal',
-    },
-    {
-      table: 'core.tenant_module_states',
-      privileges: ['select'],
-      reason: 'Core modules/module-state-gate checks that party.registry is enabled for the tenant',
-    },
-    {
-      table: 'core.application_composition_authority',
-      privileges: ['select'],
-      reason: 'Core modules/application-composition-authority reads the active composition revision',
-    },
-    {
-      table: 'core.action_invocations',
-      privileges: ['select', 'insert', 'update'],
-      reason: 'Core actions/repository records and completes party.registry action invocations (idempotency)',
-    },
-    {
-      table: 'core.audit_events',
-      privileges: ['select', 'insert'],
-      columns: { select: ['action_invocation_id', 'event_type', 'outcome_code', 'outcome_stage'] },
-      reason: 'Core actions/repository writes audit events and reads outcome columns for idempotent replay',
-    },
-    {
-      table: 'core.data_access_events',
-      privileges: ['insert'],
-      reason: 'Core reads/repository and actions/collector record data access evidence for party.registry',
-    },
-    {
-      table: 'core.domain_events',
-      privileges: ['insert'],
-      reason: 'Core actions/events appends party.registry domain events',
-    },
-    {
-      table: 'core.outbox_messages',
-      privileges: ['insert'],
-      reason: 'Core actions/events enqueues party.registry outbox messages',
-    },
-    {
-      table: 'core.search_index_entries',
-      privileges: ['select'],
-      reason: 'Core search/persistence queries party.registry search candidates for Party Search providers',
-    },
-  ],
+      {
+        table: 'core.tenants',
+        privileges: ['select', 'update'],
+        columns: { select: ['tenant_id', 'status'], update: ['tenant_id'] },
+        reason:
+          'Core operations/context checks tenant status; Core actions/runtime takes the tenant row lock with a no-op update',
+      },
+      {
+        table: 'core.legal_entities',
+        privileges: ['select'],
+        columns: { select: ['legal_entity_id', 'tenant_id', 'status'] },
+        reason: 'Core auth/legal-entity-context and operations/context check legal-entity membership and status',
+      },
+      {
+        table: 'core.principals',
+        privileges: ['select'],
+        columns: { select: ['principal_id', 'tenant_id', 'status'] },
+        reason: 'Core auth/principal-resolver checks the acting principal status',
+      },
+      {
+        table: 'core.principal_auth_bindings',
+        privileges: ['select'],
+        columns: {
+          select: [
+            'principal_auth_binding_id',
+            'tenant_id',
+            'principal_id',
+            'authentication_namespace_id',
+            'subject_type',
+            'status',
+            'binding_revision',
+            'revoked_at',
+          ],
+        },
+        reason: 'Core auth/principal-resolver resolves the active authentication binding of the acting principal',
+      },
+      {
+        table: 'core.tenant_module_states',
+        privileges: ['select'],
+        reason: 'Core modules/module-state-gate checks that party.registry is enabled for the tenant',
+      },
+      {
+        table: 'core.application_composition_authority',
+        privileges: ['select'],
+        reason: 'Core modules/application-composition-authority reads the active composition revision',
+      },
+      {
+        table: 'core.action_invocations',
+        privileges: ['select', 'insert', 'update'],
+        reason: 'Core actions/repository records and completes party.registry action invocations (idempotency)',
+      },
+      {
+        table: 'core.audit_events',
+        privileges: ['select', 'insert'],
+        columns: { select: ['action_invocation_id', 'event_type', 'outcome_code', 'outcome_stage'] },
+        reason: 'Core actions/repository writes audit events and reads outcome columns for idempotent replay',
+      },
+      {
+        table: 'core.data_access_events',
+        privileges: ['insert'],
+        reason: 'Core reads/repository and actions/collector record data access evidence for party.registry',
+      },
+      {
+        table: 'core.domain_events',
+        privileges: ['insert'],
+        reason: 'Core actions/events appends party.registry domain events',
+      },
+      {
+        table: 'core.outbox_messages',
+        privileges: ['insert'],
+        reason: 'Core actions/events enqueues party.registry outbox messages',
+      },
+      {
+        table: 'core.search_index_entries',
+        privileges: ['select'],
+        reason: 'Core search/persistence queries party.registry search candidates for Party Search providers',
+      },
+    ],
+    ACCESS_DECISION_REQUEST_GRANTS,
+  ),
   sequences: [
     {
       sequence: 'core.domain_event_tenant_sequence_no_seq',

@@ -41,6 +41,7 @@ const execute = Effect.fn('EndApplicabilityBindingActionServer.execute')(functio
       authorization: Redacted.make(request.headers['authorization']),
       'x-correlation-id': correlationId,
     },
+    successContract: 'result-or-proposal',
   });
 });
 

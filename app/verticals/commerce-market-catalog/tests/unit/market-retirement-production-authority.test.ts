@@ -3,8 +3,9 @@ import type {
   MarketAffectedUseAssessmentResponse,
   MarketAffectedUseSourceEvidence,
 } from '@app/customer-market-retirement-contracts';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { describe, expect, it } from 'effect-rstest';
-import { DateTime, Effect, Predicate } from 'effect';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
 
 import {
   makeMarketRetirementImpactAuthority,
@@ -370,4 +371,57 @@ describe('Market retirement production authority', () => {
   it('exports the published-client authority factory used by the deployed Action composition', () => {
     expect(makeMarketRetirementImpactAuthorityFromPublishedClient).toBeTypeOf('function');
   });
+
+  it.effect('refuses a parked reservation proposal instead of accepting or advancing reservation work', () =>
+    Effect.gen(function* parkedReservationProposal() {
+      const parkedProposal = Schema.decodeSync(ActionProposalAcceptedSchema)({
+        _tag: 'ActionProposalAccepted',
+        expiresAt: '2026-11-30T12:00:00.000Z',
+        proposalId: '99999999-9999-4999-8999-999999999999',
+      });
+      const executedReservation = {
+        assessmentDigest,
+        lifecycle: 'RESERVED' as const,
+        marketRef,
+        marketRevision: 3,
+        reservationToken,
+        reservationVersion: 7,
+        tenantId,
+      };
+      const authority = makeMarketRetirementImpactAuthority(
+        () => Effect.succeed(verified),
+        (payload) => Effect.succeed(payload.operation === 'RESERVE' ? executedReservation : parkedProposal),
+      );
+
+      const reservedFailure = yield* makeMarketRetirementImpactAuthority(
+        () => Effect.succeed(verified),
+        () => Effect.succeed(parkedProposal),
+      )
+        .reserveRetirementImpact({ ...input, reason: 'Retire replaced Market.' })
+        .pipe(Effect.flip);
+      expect(Predicate.isTagged(reservedFailure, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);
+
+      const reserved = yield* authority.reserveRetirementImpact({ ...input, reason: 'Retire replaced Market.' });
+      const committedFailure = yield* authority
+        .commitRetirementImpact({
+          actionInvocationId: input.actionInvocationId,
+          assessment: reserved,
+          compositionRevision: input.compositionRevision,
+          legalEntityId: input.legalEntityId,
+          reason: 'Retire replaced Market.',
+        })
+        .pipe(Effect.flip);
+      expect(Predicate.isTagged(committedFailure, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);
+      const releasedFailure = yield* authority
+        .releaseRetirementImpact({
+          actionInvocationId: input.actionInvocationId,
+          assessment: reserved,
+          compositionRevision: input.compositionRevision,
+          legalEntityId: input.legalEntityId,
+          reason: 'Cancel Market retirement.',
+        })
+        .pipe(Effect.flip);
+      expect(Predicate.isTagged(releasedFailure, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);
+    }),
+  );
 });

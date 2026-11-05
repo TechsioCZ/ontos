@@ -40,7 +40,7 @@ const requestedActivities = (
 
 const processingActivitiesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.processing_catalog.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.processing-activities',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -48,6 +48,14 @@ const processingActivitiesEntrypoint = defineTenantModuleEntrypoint({
 
 export const processingActivitiesRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.processing-activity.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'processing-governance', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: processingActivitiesEntrypoint,
     evidencePolicy: {
@@ -57,7 +65,6 @@ export const processingActivitiesRead = defineRead(
     inputSchema: ProcessingActivitiesRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.processing-activities',
     resultSchema: ProcessingActivitiesResponseSchema,
@@ -80,5 +87,4 @@ export const processingActivitiesRead = defineRead(
     }).pipe(Effect.mapError(unavailable));
   },
   (transaction, scope) => processingActivityRepositoryForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

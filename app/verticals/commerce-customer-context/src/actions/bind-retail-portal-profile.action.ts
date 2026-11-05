@@ -3,33 +3,30 @@
 // @ontos-action-slug bind-retail-portal-profile
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { reconcileAccessPortalAfterAttempt } from '@app/core-runtime/access/portal';
+import { Effect } from 'effect';
 import {
   BindRetailPortalProfilePayloadSchema,
-  LegalEntityIdSchema,
   RetailPortalBindingActionRejected,
   RetailPortalBindingResultSchema,
+  retailPortalBindingEventFields,
   retailPortalBindingPayloadMatchesTrustedScope,
-  retailPortalBindingPermissionMutationPayloads,
   retailPortalBindingResultMatches,
-  retailPortalBindingStagedPermissionMutations,
 } from '../../shared/actions/bind-retail-portal-profile.ts';
 import type {
   RetailPortalBindingPayload,
   RetailPortalBindingResult,
 } from '../../shared/actions/bind-retail-portal-profile.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import { retailPortalBindingServicesForVerifiedScope } from '../profile-service-factory.ts';
 import {
-  BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayloadSchema as AuthorizationMutationRequestedEventSchema,
-  createBindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxMessage as createAuthorizationMutationRequestedOutboxMessage,
-} from './bind-retail-portal-profile-commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1.outbox-message.ts';
-import type { BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayload } from './bind-retail-portal-profile-commerce-customer-context-retail-portal-profile-binding-activation-authorization-mutation-requested-v1.outbox-message.ts';
+  BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxPayloadSchema as BindingActivatedEventSchema,
+  createBindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivatedV1OutboxMessage as createBindingActivatedOutboxMessage,
+} from './bind-retail-portal-profile.commerce-customer-context-retail-portal-profile-binding-activated-v1.outbox-message.ts';
 import { recordProfileResourceLookup } from './profile-action-data-access.ts';
 
 const MODULE_KEY = 'commerce.customer-context';
 const domainEvents = {
-  'commerce.customer-context.retail-portal-profile-binding-activation-authorization-mutation-requested.v1':
-    AuthorizationMutationRequestedEventSchema,
+  'commerce.customer-context.retail-portal-profile-binding-activated.v1': BindingActivatedEventSchema,
 } as const;
 export interface BindRetailPortalProfileServices {
   readonly bind: (
@@ -61,10 +58,7 @@ const validateBindPayload = (
     return bindingScopeConflict();
   }
   const trustedScope = { legalEntityId, tenantId: context.scope.tenantId };
-  if (!retailPortalBindingPayloadMatchesTrustedScope(payload, trustedScope)) {
-    return bindingScopeConflict();
-  }
-  return legalEntityId;
+  return retailPortalBindingPayloadMatchesTrustedScope(payload, trustedScope) ? undefined : bindingScopeConflict();
 };
 
 const validateBindResult = (
@@ -84,12 +78,10 @@ const handle = Effect.fn('BindRetailPortalProfileAction.handle')(function* handl
   payload: RetailPortalBindingPayload,
   context: ActionHandlerContext<typeof domainEvents, BindRetailPortalProfileServices>,
 ) {
-  const payloadValidation = validateBindPayload(payload, context);
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- This local validator returns either the trusted legal-entity string or a yieldable domain rejection; runtime classification preserves that fail-closed union.
-  if (typeof payloadValidation !== 'string') {
-    return yield* payloadValidation;
+  const payloadError = validateBindPayload(payload, context);
+  if (payloadError !== undefined) {
+    return yield* payloadError;
   }
-  const legalEntityId = payloadValidation;
   const result = yield* context.services.bind(payload, context);
   const resultError = validateBindResult(result, payload, context);
   if (resultError !== undefined) {
@@ -110,47 +102,38 @@ const handle = Effect.fn('BindRetailPortalProfileAction.handle')(function* handl
     result.bindingRef,
     `retail-binding-current:${result.bindingRef.resourceId}:${result.revision}`,
   );
-  const permissionMutations = retailPortalBindingStagedPermissionMutations(result.permissionMutations);
-  if (permissionMutations === undefined && result.authorizationState === 'ACTIVE') {
-    return result;
-  }
-  if (permissionMutations === undefined) {
-    return yield* new RetailPortalBindingActionRejected({
-      code: 'OUTCOME_INDETERMINATE',
-      reason: 'The binding authorization intent set was not durably staged',
-      retryable: true,
-    });
-  }
-  const eventPayloadBase = {
-    bindingRef: result.bindingRef,
-    catalogVersion: '1' as const,
-    legalEntityId: yield* Schema.decodeEffect(LegalEntityIdSchema)(legalEntityId).pipe(Effect.orDie),
-    mutationId: context.actionInvocationId,
-    operation: 'grant' as const,
-    principalRef: payload.principalRef,
-    profileRef: payload.profileRef,
-    schemaVersion: '1' as const,
-    sellingLegalEntityRef: payload.sellingLegalEntityRef,
-    transition: 'activation' as const,
-  };
-  const eventPayload: BindRetailPortalProfileCommerceCustomerContextRetailPortalProfileBindingActivationAuthorizationMutationRequestedV1OutboxPayload =
-    {
-      ...eventPayloadBase,
-      permissionMutations: retailPortalBindingPermissionMutationPayloads(permissionMutations),
-    };
+  const eventPayload = { ...retailPortalBindingEventFields(result, payload), state: 'ACTIVE' as const };
   const event = yield* context.addDomainEvent({
-    eventType: 'commerce.customer-context.retail-portal-profile-binding-activation-authorization-mutation-requested.v1',
+    eventType: 'commerce.customer-context.retail-portal-profile-binding-activated.v1',
     payloadJson: eventPayload,
     producerModuleKey: MODULE_KEY,
     subjectModuleKey: MODULE_KEY,
     subjectResourceId: result.bindingRef.resourceId,
     subjectResourceType: result.bindingRef.resourceType,
   });
-  yield* context.addOutboxMessage(event, createAuthorizationMutationRequestedOutboxMessage(eventPayload));
+  yield* context.addOutboxMessage(event, createBindingActivatedOutboxMessage(eventPayload));
   return result;
 });
 export const bindRetailPortalProfileAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason: 'Customer-context enrollment continuation binds the retail portal profile for the subject it acts for',
+      subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
+    },
+    // An Action, not an `admin` declaration: the Storefront workload binds through the enrollment continuation,
+    // and a machine never reaches structural administration (O81). Ephemeral keeps the admin narrowing: the
+    // enrollment cannot wait for an approval, so it is never proposed and never run by an agent (O22).
+    accessDeclaration: {
+      ephemeral: true,
+      key: 'commerce.customer-context.retail-portal-profile.bind',
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'portal-access', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.bind-retail-portal-profile.access.v1',
@@ -161,7 +144,7 @@ export const bindRetailPortalProfileAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.bind-retail-portal-profile',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -176,9 +159,12 @@ export const bindRetailPortalProfileAction = defineAction(
   },
   handle,
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
+    retailPortalBindingServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ bindRetailPortalProfile }): BindRetailPortalProfileServices => bindRetailPortalProfile),
     ),
+  undefined,
+  // The binding committed the bound person's portal access with it; the engine follows once it committed.
+  reconcileAccessPortalAfterAttempt(),
 );
 
 export type { RetailPortalBindingPayload } from '../../shared/actions/bind-retail-portal-profile.ts';

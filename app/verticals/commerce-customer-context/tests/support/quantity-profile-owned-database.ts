@@ -10,6 +10,7 @@ import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect } from 'effect-rstest';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
+import { nativeTestDatabaseContainer } from './native-test-database.ts';
 
 const databaseUsernameArgument = '--username';
 
@@ -39,7 +40,7 @@ const quantityJournalReceipt = Effect.fn('QuantityProfileAdmissionTests.journalR
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',
@@ -85,7 +86,7 @@ const copyQuantityMigrationJournal = Effect.fn('QuantityProfileAdmissionTests.co
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'pg_dump',
       '--host',
       'localhost',
@@ -114,7 +115,7 @@ const copyQuantityMigrationJournal = Effect.fn('QuantityProfileAdmissionTests.co
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',

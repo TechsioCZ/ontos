@@ -2,7 +2,7 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug reconcile-payment-term-reference
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   ReconcilePaymentTermReferencePayloadSchema,
@@ -170,6 +170,14 @@ export const handleReconcilePaymentTermReference = Effect.fn('ReconcilePaymentTe
 
 export const reconcilePaymentTermReferenceAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'payment.term-catalog.payment-term.reconcile-reference',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'payment-terms', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'payment.term-catalog.reconcile-payment-term-reference.access.v1',
@@ -181,7 +189,7 @@ export const reconcilePaymentTermReferenceAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'payment.term-catalog.reconcile-payment-term-reference',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -191,10 +199,6 @@ export const reconcilePaymentTermReferenceAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: ReconcilePaymentTermReferencePayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ReconcilePaymentTermReferencePayload>((payload) => ({
-      permission: 'write',
-      resource: payload.aliasPaymentTermRef,
-    })),
     resultSchema: ReconcilePaymentTermReferenceResultSchema,
     schemaVersion: '1',
   },

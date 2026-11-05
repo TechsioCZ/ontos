@@ -63,7 +63,7 @@ const recoverRemoveCatalogMedia = Effect.fn('RemoveCatalogMediaRecoveryRead.reco
 
 const removeCatalogMediaRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.remove-catalog-media-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.remove-catalog-media-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const removeCatalogMediaRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const removeCatalogMediaRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.remove-catalog-media-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: removeCatalogMediaRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const removeCatalogMediaRecoveryRead = defineRead(
     inputSchema: RemoveCatalogMediaRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.remove-catalog-media-recovery',
     resultSchema: RemoveCatalogMediaRecoveryResponseSchema,
@@ -90,5 +97,4 @@ export const removeCatalogMediaRecoveryRead = defineRead(
     recoverRemoveCatalogMedia(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

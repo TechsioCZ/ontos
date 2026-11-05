@@ -91,6 +91,21 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
 
 export const createPartyAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      reason:
+        'Commerce Customer Context creates Parties for a verified self-enrollment subject during profile creation.',
+      subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
+    },
+    accessDeclaration: {
+      key: 'party.registry.party.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'party-identity', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.create-party.access.v1',
@@ -101,10 +116,7 @@ export const createPartyAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.create-party',
       moduleKey: 'party.registry',
       role: 'action',
@@ -118,7 +130,6 @@ export const createPartyAction = defineAction(
     policies: [],
     resultSchema: CreatePartyResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleCreateParty,
   (transaction, scope) =>

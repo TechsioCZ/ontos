@@ -29,7 +29,7 @@ const unavailable = (cause: unknown) => {
 
 const ownerInventoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.owner_inventory.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.owner-inventory',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -37,6 +37,14 @@ const ownerInventoryEntrypoint = defineTenantModuleEntrypoint({
 
 export const ownerInventoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.owner-inventory.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'processing-governance', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: ownerInventoryEntrypoint,
     evidencePolicy: {
@@ -46,7 +54,6 @@ export const ownerInventoryRead = defineRead(
     inputSchema: OwnerInventoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.owner-inventory',
     resultSchema: OwnerInventoryResponseSchema,
@@ -78,5 +85,4 @@ export const ownerInventoryRead = defineRead(
     }).pipe(Effect.mapError((cause) => (Schema.is(ReadHandlerNotFound)(cause) ? cause : unavailable(cause))));
   },
   (transaction, scope) => processingActivityRepositoryForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug archive-customer-group
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import {
   ArchiveCustomerGroupPayloadSchema,
@@ -22,7 +22,7 @@ import {
   OutboxPayloadSchema as CustomerGroupArchivedEventSchema,
   outboxProducerModuleKey as MODULE_KEY,
 } from '../../shared/outbox/commerce-customer-context-customer-group-archived-v1.ts';
-import { customerGroupServiceFactory, customerGroupWritePermission } from './customer-group-action-support.ts';
+import { customerGroupServiceFactory } from './customer-group-action-support.ts';
 import { executeCustomerGroupAction } from './customer-group-action-handler.ts';
 import { createArchiveCustomerGroupCommerceCustomerContextCustomerGroupArchivedV1OutboxMessage as createCustomerGroupArchivedOutboxMessage } from './archive-customer-group.commerce-customer-context-customer-group-archived-v1.outbox-message.ts';
 
@@ -97,6 +97,14 @@ const handleArchiveCustomerGroup = Effect.fn('ArchiveCustomerGroupAction.handle'
 
 export const archiveCustomerGroupAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.customer-group.archive',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'customer-groups', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.archive-customer-group.access.v1',
@@ -108,7 +116,7 @@ export const archiveCustomerGroupAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.customer-context.archive-customer-group',
       moduleKey: 'commerce.customer-context',
       role: 'action',
@@ -118,9 +126,6 @@ export const archiveCustomerGroupAction = defineAction(
     owningModuleKey: 'commerce.customer-context',
     payloadSchema: ArchiveCustomerGroupPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<ArchiveCustomerGroupPayload>(({ groupRef }) =>
-      customerGroupWritePermission(groupRef),
-    ),
     resultSchema: ArchiveCustomerGroupResultSchema,
     schemaVersion: '1',
   },

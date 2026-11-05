@@ -5,27 +5,18 @@ import {
   InvoiceRecipientResolutionRequestSchema,
   InvoiceRecipientResolutionResponseSchema,
 } from '../../shared/apis/invoice-recipient-resolution.ts';
-import type { InvoiceRecipientResolutionRequest } from '../../shared/apis/invoice-recipient-resolution.ts';
 import { resolveInvoiceRecipient } from '../../shared/domain/address-resolution.ts';
 import { invoiceRecipientReadServiceFactory } from './address-read-support.ts';
-import {
-  makePurchaseResolutionPermission,
-  makePurchaseResolutionReadHandler,
-} from './purchase-resolution-read-support.ts';
+import { makePurchaseResolutionReadHandler, purchaseResolutionOwnerFacts } from './purchase-resolution-read-support.ts';
 
 const moduleKey = 'commerce.customer-context' as const;
 const invoiceRecipientResolutionEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.invoice-recipient-resolution',
   moduleKey,
   role: 'api',
 });
-
-const invoiceRecipientResolutionPermission = makePurchaseResolutionPermission(
-  (input: InvoiceRecipientResolutionRequest) =>
-    input.explicitChoice?.kind === 'SAVED_ADDRESS' ? input.explicitChoice.savedAddressRef : undefined,
-);
 
 const handleInvoiceRecipientResolution = makePurchaseResolutionReadHandler({
   effectName: 'InvoiceRecipientResolutionRead.handle',
@@ -35,7 +26,16 @@ const handleInvoiceRecipientResolution = makePurchaseResolutionReadHandler({
 
 export const invoiceRecipientResolutionRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.invoice-recipient.resolve',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'address-book', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
+    accessOwnerFacts: purchaseResolutionOwnerFacts,
     entrypoint: invoiceRecipientResolutionEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
@@ -44,7 +44,6 @@ export const invoiceRecipientResolutionRead = defineRead(
     inputSchema: InvoiceRecipientResolutionRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'conditional',
     policies: [],
     readKey: 'commerce.customer-context.api.invoice-recipient-resolution',
     resultSchema: InvoiceRecipientResolutionResponseSchema,
@@ -52,5 +51,4 @@ export const invoiceRecipientResolutionRead = defineRead(
   },
   handleInvoiceRecipientResolution,
   invoiceRecipientReadServiceFactory,
-  invoiceRecipientResolutionPermission,
 );

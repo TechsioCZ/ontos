@@ -1053,9 +1053,17 @@ it.layer(
 
   it('durable matching is an idempotent identity Action and the separate UX preview remains a governed read', () => {
     expect(matchPartyAction.descriptor.idempotency).toBe('required');
-    expect(matchPartyAction.descriptor.tenantPermission?.({ candidate: candidate() })).toBe('manage_party_identity');
+    expect(matchPartyAction.descriptor.accessDeclaration?.key).toBe('party.registry.party-match.record');
     expect(matchPartyAction.descriptor.legalEntityScope).toBe('optional');
     expect(partyMatchRead.descriptor.accessKind).toBe('detail');
+    expect(partyMatchRead.descriptor.accessActor).toEqual(
+      expect.objectContaining({
+        callers: ['commerce-customer-context'],
+        reason: expect.any(String),
+        subject: 'identity',
+        subjectWorkloads: ['commerce.storefront-client'],
+      }),
+    );
   });
 
   testIt.effect('weak exact canonical evidence produces review rather than automatic identity or NO_MATCH', () =>

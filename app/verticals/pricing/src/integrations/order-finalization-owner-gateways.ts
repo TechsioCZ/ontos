@@ -1,4 +1,5 @@
 import type { CoreSearchResourceRefSchema, OperationalScope } from '@app/core-runtime';
+import { readVerifiedGatewayActor } from '@app/core-runtime';
 import {
   FinalCartCandidateRefSchema,
   FinalCartCandidateRequestSchema,
@@ -8,31 +9,13 @@ import { executePreparedOrderPricingBindingWithAuthorization } from '@app/commer
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { PricingCommitmentConfirmationBindingSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
 import type { PricingCommitmentConfirmationBinding } from '@app/pricing-contracts/domain/commitment-confirmation';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Config, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import type { CurrentPricingDecisionCustomerContextGatewayIssuerService } from '../services/current-pricing-decision-subject-authority.service.ts';
 import {
   CurrentPricingDecisionCustomerContextGatewayIssuer,
   CurrentPricingDecisionCustomerContextGatewayUnavailable,
 } from '../services/current-pricing-decision-subject-authority.service.ts';
-
-const httpUrl = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username.length === 0 &&
-    url.password.length === 0 &&
-    url.search.length === 0 &&
-    url.hash.length === 0
-      ? undefined
-      : 'Owner gateway URL must be an HTTP(S) origin without credentials, query or fragment',
-  ),
-);
-const configuration = Config.all({
-  apiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
-  orderNamespaceId: Config.schema(Schema.String, 'ONTOS_PRICING_ORDER_NAMESPACE_ID'),
-  orderPrincipalId: Config.schema(Schema.String.check(Schema.isUUID()), 'ONTOS_PRICING_ORDER_PRINCIPAL_ID'),
-  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
 
 export class PricingFinalizationAuthorityUnavailable extends Schema.TaggedError<PricingFinalizationAuthorityUnavailable>()(
   'PricingFinalizationAuthorityUnavailable',
@@ -51,39 +34,47 @@ const unavailable = (cause: unknown) =>
 export const isOrderFinalizationPricingContext = (contextRef: string): boolean =>
   /^ccc:order-finalization:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(contextRef);
 
+/** The finalized buyer is the subject the owner read acts for; any other buyer is another customer's evidence. */
+export const finalizationBuyerMatchesSubject = (buyerPrincipalId: string, subjectPrincipalId: string): boolean =>
+  buyerPrincipalId === subjectPrincipalId;
+
+/** Only the Order module, acting for its buyer, may read finalization evidence (DESIGN D8). */
+export const finalizationCallerMatches = (actor?: { readonly appId: string }): boolean =>
+  actor?.appId === 'commerce-order';
+
 const sameBinding = Schema.toEquivalence(PricingCommitmentConfirmationBindingSchema);
 const sameRequest = Schema.toEquivalence(CurrentPricingDecisionRequestSchema);
 
-/** This bridge authenticates Pricing as Pricing; the buyer remains retained owner evidence. */
+/**
+ * Owner evidence for finalization, acting for the subject of `scope`. The subject is the buyer: every
+ * candidate and binding read here must name `scope.principalId` as its buyer, so a caller can only obtain
+ * evidence for its own buyer's final candidate. The calling module is carried by the verified actor.
+ */
 export const pricingFinalizationOwnerGateways = Effect.fn('PricingFinalization.ownerGateways')(function* ownerGateways(
   scope: OperationalScope,
   compositionRevision: string,
+  crypto: Crypto.Crypto,
 ) {
-  const configured = yield* configuration.pipe(Effect.mapError(unavailable));
-  if (
-    scope.authMethod !== 'api_key' ||
-    scope.principalId !== configured.orderPrincipalId ||
-    scope.authenticationNamespaceId !== configured.orderNamespaceId ||
-    scope.legalEntityId === undefined
-  ) {
-    return yield* unavailable('The caller is not the configured Order service in a Selling Legal Entity');
+  if (!finalizationCallerMatches(readVerifiedGatewayActor(scope))) {
+    return yield* unavailable('The caller is not the Order module acting for its buyer');
   }
-  const { legalEntityId } = scope;
+  if (scope.legalEntityId === undefined) {
+    return yield* unavailable('A Selling Legal Entity is required for the owner gateway');
+  }
   const credentialFor = Effect.fn('PricingFinalization.ownerCredential')(function* ownerCredential(
     audience: 'commerce-cart' | 'commerce-order' | 'commerce-customer-context',
   ) {
-    const issued = yield* issueApiKeyGatewayContext(
+    const issued = yield* acquireOwnerGatewayConnection(
       {
         audience,
         compositionRevision,
-        legalEntityId,
+        legalEntityScope: 'subject',
+        requestCorrelation: scope.correlationId,
+        scope,
       },
-      { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation: scope.correlationId },
+      crypto,
     ).pipe(Effect.mapError(unavailable));
-    if (issued.compositionRevision !== compositionRevision) {
-      return yield* unavailable('Owner credential belongs to a different active composition');
-    }
-    return { baseUrl: new URL(issued.apiBaseUrl, configured.shellBaseUrl), credential: `Bearer ${issued.token}` };
+    return { baseUrl: issued.baseUrl, credential: Redacted.value(issued.credential) };
   });
   const readCandidate = Effect.fn('PricingFinalization.readFinalCartCandidate')(function* readCandidate(
     candidateRef: typeof CoreSearchResourceRefSchema.Encoded,
@@ -107,9 +98,10 @@ export const pricingFinalizationOwnerGateways = Effect.fn('PricingFinalization.o
       candidate.candidateHash !== candidateHash ||
       candidate.candidateRef.resourceId !== request.candidateRef.resourceId ||
       candidate.tenantId !== scope.tenantId ||
-      candidate.legalEntityId !== scope.legalEntityId
+      candidate.legalEntityId !== scope.legalEntityId ||
+      !finalizationBuyerMatchesSubject(candidate.buyerPrincipalId, scope.principalId)
     ) {
-      return yield* unavailable('Cart returned a different immutable final candidate');
+      return yield* unavailable('Cart returned a different immutable final candidate for this buyer');
     }
     return candidate;
   });
@@ -128,6 +120,7 @@ export const pricingFinalizationOwnerGateways = Effect.fn('PricingFinalization.o
       !sameBinding(prepared.binding, binding) ||
       prepared.tenantId !== scope.tenantId ||
       prepared.legalEntityId !== scope.legalEntityId ||
+      !finalizationBuyerMatchesSubject(prepared.buyerPrincipalId, scope.principalId) ||
       DateTime.isGreaterThan(prepared.observedAt, now) ||
       !DateTime.isGreaterThan(prepared.validUntil, now)
     ) {
@@ -148,59 +141,30 @@ export const pricingFinalizationOwnerGateways = Effect.fn('PricingFinalization.o
   return { credentialFor, readCandidate, verifyBinding };
 });
 
-/** Explicit service delegation: CCC independently admits Pricing against a retained approved buyer context. */
-export const pricingFinalizationCustomerContextGatewayIssuerLive = Layer.succeed(
+/** Customer Context owner credential: Pricing acts for the verified subject through the module credential. */
+export const pricingFinalizationCustomerContextGatewayIssuerLive = Layer.effect(
   CurrentPricingDecisionCustomerContextGatewayIssuer,
-  {
-    issue: Effect.fn('PricingFinalizationCustomerContext.issue')(
-      (input: Parameters<CurrentPricingDecisionCustomerContextGatewayIssuerService['issue']>[0]) =>
-        Effect.gen(function* issueCustomerContextCredential() {
-          const preapproval = yield* Config.all({
-            namespace: Config.String('ONTOS_PRICING_PREPROPOSAL_NAMESPACE_ID'),
-            principal: Config.String('ONTOS_PRICING_PREPROPOSAL_PRINCIPAL_ID'),
-          }).pipe(Effect.option);
-          if (
-            Option.isSome(preapproval) &&
-            input.principal.principalId === preapproval.value.principal &&
-            input.principal.authenticationNamespaceId === preapproval.value.namespace &&
-            input.principal.authMethod === 'api_key' &&
-            input.principal.impersonatedByPrincipalId === undefined &&
-            input.principal.legalEntityId !== undefined
-          ) {
-            const configured = yield* Config.all({
-              apiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
-              shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-            });
-            const issued = yield* issueApiKeyGatewayContext(
-              {
-                audience: 'commerce-customer-context',
-                compositionRevision: input.compositionRevision,
-                legalEntityId: input.principal.legalEntityId,
-              },
-              {
-                apiKey: configured.apiKey,
-                baseUrl: configured.shellBaseUrl,
-                requestCorrelation: input.requestCorrelation,
-              },
-            );
-            if (
-              issued.compositionRevision !== input.compositionRevision ||
-              issued.expiresAt * 1000 <= DateTime.toEpochMillis(yield* DateTime.now)
-            ) {
-              return yield* unavailable('Stale preapproval gateway');
-            }
-            return {
-              baseUrl: new URL(issued.apiBaseUrl, configured.shellBaseUrl),
-              credential: Redacted.make(`Bearer ${issued.token}`),
-            };
-          }
-          const owners = yield* pricingFinalizationOwnerGateways(
-            { ...input.principal, correlationId: input.requestCorrelation },
-            input.compositionRevision,
-          );
-          const owner = yield* owners.credentialFor('commerce-customer-context');
-          return { baseUrl: owner.baseUrl, credential: Redacted.make(owner.credential) };
-        }).pipe(
+  Effect.gen(function* pricingFinalizationCustomerContextGatewayIssuer() {
+    const crypto = yield* Crypto.Crypto;
+    return {
+      issue: Effect.fn('PricingFinalizationCustomerContext.issue')(function* issueCustomerContextCredential(
+        input: Parameters<CurrentPricingDecisionCustomerContextGatewayIssuerService['issue']>[0],
+      ) {
+        if (input.principal.legalEntityId === undefined) {
+          return yield* new CurrentPricingDecisionCustomerContextGatewayUnavailable({
+            reason: 'GATEWAY_ISSUER_UNAVAILABLE',
+          });
+        }
+        const connection = yield* acquireOwnerGatewayConnection(
+          {
+            audience: 'commerce-customer-context',
+            compositionRevision: input.compositionRevision,
+            legalEntityScope: 'subject',
+            requestCorrelation: input.requestCorrelation,
+            scope: input.principal,
+          },
+          crypto,
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new CurrentPricingDecisionCustomerContextGatewayUnavailable({
@@ -208,9 +172,11 @@ export const pricingFinalizationCustomerContextGatewayIssuerLive = Layer.succeed
                 reason: 'GATEWAY_ISSUER_UNAVAILABLE',
               }),
           ),
-        ),
-    ),
-  },
+        );
+        return connection;
+      }),
+    };
+  }),
 );
 
 export const verifyFinalCartQuotationRequest = Effect.fn('PricingFinalization.verifyQuotationRequest')(
@@ -222,11 +188,12 @@ export const verifyFinalCartQuotationRequest = Effect.fn('PricingFinalization.ve
     },
     scope: OperationalScope,
     compositionRevision: string,
+    crypto: Crypto.Crypto,
   ) {
     if (input.candidateHash === undefined) {
       return yield* unavailable('Final Cart candidate hash is required');
     }
-    const owners = yield* pricingFinalizationOwnerGateways(scope, compositionRevision);
+    const owners = yield* pricingFinalizationOwnerGateways(scope, compositionRevision, crypto);
     const candidateRef = yield* Schema.decodeUnknownEffect(FinalCartCandidateRefSchema)({
       moduleId: 'commerce.cart',
       resourceId: input.candidateRef,

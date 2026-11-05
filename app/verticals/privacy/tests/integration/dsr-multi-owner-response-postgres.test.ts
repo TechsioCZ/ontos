@@ -14,6 +14,7 @@ import {
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
@@ -107,6 +108,7 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
   const { isolated, makeRedemption, snapshot } = yield* makeDsrIsolation();
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys,
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
@@ -341,7 +343,12 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
       }),
     }),
   );
-  const context = yield* Layer.build(Layer.mergeAll(fixture.layer, authorities, NodeCrypto.layer));
+  // The one access gate this suite scripts (the native database carries no v2 access intent and
+  // reaches no engine), plus the per-principal refusals it names (see `live-access-authority`).
+  const deniedAccess = createPrivacyDeniedAccess();
+  const context = yield* Layer.build(
+    Layer.mergeAll(fixture.layer.pipe(Layer.provide(deniedAccess.layer)), authorities, NodeCrypto.layer),
+  );
   // Deferred native factories and HTTP requests use this exported context, not setup's ambient services.
   const exportedContextCrypto = Context.get(context, Crypto.Crypto);
   const exportedContextId = yield* exportedContextCrypto.randomUUIDv4();
@@ -482,6 +489,7 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
     decide,
     deliver,
     deliveredAt,
+    deniedAccess,
     evidenceRef,
     fixture,
     inventoryMode,
@@ -767,6 +775,9 @@ it.live(
         yield* native.recordTask(testOwnerB, 'competing-task');
         const competing = yield* native.respond(false, yield* nextId).pipe(Effect.flip);
         expect(competing).toMatchObject({ code: 'privacy_operation_conflict' });
+        // v2: the one access gate decides this Action (O62); a principal without the executor
+        // assignment is refused by the gate, named on the fixture's own per-request owner seam.
+        native.deniedAccess.deny(native.fixture.legalEntityOnly.principalId, 'privacy.core.dsr-response.record');
         const denied = yield* runAction({
           payload: {
             response: {

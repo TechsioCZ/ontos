@@ -1,7 +1,5 @@
-import { customerOwnerPermissionTarget } from '../permissions/authorization.ts';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { Crypto, Effect } from 'effect';
-import type { AddressBookProfile } from '../../shared/domain/address-book.ts';
 import {
   deliveryDestinationPortsForTransaction,
   composeAddressExternalResolutionPorts,
@@ -64,28 +62,3 @@ const makeInvoiceRecipientReadServiceFactory = (
   );
 
 export const invoiceRecipientReadServiceFactory = makeInvoiceRecipientReadServiceFactory();
-
-export const profileTarget = (input: { readonly profile: AddressBookProfile }, scope: OperationalScope) => {
-  const legalEntityId = scope.legalEntityId ?? 'missing-required-legal-entity-scope';
-  const request =
-    input.profile.kind === 'COUNTERPARTY'
-      ? {
-          permission: 'counterparty.address_book.use',
-          target: {
-            counterpartyId: input.profile.counterpartyRef.resourceId,
-            kind: 'counterparty' as const,
-            legalEntityId,
-            tenantId: scope.tenantId,
-          },
-        }
-      : {
-          permission: 'retail.address_book.use',
-          target: {
-            kind: 'retail_profile' as const,
-            legalEntityId,
-            profileId: input.profile.profileRef.resourceId,
-            tenantId: scope.tenantId,
-          },
-        };
-  return { kind: 'owner_permission' as const, ownerPermission: customerOwnerPermissionTarget(request) };
-};

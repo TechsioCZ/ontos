@@ -176,6 +176,14 @@ const trustedEnforcementAuthority: AntiResurrectionEnforcementAuthorityService =
 };
 
 describe('Owner execution authority-bound Actions', () => {
+  it('declares the module callers that may record an owner outcome for a verified requester', () => {
+    expect(recordOwnerExecutionOutcomeAction.descriptor.accessActor).toEqual({
+      callers: ['commerce-customer-context', 'party-registry'],
+      reason: expect.any(String),
+      subject: 'identity',
+    });
+  });
+
   it('rejects caller-supplied owner success and protection facts at the public schemas', () => {
     expect(() =>
       Schema.decodeUnknownSync(RecordOwnerExecutionOutcomePayloadSchema)({ outcome: authority.outcome }),

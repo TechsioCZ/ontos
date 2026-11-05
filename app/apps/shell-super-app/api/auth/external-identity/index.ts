@@ -1,5 +1,6 @@
 import {
   ExternalIdentityAdmission,
+  GrantedProvisioningNamespaces,
   ReadRuntime,
   TrustedPrincipalContextSchema,
   activatePrincipalBindingAction,
@@ -314,10 +315,19 @@ const requiredHeader = (
     : Effect.succeed(value);
 };
 
+/**
+ * Core qualifies the namespace of a workload by its own registration (`namespace-authority.ts`). A
+ * workload authenticated in the staff namespace reaches another namespace only through a deployment
+ * grant, so every caller passes exactly the namespaces its grant check has already admitted.
+ */
+const grantedNamespaces = (authenticationNamespaceIds: readonly string[]) =>
+  Context.make(GrantedProvisioningNamespaces, { authenticationNamespaceIds });
+
 const runBindingRead = (
   principal: TrustedPrincipalContext,
   input: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>,
   audience: string,
+  grantedNamespaceIds: readonly string[],
 ) =>
   Effect.all({ correlation: ExternalIdentityHttpCorrelationId, runtime: ReadRuntime }, { concurrency: 1 }).pipe(
     Effect.flatMap(({ correlation, runtime }) =>
@@ -329,6 +339,7 @@ const runBindingRead = (
         transport: { correlationId: correlation },
       }),
     ),
+    Effect.provideContext(grantedNamespaces(grantedNamespaceIds)),
     Effect.mapError(mapReadError),
   );
 
@@ -378,12 +389,23 @@ const subjectFromPayload = (
   subjectType: payload.subjectType,
 });
 
+/**
+ * A binding-id lookup learns the binding's namespace only from the read itself, so it may see
+ * exactly the namespaces the deployment grants this workload for the operation; the caller then
+ * checks the grant again against the namespace the binding actually lives in.
+ */
 const requireBinding = (
   principal: TrustedPrincipalContext,
   authBindingId: Schema.Schema.Type<typeof AuthBindingIdSchema>,
   audience: string,
+  operation: ExternalIdentityWorkloadOperation,
 ) =>
-  runBindingRead(principal, { authBindingId, lookup: 'binding' }, audience).pipe(
+  ExternalIdentityWorkloadAuthorization.pipe(
+    Effect.flatMap((authorization) => authorization.grantedNamespaces(principal, operation)),
+    Effect.mapError(mapWorkloadError),
+    Effect.flatMap((grantedNamespaceIds) =>
+      runBindingRead(principal, { authBindingId, lookup: 'binding' }, audience, grantedNamespaceIds),
+    ),
     Effect.catchIf(Predicate.isTagged('ExternalIdentityForbiddenProblem'), () => Effect.fail(notFoundProblem())),
     Effect.filterOrFail(
       (result) => result.outcome === 'FOUND',
@@ -396,7 +418,8 @@ const requireSubjectBinding = (
   subject: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>,
   audience: string,
 ) =>
-  runBindingRead(principal, { ...subject, lookup: 'subject' }, audience).pipe(
+  // Callers have already checked the workload grant for this subject's exact namespace.
+  runBindingRead(principal, { ...subject, lookup: 'subject' }, audience, [subject.authenticationNamespaceId]).pipe(
     Effect.catchIf(Predicate.isTagged('ExternalIdentityForbiddenProblem'), () => Effect.fail(notFoundProblem())),
     Effect.filterOrFail(
       (result) => result.outcome === 'FOUND',
@@ -526,7 +549,11 @@ const runReserveAction = (
           registration: reservePrincipalBindingAction,
           requestHeaders: { authorization: missingAuthorization, [CORRELATION_ID_HEADER]: correlation },
         }),
-        Context.make(ExternalIdentityAdmission, admission),
+        Context.add(
+          grantedNamespaces([payload.reservation.authenticationNamespaceId]),
+          ExternalIdentityAdmission,
+          admission,
+        ),
       ),
     ),
   );
@@ -537,6 +564,7 @@ const runActivateAction = (
   idempotencyKey: string,
   audience: string,
   admission: ExternalIdentityAdmissionContext,
+  grantedNamespaceId: string,
 ) =>
   ExternalIdentityHttpCorrelationId.pipe(
     Effect.flatMap((correlation) =>
@@ -552,7 +580,7 @@ const runActivateAction = (
           registration: activatePrincipalBindingAction,
           requestHeaders: { authorization: missingAuthorization, [CORRELATION_ID_HEADER]: correlation },
         }),
-        Context.make(ExternalIdentityAdmission, admission),
+        Context.add(grantedNamespaces([grantedNamespaceId]), ExternalIdentityAdmission, admission),
       ),
     ),
   );
@@ -757,6 +785,7 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
               principal,
               payload.activation.authBindingId,
               ultramodernDeliveryUnit.appId,
+              'activate',
             );
             yield* requireBindingWorkloadGrant(principal, 'activate', binding.authenticationNamespaceId);
             const subject = yield* requireBindingSubject(principal, binding, ultramodernDeliveryUnit.appId);
@@ -787,6 +816,7 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
               idempotencyKey,
               ultramodernDeliveryUnit.appId,
               admission,
+              binding.authenticationNamespaceId,
             );
           }),
         );
@@ -810,6 +840,7 @@ const changePrincipalBindingStatusHandler = Effect.fn('ExternalIdentityHttp.chan
               principal,
               payload.change.authBindingId,
               ultramodernDeliveryUnit.appId,
+              'status',
             );
             yield* requireBindingWorkloadGrant(principal, 'status', binding.authenticationNamespaceId);
             let admission: ExternalIdentityAdmissionContext | undefined;
@@ -859,7 +890,12 @@ const readPrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.readPrincipa
             const apiKey = Redacted.make(request.headers['x-api-key']);
             const principal = yield* authenticateWorkloadPrincipal(apiKey);
             if (payload.lookup === 'binding') {
-              const binding = yield* requireBinding(principal, payload.authBindingId, ultramodernDeliveryUnit.appId);
+              const binding = yield* requireBinding(
+                principal,
+                payload.authBindingId,
+                ultramodernDeliveryUnit.appId,
+                'read',
+              );
               yield* requireBindingWorkloadGrant(principal, 'read', binding.authenticationNamespaceId);
               return binding;
             }
@@ -867,7 +903,9 @@ const readPrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.readPrincipa
               operation: 'read',
               targetAuthenticationNamespaceId: payload.authenticationNamespaceId,
             });
-            return yield* runBindingRead(principal, payload, ultramodernDeliveryUnit.appId);
+            return yield* runBindingRead(principal, payload, ultramodernDeliveryUnit.appId, [
+              payload.authenticationNamespaceId,
+            ]);
           }),
         );
       }),
@@ -965,8 +1003,15 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
             if (payload.legalEntityId !== undefined) {
               const selected = yield* validateAuthorizedLegalEntity({
                 legalEntityId: payload.legalEntityId,
-                principalId: resolved.principalId,
-                tenantId: resolved.tenantId,
+                scope: {
+                  authBindingId: resolved.authBindingId,
+                  authContextRef: payload.authenticationRef,
+                  authenticationNamespaceId: resolved.authenticationNamespaceId,
+                  authMethod: 'session',
+                  correlationId: requestCorrelation,
+                  principalId: resolved.principalId,
+                  tenantId: resolved.tenantId,
+                },
               }).pipe(Effect.mapError(mapLegalEntitySelectionProblem));
               const { legalEntityId: selectedLegalEntityId } = selected;
               legalEntityId = selectedLegalEntityId;

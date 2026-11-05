@@ -93,15 +93,13 @@ const request = (idempotencyKey: string) => ({
 it.effect('denies CUSTOMER onboarding before the owner handler when Action permission is absent', () =>
   Effect.gen(function* deniedOnboarding() {
     const harness = yield* makeActionTestHarness({
+      access: 'denied',
       ownerRegistration: partyRegistryBackendRegistration,
-      actionPermission: 'denied',
-      legalEntityPermission: 'allowed',
       services: [
         bindActionTestServices(counterpartyCustomerOnboardAction, {
           onboard: () => Effect.die('the denied Action must not execute its owner handler'),
         }),
       ],
-      tenantPermission: 'allowed',
     });
 
     const failure = yield* harness.runtime.runAction(request('denied-1')).pipe(Effect.flip);
@@ -117,9 +115,8 @@ it.effect('recovers a committed CUSTOMER onboarding invocation without replaying
   Effect.gen(function* recoverOnboarding() {
     let calls = 0;
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       ownerRegistration: partyRegistryBackendRegistration,
-      actionPermission: 'allowed',
-      legalEntityPermission: 'allowed',
       services: [
         bindActionTestServices(counterpartyCustomerOnboardAction, {
           onboard: () =>
@@ -129,7 +126,6 @@ it.effect('recovers a committed CUSTOMER onboarding invocation without replaying
             }),
         }),
       ],
-      tenantPermission: 'allowed',
     });
 
     const result = yield* harness.runtime.runAction(request('recover-1'));
@@ -153,15 +149,13 @@ it.effect('recovers a committed CUSTOMER onboarding invocation without replaying
 it.effect('exact-equivalent onboarding commits no duplicate domain events', () =>
   Effect.gen(function* exactReplay() {
     const harness = yield* makeActionTestHarness({
+      access: 'allowed',
       ownerRegistration: partyRegistryBackendRegistration,
-      actionPermission: 'allowed',
-      legalEntityPermission: 'allowed',
       services: [
         bindActionTestServices(counterpartyCustomerOnboardAction, {
           onboard: () => Effect.succeed(persistenceResult({ counterpartyCreated: false, rolePeriodCreated: false })),
         }),
       ],
-      tenantPermission: 'allowed',
     });
 
     const result = yield* harness.runtime.runAction(request('exact-1'));

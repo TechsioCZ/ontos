@@ -140,6 +140,14 @@ export const handleSetProductLocalizedFacts = Effect.fn('SetProductLocalizedFact
 
 export const setProductLocalizedFactsAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-localized-facts.set',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-product-localized-facts.access.v1',
@@ -151,7 +159,7 @@ export const setProductLocalizedFactsAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.catalog.set-product-localized-facts',
       moduleKey: MODULE_KEY,
       role: 'action',

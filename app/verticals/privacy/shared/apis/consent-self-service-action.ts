@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug consent-self-service
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { ConsentSelfServicePayloadSchema, ConsentSelfServiceResultSchema } from '../actions/consent-self-service.ts';
 
 export { ConsentSelfServicePayloadSchema } from '../actions/consent-self-service.ts';
-
 export const ConsentSelfServiceActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ConsentSelfServiceActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const ConsentSelfServiceActionForbiddenProblemSchema = makeProblemDetails
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const consentSelfServiceActionGroupDefinition = HttpApiGroup.make('consen
     HttpApiEndpoint.post('execute', '/privacy/actions/consent-self-service', {
       error: actionErrors,
       payload: Schema.toEncoded(ConsentSelfServicePayloadSchema),
-      success: ConsentSelfServiceResultSchema,
+      success: [ActionProposalAcceptedSchema, ConsentSelfServiceResultSchema],
     }),
   )
   .middleware(ConsentSelfServiceActionSchemaErrorMiddleware);

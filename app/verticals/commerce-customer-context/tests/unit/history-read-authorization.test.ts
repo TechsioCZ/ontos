@@ -1,13 +1,10 @@
-import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { expect, it } from 'effect-rstest';
-import { Effect, Predicate, Schema } from 'effect';
-import { ReadHandlerUnavailable, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
-import {
-  getReadPermissionTargetResolver,
-  getReadResourcePermissionTargetResolver,
-  getReadResultPermissionTargetResolver,
-} from '@app/core-runtime/testing/reads';
+import { Effect, Schema } from 'effect';
+import { ReadHandlerUnavailable, ReadPermissionDenied, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
+import type { ContextAccessService } from '@app/core-runtime';
+import { getReadResultPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
+import { makeTestBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { counterpartyAllOrderHistoryRead } from '../../src/api/counterparty-all-order-history.read.ts';
@@ -67,12 +64,6 @@ const counterpartyRef = {
   tenantId,
 };
 
-const expectFunctions = (values: readonly unknown[]) => {
-  for (const value of values) {
-    expect(Predicate.isFunction(value)).toBe(true);
-  }
-};
-
 const profileScope: ProfilePersistenceScope = {
   legalEntityId: scope.legalEntityId,
   principalId: scope.principalId,
@@ -114,13 +105,6 @@ const profileTransaction = (
       },
     ]),
 });
-const orderRef = {
-  moduleId: 'commerce.order',
-  resourceId: 'order-1',
-  resourceType: 'commerce.order.order',
-  tenantId,
-};
-
 it.effect('keeps exact Counterparty history association independent from the new-order lifecycle gate', () =>
   Effect.gen(function* counterpartyLifecycleSeparation() {
     const states = ['ACTIVE', 'SUSPENDED', 'ARCHIVED'] as const;
@@ -174,106 +158,41 @@ it.effect('keeps exact Counterparty history association independent from the new
   }),
 );
 
-it('declares exact business and Resource authorization before history handlers', () => {
-  const retailInput = { profileRef: retailProfileRef };
-  const counterpartyInput = { counterpartyRef, profileRef: counterpartyProfileRef };
-  const retailResolver = getReadPermissionTargetResolver(retailOrderHistoryRead);
-  const counterpartyOwnResolver = getReadPermissionTargetResolver(counterpartyOrderHistoryRead);
-  const counterpartyAllResolver = getReadPermissionTargetResolver(counterpartyAllOrderHistoryRead);
-  expectFunctions([retailResolver, counterpartyOwnResolver, counterpartyAllResolver]);
-  if (
-    !Predicate.isFunction(retailResolver) ||
-    !Predicate.isFunction(counterpartyOwnResolver) ||
-    !Predicate.isFunction(counterpartyAllResolver)
-  ) {
-    return;
-  }
-
-  expect(retailResolver(retailInput, scope)).toEqual({
-    kind: 'owner_permission',
-    ownerPermission: customerOwnerPermissionTarget({
-      permission: 'retail.history.read',
-      target: {
-        kind: 'retail_profile',
-        legalEntityId: scope.legalEntityId,
-        profileId: retailProfileRef.resourceId,
-        tenantId,
-      },
-    }),
-  });
-  expect(getReadResourcePermissionTargetResolver(retailOrderHistoryRead)?.(retailInput, scope)).toEqual({
-    permission: 'read',
-    resource: retailProfileRef,
-  });
-  expect(counterpartyOwnResolver(counterpartyInput, scope)).toMatchObject({
-    kind: 'owner_permission',
-    ownerPermission: { definition: { key: 'counterparty.history.read_own' } },
-  });
-  expect(counterpartyAllResolver(counterpartyInput, scope)).toMatchObject({
-    kind: 'owner_permission',
-    ownerPermission: { definition: { key: 'counterparty.history.read_all' } },
-  });
-  const allArchiveResolver = getReadPermissionTargetResolver(counterpartyAllCustomerArchiveRead);
-  expect(Predicate.isFunction(allArchiveResolver)).toBe(true);
-  if (Predicate.isFunction(allArchiveResolver)) {
-    expect(allArchiveResolver(counterpartyInput, scope)).toMatchObject({
-      kind: 'owner_permission',
-      ownerPermission: { definition: { key: 'counterparty.history.read_all' } },
-    });
+it('declares one scope-wide capability per history Read with the owner facts that name its record', () => {
+  // The legacy business/Resource permission-target resolvers are gone (O62.4): each protected Read
+  // carries a v2 declaration and the owner facts that name the record whose own grant the overlay
+  // checks (O67-Q1, O70).
+  for (const [read, key] of [
+    [retailOrderHistoryRead, 'commerce.customer-context.retail-order-history.read'],
+    [counterpartyOrderHistoryRead, 'commerce.customer-context.counterparty-order-history.read-own'],
+    [counterpartyAllOrderHistoryRead, 'commerce.customer-context.counterparty-order-history.read-all'],
+    [counterpartyAllCustomerArchiveRead, 'commerce.customer-context.counterparty-customer-archive.read-all'],
+  ] as const) {
+    expect(read.descriptor.accessDeclaration?.key).toBe(key);
+    expect(read.descriptor.accessDeclaration?.selectors).toEqual([]);
+    expect(read.descriptor.accessOwnerFacts).toBeDefined();
+    expect(read.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
   }
 });
 
-it('gates authoritative detail with the exact scope and Order Resource before owner ports', () => {
-  const retailInput = { orderRef, profileRef: retailProfileRef };
-  const counterpartyInput = {
-    counterpartyRef,
-    orderRef,
-    profileRef: counterpartyProfileRef,
-  };
-  const retailResolver = getReadPermissionTargetResolver(retailOrderHistoryDetailRead);
-  const counterpartyOwnResolver = getReadPermissionTargetResolver(counterpartyOrderHistoryDetailRead);
-  const counterpartyAllResolver = getReadPermissionTargetResolver(counterpartyAllOrderHistoryDetailRead);
-  expectFunctions([retailResolver, counterpartyOwnResolver, counterpartyAllResolver]);
-  if (
-    !Predicate.isFunction(retailResolver) ||
-    !Predicate.isFunction(counterpartyOwnResolver) ||
-    !Predicate.isFunction(counterpartyAllResolver)
-  ) {
-    return;
+it('gates authoritative detail with the exact scope and owner facts before owner ports', () => {
+  for (const [read, key] of [
+    [retailOrderHistoryDetailRead, 'commerce.customer-context.retail-order-history.read-detail'],
+    [counterpartyOrderHistoryDetailRead, 'commerce.customer-context.counterparty-order-history.read-detail-own'],
+    [counterpartyAllOrderHistoryDetailRead, 'commerce.customer-context.counterparty-order-history.read-detail-all'],
+  ] as const) {
+    expect(read.descriptor.accessDeclaration?.key).toBe(key);
+    expect(read.descriptor.accessDeclaration?.selectors).toEqual([]);
+    expect(read.descriptor.accessOwnerFacts).toBeDefined();
   }
-
-  expect(retailResolver(retailInput, scope)).toMatchObject({
-    ownerPermission: { definition: { key: 'retail.history.read' } },
-  });
-  expect(getReadResourcePermissionTargetResolver(retailOrderHistoryDetailRead)?.(retailInput, scope)).toEqual({
-    permission: 'read',
-    resource: orderRef,
-  });
-  expect(counterpartyOwnResolver(counterpartyInput, scope)).toMatchObject({
-    ownerPermission: { definition: { key: 'counterparty.history.read_own' } },
-  });
-  expect(counterpartyAllResolver(counterpartyInput, scope)).toMatchObject({
-    ownerPermission: { definition: { key: 'counterparty.history.read_all' } },
-  });
   expect(getReadResultPermissionTargetResolver(retailOrderHistoryDetailRead)).toBeUndefined();
 });
 
-it('makes cross-tenant references invalid before any owner port can be resolved', () => {
-  const foreignProfile = {
-    ...retailProfileRef,
-    tenantId: '44444444-4444-4444-8444-444444444444',
-  };
-  const resolver = getReadPermissionTargetResolver(retailOrderHistoryRead);
-  expect(Predicate.isFunction(resolver)).toBe(true);
-  if (!Predicate.isFunction(resolver)) {
-    return;
-  }
-  const target = resolver({ profileRef: foreignProfile }, scope);
-
-  expect(target).toMatchObject({
-    kind: 'owner_permission',
-    ownerPermission: { objectId: '', scope: { tenantId: '' }, target: { tenantId: '' } },
-  });
+it('makes cross-tenant references invalid through the Read own scope, not a permission resolver', () => {
+  // The per-tenant permission resolver is gone: a foreign profile is refused by the read's own
+  // trusted-scope check and the owner facts that name the profile, never by a resolver target.
+  expect(retailOrderHistoryRead.descriptor.accessOwnerFacts).toBeDefined();
+  expect(retailOrderHistoryRead.descriptor.accessDeclaration?.selectors).toEqual([]);
 });
 
 it('does not attach illegal generic result filtering to business-permission Reads', () => {
@@ -283,10 +202,8 @@ it('does not attach illegal generic result filtering to business-permission Read
   expect(getReadResultPermissionTargetResolver(counterpartyAllCustomerArchiveRead)).toBeUndefined();
 });
 
-it.effect('executes exact business and Resource gates before resolving unavailable owners', () =>
+it.effect('runs the handler only after the gate allows and fails closed when it denies', () =>
   Effect.gen(function* runtimeAuthorization() {
-    let businessChecks = 0;
-    let resourceChecks = 0;
     const database = {
       executor: yield* makeTestDatabase((text) => {
         if (text.includes('transaction_timestamp')) {
@@ -299,50 +216,43 @@ it.effect('executes exact business and Resource gates before resolving unavailab
         );
       }),
     };
-    const runtime = makeReadRuntime(
-      database,
-      openModuleEntrypointGateway,
-      { resolve: () => Effect.succeed(scope) },
-      {
-        legalEntities: ({ legalEntityIds }) =>
-          Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-        ownerPermissions: ({ targets }) => {
-          businessChecks += 1;
-          return Effect.succeed(
-            targets.map((target) => ({
-              decision: 'allowed' as const,
-              key: target.target.key,
-            })),
-          );
-        },
-        resources: ({ resources }) => {
-          resourceChecks += 1;
-          return Effect.succeed(
-            resources.map((resource) => ({
-              decision: 'allowed' as const,
-              key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-            })),
-          );
-        },
-        tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
-      },
-      {
+    const contextAccess: ContextAccessService = {
+      legalEntities: ({ legalEntityIds }) =>
+        Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+      modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+      resources: ({ resources }) =>
+        Effect.succeed(
+          resources.map((resource) => ({
+            decision: 'allowed' as const,
+            key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+          })),
+        ),
+      tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    };
+    const makeRuntime = (accessDecision: ReturnType<typeof makeTestBoundAccessGate>['bound']) =>
+      makeReadRuntime(database, openModuleEntrypointGateway, { resolve: () => Effect.succeed(scope) }, contextAccess, {
+        accessDecision,
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
         ownerRegistration: commerceCustomerContextRegistration,
-      },
-    );
-    const failure = yield* runtime
-      .runRead({
-        input: { profileRef: retailProfileRef },
-        principal,
-        registration: retailOrderHistoryRead,
-        transport: { correlationId: scope.correlationId },
-      })
-      .pipe(Effect.provideService(CustomerHistoryPortsService, unavailableCustomerHistoryPorts()), Effect.flip);
+      });
+    const invocation = {
+      input: { profileRef: retailProfileRef },
+      principal,
+      registration: retailOrderHistoryRead,
+      transport: { correlationId: scope.correlationId },
+    };
+    const ownerPorts = unavailableCustomerHistoryPorts();
 
-    expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
-    expect(businessChecks).toBe(1);
-    expect(resourceChecks).toBe(1);
+    // An allowed list decision reaches the owner ports, which are unavailable here.
+    const unavailable = yield* makeRuntime(makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } }).bound)
+      .runRead(invocation)
+      .pipe(Effect.provideService(CustomerHistoryPortsService, ownerPorts), Effect.flip);
+    expect(Schema.is(ReadHandlerUnavailable)(unavailable)).toBe(true);
+
+    // Negative control: a denied gate stops before the owner ports are ever resolved.
+    const refusal = yield* makeRuntime(makeTestBoundAccessGate().bound)
+      .runRead(invocation)
+      .pipe(Effect.provideService(CustomerHistoryPortsService, ownerPorts), Effect.flip);
+    expect(Schema.is(ReadPermissionDenied)(refusal)).toBe(true);
   }),
 );

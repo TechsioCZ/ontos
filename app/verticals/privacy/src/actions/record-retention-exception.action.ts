@@ -53,6 +53,14 @@ const handleRecordRetentionException = Effect.fn('RecordRetentionExceptionAction
 
 export const recordRetentionExceptionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.retention-exception.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'retention', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-retention-exception.access.v1',
@@ -64,7 +72,7 @@ export const recordRetentionExceptionAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-retention-exception',
       moduleKey: 'privacy.core',
       role: 'action',

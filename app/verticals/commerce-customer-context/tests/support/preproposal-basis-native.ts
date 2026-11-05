@@ -1,11 +1,8 @@
-import { customerOwnerPermissionTarget } from '../../src/permissions/authorization.ts';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import {
   ActionRuntime,
   ActiveApplicationCompositionService,
   ApplicationCompositionSchema,
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
   ContextAccess,
   ContextAccessLive,
   CorePersistenceLive,
@@ -31,9 +28,13 @@ import {
   parseDatabaseConnectionPair,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
+import { DecisionLogIdSchema, LegalEntityIdSchema } from '@app/core-runtime/access/ids';
+import { parseSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { ChangeCounterpartyPurchaseLimitPayloadSchema } from '../../shared/actions/change-counterparty-purchase-limit.ts';
+import { requireExecutedAction, requireExecutionResult } from './action-execution-result.ts';
 import { executeChangeCounterpartyPurchaseLimitWithAuthorization } from '../../src/api/change-counterparty-purchase-limit-action-client.ts';
-import { beginGrant, settleGrant } from './purchasing-approval-native.ts';
+import { grantAccess } from './purchasing-approval-native.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +48,8 @@ import { executePreapprovalCartObservationWithAuthorization } from '@app/commerc
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
+import { grantTestTenantOwnerAccess } from '@app/core-runtime/testing/tenant-access';
+import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
@@ -65,7 +68,10 @@ import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import {
+  issueApiKeyGatewayContext,
+  issueDelegatedGatewayContext,
+} from '@app/shared-contracts/server/gateway-context-api-key';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import type { GatewayContextRequest } from '@app/shared-contracts';
 import {
@@ -76,6 +82,7 @@ import {
   counterpartyCustomerOnboardWithAuthorization,
 } from '@app/party-registry/api/client';
 import { executeManageQuotationWithAuthorization } from '@app/pricing-contracts/manage-quotation/client';
+import { ManageQuotationResultSchema } from '@app/pricing-contracts/manage-quotation';
 import { pricingQuotationMatchesCurrentDecision } from '@app/pricing-contracts/quotation-verification';
 import {
   Array as EffectArray,
@@ -91,6 +98,7 @@ import {
   Layer,
   Option,
   Order,
+  Predicate,
   Queue,
   Redacted,
   Schema,
@@ -136,19 +144,25 @@ import {
 import { readCurrentPurchaseProposalRoutine } from '../../src/persistence/purchase-limit-persistence.ts';
 
 import { executeCreateCounterpartyPurchasingProfileWithAuthorization } from '../../src/api/create-counterparty-purchasing-profile-action-client.ts';
+import { CreateCounterpartyPurchasingProfileResultSchema } from '../../shared/actions/create-counterparty-purchasing-profile.ts';
 import { executeBootstrapCounterpartyAccessAdministratorWithAuthorization } from '../../src/api/bootstrap-counterparty-access-administrator-action-client.ts';
 import { executeGrantCounterpartyCommerceAccessWithAuthorization } from '../../src/api/grant-counterparty-commerce-access-action-client.ts';
 import { administerPurchaseCurrencyPolicyAction } from '../../src/actions/administer-purchase-currency-policy.action.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
-import { profileRetailPermissionReaderFactoryLive } from '../../src/integrations/retail-permission-reader.ts';
 import { PurchaseCurrencyPolicyAdministrationPayloadSchema } from '../../shared/domain/customer-commerce-policy-administration.ts';
 import {
+  CreatePurchaseProposalRevisionResultSchema,
+  DecidePurchaseApprovalRequestResultSchema,
   PurchaseProposalRevisionSchema,
+  SubmitPurchaseApprovalRequestResultSchema,
   computePurchaseProposalCanonicalHash,
 } from '../../shared/domain/purchasing-approval.ts';
 
 import { executeCompletePurchaseProposalBasisWithAuthorization } from '../../src/api/complete-purchase-proposal-basis-action-client.ts';
-import { CompletePurchaseProposalBasisActionConflictProblemSchema } from '../../shared/apis/complete-purchase-proposal-basis-action.ts';
+import {
+  CompletePurchaseProposalBasisActionConflictProblemSchema,
+  CompletePurchaseProposalBasisActionForbiddenProblemSchema,
+} from '../../shared/apis/complete-purchase-proposal-basis-action.ts';
 import { executeCreatePurchaseProposalRevisionWithAuthorization } from '../../src/api/create-purchase-proposal-revision-action-client.ts';
 import { executeCreateApprovalHierarchyWithAuthorization } from '../../src/api/create-approval-hierarchy-action-client.ts';
 import { executeSubmitPurchaseApprovalRequestWithAuthorization } from '../../src/api/submit-purchase-approval-request-action-client.ts';
@@ -159,8 +173,9 @@ import { executePurchaseLimitEvaluationWithAuthorization } from '../../src/api/p
 import { executePurchaseProposalBasisWithAuthorization } from '../../src/api/purchase-proposal-basis-client.ts';
 import {
   CompletePurchaseProposalBasisPayloadSchema,
-  PreparePurchaseProposalBasisPayloadSchema,
   PurchaseProposalBasisSchema,
+  PreparePurchaseProposalBasisPayloadSchema,
+  PurchaseProposalBasisForbiddenProblemSchema,
 } from '../../shared/apis/purchase-proposal-basis.ts';
 import { PurchaseLimitEvaluationRequestSchema } from '../../shared/apis/purchase-limit-evaluation.ts';
 import { PurchaseLimitSourceRevisionVectorSchema } from '../../shared/domain/purchase-limit-evaluation.ts';
@@ -172,9 +187,12 @@ type NativeCoreFixture = Effect.Success<ReturnType<typeof makeLiveOperationFixtu
 const cartAudience = 'commerce-cart';
 const describeOwner = '--describe' as const;
 const serveOwner = '--serve' as const;
+// The Shell child answers with its production access gate: this suite seeds the tenant's v2 access intent.
+const serveShellWithAccessIntent = '--serve-with-access-intent' as const;
 const shellAudience = 'shell-super-app' as const;
 const identityModule = 'core.identity' as const;
 const contextModule = 'commerce.customer-context' as const;
+const completeBasisActionKey = 'commerce.customer-context.complete-purchase-proposal-basis' as const;
 const preproposalReceiver = 'preproposal-basis-receiver.fixture.ts' as const;
 
 const pricingAudience = 'pricing' as const;
@@ -190,11 +208,14 @@ const servePreproposal = '--serve-preproposal-basis' as const;
 const untrustedCommand = 'untrusted-command' as const;
 
 const contextAudience = 'commerce-customer-context';
-const serviceRole = 'ccc-service';
-const pricingIssuerRole = 'pricing-issuer' as const;
+// Module roles name the calling module; each acts through its own deployment credential.
+const cccModuleRole = 'commerce-customer-context-module' as const;
+const pricingModuleRole = 'pricing-module' as const;
 const pricingOwner = 'verticals/pricing' as const;
 const pricingModule = 'commerce.pricing' as const;
-const NativeRoleSchema = Schema.Literals(['operator', 'buyer', pricingIssuerRole, serviceRole]);
+// A second human of the buyer's Tenant and Legal Entity: never the buyer, so never the subject of the buyer's basis.
+const secondHumanRole = 'second-human' as const;
+const NativeRoleSchema = Schema.Literals(['operator', 'buyer', secondHumanRole, pricingModuleRole, cccModuleRole]);
 const NativeAudienceSchema = Schema.Literals([cartAudience, contextAudience, pricingAudience]);
 type NativeRole = typeof NativeRoleSchema.Type;
 type NativeAudience = typeof NativeAudienceSchema.Type;
@@ -204,17 +225,61 @@ export interface PreproposalNativeCredential {
   readonly options: { readonly baseUrl: URL; readonly compositionRevision: string };
 }
 
+/**
+ * The registered invocation that a module call continues: the principal that ran it and the idempotency key
+ * the test sent to that Action. A module call never guesses its originator from ordering.
+ */
+export interface ModuleCallOriginator {
+  readonly idempotencyKey: string;
+  readonly principalId: string;
+}
+
+/**
+ * Whom a module call acts for. None (`requester`) relays the buyer's own live-session request assertion, as a module
+ * relays the verified scope it received; an originator names a registered invocation for asynchronous work, which
+ * the Shell admits only for an Action the calling module declares in `originatorActions`.
+ */
+export type ModuleCallSubject = Option.Option<ModuleCallOriginator>;
+const requester: ModuleCallSubject = Option.none();
+
+/** One Core access decision whose delegate (the calling module) is the named app. */
+export interface DelegatedDecisionRow {
+  readonly actorPrincipalId: string;
+  readonly decisionLogId: string;
+  readonly delegatePrincipalId: string;
+  readonly outcome: string;
+  readonly reasons: readonly string[];
+}
+
 /** Authentication is the only caller-supplied seam. Each acquisition must issue a fresh assertion. */
 export interface PreproposalNativeTransport<Failure, Requirements> {
   readonly authorize: (
     role: NativeRole,
     audience: NativeAudience,
+    subject?: ModuleCallSubject,
   ) => Effect.Effect<PreproposalNativeCredential, Failure, Requirements>;
   readonly buyerPrincipalId: string;
   readonly cccReaderPrincipalId: string;
-  readonly core: { readonly evidence: () => ReturnType<NativeCoreFixture['evidence']> };
+  readonly core: {
+    readonly delegatedDecisions: (
+      delegateAppId: string,
+    ) => Effect.Effect<readonly DelegatedDecisionRow[], PreproposalNativeProtocolError>;
+    readonly evidence: () => ReturnType<NativeCoreFixture['evidence']>;
+  };
   readonly pricingIssuerPrincipalId: string;
+  /** The second human of the Tenant and its one succeeded Action invocation, an Originator that is not the buyer. */
+  readonly secondHuman: ModuleCallOriginator;
 }
+
+const DelegatedDecisionRowsSchema = Schema.Array(
+  Schema.Struct({
+    actorPrincipalId: PrincipalIdSchema,
+    decisionLogId: DecisionLogIdSchema,
+    delegatePrincipalId: PrincipalIdSchema,
+    outcome: Schema.String,
+    reasons: Schema.Array(Schema.Struct({ code: Schema.String })),
+  }),
+);
 
 export class PreproposalNativeProtocolError extends Schema.TaggedError<PreproposalNativeProtocolError>()(
   'PreproposalNativeProtocolError',
@@ -222,6 +287,79 @@ export class PreproposalNativeProtocolError extends Schema.TaggedError<Prepropos
 ) {}
 const requireProtocol = (condition: boolean, stage: string) =>
   condition ? Effect.void : Effect.fail(new PreproposalNativeProtocolError({ stage }));
+
+/** The single decision a module call must record: its outcome, the subject, the calling module and, when named, the code. */
+const requireModuleCallDecision = (
+  rows: readonly DelegatedDecisionRow[],
+  expected: {
+    readonly actorPrincipalId: string;
+    readonly code?: string;
+    readonly delegatePrincipalId: string;
+    readonly outcome: 'ALLOWED' | 'DENIED';
+    readonly stage: string;
+  },
+) =>
+  rows.length === 1 &&
+  rows[0]?.outcome === expected.outcome &&
+  (expected.code === undefined || rows[0].reasons.includes(expected.code)) &&
+  rows[0].actorPrincipalId === expected.actorPrincipalId &&
+  rows[0].delegatePrincipalId === expected.delegatePrincipalId
+    ? Effect.void
+    : Effect.fail(
+        new PreproposalNativeProtocolError({
+          // Outcomes and reason codes only: which decisions Core recorded instead of the expected one.
+          message: rows.map((row) => `${row.outcome}[${row.reasons.join(',')}]`).join(' ') || 'no decision',
+          stage: expected.stage,
+        }),
+      );
+
+/** Core records a refused Action as exactly one rejected invocation of its subject; it never completes. */
+const requireOneRejectedInvocation = (
+  invocations: readonly {
+    readonly actionKey: string;
+    readonly correlationId: string | null;
+    readonly principalId: string | null;
+    readonly status: string;
+  }[],
+  expected: {
+    readonly actionKey: string;
+    readonly correlationId: string;
+    readonly principalId: string;
+    readonly stage: string;
+  },
+) => {
+  const refused = invocations.filter((row) => row.correlationId === expected.correlationId);
+  return requireProtocol(
+    refused.length === 1 &&
+      refused.every(
+        (row) =>
+          row.actionKey === expected.actionKey && row.status === 'rejected' && row.principalId === expected.principalId,
+      ),
+    expected.stage,
+  );
+};
+
+/** The typed failures an Exit carries, so a refusal is decoded as its own problem and never as any failure. */
+const refusalsOf = (exit: Exit.Exit<unknown, unknown>): readonly unknown[] =>
+  Exit.isFailure(exit)
+    ? exit.cause.reasons.flatMap((reason) => (Cause.isFailReason(reason) ? [reason.error] : []))
+    : [];
+
+/** Decision rows that were not in the snapshot taken before a call, matched by their own identity. */
+const rowsSince = (
+  before: readonly DelegatedDecisionRow[],
+  after: readonly DelegatedDecisionRow[],
+): readonly DelegatedDecisionRow[] => {
+  const seen = new Set(before.map((row) => row.decisionLogId));
+  return after.filter((row) => !seen.has(row.decisionLogId));
+};
+/** Commerce Cart publishes no execution-result schema for its draft mutations, so the seam refuses the
+ * public proposal shape before any Cart field is read. */
+const requireExecutedDraft = <Result, Failure, Requirements>(
+  stage: string,
+  outcome: Effect.Effect<Result | ActionProposalAccepted, Failure, Requirements>,
+): Effect.Effect<Result, Failure | PreproposalNativeProtocolError, Requirements> =>
+  requireExecutedAction(() => new PreproposalNativeProtocolError({ stage }), outcome);
 
 /** Real Cart writes/read only; Catalog selection and Unit must already have real owner provenance. */
 export const createRegisteredPreproposalCart = Effect.fn('PreproposalNative.createCart')(
@@ -238,11 +376,14 @@ export const createRegisteredPreproposalCart = Effect.fn('PreproposalNative.crea
   }) {
     const { population } = input;
     const buyer = yield* input.transport.authorize('buyer', cartAudience);
-    const created = yield* executeCreateCartDraftWithAuthorization(
-      { entries: input.entries },
-      Redacted.value(buyer.authorization),
-      `${input.intent}:create-cart`,
-      { ...buyer.options, idempotencyKey: `${input.intent}:create-cart` },
+    const created = yield* requireExecutedDraft(
+      'registered-cart-draft-executed',
+      executeCreateCartDraftWithAuthorization(
+        { entries: input.entries },
+        Redacted.value(buyer.authorization),
+        `${input.intent}:create-cart`,
+        { ...buyer.options, idempotencyKey: `${input.intent}:create-cart` },
+      ),
     );
     yield* requireProtocol(
       created.cart.status === 'OPEN' &&
@@ -254,15 +395,18 @@ export const createRegisteredPreproposalCart = Effect.fn('PreproposalNative.crea
       yield* input.onCreated(created.cart.cartRef);
     }
     const reviser = yield* input.transport.authorize('buyer', cartAudience);
-    const revised = yield* executeReviseCartDraftWithAuthorization(
-      {
-        cartRef: created.cart.cartRef,
-        entries: created.cart.entries.map((entry) => ({ kind: 'RETAIN' as const, selectionId: entry.selectionId })),
-        expectedRevision: created.cart.revisionRef.revision,
-      },
-      Redacted.value(reviser.authorization),
-      `${input.intent}:revise-cart`,
-      { ...reviser.options, idempotencyKey: `${input.intent}:revise-cart` },
+    const revised = yield* requireExecutedDraft(
+      'registered-cart-revision-executed',
+      executeReviseCartDraftWithAuthorization(
+        {
+          cartRef: created.cart.cartRef,
+          entries: created.cart.entries.map((entry) => ({ kind: 'RETAIN' as const, selectionId: entry.selectionId })),
+          expectedRevision: created.cart.revisionRef.revision,
+        },
+        Redacted.value(reviser.authorization),
+        `${input.intent}:revise-cart`,
+        { ...reviser.options, idempotencyKey: `${input.intent}:revise-cart` },
+      ),
     );
     yield* requireProtocol(
       revised.cart.revisionRef.revision === created.cart.revisionRef.revision + 1 &&
@@ -273,7 +417,7 @@ export const createRegisteredPreproposalCart = Effect.fn('PreproposalNative.crea
         ),
       'registered-cart-revision-retains-original-occurrences',
     );
-    const reader = yield* input.transport.authorize(serviceRole, cartAudience);
+    const reader = yield* input.transport.authorize(cccModuleRole, cartAudience, requester);
     const observed = yield* executePreapprovalCartObservationWithAuthorization(
       { cartRef: revised.cart.cartRef, revision: revised.cart.revisionRef.revision },
       Redacted.value(reader.authorization),
@@ -291,7 +435,79 @@ export const createRegisteredPreproposalCart = Effect.fn('PreproposalNative.crea
 );
 
 /**
- * Sequential public-owner producer, never an injected READY/quote/currentness implementation.
+ * Right actor, wrong subject: Pricing is a declared caller of the basis read, but the only record it could act for is
+ * the second human's own Cart invocation, never a request of the buyer. Pricing declares no Originator Actions, so
+ * the Shell refuses to issue that context: the read is never sent and Core records no decision for it.
+ */
+const refuseNonBuyerSubjectRead = Effect.fn('PreproposalNative.refuseNonBuyerSubjectRead')(
+  function* refuseNonBuyerSubjectRead<Failure, Requirements>(input: {
+    readonly transport: PreproposalNativeTransport<Failure, Requirements>;
+  }) {
+    const { transport } = input;
+    const before = yield* transport.core.delegatedDecisions(pricingAudience);
+    const refused = yield* Effect.exit(
+      transport.authorize(
+        pricingModuleRole,
+        contextAudience,
+        Option.some({
+          idempotencyKey: transport.secondHuman.idempotencyKey,
+          principalId: transport.secondHuman.principalId,
+        }),
+      ),
+    );
+    const [refusal, ...otherRefusals] = refusalsOf(refused);
+    if (
+      otherRefusals.length > 0 ||
+      !Schema.is(PreproposalNativeProtocolError)(refusal) ||
+      refusal.stage !== `delegated-module-credential-forbidden:${pricingAudience}`
+    ) {
+      return yield* new PreproposalNativeProtocolError({ stage: 'non-buyer-subject-delegation-refused-by-shell' });
+    }
+    yield* requireProtocol(
+      rowsSince(before, yield* transport.core.delegatedDecisions(pricingAudience)).length === 0,
+      'non-buyer-subject-refusal-records-no-decision',
+    );
+    return { stage: refusal.stage };
+  },
+);
+
+/** The second human runs exactly one Action of its own: an empty Cart draft in the buyer's Legal Entity. */
+const runSecondHumanAction = Effect.fn('PreproposalNative.secondHumanAction')(function* runSecondHumanAction<
+  Failure,
+  Requirements,
+>(input: {
+  readonly legalEntityId: string;
+  readonly tenantId: string;
+  readonly transport: PreproposalNativeTransport<Failure, Requirements>;
+}) {
+  const { secondHuman } = input.transport;
+  const credential = yield* input.transport.authorize(secondHumanRole, cartAudience);
+  const created = yield* requireExecutedDraft(
+    'second-human-cart-draft-executed',
+    executeCreateCartDraftWithAuthorization(
+      { entries: [] },
+      Redacted.value(credential.authorization),
+      secondHuman.idempotencyKey,
+      { ...credential.options, idempotencyKey: secondHuman.idempotencyKey },
+    ),
+  );
+  const invocations = (yield* input.transport.core.evidence()).invocations.filter(
+    (row) => row.principalId === secondHuman.principalId,
+  );
+  const [invocation] = invocations;
+  yield* requireProtocol(
+    created.cart.preparationPrincipalId === secondHuman.principalId &&
+      invocations.length === 1 &&
+      invocation?.idempotencyKey === secondHuman.idempotencyKey &&
+      invocation.status === 'succeeded' &&
+      invocation.tenantId === input.tenantId &&
+      invocation.legalEntityId === input.legalEntityId,
+    'second-human-one-succeeded-invocation',
+  );
+  return invocation;
+});
+
+/** Sequential public-owner producer, never an injected READY/quote/currentness implementation.
  * The proposal is an untrusted command assembled from actual owner setup receipts. Every source
  * used below is subsequently obtained from real registered Actions or governed owner/Core reads.
  * This helper performs no bootstrap and runs no operation merely by being imported.
@@ -304,9 +520,8 @@ export const runRegisteredPreproposalBasisChain = Effect.fn('PreproposalNative.r
   }) {
     const { intent, transport } = input;
     yield* requireProtocol(
-      transport.buyerPrincipalId !== transport.pricingIssuerPrincipalId &&
-        input.proposal.identity.buyer.principalId === transport.buyerPrincipalId,
-      'distinct-buyer-and-actual-pricing-issuer',
+      input.proposal.identity.buyer.principalId === transport.buyerPrincipalId,
+      'proposal-buyer-is-the-delegated-subject',
     );
     const buyer = yield* transport.authorize('buyer', contextAudience);
     // The proposal is already decoded; validate its decoded (type-side) shape rather than the wire encoding.
@@ -314,15 +529,18 @@ export const runRegisteredPreproposalBasisChain = Effect.fn('PreproposalNative.r
       idempotencyKey: `${intent}:prepare`,
       proposal: input.proposal,
     });
-    const prepared = yield* executePreparePurchaseProposalBasisWithAuthorization(
-      preparation,
-      Redacted.value(buyer.authorization),
-      `${intent}:prepare`,
-      { ...buyer.options, idempotencyKey: `${intent}:prepare` },
+    const prepared = yield* requireExecutionResult(
+      PurchaseProposalBasisSchema,
+      executePreparePurchaseProposalBasisWithAuthorization(
+        preparation,
+        Redacted.value(buyer.authorization),
+        `${intent}:prepare`,
+        { ...buyer.options, idempotencyKey: `${intent}:prepare` },
+      ),
     );
     yield* requireProtocol(prepared.status === 'PREPARED', 'registered-preparation');
     const selector = { sourceRef: prepared.proposal.proposalRevisionRef.resourceId, sourceRevision: '1' };
-    const service = yield* transport.authorize(serviceRole, contextAudience);
+    const service = yield* transport.authorize(pricingModuleRole, contextAudience, requester);
     const pricingInput = yield* executePurchaseProposalBasisWithAuthorization(
       { ...selector, operation: 'PRICING_INPUT' },
       Redacted.value(service.authorization),
@@ -335,17 +553,20 @@ export const runRegisteredPreproposalBasisChain = Effect.fn('PreproposalNative.r
         pricingInput.facts === null,
       'retained-pricing-input',
     );
-    const issuer = yield* transport.authorize(pricingIssuerRole, pricingAudience);
+    const issuer = yield* transport.authorize('buyer', pricingAudience);
     const quotationIntent = `${intent}:quotation`;
-    const issued = yield* executeManageQuotationWithAuthorization(
-      {
-        candidateRef: pricingInput.pricingCandidateRef,
-        currentDecision: pricingInput.pricingInput,
-        reason: 'Native preproposal producer: exact retained owner input',
-      },
-      Redacted.value(issuer.authorization),
-      quotationIntent,
-      { ...issuer.options, idempotencyKey: quotationIntent },
+    const issued = yield* requireExecutionResult(
+      ManageQuotationResultSchema,
+      executeManageQuotationWithAuthorization(
+        {
+          candidateRef: pricingInput.pricingCandidateRef,
+          currentDecision: pricingInput.pricingInput,
+          reason: 'Native preproposal producer: exact retained owner input',
+        },
+        Redacted.value(issuer.authorization),
+        quotationIntent,
+        { ...issuer.options, idempotencyKey: quotationIntent },
+      ),
     );
     yield* requireProtocol(
       issued.quotation.binding.candidateRef === pricingInput.pricingCandidateRef &&
@@ -359,7 +580,7 @@ export const runRegisteredPreproposalBasisChain = Effect.fn('PreproposalNative.r
       (row) =>
         row.actionKey === 'commerce.pricing.manage-quotation' &&
         row.idempotencyKey === quotationIntent &&
-        row.principalId === transport.pricingIssuerPrincipalId &&
+        row.principalId === transport.buyerPrincipalId &&
         row.tenantId === prepared.proposal.context.tenantId &&
         row.legalEntityId === prepared.proposal.context.sellingLegalEntityId &&
         row.status === 'succeeded',
@@ -372,20 +593,24 @@ export const runRegisteredPreproposalBasisChain = Effect.fn('PreproposalNative.r
       ...selector,
       pricingIssuanceInvocationId: invocation.actionInvocationId,
     });
-    const completer = yield* transport.authorize(serviceRole, contextAudience);
-    const ready = yield* executeCompletePurchaseProposalBasisWithAuthorization(
-      completion,
-      Redacted.value(completer.authorization),
-      `${intent}:complete`,
-      { ...completer.options, idempotencyKey: `${intent}:complete` },
+    // The Pricing issuer is the only module that completes a basis, and it acts for the basis buyer (DESIGN D6).
+    const completer = yield* transport.authorize(pricingModuleRole, contextAudience, requester);
+    const ready = yield* requireExecutionResult(
+      PurchaseProposalBasisSchema,
+      executeCompletePurchaseProposalBasisWithAuthorization(
+        completion,
+        Redacted.value(completer.authorization),
+        `${intent}:complete`,
+        { ...completer.options, idempotencyKey: `${intent}:complete` },
+      ),
     );
     yield* requireProtocol(
       ready.status === 'READY' &&
         ready.pricingIssuanceInvocationId === invocation.actionInvocationId &&
-        ready.pricingIssuerPrincipalId === transport.pricingIssuerPrincipalId,
+        ready.pricingIssuerPrincipalId === transport.buyerPrincipalId,
       'registered-ready-provenance',
     );
-    const currentReader = yield* transport.authorize(serviceRole, contextAudience);
+    const currentReader = yield* transport.authorize(pricingModuleRole, contextAudience, requester);
     const current = yield* executePurchaseProposalBasisWithAuthorization(
       { ...selector, operation: 'CURRENT' },
       Redacted.value(currentReader.authorization),
@@ -433,13 +658,16 @@ export const runRegisteredPreproposalBasisChain = Effect.fn('PreproposalNative.r
         sourceRevisions,
       },
     });
-    const created = yield* executeCreatePurchaseProposalRevisionWithAuthorization(
-      command,
-      Redacted.value(creator.authorization),
-      `${intent}:create-proposal`,
-      { ...creator.options, idempotencyKey: `${intent}:create-proposal` },
+    const created = yield* requireExecutionResult(
+      CreatePurchaseProposalRevisionResultSchema,
+      executeCreatePurchaseProposalRevisionWithAuthorization(
+        command,
+        Redacted.value(creator.authorization),
+        `${intent}:create-proposal`,
+        { ...creator.options, idempotencyKey: `${intent}:create-proposal` },
+      ),
     );
-    const negativeCredential = yield* transport.authorize(serviceRole, contextAudience);
+    const negativeCredential = yield* transport.authorize(pricingModuleRole, contextAudience, requester);
     const alteredIssuance = yield* Schema.decodeUnknownEffect(CompletePurchaseProposalBasisPayloadSchema)({
       ...completion,
       pricingIssuanceInvocationId: randomUUID(),
@@ -464,21 +692,87 @@ export const runRegisteredPreproposalBasisChain = Effect.fn('PreproposalNative.r
     if (wrongIssuanceProblem?.code !== 'IDEMPOTENCY_CONFLICT') {
       return yield* new PreproposalNativeProtocolError({ stage: 'reject-changed-original-issuance-causal-conflict' });
     }
+    // Wrong actor, declared carrier: Purchase Proposal Basis reads declare only Pricing as an accessActor caller.
+    // The subject is the buyer; the module CCC is the actor, so Core must refuse it with deny.actor_unbound.
+    const cccActorOnPricingRead = yield* transport.authorize(cccModuleRole, contextAudience, requester);
+    const cccDecisionsBefore = yield* transport.core.delegatedDecisions(contextAudience);
+    const refusedRead = yield* Effect.exit(
+      executePurchaseProposalBasisWithAuthorization(
+        { ...selector, operation: 'CURRENT' },
+        Redacted.value(cccActorOnPricingRead.authorization),
+        `${intent}:wrong-actor-read`,
+        cccActorOnPricingRead.options,
+      ),
+    );
+    const [readRefusal, ...otherReadRefusals] = refusalsOf(refusedRead);
+    yield* requireProtocol(
+      Exit.isFailure(refusedRead) &&
+        otherReadRefusals.length === 0 &&
+        Schema.is(PurchaseProposalBasisForbiddenProblemSchema)(readRefusal),
+      'wrong-actor-read-refused-as-forbidden',
+    );
+    yield* requireModuleCallDecision(
+      rowsSince(cccDecisionsBefore, yield* transport.core.delegatedDecisions(contextAudience)),
+      {
+        actorPrincipalId: transport.buyerPrincipalId,
+        code: 'deny.actor_unbound',
+        delegatePrincipalId: transport.cccReaderPrincipalId,
+        outcome: 'DENIED',
+        stage: 'wrong-actor-read-denied-by-actor-unbound',
+      },
+    );
+    // Wrong actor, declared carrier: completion declares only Pricing as an accessActor caller. The subject is the
+    // buyer of the relayed request; the module CCC is the actor, so Core must refuse it with deny.actor_unbound.
+    const cccActorOnCompletion = yield* transport.authorize(cccModuleRole, contextAudience, requester);
+    const completionDecisionsBefore = yield* transport.core.delegatedDecisions(contextAudience);
+    const refusedCompletion = yield* Effect.exit(
+      executeCompletePurchaseProposalBasisWithAuthorization(
+        completion,
+        Redacted.value(cccActorOnCompletion.authorization),
+        `${intent}:wrong-actor-complete`,
+        { ...cccActorOnCompletion.options, idempotencyKey: `${intent}:wrong-actor-complete` },
+      ),
+    );
+    const [completionRefusal, ...otherCompletionRefusals] = refusalsOf(refusedCompletion);
+    yield* requireProtocol(
+      Exit.isFailure(refusedCompletion) &&
+        otherCompletionRefusals.length === 0 &&
+        Schema.is(CompletePurchaseProposalBasisActionForbiddenProblemSchema)(completionRefusal) &&
+        completionRefusal.code === 'action_permission_denied',
+      'wrong-actor-completion-refused-as-forbidden',
+    );
+    yield* requireModuleCallDecision(
+      rowsSince(completionDecisionsBefore, yield* transport.core.delegatedDecisions(contextAudience)),
+      {
+        actorPrincipalId: transport.buyerPrincipalId,
+        code: 'deny.actor_unbound',
+        delegatePrincipalId: transport.cccReaderPrincipalId,
+        outcome: 'DENIED',
+        stage: 'wrong-actor-completion-denied-by-actor-unbound',
+      },
+    );
+    const nonBuyerSubjectRefusal = yield* refuseNonBuyerSubjectRead({ transport });
     const rejectionEvidence = yield* transport.core.evidence();
     const rejectedInvocations = rejectionEvidence.invocations.filter(
       (row) =>
-        row.actionKey === 'commerce.customer-context.complete-purchase-proposal-basis' &&
+        row.actionKey === completeBasisActionKey &&
         row.correlationId === `${intent}:wrong-issuance` &&
         row.idempotencyKey === `${intent}:wrong-issuance` &&
-        row.principalId === transport.cccReaderPrincipalId &&
+        row.principalId === transport.buyerPrincipalId &&
         row.tenantId === prepared.proposal.context.tenantId &&
         row.legalEntityId === prepared.proposal.context.sellingLegalEntityId,
     );
+    yield* requireOneRejectedInvocation(rejectionEvidence.invocations, {
+      actionKey: completeBasisActionKey,
+      correlationId: `${intent}:wrong-actor-complete`,
+      principalId: transport.buyerPrincipalId,
+      stage: 'refused-actor-records-one-rejected-invocation',
+    });
     const [rejectedInvocation] = rejectedInvocations;
     if (rejectedInvocations.length !== 1 || rejectedInvocation === undefined) {
       return yield* new PreproposalNativeProtocolError({ stage: 'changed-issuance-registered-request-provenance' });
     }
-    const retainedCredential = yield* transport.authorize(serviceRole, contextAudience);
+    const retainedCredential = yield* transport.authorize(pricingModuleRole, contextAudience, requester);
     const retained = yield* executePurchaseProposalBasisWithAuthorization(
       { ...selector, operation: 'CURRENT' },
       Redacted.value(retainedCredential.authorization),
@@ -495,6 +789,7 @@ export const runRegisteredPreproposalBasisChain = Effect.fn('PreproposalNative.r
       current,
       invocation,
       issued,
+      nonBuyerSubjectRefusal,
       observedEvaluation,
       prepared,
       pricingInput,
@@ -531,16 +826,19 @@ const PermissionEnvironmentSchema = Schema.Struct({
 export const readAllocatedPermissionEnvironment = Effect.fn('PreproposalNative.readAllocatedPermissionConfiguration')(
   function* readAllocatedPermissionEnvironment() {
     const configuration = yield* Config.all({
-      ca: Config.Redacted('SPICEDB_CA_CERT'),
+      ca: Config.Redacted('SPICEDB_CA_CERT').pipe(Config.option),
       deployment: Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(Config.option),
       endpoint: Config.String('SPICEDB_ENDPOINT'),
       key: Config.Redacted('SPICEDB_PRESHARED_KEY'),
     }).parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true }));
     const environment: NativePermissionEnvironment = {
-      SPICEDB_CA_CERT: Redacted.value(configuration.ca),
       SPICEDB_ENDPOINT: configuration.endpoint,
       SPICEDB_PRESHARED_KEY: Redacted.value(configuration.key),
     };
+    // A local SpiceDB without TLS has no CA certificate; the schema keeps the field optional for that case.
+    if (Option.isSome(configuration.ca)) {
+      environment.SPICEDB_CA_CERT = Redacted.value(configuration.ca.value);
+    }
     if (Option.isSome(configuration.deployment)) {
       environment.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT = configuration.deployment.value;
     }
@@ -565,7 +863,7 @@ const ownerDefinitions = [
     moduleId: identityModule,
     owner: 'apps/shell-super-app',
     receiver: 'tenant-party-shell-http.ts',
-    serve: serveOwner,
+    serve: serveShellWithAccessIntent,
   },
   {
     appId: partyAudience,
@@ -632,6 +930,30 @@ const ReadySchema = Schema.Struct({ marker: MarkerSchema, port: Schema.Int, type
 const safeFailure = (stage: string) => new PreproposalNativeProtocolError({ stage });
 const io = <Value>(stage: string, operation: () => Promise<Value>) =>
   Effect.tryPromise({ catch: () => safeFailure(stage), try: operation });
+
+/**
+ * The Tenant's access, written the way a Tenant gets it: `bootstrapTenantAccess` makes the buyer (who also
+ * operates this Tenant) its owner holding "Plný přístup" in every scope, and the second human joins the Tenant
+ * and the buyer's Legal Entity and holds that role in the Legal Entity only. The module service principals hold
+ * nothing: Core admits a module call by the carrier's `accessActor`, never by a grant.
+ */
+const seedNativeTenantAccess = Effect.fn('PreproposalNative.seedTenantAccess')(function* seedNativeTenantAccess(input: {
+  readonly adminConnectionString: string;
+  readonly core: NativeCoreFixture;
+  readonly permissionEnvironment: NativePermissionEnvironment;
+  readonly secondHuman: NativeCoreFixture['manager'];
+}) {
+  const spiceDb = yield* parseSpiceDbConfig(input.permissionEnvironment).pipe(
+    Effect.mapError(() => safeFailure('access-seed-permissions')),
+  );
+  return yield* grantTestTenantOwnerAccess({
+    adminConnectionString: Redacted.make(input.adminConnectionString),
+    legalEntityIds: [input.core.legalEntityId],
+    memberPrincipalIds: [input.secondHuman.principalId],
+    owner: input.core.manager,
+    spiceDb,
+  });
+});
 
 /** Private scoped child IPC; the standard platform spawner owns termination/fds. */
 export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function* openNativeChild(input: {
@@ -1259,6 +1581,19 @@ const makeCompositionSource = Effect.fn('PreproposalNative.compositionSource')(f
   return `http://127.0.0.1:${address.port}/composition`;
 });
 
+/**
+ * The second human is Core's own Legal Entity actor of the buyer's Tenant: a human principal with its own active
+ * binding and Legal Entity membership, which the buyer's basis never names.
+ */
+const secondHumanOf = (core: NativeCoreFixture): NativeCoreFixture['manager'] => ({
+  authBindingId: core.legalEntityOnly.authBindingId,
+  authContextRef: core.legalEntityOnly.authContextRef,
+  authenticationNamespaceId: core.legalEntityOnly.authenticationNamespaceId,
+  authMethod: core.legalEntityOnly.authMethod,
+  principalId: core.legalEntityOnly.principalId,
+  tenantId: core.legalEntityOnly.tenantId,
+});
+
 const identityProtocol = 'ontos.shell.preproposal-basis.identity.v1';
 const identityService = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
@@ -1270,25 +1605,39 @@ const IdentityCreatedSchema = Schema.Struct({
   protocol: Schema.Literal(identityProtocol),
   providerUserId: ProviderSubjectIdSchema,
 });
+const moduleCredentialIdentity = Schema.Struct({ ...identityService.fields, providerKeyId: ProviderSubjectIdSchema });
 const IdentityKeysSchema = Schema.Struct({
   buyer: identityService,
   buyerPrincipalId: PrincipalIdSchema,
-  cccReader: identityService,
-  marketRelay: Schema.Struct({ ...identityService.fields, providerKeyId: ProviderSubjectIdSchema }),
+  // The buyer's actual Shell sessions (Legal Entity selected, Tenant only). A relayed assertion is rechecked against one.
+  buyerSessions: Schema.Struct({
+    legalEntity: Schema.Struct({ authContextRef: Schema.String, legalEntityId: LegalEntityIdSchema }),
+    tenant: Schema.Struct({ authContextRef: Schema.String }),
+  }),
+  catalog: moduleCredentialIdentity,
+  cccReader: moduleCredentialIdentity,
+  marketRelay: moduleCredentialIdentity,
   operation: Schema.Literal('SERVICE_KEYS_CREATED'),
-  pricingIssuer: identityService,
+  pricingIssuer: moduleCredentialIdentity,
   protocol: Schema.Literal(identityProtocol),
   tenantId: TenantIdSchema,
 });
+/** Two distinct live Shell sessions of the buyer: one in the fixture's Legal Entity, one in the Tenant only. */
+const genuineBuyerSessions = (identities: typeof IdentityKeysSchema.Type, legalEntityId: string) =>
+  identities.buyerSessions.legalEntity.legalEntityId === legalEntityId &&
+  identities.buyerSessions.legalEntity.authContextRef.startsWith('better-auth-session:') &&
+  identities.buyerSessions.tenant.authContextRef.startsWith('better-auth-session:') &&
+  identities.buyerSessions.tenant.authContextRef !== identities.buyerSessions.legalEntity.authContextRef;
 const distinctManagedIdentities = (identities: typeof IdentityKeysSchema.Type, buyer: string, tenant: string) =>
   identities.buyerPrincipalId === buyer &&
   identities.buyer.principalId === buyer &&
   new Set([
     buyer,
+    identities.catalog.principalId,
     identities.cccReader.principalId,
     identities.pricingIssuer.principalId,
     identities.marketRelay.principalId,
-  ]).size === 4 &&
+  ]).size === 5 &&
   identities.tenantId === tenant &&
   identities.cccReader.principalId !== identities.pricingIssuer.principalId &&
   identities.cccReader.principalId !== buyer &&
@@ -1339,7 +1688,7 @@ const nativeActionKeys = [
   'commerce.customer-context.grant-counterparty-commerce-access',
   'commerce.customer-context.administer-purchase-currency-policy',
   'commerce.customer-context.prepare-purchase-proposal-basis',
-  'commerce.customer-context.complete-purchase-proposal-basis',
+  completeBasisActionKey,
   'commerce.customer-context.create-purchase-proposal-revision',
   'commerce.customer-context.create-approval-hierarchy',
   'commerce.customer-context.change-counterparty-purchase-limit',
@@ -1368,6 +1717,8 @@ const originalPartyReviewEvidenceMatches = (
   original.committedCreateOutcome === 'AMBIGUOUS' &&
   original.caseRef !== null &&
   Schema.toEquivalence(DuplicateCandidateDetailResponseSchema.fields.caseRef)(original.caseRef, detail.caseRef) &&
+  // Evidence the reviewer may not read is absent, which never matches the original decision.
+  detail.evaluatedEvidence !== undefined &&
   Schema.toEquivalence(PartyMatchDecisionResponseSchema.fields.evidenceExplanation)(
     original.evidenceExplanation,
     detail.evaluatedEvidence,
@@ -1451,7 +1802,11 @@ export const createRegisteredPreproposalParty = Effect.fn('PreproposalNative.cre
       !sameCase(detail.caseRef, initialCreate.caseRef) ||
       !['OPEN', 'NEEDS_EVIDENCE'].includes(detail.lifecycleState) ||
       detail.candidate.partyType !== 'PERSON' ||
-      !Schema.toEquivalence(CreatePartyPayloadSchema)({ candidate: detail.candidate }, input.payload)
+      detail.candidate.officialIdentifiers === undefined ||
+      !Schema.toEquivalence(CreatePartyPayloadSchema)(
+        { candidate: { ...detail.candidate, officialIdentifiers: detail.candidate.officialIdentifiers } },
+        input.payload,
+      )
     ) {
       return yield* refuse(
         initialCreate.outcome,
@@ -1521,7 +1876,6 @@ export const createRegisteredPreproposalParty = Effect.fn('PreproposalNative.cre
 
 /** Entire setup is scoped inside the explicitly selected integration case. */
 export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNative.fixture')(
-  // oxlint-disable-next-line eslint/complexity -- One generator sequences the whole native owner chain; remove-when: the chain is split per owner.
   function* makeRegisteredPreproposalNativeFixture() {
     const configuration = yield* Config.all({
       admin: Config.Redacted('DATABASE_ADMIN_URL'),
@@ -1679,6 +2033,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     yield* Effect.logInfo('Preproposal native: initializing Core operation fixture');
     const core = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
+        access: 'allowed',
         actionExecutor: 'manager-only',
         actionKeys: [...nativeActionKeys, ...identitySetupActionKeys, ...partySetupActionKeys],
         adminConnectionString: Redacted.make(owned.connections.admin.connectionString),
@@ -1712,14 +2067,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       distinctManagedIdentities(identities, core.manager.principalId, core.tenantId),
       'genuine-distinct-managed-identities',
     );
-    for (const service of [identities.cccReader, identities.pricingIssuer]) {
-      yield* core.grantExistingService({
-        actionKeys: nativeActionKeys,
-        legalEntityId: core.legalEntityId,
-        moduleKeys,
-        principalId: service.principalId,
-      });
-    }
+    yield* requireProtocol(genuineBuyerSessions(identities, core.legalEntityId), 'actual-buyer-sessions');
     yield* identityChild.send(JSON.stringify({ operation: 'STOP', protocol: identityProtocol }), 'private', true);
     yield* identityChild.read(
       Schema.Struct({ operation: Schema.Literal('STOPPED'), protocol: Schema.Literal(identityProtocol) }),
@@ -1737,12 +2085,6 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       permissionEnvironment.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT =
         core.permissionEnvironment.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT;
     }
-    const serviceGrant = {
-      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-      legalEntityId: core.legalEntityId,
-      principalId: identities.cccReader.principalId,
-      tenantId: core.tenantId,
-    };
     const ownerFor = (audience: string) => {
       const owner = owners.find((candidate) => candidate.appId === audience);
       if (owner === undefined) {
@@ -1750,51 +2092,52 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       }
       return owner;
     };
+    // One deployment credential per calling module (service principal, bound to its release). The Shell alone
+    // holds the bindings that attest each credential to exactly one module source.
+    const moduleCredentials = [
+      { appId: contextAudience, identity: identities.cccReader },
+      { appId: pricingAudience, identity: identities.pricingIssuer },
+      { appId: marketAudience, identity: identities.marketRelay },
+      { appId: catalogAudience, identity: identities.catalog },
+    ] as const;
+    const gatewayModuleBindings = JSON.stringify(
+      moduleCredentials.map(({ appId, identity }) => ({
+        compositionRevision,
+        providerKeyId: identity.providerKeyId,
+        sourceAppId: appId,
+        sourceBuildMarker: ownerFor(appId).marker.buildMarker,
+      })),
+    );
     const environment = {
       ...baseEnvironment,
       ...permissionEnvironment,
-      [`ONTOS_CATALOG_CART_POPULATION_${core.tenantId.replaceAll('-', '').toUpperCase()}_GATEWAY_API_KEY`]:
-        Redacted.value(identities.cccReader.secret),
-      [`ONTOS_CATALOG_CART_POPULATION_${core.tenantId.replaceAll('-', '').toUpperCase()}_OWNER_ORIGIN`]:
-        owners.find((owner) => owner.appId === cartAudience)?.origin ?? '',
-      [`ONTOS_CATALOG_CART_POPULATION_${core.tenantId.replaceAll('-', '').toUpperCase()}_SHELL_ORIGIN`]: shell.origin,
-      ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS: JSON.stringify([
-        serviceGrant,
-        { ...serviceGrant, principalId: identities.pricingIssuer.principalId },
-      ]),
-      // CCC's preproposal identity is the Pricing issuer: Pricing reports the calling principal as the Quotation issuer.
-      ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY: Redacted.value(identities.pricingIssuer.secret),
-      ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID: identities.pricingIssuer.principalId,
-      ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS: JSON.stringify([
-        serviceGrant,
-        { ...serviceGrant, principalId: identities.pricingIssuer.principalId },
-      ]),
-      ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: Redacted.value(identities.cccReader.secret),
       ONTOS_PREPROPOSAL_FAILURE_SPAN: 'service.resolveSubmission',
-      // Dedicated workload authentication; relay retains the actual incoming buyer as the provider actor.
-      ONTOS_GATEWAY_RELAY_API_KEY: Redacted.value(identities.marketRelay.secret),
-      ONTOS_GATEWAY_RELAY_SOURCE_BINDINGS: JSON.stringify([
-        {
-          compositionRevision,
-          providerKeyId: identities.marketRelay.providerKeyId,
-          sourceAppId: marketAudience,
-          sourceBuildMarker: ownerFor(marketAudience).marker.buildMarker,
-        },
-      ]),
       // Run-local signing material for Pricing immutable owner proofs; never a deployed secret.
       ONTOS_PRICING_CONFIRMATION_KEY_LINEAGE_REF: 'preproposal-native-lineage',
       ONTOS_PRICING_CONFIRMATION_KEY_REF: 'preproposal-native-key',
       ONTOS_PRICING_CONFIRMATION_KEY_VERSION: '1',
       ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: randomBytes(32).toString('hex'),
-      ONTOS_PRICING_GATEWAY_API_KEY: Redacted.value(identities.pricingIssuer.secret),
-      ONTOS_PRICING_PREPROPOSAL_NAMESPACE_ID: STAFF_AUTHENTICATION_NAMESPACE_ID,
-      ONTOS_PRICING_PREPROPOSAL_PRINCIPAL_ID: identities.pricingIssuer.principalId,
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.origin}/shell-super-app-api`,
+    };
+    // Each module process receives only its own credential; the Shell receives the binding table.
+    const environmentFor = (appId: string) => {
+      const moduleEnvironment: typeof environment & {
+        ONTOS_GATEWAY_MODULE_API_KEY?: string;
+        ONTOS_GATEWAY_MODULE_BINDINGS?: string;
+      } = { ...environment };
+      const credential = moduleCredentials.find((candidate) => candidate.appId === appId);
+      if (credential !== undefined) {
+        moduleEnvironment.ONTOS_GATEWAY_MODULE_API_KEY = Redacted.value(credential.identity.secret);
+      }
+      if (appId === shellAudience) {
+        moduleEnvironment.ONTOS_GATEWAY_MODULE_BINDINGS = gatewayModuleBindings;
+      }
+      return moduleEnvironment;
     };
     for (const owner of owners) {
       const receiver = yield* openNativeChild({
         args: [owner.artifact, owner.serve],
-        environment,
+        environment: environmentFor(owner.appId),
         stage: `receiver:${owner.appId}`,
       });
       const ready = yield* receiver.read(ReadySchema, 'public');
@@ -1817,15 +2160,39 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       stage: 'core-signed-assertion-registrar',
     });
     yield* scopeGrantChild.read(Schema.Struct({ type: Schema.Literal('ready') }), 'public');
+    const secondHuman = secondHumanOf(core);
+    yield* requireProtocol(
+      ![
+        core.manager.principalId,
+        identities.catalog.principalId,
+        identities.cccReader.principalId,
+        identities.marketRelay.principalId,
+        identities.pricingIssuer.principalId,
+      ].includes(secondHuman.principalId),
+      'distinct-second-human-of-the-tenant',
+    );
+    yield* seedNativeTenantAccess({
+      adminConnectionString: owned.connections.admin.connectionString,
+      core,
+      permissionEnvironment,
+      secondHuman,
+    });
+    const secondHumanIntent = `${intent}:second-human-cart`;
     const signBuyer = Effect.fn('PreproposalNative.TESTAuthenticationOnly')(function* signBuyer(
       audience: string,
       legalEntity: boolean,
       storefront: boolean,
+      human: typeof core.manager = core.manager,
     ) {
       const owner = ownerFor(audience);
       const now = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000);
       const principal: typeof core.manager & { legalEntityId?: string; trustedStorefrontId?: string } = {
-        ...core.manager,
+        ...human,
+        // The buyer's assertion names the live session it is signed in with, in the Legal Entity or the Tenant.
+        authContextRef:
+          human.principalId === core.manager.principalId
+            ? (legalEntity ? identities.buyerSessions.legalEntity : identities.buyerSessions.tenant).authContextRef
+            : human.authContextRef,
       };
       if (legalEntity) {
         principal.legalEntityId = core.legalEntityId;
@@ -1847,7 +2214,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
             .setProtectedHeader({ alg: 'EdDSA', kid, typ: 'JWT' })
             .setIssuer(issuer)
             .setAudience(audience)
-            .setSubject(core.manager.principalId)
+            .setSubject(human.principalId)
             .setIssuedAt(now)
             .setExpirationTime(expiresAtEpochSeconds)
             .setJti(jti)
@@ -1861,7 +2228,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
             expiresAtEpochSeconds,
             jti,
             legalEntityId: principal.legalEntityId,
-            principalId: core.manager.principalId,
+            principalId: human.principalId,
             tenantId: core.tenantId,
           }),
           'stdin',
@@ -1870,53 +2237,149 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       }
       return Redacted.make(`Bearer ${token}`);
     });
-    const serviceCredential = Effect.fn('PreproposalNative.actualShellServiceCredential')(function* serviceCredential(
-      service: typeof identities.cccReader,
-      audience: string,
-      legalEntity: boolean,
+    // A human signs its own request; only the buyer carries the trusted Storefront to Customer Context.
+    const humanAuthorization = (role: 'buyer' | 'operator' | typeof secondHumanRole, audience: NativeAudience) =>
+      role === secondHumanRole
+        ? signBuyer(audience, true, false, secondHuman)
+        : signBuyer(
+            audience,
+            !(role === 'operator' && audience === cartAudience),
+            role === 'buyer' && audience === contextAudience,
+          );
+    // A module call is one delegated Shell admission: the calling module's own credential, its subject and the
+    // module as the actor. Nothing else. A relayed requester assertion is the one the module itself received.
+    const delegatedSubjectWire = Effect.fn('PreproposalNative.delegatedSubjectWire')(function* delegatedSubjectWire(
+      appId: typeof contextAudience | typeof pricingAudience,
+      subject: ModuleCallSubject,
     ) {
-      const request: MutableNativeGatewayRequest = {
-        audience,
-        compositionRevision,
-      };
-      if (legalEntity) {
-        request.legalEntityId = core.legalEntityId;
+      if (Option.isNone(subject)) {
+        const relayed = yield* humanAuthorization('buyer', appId);
+        return { _tag: 'Assertion' as const, sourceAssertion: Redacted.value(relayed).slice('Bearer '.length) };
       }
-      const result = yield* issueApiKeyGatewayContext(request, {
-        apiKey: service.secret,
-        baseUrl: `${shell.origin}/shell-super-app-api`,
-        requestCorrelation: `${intent}:service-credential`,
-      });
-      yield* requireProtocol(result.compositionRevision === compositionRevision, 'actual-shell-composition');
-      return Redacted.make(`Bearer ${result.token}`);
+      const evidence = yield* core.evidence(evidenceDatabase);
+      // The named registered invocation of the originator principal is the only originator; ordering never selects it.
+      const originating = evidence.invocations.filter(
+        (row) =>
+          row.idempotencyKey === subject.value.idempotencyKey &&
+          row.principalId === subject.value.principalId &&
+          row.tenantId === core.tenantId &&
+          row.legalEntityId === core.legalEntityId &&
+          row.status === 'succeeded',
+      );
+      const [subjectInvocation] = originating;
+      if (originating.length !== 1 || subjectInvocation === undefined) {
+        return yield* new PreproposalNativeProtocolError({ stage: 'delegated-subject-invocation' });
+      }
+      return {
+        _tag: 'Originator' as const,
+        actionInvocationId: subjectInvocation.actionInvocationId,
+        tenantId: core.tenantId,
+      };
     });
+    const delegatedModuleCredential = Effect.fn('PreproposalNative.delegatedModuleCredential')(
+      function* delegatedModuleCredential(
+        role: typeof cccModuleRole | typeof pricingModuleRole,
+        audience: string,
+        subject: ModuleCallSubject | undefined,
+      ) {
+        if (subject === undefined) {
+          return yield* new PreproposalNativeProtocolError({ stage: `module-call-subject:${role}` });
+        }
+        const appId = role === pricingModuleRole ? pricingAudience : contextAudience;
+        const identity = role === pricingModuleRole ? identities.pricingIssuer : identities.cccReader;
+        const issued = yield* issueDelegatedGatewayContext(
+          {
+            audience,
+            compositionRevision,
+            exchangeId: randomUUID(),
+            legalEntityScope: 'subject',
+            subject: yield* delegatedSubjectWire(appId, subject),
+          },
+          {
+            apiKey: identity.secret,
+            baseUrl: `${shell.origin}/shell-super-app-api`,
+            requestCorrelation: `${intent}:delegated:${appId}:${audience}`,
+          },
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PreproposalNativeProtocolError({
+                stage: Predicate.isTagged(cause, 'GatewayForbiddenProblem')
+                  ? `delegated-module-credential-forbidden:${appId}`
+                  : `delegated-module-credential:${appId}`,
+              }),
+          ),
+        );
+        yield* requireProtocol(issued.compositionRevision === compositionRevision, 'actual-shell-composition');
+        return { authorization: Redacted.make(`Bearer ${issued.token}`) };
+      },
+    );
+    // Integration credentials (a human's own API key) still use the Shell's external issuance path.
+    const integrationCredential = Effect.fn('PreproposalNative.actualShellIntegrationCredential')(
+      function* integrationCredential(service: typeof identities.buyer, audience: string) {
+        const request: MutableNativeGatewayRequest = {
+          audience,
+          compositionRevision,
+          legalEntityId: core.legalEntityId,
+        };
+        const result = yield* issueApiKeyGatewayContext(request, {
+          apiKey: service.secret,
+          baseUrl: `${shell.origin}/shell-super-app-api`,
+          requestCorrelation: `${intent}:integration-credential`,
+        });
+        yield* requireProtocol(result.compositionRevision === compositionRevision, 'actual-shell-composition');
+        return Redacted.make(`Bearer ${result.token}`);
+      },
+    );
     const authorize = Effect.fn('PreproposalNative.authorize')(function* authorize(
       role: NativeRole,
       audience: NativeAudience,
+      subject?: ModuleCallSubject,
     ) {
       const authorization =
-        role === 'buyer' || role === 'operator'
-          ? yield* signBuyer(
-              audience,
-              !(role === 'operator' && audience === cartAudience),
-              role === 'buyer' && audience === contextAudience,
-            )
-          : yield* serviceCredential(
-              role === pricingIssuerRole ? identities.pricingIssuer : identities.cccReader,
-              audience,
-              true,
-            );
+        role === 'buyer' || role === 'operator' || role === secondHumanRole
+          ? yield* humanAuthorization(role, audience)
+          : (yield* delegatedModuleCredential(role, audience, subject)).authorization;
       return {
         authorization,
         options: { baseUrl: new URL(`${ownerFor(audience).origin}/${audience}-api`), compositionRevision },
       };
     });
+    // Core's decision log is read through the same admin evidence executor as the invocation rows.
+    const delegatedDecisionRows = Effect.fn('PreproposalNative.delegatedDecisionRows')(function* delegatedDecisionRows(
+      delegateAppId: string,
+    ) {
+      const rows = yield* Effect.gen(function* readDelegatedDecisionRows() {
+        const sql = yield* PgClient.PgClient;
+        return yield* sql.unsafe(
+          `select decision_log_id::text as "decisionLogId", actor_principal_id::text as "actorPrincipalId", delegate_principal_id::text as "delegatePrincipalId", outcome, reasons_json as reasons from core.access_decision_logs where tenant_id = $1 and delegate_app_id = $2 and delegate_principal_id is not null order by decided_at asc, decision_log_id asc`,
+          [core.tenantId, delegateAppId],
+        );
+      }).pipe(
+        Effect.provideContext(evidenceServices),
+        Effect.mapError(() => new PreproposalNativeProtocolError({ stage: 'delegated-decision-rows' })),
+      );
+      const decoded = yield* Schema.decodeUnknownEffect(DelegatedDecisionRowsSchema)(rows).pipe(
+        Effect.mapError(() => new PreproposalNativeProtocolError({ stage: 'delegated-decision-rows' })),
+      );
+      return decoded.map((row) => ({
+        actorPrincipalId: row.actorPrincipalId,
+        decisionLogId: row.decisionLogId,
+        delegatePrincipalId: row.delegatePrincipalId,
+        outcome: row.outcome,
+        reasons: row.reasons.map((reason) => reason.code),
+      }));
+    });
     const transport = {
       authorize,
       buyerPrincipalId: core.manager.principalId,
       cccReaderPrincipalId: identities.cccReader.principalId,
-      core: { evidence: () => core.evidence(evidenceDatabase) },
+      core: {
+        delegatedDecisions: delegatedDecisionRows,
+        evidence: () => core.evidence(evidenceDatabase),
+      },
       pricingIssuerPrincipalId: identities.pricingIssuer.principalId,
+      secondHuman: { idempotencyKey: secondHumanIntent, principalId: secondHuman.principalId },
     };
     const now = yield* DateTime.now;
     const at = DateTime.formatIso(now);
@@ -1980,28 +2443,26 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
         idempotencyKey: `${intent}:customer`,
       },
     );
-    yield* core.grantResourceAccess(counterparty.counterpartyRef, identities.cccReader.principalId, 'reader');
-    yield* core.grantResourceAccess(counterparty.counterpartyRef, identities.pricingIssuer.principalId, 'reader');
     const profileCredential = yield* authorize('operator', contextAudience);
-    const profile = yield* executeCreateCounterpartyPurchasingProfileWithAuthorization(
-      {
-        effectiveAt: at,
-        subject: { counterpartyRef: counterparty.counterpartyRef, kind: 'COUNTERPARTY' },
-        trigger: 'AUTHORIZED_ONBOARDING',
-      },
-      Redacted.value(profileCredential.authorization),
-      `${intent}:profile`,
-      { ...profileCredential.options, idempotencyKey: `${intent}:profile` },
+    const profile = yield* requireExecutionResult(
+      CreateCounterpartyPurchasingProfileResultSchema,
+      executeCreateCounterpartyPurchasingProfileWithAuthorization(
+        {
+          effectiveAt: at,
+          subject: { counterpartyRef: counterparty.counterpartyRef, kind: 'COUNTERPARTY' },
+          trigger: 'AUTHORIZED_ONBOARDING',
+        },
+        Redacted.value(profileCredential.authorization),
+        `${intent}:profile`,
+        { ...profileCredential.options, idempotencyKey: `${intent}:profile` },
+      ),
     );
     yield* requireProtocol(
       profile.outcome === 'PROFILE_CREATED' && profile.state === 'ACTIVE',
       'registered-active-profile',
     );
 
-    const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
-      Layer.provide(profileRetailPermissionReaderFactoryLive),
-      Layer.provide(ContextAccessLive),
-    );
+    const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive));
     const ownerConfiguration = ConfigProvider.layer(ConfigProvider.fromUnknown(environment));
     const ownIdentity = yield* resolveNativeOwnerIdentity('verticals/commerce-customer-context');
     const ownDeployment = { appId: contextAudience, buildMarker: ownIdentity.buildMarker };
@@ -2013,7 +2474,12 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(states));
     const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
-    const resolver = OperationalScopeResolverLive.pipe(Layer.provide(Layer.mergeAll(persistence, ContextAccessLive)));
+    // The owned database carries no v2 access intent for this in-process owner runtime, so the one gate is
+    // scripted to allow, as the Core operation fixture's gate does for the same suite.
+    const access = makeTestAccessGateLayers({ spec: { defaultAnswer: { outcome: 'ALLOWED' } } });
+    const resolver = OperationalScopeResolverLive.pipe(
+      Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
+    );
     const common = Layer.mergeAll(
       persistence,
       ActionRepositoryLive.pipe(Layer.provide(persistence)),
@@ -2024,6 +2490,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       resolver,
       staffAuthenticationNamespaceRegistryLayer([contextAudience]),
       Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      access,
       overlay,
     );
     const ownerRuntimeLayer = Layer.mergeAll(
@@ -2083,7 +2550,6 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     const workerLayer = outboxWorkerLayer.pipe(
       Layer.provide(OutboxRepositoryLive),
       Layer.provide(ContextAccessLive),
-      Layer.provide(BusinessPermissionRelationshipMutationLive),
       Layer.provideMerge(ownerRuntimeLayer),
       Layer.provide(ownerConfiguration),
     );
@@ -2114,7 +2580,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
         const grants = yield* core
           .prepareOwner(
             (transaction) =>
-              transaction.invoke(beginGrant, [
+              transaction.invoke(grantAccess, [
                 counterparty.counterpartyRef.resourceId,
                 principalRef.principalId,
                 permission,
@@ -2132,41 +2598,6 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
         if (initialGrant === undefined) {
           return yield* safeFailure('initial-approval-grant-missing');
         }
-        const permissionRelation = {
-          permission,
-          principal: principalRef,
-          target: {
-            counterpartyId: counterparty.counterpartyRef.resourceId,
-            kind: 'counterparty' as const,
-            legalEntityId: core.legalEntityId,
-            tenantId: core.tenantId,
-          },
-        };
-        const permissionMutation = Context.get(
-          yield* Layer.build(BusinessPermissionRelationshipMutationLive.pipe(Layer.provide(ownerConfiguration))),
-          BusinessPermissionRelationshipMutation,
-        );
-        yield* permissionMutation.mutate({
-          ...permissionRelation,
-          operation: 'grant',
-          target: customerOwnerPermissionTarget(permissionRelation),
-        });
-        yield* Effect.addFinalizer(() =>
-          permissionMutation
-            .mutate({
-              ...permissionRelation,
-              operation: 'revoke',
-              target: customerOwnerPermissionTarget(permissionRelation),
-            })
-            .pipe(Effect.orDie),
-        );
-        yield* core
-          .prepareOwner(
-            (transaction) =>
-              transaction.invoke(settleGrant, [initialGrant.grant_id, initialGrant.mutation_id, 'grant', 'ACTIVE']),
-            'required',
-          )
-          .pipe(Effect.provideContext(runtimeContext));
         return yield* Effect.void;
       },
     );
@@ -2186,19 +2617,30 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     if (purchaseLimit.currentPolicy === null) {
       return yield* safeFailure('registered-purchase-limit');
     }
-    const bootstrapCredential = yield* authorize(serviceRole, contextAudience);
+    // Bootstrap is an internal seam: the owner runs it through its own redeemed API-key credential, never a session.
+    const bootstrapAuthorization = yield* integrationCredential(identities.buyer, contextAudience);
     const administrator = yield* executeBootstrapCounterpartyAccessAdministratorWithAuthorization(
       {
         counterpartyRef: counterparty.counterpartyRef,
         reason: 'Actual internal owner bootstraps distinct human buyer administration',
         recipient: principalRef,
       },
-      Redacted.value(bootstrapCredential.authorization),
+      Redacted.value(bootstrapAuthorization),
       `${intent}:administrator`,
-      { ...bootstrapCredential.options, idempotencyKey: `${intent}:administrator` },
+      {
+        baseUrl: new URL(`${ownerFor(contextAudience).origin}/${contextAudience}-api`),
+        compositionRevision,
+        idempotencyKey: `${intent}:administrator`,
+      },
     );
     yield* cycle();
-    for (const permission of ['counterparty.purchase.prepare', 'counterparty.purchase.submit'] as const) {
+    // Pricing resolves the buyer's Price Group for the buyer itself, so the buyer also reads its Counterparty profile.
+    const buyerGrants = [
+      { permission: 'counterparty.purchase.prepare', scope: { kind: 'storefront', storefrontKey: storefrontId } },
+      { permission: 'counterparty.purchase.submit', scope: { kind: 'storefront', storefrontKey: storefrontId } },
+      { permission: 'counterparty.profile.read', scope: { kind: 'counterparty' } },
+    ] as const;
+    for (const { permission, scope } of buyerGrants) {
       const grantCredential = yield* authorize('buyer', contextAudience);
       yield* executeGrantCounterpartyCommerceAccessWithAuthorization(
         {
@@ -2206,7 +2648,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
           permission,
           reason: 'Native registered human buyer authority',
           recipient: principalRef,
-          scope: { kind: 'storefront', storefrontKey: storefrontId },
+          scope,
         },
         Redacted.value(grantCredential.authorization),
         `${intent}:${permission}`,
@@ -2214,25 +2656,6 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       );
       yield* cycle();
     }
-    // Pricing reads the buyer's PriceGroup resolution as its own granted service identity (Counterparty-wide).
-    const pricingGrantCredential = yield* authorize('buyer', contextAudience);
-    yield* executeGrantCounterpartyCommerceAccessWithAuthorization(
-      {
-        counterpartyRef: counterparty.counterpartyRef,
-        permission: 'counterparty.profile.read',
-        reason: 'Native Pricing service identity reads the Counterparty profile',
-        recipient: { principalId: identities.pricingIssuer.principalId, tenantId: core.tenantId },
-        scope: { kind: 'counterparty' },
-      },
-      Redacted.value(pricingGrantCredential.authorization),
-      `${intent}:pricing-profile-read`,
-      { ...pricingGrantCredential.options, idempotencyKey: `${intent}:pricing-profile-read` },
-    );
-    yield* cycle();
-    yield* core
-      .grantResourceAccess(profile.profileRef, identities.pricingIssuer.principalId, 'reader')
-      .pipe(Effect.mapError(() => safeFailure('pricing-profile-resource-grant')));
-
     const invokeOwnerConfiguration = Effect.fn('PreproposalNative.ownerConfiguration')(
       function* invokeOwnerConfiguration<Codec extends Schema.Top>(
         owner: string,
@@ -2248,11 +2671,11 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
         );
         const child = yield* openNativeChild({
           args: [artifact],
-          environment,
+          environment: environmentFor(owner),
           stage: `registered-config:${owner}:${operation}`,
         });
         const authorization = yield* owner === marketAudience
-          ? serviceCredential(identities.buyer, owner, true)
+          ? integrationCredential(identities.buyer, owner)
           : signBuyer(owner, true, false);
         yield* child.send(
           JSON.stringify({
@@ -2329,14 +2752,14 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     );
     yield* core.grantResourceAccess(market.marketRef, core.manager.principalId, 'writer');
     yield* Effect.gen(function* verifyIndependentStorefrontReadAuthority() {
-      const access = yield* ContextAccess;
+      const contextAccess = yield* ContextAccess;
       const target = {
         legalEntityId: core.legalEntityId,
         moduleIds: [registryModule],
         tenantId: core.tenantId,
       };
-      const actor = yield* access.modules({ ...target, principalId: core.manager.principalId });
-      const workload = yield* access.modules({ ...target, principalId: identities.marketRelay.principalId });
+      const actor = yield* contextAccess.modules({ ...target, principalId: core.manager.principalId });
+      const workload = yield* contextAccess.modules({ ...target, principalId: identities.marketRelay.principalId });
       yield* requireProtocol(
         actor[0]?.key === registryModule &&
           actor[0].decision === 'allowed' &&
@@ -2380,58 +2803,15 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       { legalEntity: false, permission: 'commerce.catalog.read.variant-history' },
       { legalEntity: true, permission: 'commerce.catalog.read.quantity-preparation' },
     ] as const;
-    // Catalog reads Cart's tenant-wide population as the granted service identity behind its Tenant binding.
-    yield* contextPermissions.mutate({
-      operation: 'grant',
-      principal: { principalId: identities.cccReader.principalId, tenantId: core.tenantId },
-      target: { moduleId: 'commerce.cart', permission: 'commerce.cart.read.open_selection_population' },
-      tenantId: core.tenantId,
-    });
-    // Pricing validates the Catalog selection as its own granted service identity (Tenant-wide read).
-    yield* contextPermissions.mutate({
-      operation: 'grant',
-      principal: { principalId: identities.pricingIssuer.principalId, tenantId: core.tenantId },
-      target: { moduleId: catalogModule, permission: 'commerce.catalog.read.selection-evidence' },
-      tenantId: core.tenantId,
-    });
-    // CCC resolves Purchase Currency support from Pricing as its granted service identity (Tenant-wide read).
-    for (const principalId of [identities.cccReader.principalId, identities.pricingIssuer.principalId]) {
-      yield* contextPermissions.mutate({
-        operation: 'grant',
-        principal: { principalId, tenantId: core.tenantId },
-        target: { moduleId: 'commerce.pricing', permission: 'pricing.currency_support.read' },
-        tenantId: core.tenantId,
-      });
-    }
-    // Pricing validates quantity-basis and purpose equivalence as its granted service identity (LE-scoped reads).
-    for (const permission of [
-      'commerce.catalog.read.quantity-basis-compatibility',
-      'commerce.catalog.read.pricing-purpose-equivalence',
-    ] as const) {
-      yield* contextPermissions.mutate({
-        legalEntityId: core.legalEntityId,
-        operation: 'grant',
-        principal: { principalId: identities.pricingIssuer.principalId, tenantId: core.tenantId },
-        target: { moduleId: catalogModule, permission },
-        tenantId: core.tenantId,
-      });
-    }
     for (const read of catalogReads) {
-      // CCC reads the same Catalog facts as its granted service identity during basis preparation.
-      for (const principalId of [
-        core.manager.principalId,
-        identities.cccReader.principalId,
-        identities.pricingIssuer.principalId,
-      ]) {
-        const grant: Parameters<typeof contextPermissions.mutate>[0] = {
-          operation: 'grant',
-          principal: { principalId, tenantId: core.tenantId },
-          target: { moduleId: catalogModule, permission: read.permission },
-          tenantId: core.tenantId,
-        };
-        const scopedGrant = read.legalEntity ? { ...grant, legalEntityId: core.legalEntityId } : grant;
-        yield* contextPermissions.mutate(scopedGrant);
-      }
+      const grant: Parameters<typeof contextPermissions.mutate>[0] = {
+        operation: 'grant',
+        principal: { principalId: core.manager.principalId, tenantId: core.tenantId },
+        target: { moduleId: catalogModule, permission: read.permission },
+        tenantId: core.tenantId,
+      };
+      const scopedGrant = read.legalEntity ? { ...grant, legalEntityId: core.legalEntityId } : grant;
+      yield* contextPermissions.mutate(scopedGrant);
     }
     const GrantRequestSchema = Schema.Struct({
       protocol: Schema.Literal(catalogProducerProtocol),
@@ -2516,10 +2896,6 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
           for (const resource of product.resources) {
             yield* core.grantResourceAccess(resource, core.manager.principalId, 'reader');
             yield* core.grantResourceAccess(resource, core.manager.principalId, 'writer');
-            // CCC's granted service identity reads the same Catalog resources during basis preparation.
-            yield* core.grantResourceAccess(resource, identities.cccReader.principalId, 'reader');
-            // Pricing's granted service identity validates quantity/size facts against the same Catalog resources.
-            yield* core.grantResourceAccess(resource, identities.pricingIssuer.principalId, 'reader');
           }
           yield* catalogProducer.send('ack-grant-v1', 'private', false);
           product = yield* catalogProducer.read(ProducerFrameSchema, 'private');
@@ -2555,12 +2931,11 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
         Effect.gen(function* grantCartAccess() {
           yield* core.grantResourceAccess(cartRef, core.manager.principalId, 'reader');
           yield* core.grantResourceAccess(cartRef, core.manager.principalId, 'writer');
-          yield* core.grantResourceAccess(cartRef, identities.cccReader.principalId, 'reader');
-          yield* core.grantResourceAccess(cartRef, identities.pricingIssuer.principalId, 'reader');
         }).pipe(Effect.mapError(() => safeFailure('cart-resource-grants'))),
       population: initializedPopulation,
       transport,
     });
+    yield* runSecondHumanAction({ legalEntityId: core.legalEntityId, tenantId: core.tenantId, transport });
 
     const pricingArtifact = yield* buildOwnerExecutable(
       pricingOwner,
@@ -2895,36 +3270,42 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
           );
           const submitKey = `${intent}:submit`;
           const submissionCredential = yield* authorize('buyer', contextAudience);
-          const submitted = yield* executeSubmitPurchaseApprovalRequestWithAuthorization(
-            {
-              counterpartyRef: retained.identity.counterpartyRef,
-              idempotencyKey: submitKey,
-              proposalRevision: retained.revision,
-              proposalRevisionRef: retained.proposalRevisionRef,
-              requestExpiresAt: retained.expiresAt,
-              storefrontId,
-            },
-            Redacted.value(submissionCredential.authorization),
-            submitKey,
-            { ...submissionCredential.options, idempotencyKey: submitKey },
+          const submitted = yield* requireExecutionResult(
+            SubmitPurchaseApprovalRequestResultSchema,
+            executeSubmitPurchaseApprovalRequestWithAuthorization(
+              {
+                counterpartyRef: retained.identity.counterpartyRef,
+                idempotencyKey: submitKey,
+                proposalRevision: retained.revision,
+                proposalRevisionRef: retained.proposalRevisionRef,
+                requestExpiresAt: retained.expiresAt,
+                storefrontId,
+              },
+              Redacted.value(submissionCredential.authorization),
+              submitKey,
+              { ...submissionCredential.options, idempotencyKey: submitKey },
+            ),
           );
           const decisionKey = `${intent}:approve`;
           const decisionCredential = yield* authorize('buyer', contextAudience);
-          const approved = yield* executeDecidePurchaseApprovalRequestWithAuthorization(
-            {
-              counterpartyRef: retained.identity.counterpartyRef,
-              decidedAt: yield* DateTime.now,
-              decision: 'APPROVE',
-              expectedRequestRevision: submitted.request.requestRevision,
-              idempotencyKey: decisionKey,
-              proposalRevisionRef: retained.proposalRevisionRef,
-              reason: null,
-              requestRef: submitted.request.requestRef,
-              storefrontId,
-            },
-            Redacted.value(decisionCredential.authorization),
-            decisionKey,
-            { ...decisionCredential.options, idempotencyKey: decisionKey },
+          const approved = yield* requireExecutionResult(
+            DecidePurchaseApprovalRequestResultSchema,
+            executeDecidePurchaseApprovalRequestWithAuthorization(
+              {
+                counterpartyRef: retained.identity.counterpartyRef,
+                decidedAt: yield* DateTime.now,
+                decision: 'APPROVE',
+                expectedRequestRevision: submitted.request.requestRevision,
+                idempotencyKey: decisionKey,
+                proposalRevisionRef: retained.proposalRevisionRef,
+                reason: null,
+                requestRef: submitted.request.requestRef,
+                storefrontId,
+              },
+              Redacted.value(decisionCredential.authorization),
+              decisionKey,
+              { ...decisionCredential.options, idempotencyKey: decisionKey },
+            ),
           );
           yield* requireProtocol(
             submitted.outcome === 'SUBMITTED' && approved.request.status === 'APPROVED',

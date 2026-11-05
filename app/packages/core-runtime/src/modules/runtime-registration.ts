@@ -1,6 +1,13 @@
 import { Predicate, Result, Schema } from 'effect';
 import type { Effect } from 'effect';
 
+import type {
+  AccessActorInput,
+  AccessDeclarationInput,
+  AccessFieldGroupInput,
+  AccessWorkloadInput,
+} from '../authorization/access-declaration.ts';
+import type { AnyActionRegistration } from '../actions/definition.ts';
 import type { AnyOutboxWorkerRegistration } from '../outbox/definition.ts';
 import { validateOutboxWorkerRegistrations } from '../outbox/definition.ts';
 import type { AnyReadRegistration } from '../reads/definition.ts';
@@ -235,6 +242,42 @@ export interface VerticalRuntimeSafeDescriptors {
   readonly shellContributions: OntosShellContributions;
 }
 
+/**
+ * The three access carriers an Action descriptor may hold. They are not exclusive: a dual protected
+ * Action carries `accessDeclaration` beside `accessWorkload` (O67-Q4, O72), and field groups ride the
+ * record a declaration already decides (O58), so `accessFieldGroups` requires a declaration and
+ * `accessWorkload` alone is the workload-only carrier (O59, O73).
+ */
+interface ActionAccessCarriers {
+  readonly accessActor?: AccessActorInput;
+  readonly accessDeclaration?: AccessDeclarationInput;
+  readonly accessFieldGroups?: readonly AccessFieldGroupInput[];
+  readonly accessWorkload?: AccessWorkloadInput;
+}
+
+/** Only the carriers the descriptor really declares are copied; a protected Action always has one (O62). */
+const withAccessCarriers = <Contract extends object>(
+  descriptor: AnyActionRegistration['descriptor'],
+  contract: Contract,
+): Contract & ActionAccessCarriers => {
+  const declared: {
+    -readonly [Key in keyof ActionAccessCarriers]: ActionAccessCarriers[Key];
+  } = {};
+  if (descriptor.accessDeclaration !== undefined) {
+    declared.accessDeclaration = descriptor.accessDeclaration;
+  }
+  if (descriptor.accessFieldGroups !== undefined) {
+    declared.accessFieldGroups = descriptor.accessFieldGroups;
+  }
+  if (descriptor.accessWorkload !== undefined) {
+    declared.accessWorkload = descriptor.accessWorkload;
+  }
+  if (descriptor.accessActor !== undefined) {
+    declared.accessActor = descriptor.accessActor;
+  }
+  return { ...contract, ...declared };
+};
+
 /** Build-tool seam. Returns copied, frozen data and never returns a handler or Schema value. */
 export const extractVerticalRuntimeSafeDescriptors = (
   registration: VerticalRuntimeRegistration,
@@ -243,21 +286,20 @@ export const extractVerticalRuntimeSafeDescriptors = (
   const descriptors: VerticalRuntimeSafeDescriptors = {
     actions: Object.freeze(
       runtime.actions
-        .map(({ descriptor }) =>
-          Object.freeze(
-            Result.getOrThrow(
-              Schema.decodeResult(OntosActionContractSchema)({
-                actionKey: descriptor.actionKey,
-                auditProfile: descriptor.auditProfile,
-                entrypoint: descriptor.entrypoint,
-                idempotency: descriptor.idempotency,
-                legalEntityScope: descriptor.legalEntityScope,
-                owningModuleId: descriptor.owningModuleKey,
-                schemaVersion: descriptor.schemaVersion,
-              }),
-            ),
-          ),
-        )
+        .map(({ descriptor }) => {
+          const contract = {
+            actionKey: descriptor.actionKey,
+            auditProfile: descriptor.auditProfile,
+            entrypoint: descriptor.entrypoint,
+            idempotency: descriptor.idempotency,
+            legalEntityScope: descriptor.legalEntityScope,
+            owningModuleId: descriptor.owningModuleKey,
+            schemaVersion: descriptor.schemaVersion,
+          };
+          return Object.freeze(
+            Result.getOrThrow(Schema.decodeResult(OntosActionContractSchema)(withAccessCarriers(descriptor, contract))),
+          );
+        })
         .toSorted((left, right) => left.actionKey.localeCompare(right.actionKey)),
     ),
     moduleId: registration.moduleId,

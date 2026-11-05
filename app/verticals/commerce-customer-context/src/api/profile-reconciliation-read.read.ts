@@ -31,18 +31,9 @@ const readProfileReconciliationFromServices = (
   services: ProfileReconciliationReadServices,
 ) => (input.reconciliationCaseRef.tenantId === tenantId ? services.readCase(input, tenantId) : Effect.fail(notFound()));
 
-export const profileReconciliationReadPermissionTarget = (input: ProfileReconciliationReadRequest) => ({
-  kind: 'resource' as const,
-  resource: {
-    moduleId: input.reconciliationCaseRef.moduleId,
-    resourceId: input.reconciliationCaseRef.resourceId,
-    resourceType: input.reconciliationCaseRef.resourceType,
-  },
-});
-
 const profileReconciliationReadEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'retail.profile.reconcile' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.customer-context.api.profile-reconciliation-read',
   moduleKey: 'commerce.customer-context',
   role: 'api',
@@ -50,6 +41,14 @@ const profileReconciliationReadEntrypoint = defineTenantModuleEntrypoint({
 
 export const profileReconciliationReadRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.customer-context.profile-reconciliation.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'customer-profiles', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: profileReconciliationReadEntrypoint,
     evidencePolicy: {
@@ -59,7 +58,6 @@ export const profileReconciliationReadRead = defineRead(
     inputSchema: ProfileReconciliationReadRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.customer-context',
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'commerce.customer-context.api.profile-reconciliation-read',
     resultSchema: ProfileReconciliationReadResponseSchema,
@@ -73,5 +71,4 @@ export const profileReconciliationReadRead = defineRead(
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ profileReconciliationRead }): ProfileReconciliationReadServices => profileReconciliationRead),
     ),
-  profileReconciliationReadPermissionTarget,
 );

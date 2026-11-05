@@ -20,7 +20,9 @@ import {
   PricingPurchaseContextVerificationResponseSchema,
 } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import type { PricingPurchaseContextVerificationRequest } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
-import { DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
+import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
 import { PriceRefSchema } from '@app/pricing-contracts/resources/price';
 import { PricingCommercialScopeSchema } from '@app/pricing-contracts/domain/pricing-commercial-scope';
@@ -84,16 +86,6 @@ import type {
   QuantityTierSetProofPersistence,
 } from '../services/quantity-tier-persistence.service.ts';
 import { promotionModuleNotInstalledFinalFenceLive } from './promotion-module-not-installed-final-fence.ts';
-import type { CommercialContextGatewayCredentialIssuer } from '../../shared/domain/commercial-context-gateway-credential.ts';
-import {
-  CommercialContextGatewayCredentialService,
-  unavailableCommercialContextGatewayCredentialIssuer,
-} from '../../shared/domain/commercial-context-gateway-credential.ts';
-import type { CommercePriceGroupResolutionGatewayCredentialIssuer } from '../../shared/domain/commerce-price-group-resolution-gateway-credential.ts';
-import {
-  CommercePriceGroupResolutionGatewayCredentialService,
-  unavailableCommercePriceGroupResolutionGatewayCredentialIssuer,
-} from '../../shared/domain/commerce-price-group-resolution-gateway-credential.ts';
 import {
   PriceGroupAssignmentProfileSchema,
   PriceGroupAssignmentResolutionSchema,
@@ -104,11 +96,6 @@ import type { QuantityBasisCompatibilityRequest } from '@app/catalog/api/quantit
 import { executePricingPurposeEquivalenceWithAuthorization } from '@app/catalog/api/pricing-purpose-equivalence-client';
 import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog/api/pricing-purpose-equivalence';
 import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-purpose-equivalence';
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
-import {
-  CatalogSelectionGatewayCredentialService,
-  unavailableCatalogSelectionGatewayCredentialIssuer,
-} from '../../shared/domain/catalog-selection-gateway-credential.ts';
 
 type PricingSetBackedFenceSource = Extract<PricingMaterialEvidenceFenceSource, { readonly sourceEvidence: unknown }>;
 const isSetBackedFenceSource = Schema.is(PricingSetBackedMaterialEvidenceFenceSourceSchema);
@@ -1399,19 +1386,21 @@ const makeMarketRequest = ({
 const sameMarketEvidenceRequest = Schema.toEquivalence(PricingCurrentMarketEvidenceRequestSchema);
 
 export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly execute: MarketEvidenceExecutor;
-  readonly issuer: CommercialContextGatewayCredentialIssuer;
 }): PricingOwnerMaterialEvidenceFenceGateway => {
   const read = Effect.fn('makePricingCurrentDecisionMarketOwnerFinalFenceGateway.read')(function* readMarketEvidence({
     candidateRef,
     compositionRevision,
     expected,
+    scope,
     source,
     verifyThrough,
   }: {
     readonly candidateRef: string;
     readonly compositionRevision: string;
     readonly expected: Pick<PricingMaterialEvidenceFenceExpectation, 'tenantId'>;
+    readonly scope: OperationalScope;
     readonly source: PricingSetBackedFenceSource;
     readonly verifyThrough?: string;
   }) {
@@ -1427,12 +1416,13 @@ export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependenc
       tenantId: expected.tenantId,
       verifyThrough,
     }).pipe(Effect.mapError((cause) => marketGatewayUnavailable('Market retained replay request is invalid', cause)));
-    const { baseUrl, credential } = yield* dependencies.issuer
-      .issue({
+    const { baseUrl, credential } = yield* dependencies
+      .acquire({
         audience: 'commerce-market-catalog',
         compositionRevision,
-        legalEntityId: request.commercialScope.sellingLegalEntityRef.resourceId,
+        legalEntityScope: 'subject',
         requestCorrelation: candidateRef,
+        scope,
       })
       .pipe(Effect.mapError((cause) => marketGatewayUnavailable('Market owner credential is unavailable', cause)));
     const raw = yield* dependencies
@@ -1454,19 +1444,28 @@ export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependenc
     candidateRef,
     compositionRevision,
     observation,
+    scope,
     source,
     through,
   }: {
     readonly candidateRef: string;
     readonly compositionRevision: string;
     readonly observation: PricingFenceObservation;
+    readonly scope: OperationalScope;
     readonly source: PricingSetBackedFenceSource | undefined;
     readonly through: string;
   }) => {
     if (source === undefined) {
       return Effect.fail(marketGatewayUnavailable('Market generation source is missing'));
     }
-    return read({ candidateRef, compositionRevision, expected: observation, source, verifyThrough: through }).pipe(
+    return read({
+      candidateRef,
+      compositionRevision,
+      expected: observation,
+      scope,
+      source,
+      verifyThrough: through,
+    }).pipe(
       Effect.flatMap((response) => {
         const { authority } = response.receipt;
         return response.verifiedThrough === undefined || DateTime.formatIso(response.verifiedThrough) < through
@@ -1486,17 +1485,19 @@ export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependenc
     candidateRef,
     compositionRevision,
     expected,
+    scope,
     source,
   }: {
     readonly candidateRef: string;
     readonly compositionRevision: string;
     readonly expected: PricingMaterialEvidenceFenceExpectation;
+    readonly scope: OperationalScope;
     readonly source: PricingSetBackedFenceSource | undefined;
   }) => {
     if (source === undefined) {
       return Effect.fail(marketGatewayUnavailable('Market retained source is missing'));
     }
-    return read({ candidateRef, compositionRevision, expected, source }).pipe(
+    return read({ candidateRef, compositionRevision, expected, scope, source }).pipe(
       Effect.map((response) => {
         const { authority } = response.receipt;
         return {
@@ -1523,7 +1524,14 @@ export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependenc
   return {
     confirmObservedGenerationsThrough: Effect.fn(
       'makePricingCurrentDecisionMarketOwnerFinalFenceGateway.confirmObservedGenerationsThrough',
-    )(function* confirmMarketGenerations({ candidateRef, compositionRevision, observations, through, typedSources }) {
+    )(function* confirmMarketGenerations({
+      candidateRef,
+      compositionRevision,
+      observations,
+      scope,
+      through,
+      typedSources,
+    }) {
       if (typedSources === undefined || typedSources.length !== observations.length) {
         return yield* marketGatewayUnavailable('Exact typed Market sources are required for generation confirmation');
       }
@@ -1535,6 +1543,7 @@ export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependenc
             candidateRef,
             compositionRevision,
             observation,
+            scope,
             source: typedByProof.get(observation.evidenceVerificationRef),
             through,
           }),
@@ -1544,7 +1553,14 @@ export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependenc
     }),
     verifyOpaqueProofsAgainstCurrentState: Effect.fn(
       'makePricingCurrentDecisionMarketOwnerFinalFenceGateway.verifyOpaqueProofsAgainstCurrentState',
-    )(function* verifyMarketProofs({ candidateRef, compositionRevision, sources, typedSources, verificationContext }) {
+    )(function* verifyMarketProofs({
+      candidateRef,
+      compositionRevision,
+      scope,
+      sources,
+      typedSources,
+      verificationContext,
+    }) {
       if (
         typedSources === undefined ||
         verificationContext?.candidateRef !== candidateRef ||
@@ -1560,6 +1576,7 @@ export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependenc
             candidateRef,
             compositionRevision,
             expected,
+            scope,
             source: typedByProof.get(expected.evidenceVerificationRef),
           }),
         { concurrency: 5 },
@@ -1572,14 +1589,13 @@ export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependenc
 
 export const pricingCurrentDecisionMarketOwnerFinalFenceLive = Layer.effect(
   PricingMarketMaterialEvidenceFenceGateway,
-  Effect.serviceOption(CommercialContextGatewayCredentialService).pipe(
-    Effect.map((issuer) =>
-      makePricingCurrentDecisionMarketOwnerFinalFenceGateway({
-        execute: executeAuthorizedMarketEvidence,
-        issuer: Option.isSome(issuer) ? issuer.value : unavailableCommercialContextGatewayCredentialIssuer,
-      }),
-    ),
-  ),
+  Effect.gen(function* pricingCurrentDecisionMarketOwnerFinalFenceLive() {
+    const crypto = yield* Crypto.Crypto;
+    return makePricingCurrentDecisionMarketOwnerFinalFenceGateway({
+      acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+      execute: executeAuthorizedMarketEvidence,
+    });
+  }),
 );
 
 type CustomerGroupClientEffect = ReturnType<typeof executeCustomerPriceGroupResolutionWithAuthorization>;
@@ -1616,18 +1632,20 @@ const samePurchaseSubjectAuthority = Schema.toEquivalence(
 const sameCustomerGroupResolution = Schema.toEquivalence(PriceGroupAssignmentResolutionSchema);
 
 export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly execute: CustomerGroupExecutor;
   readonly executePurchaseContext?: PurchaseContextExecutor;
-  readonly issuer: CommercePriceGroupResolutionGatewayCredentialIssuer;
 }): PricingOwnerMaterialEvidenceFenceGateway => {
   const read = Effect.fn('makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway.read')(
     function* readCustomerContextEvidence({
       candidateRef,
       compositionRevision,
+      scope,
       source,
     }: {
       readonly candidateRef: string;
       readonly compositionRevision: string;
+      readonly scope: OperationalScope;
       readonly source: PricingMaterialEvidenceFenceSource;
     }) {
       const material = source.verificationMaterial;
@@ -1646,12 +1664,13 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
           customerContextGatewayUnavailable('Customer Price Group replay request is invalid', cause),
         ),
       );
-      const { baseUrl, credential } = yield* dependencies.issuer
-        .issue({
+      const { baseUrl, credential } = yield* dependencies
+        .acquire({
           audience: 'commerce-customer-context',
           compositionRevision,
-          legalEntityId: material.input.basis.commercialScope.sellingLegalEntityId,
+          legalEntityScope: 'subject',
           requestCorrelation: candidateRef,
+          scope,
         })
         .pipe(
           Effect.mapError((cause) =>
@@ -1694,10 +1713,12 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
   )(function* verifyPurchaseContext({
     candidateRef,
     compositionRevision,
+    scope,
     typedSources,
   }: {
     readonly candidateRef: string;
     readonly compositionRevision: string;
+    readonly scope: OperationalScope;
     readonly typedSources: readonly PricingMaterialEvidenceFenceSource[] | undefined;
   }) {
     const purchaseMaterials = (typedSources ?? []).flatMap(({ verificationMaterial }) =>
@@ -1709,12 +1730,13 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
         'Exact Purchase Context singleton authority is required at the final fence',
       );
     }
-    const { baseUrl, credential } = yield* dependencies.issuer
-      .issue({
+    const { baseUrl, credential } = yield* dependencies
+      .acquire({
         audience: 'commerce-customer-context',
         compositionRevision,
-        legalEntityId: material.request.purchasingContext.sellingLegalEntityId,
+        legalEntityScope: 'subject',
         requestCorrelation: candidateRef,
+        scope,
       })
       .pipe(
         Effect.mapError((cause) =>
@@ -1770,19 +1792,21 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
     candidateRef,
     compositionRevision,
     observation,
+    scope,
     source,
     through,
   }: {
     readonly candidateRef: string;
     readonly compositionRevision: string;
     readonly observation: PricingFenceObservation;
+    readonly scope: OperationalScope;
     readonly source: PricingSetBackedFenceSource | undefined;
     readonly through: string;
   }) => {
     if (source === undefined) {
       return Effect.fail(customerContextGatewayUnavailable('Customer Context generation source is missing'));
     }
-    return read({ candidateRef, compositionRevision, source }).pipe(
+    return read({ candidateRef, compositionRevision, scope, source }).pipe(
       Effect.flatMap((response) =>
         response.currentnessEvidence.revalidatedAt < through
           ? Effect.fail(
@@ -1805,17 +1829,19 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
     candidateRef,
     compositionRevision,
     expected,
+    scope,
     source,
   }: {
     readonly candidateRef: string;
     readonly compositionRevision: string;
     readonly expected: PricingMaterialEvidenceFenceExpectation;
+    readonly scope: OperationalScope;
     readonly source: PricingSetBackedFenceSource | undefined;
   }) => {
     if (source === undefined) {
       return Effect.fail(customerContextGatewayUnavailable('Customer Context retained source is missing'));
     }
-    return read({ candidateRef, compositionRevision, source }).pipe(
+    return read({ candidateRef, compositionRevision, scope, source }).pipe(
       Effect.map((response) => {
         const retained = source.verificationMaterial;
         const evidenceGeneration =
@@ -1844,10 +1870,11 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
       candidateRef,
       compositionRevision,
       observations,
+      scope,
       through,
       typedSources,
     }) {
-      yield* verifyPurchaseSingleton({ candidateRef, compositionRevision, typedSources });
+      yield* verifyPurchaseSingleton({ candidateRef, compositionRevision, scope, typedSources });
       if (typedSources === undefined) {
         return yield* customerContextGatewayUnavailable(
           'Exact typed Customer Context sources are required for generation confirmation',
@@ -1869,6 +1896,7 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
             candidateRef,
             compositionRevision,
             observation,
+            scope,
             source: typedByProof.get(observation.evidenceVerificationRef),
             through,
           }),
@@ -1881,11 +1909,12 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
     )(function* verifyCustomerContextProofs({
       candidateRef,
       compositionRevision,
+      scope,
       sources,
       typedSources,
       verificationContext,
     }) {
-      yield* verifyPurchaseSingleton({ candidateRef, compositionRevision, typedSources });
+      yield* verifyPurchaseSingleton({ candidateRef, compositionRevision, scope, typedSources });
       if (typedSources === undefined) {
         return yield* customerContextGatewayUnavailable(
           'Exact typed Customer Context sources and candidate context are required',
@@ -1907,6 +1936,7 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
             candidateRef,
             compositionRevision,
             expected,
+            scope,
             source: typedByProof.get(expected.evidenceVerificationRef),
           }),
         { concurrency: 5 },
@@ -1918,14 +1948,13 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
 
 export const pricingCurrentDecisionCustomerContextOwnerFinalFenceLive = Layer.effect(
   PricingCustomerContextMaterialEvidenceFenceGateway,
-  Effect.serviceOption(CommercePriceGroupResolutionGatewayCredentialService).pipe(
-    Effect.map((issuer) =>
-      makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway({
-        execute: executeAuthorizedCustomerGroup,
-        issuer: Option.isSome(issuer) ? issuer.value : unavailableCommercePriceGroupResolutionGatewayCredentialIssuer,
-      }),
-    ),
-  ),
+  Effect.gen(function* pricingCurrentDecisionCustomerContextOwnerFinalFenceLive() {
+    const crypto = yield* Crypto.Crypto;
+    return makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway({
+      acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+      execute: executeAuthorizedCustomerGroup,
+    });
+  }),
 );
 
 type CatalogQuantityClientEffect = ReturnType<typeof executeQuantityBasisCompatibilityWithAuthorization>;
@@ -1998,28 +2027,34 @@ const catalogSourceFor = (
 };
 
 export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependencies: {
+  readonly acquire: OwnerGatewayConnectionAcquire;
   readonly equivalence: CatalogEquivalenceExecutor;
-  readonly issuer: CatalogSelectionGatewayCredentialIssuer;
   readonly quantity: CatalogQuantityExecutor;
 }): PricingOwnerMaterialEvidenceFenceGateway => {
-  const credential = (legalEntityId: string, candidateRef: string, compositionRevision: string) =>
-    dependencies.issuer
-      .issue({ audience: 'catalog', compositionRevision, legalEntityId, requestCorrelation: candidateRef })
+  const credential = (candidateRef: string, compositionRevision: string, scope: OperationalScope) =>
+    dependencies
+      .acquire({
+        audience: 'catalog',
+        compositionRevision,
+        legalEntityScope: 'subject',
+        requestCorrelation: candidateRef,
+        scope,
+      })
       .pipe(Effect.mapError((cause) => catalogGatewayUnavailable('Catalog owner credential is unavailable', cause)));
   const read = Effect.fn('makePricingCurrentDecisionCatalogOwnerFinalFenceGateway.read')(function* readCatalogEvidence({
     candidateRef,
     compositionRevision,
     expected,
-    legalEntityId,
+    scope,
     source,
   }: {
     readonly candidateRef: string;
     readonly compositionRevision: string;
     readonly expected: Pick<PricingMaterialEvidenceFenceExpectation, 'ownerSetRevisionRef' | 'predicateRef'>;
-    readonly legalEntityId: string;
+    readonly scope: OperationalScope;
     readonly source: PricingSetBackedFenceSource;
   }): Effect.fn.Return<CatalogOwnerReplay, PricingOwnerMaterialEvidenceFenceGatewayUnavailable> {
-    const connection = yield* credential(legalEntityId, candidateRef, compositionRevision);
+    const connection = yield* credential(candidateRef, compositionRevision, scope);
     const material = source.verificationMaterial;
     if (material.kind === 'CATALOG_LINE_AUTHORITY') {
       const raw = yield* dependencies
@@ -2087,15 +2122,15 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
   const confirmCatalogObservation = ({
     candidateRef,
     compositionRevision,
-    legalEntityId,
     observation,
+    scope,
     source,
     through,
   }: {
     readonly candidateRef: string;
     readonly compositionRevision: string;
-    readonly legalEntityId: string;
     readonly observation: PricingFenceObservation;
+    readonly scope: OperationalScope;
     readonly source: PricingSetBackedFenceSource | undefined;
     readonly through: string;
   }) => {
@@ -2109,7 +2144,7 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
         ownerSetRevisionRef: observation.currentOwnerSetRevisionRef,
         predicateRef: observation.predicateRef,
       },
-      legalEntityId,
+      scope,
       source,
     }).pipe(
       Effect.flatMap((replay) =>
@@ -2132,19 +2167,19 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
     candidateRef,
     compositionRevision,
     expected,
-    legalEntityId,
+    scope,
     source,
   }: {
     readonly candidateRef: string;
     readonly compositionRevision: string;
     readonly expected: PricingMaterialEvidenceFenceExpectation;
-    readonly legalEntityId: string;
+    readonly scope: OperationalScope;
     readonly source: PricingSetBackedFenceSource | undefined;
   }) => {
     if (source === undefined) {
       return Effect.fail(catalogGatewayUnavailable('Catalog retained source is missing'));
     }
-    return read({ candidateRef, compositionRevision, expected, legalEntityId, source }).pipe(
+    return read({ candidateRef, compositionRevision, expected, scope, source }).pipe(
       Effect.map((replay) => ({
         currentFacts: expected.currentFacts,
         currentInvalidationGenerationRef: replay.generation,
@@ -2168,6 +2203,7 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
       candidateRef,
       compositionRevision,
       observations,
+      scope,
       through,
       typedSources,
       verificationContext,
@@ -2180,15 +2216,14 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
         return yield* catalogGatewayUnavailable('Exact typed Catalog sources and candidate context are required');
       }
 
-      const legalEntityId = verificationContext.decision.commercialScope.sellingLegalEntityId;
       const confirmations = yield* Effect.forEach(
         observations,
         (observation, index) =>
           confirmCatalogObservation({
             candidateRef,
             compositionRevision,
-            legalEntityId,
             observation,
+            scope,
             source: catalogSourceFor(typedSources[index], observation),
             through,
           }),
@@ -2198,7 +2233,14 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
     }),
     verifyOpaqueProofsAgainstCurrentState: Effect.fn(
       'makePricingCurrentDecisionCatalogOwnerFinalFenceGateway.verifyOpaqueProofsAgainstCurrentState',
-    )(function* verifyCatalogProofs({ candidateRef, compositionRevision, sources, typedSources, verificationContext }) {
+    )(function* verifyCatalogProofs({
+      candidateRef,
+      compositionRevision,
+      scope,
+      sources,
+      typedSources,
+      verificationContext,
+    }) {
       if (
         typedSources === undefined ||
         verificationContext?.candidateRef !== candidateRef ||
@@ -2207,7 +2249,6 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
         return yield* catalogGatewayUnavailable('Exact typed Catalog sources and candidate context are required');
       }
 
-      const legalEntityId = verificationContext.decision.commercialScope.sellingLegalEntityId;
       const observations = yield* Effect.forEach(
         sources,
         (expected, index) =>
@@ -2215,7 +2256,7 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
             candidateRef,
             compositionRevision,
             expected,
-            legalEntityId,
+            scope,
             source: catalogSourceFor(typedSources[index], expected),
           }),
         { concurrency: 5 },
@@ -2227,15 +2268,14 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
 
 export const pricingCurrentDecisionCatalogOwnerFinalFenceLive = Layer.effect(
   PricingCatalogMaterialEvidenceFenceGateway,
-  Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(
-    Effect.map((issuer) =>
-      makePricingCurrentDecisionCatalogOwnerFinalFenceGateway({
-        equivalence: executeAuthorizedCatalogEquivalence,
-        issuer: Option.isSome(issuer) ? issuer.value : unavailableCatalogSelectionGatewayCredentialIssuer,
-        quantity: executeAuthorizedCatalogQuantity,
-      }),
-    ),
-  ),
+  Effect.gen(function* pricingCurrentDecisionCatalogOwnerFinalFenceLive() {
+    const crypto = yield* Crypto.Crypto;
+    return makePricingCurrentDecisionCatalogOwnerFinalFenceGateway({
+      acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
+      equivalence: executeAuthorizedCatalogEquivalence,
+      quantity: executeAuthorizedCatalogQuantity,
+    });
+  }),
 );
 
 const missingAuthorityReason = {

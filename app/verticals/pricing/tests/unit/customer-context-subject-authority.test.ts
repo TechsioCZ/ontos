@@ -110,6 +110,21 @@ const profileRequest = (request: CurrentPricingDecisionRequest) => {
   });
 };
 
+const foreignBuyerFinalizationRequest = (guest: CurrentPricingDecisionRequest) => {
+  const subjectRequest = profileRequest(guest);
+  return Schema.decodeSync(CurrentPricingDecisionRequestSchema)({
+    ...subjectRequest,
+    decision: {
+      ...subjectRequest.decision,
+      purchasingContext: {
+        ...subjectRequest.decision.purchasingContext,
+        actor: { kind: 'PRINCIPAL', principalId: foreignPrincipalId },
+        contextRef: 'ccc:order-finalization:44444444-4444-4444-8444-444444444444',
+      },
+    },
+  });
+};
+
 const verifiedOwnerResponse = (request: PricingPurchaseContextVerificationRequest) =>
   Schema.decodeSync(PricingPurchaseContextVerificationResponseSchema)({
     evidence: {
@@ -313,6 +328,47 @@ describe('Pricing Customer Context subject authority #790', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
+    }),
+  );
+
+  it.effect('refuses an order finalization payload that names a buyer other than the verified subject', () =>
+    Effect.gen(function* rejectsForeignPayloadBuyer() {
+      const request = foreignBuyerFinalizationRequest(yield* guestRequest);
+      let issued = false;
+      let executed = false;
+      const issuer = {
+        issue: () => {
+          issued = true;
+          return Effect.succeed({
+            baseUrl: new URL('https://commerce-customer-context.example.test'),
+            credential: Redacted.make('Bearer must-not-be-issued'),
+          });
+        },
+      } satisfies CurrentPricingDecisionCustomerContextGatewayIssuerService;
+      const authority = yield* currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(
+        requestCorrelation,
+        compositionRevision,
+        (payload) => {
+          executed = true;
+          return Effect.succeed(verifiedOwnerResponse(payload));
+        },
+      ).pipe(Effect.provideService(CurrentPricingDecisionCustomerContextGatewayIssuer, issuer));
+
+      const failure = yield* authority
+        .verify({ request, scope: { principal, sellingLegalEntityId: legalEntityId } })
+        .pipe(Effect.flip);
+
+      expect(
+        Match.value(failure).pipe(
+          Match.tag(
+            'CurrentPricingDecisionSubjectAuthorityUnverifiable',
+            ({ reason, retryable }) => reason === 'OWNER_EVIDENCE_UNVERIFIABLE' && retryable,
+          ),
+          Match.orElse(() => false),
+        ),
+      ).toBe(true);
+      expect(issued).toBe(false);
+      expect(executed).toBe(false);
     }),
   );
 });

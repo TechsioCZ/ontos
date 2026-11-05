@@ -180,6 +180,7 @@ it.effect('mints a fresh Commerce audience assertion for every exact workload ca
         authorizationCalls.push(input);
         return Effect.succeed(principal);
       },
+      grantedNamespaces: () => Effect.succeed([]),
     };
     const issuer: GatewayIssuer['Service'] = {
       issue: ({ audience, compositionRevision: revision, principal }) => {
@@ -251,6 +252,7 @@ it.effect('admits a gateway-context assertion audienced for the Commerce verific
       authenticate: () => Effect.succeed(workloadPrincipal),
       authorize: () => Effect.succeed(workloadPrincipal),
       authorizePrincipal: (principal) => Effect.succeed(principal),
+      grantedNamespaces: () => Effect.succeed([]),
     };
     const issuer: GatewayIssuer['Service'] = {
       issue: ({ audience, compositionRevision: revision, principal }) => {
@@ -300,6 +302,7 @@ it.effect('refuses a Commerce workload assertion when its captured composition r
       authenticate: () => Effect.succeed(workloadPrincipal),
       authorize: () => Effect.succeed(workloadPrincipal),
       authorizePrincipal: (principal) => Effect.succeed(principal),
+      grantedNamespaces: () => Effect.succeed([]),
     };
     const issuer: GatewayIssuer['Service'] = {
       issue: (input) => {
@@ -434,6 +437,7 @@ it.effect('routes the production deployment client to the Commerce API prefix', 
         expect(input).toEqual({ operation: 'reserve', targetAuthenticationNamespaceId: namespaceId });
         return Effect.succeed(principal);
       },
+      grantedNamespaces: () => Effect.succeed([]),
     };
     const issuer: GatewayIssuer['Service'] = {
       issue: ({ audience, compositionRevision: revision, principal }) => {

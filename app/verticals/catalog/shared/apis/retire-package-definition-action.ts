@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug retire-package-definition
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/retire-package-definition.ts';
 
 export { RetirePackageDefinitionPayloadSchema } from '../actions/retire-package-definition.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RetirePackageDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetirePackageDefinitionActionInvalidProblem',
@@ -24,6 +26,7 @@ export const RetirePackageDefinitionActionForbiddenProblemSchema = makeProblemDe
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const RetirePackageDefinitionActionApi = HttpApi.make('RetirePackageDefin
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-package-definition', {
         error: actionErrors,
         payload: Schema.toEncoded(RetirePackageDefinitionPayloadSchema),
-        success: RetirePackageDefinitionResultSchema,
+        success: [ActionProposalAcceptedSchema, RetirePackageDefinitionResultSchema],
       }),
     )
     .middleware(RetirePackageDefinitionActionSchemaErrorMiddleware),

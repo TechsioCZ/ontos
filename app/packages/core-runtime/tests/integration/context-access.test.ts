@@ -5,11 +5,12 @@ import {
 } from '../support/historical-owner-targets.ts';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, FileSystem, Schema } from 'effect';
+import { Crypto, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import {
   makeContextAccess,
@@ -65,7 +66,6 @@ const requireBusinessPermissions = (access: ReturnType<typeof makeContextAccess>
 const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const configuration = yield* loadSpiceDbConfig();
   const crypto = yield* Crypto.Crypto;
-  const fileSystem = yield* FileSystem.FileSystem;
   const [
     tenantId,
     otherTenantId,
@@ -190,19 +190,10 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     throw new Error('Expected valid SpiceDB object identifiers');
   }
   const client = newSpiceDbGrpcClient(configuration);
-  const bootstrap = yield* fileSystem.readFileString(new URL('../../spicedb/bootstrap.yaml', import.meta.url).pathname);
-  const bootstrapLines = bootstrap.split('\n');
-  const schemaStart = bootstrapLines.indexOf('schema: |-') + 1;
-  const schemaEnd = bootstrapLines.indexOf('relationships: |-');
-  expect(schemaStart > 0 && schemaEnd > schemaStart).toBeTruthy();
-  const schemaBlock = bootstrapLines
-    .slice(schemaStart, schemaEnd)
-    .map((line) => line.replace(/^ {2}/u, ''))
-    .join('\n');
   yield* spiceDbEffect(
     client.promises.writeSchema(
       v1.WriteSchemaRequest.create({
-        schema: schemaBlock,
+        schema: ONTOS_SPICEDB_SCHEMA,
       }),
     ),
   );

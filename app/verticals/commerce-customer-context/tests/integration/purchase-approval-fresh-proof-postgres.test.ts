@@ -28,15 +28,13 @@ import type {
 } from '../../shared/domain/purchasing-approval.ts';
 
 import { revalidatePurchaseApprovalAction } from '../../src/actions/revalidate-purchase-approval.action.ts';
-import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { makePurchasingApprovalNativeFixture } from '../support/purchasing-approval-native.ts';
 
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  ActionPermissionCheckError,
   ActionRuntime,
-  ContextAccess,
-  ReadPermissionUnavailable,
   ReadHandlerNotFound,
   ReadPolicyDenied,
   ReadRuntime,
@@ -69,6 +67,7 @@ import {
   commerceCustomerContextRelations,
   purchaseApprovalRequests,
 } from '../../src/database/schema.ts';
+import { nativeTestDatabaseContainer } from '../support/native-test-database.ts';
 
 const oldClockDefinition = (current: string): string => {
   const old = current
@@ -125,7 +124,7 @@ const approvalFreshJournalReceipt = Effect.fn('ApprovalFreshProofTests.journalRe
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',
@@ -171,7 +170,7 @@ const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.cop
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'pg_dump',
       '--host',
       'localhost',
@@ -200,7 +199,7 @@ const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.cop
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      yield* nativeTestDatabaseContainer,
       'psql',
       '--host',
       'localhost',
@@ -435,7 +434,6 @@ const actualCurrentReplayFrame = (
           const currentness = Context.get(context, PurchaseApprovalCurrentnessFactory).make(
             transaction,
             trusted,
-            Context.get(context, ContextAccess),
             Context.get(context, PurchaseLimitEvaluationCurrentnessPort),
             evaluationSource,
           );
@@ -460,7 +458,10 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   apiKeyManager = false,
   hierarchyTtlMilliseconds?: number,
 ) {
-  const snapshot = yield* enrollmentApplicationCompositionSnapshot;
+  // The Order module is a released app of this composition: it is the only caller that may consume an approval.
+  const snapshot = yield* makeEnrollmentApplicationCompositionSnapshot(ultramodernApiMarker.buildMarker, [
+    'commerce-order',
+  ]);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     mode: 'schema-only',
@@ -521,7 +522,8 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
           claimed.commitmentCorrelationId !== correlation ||
           scope.tenantId !== owner.tenantId ||
           scope.legalEntityId !== owner.legalEntityId ||
-          scope.storefrontId !== owner.storefrontId ||
+          // The operation scope carries no storefront; the claim does, pinned to the trusted scope upstream.
+          claimed.storefrontId !== owner.storefrontId ||
           scope.principalId !== owner.principal.principalId
         ) {
           return yield* Effect.fail(
@@ -614,9 +616,10 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
     Effect.gen(function* consumeRegisteredComponent() {
       return yield* Context.get(context, ActionRuntime).runAction({
         payload: yield* Schema.encodeEffect(consumePurchaseApprovalAction.descriptor.payloadSchema)(input),
-        principal: yield* owner.authenticatedPrincipal(
-          apiKey ? owner.fixture.manager : { ...owner.fixture.manager, authMethod: 'session' },
-        ),
+        // Only the Order module consumes an approval, for the buyer it acts for (D6).
+        principal: yield* apiKey
+          ? owner.authenticatedPrincipal(owner.fixture.manager, 'commerce-order')
+          : owner.authenticatedPrincipal({ ...owner.fixture.manager, authMethod: 'session' }),
         registration: consumePurchaseApprovalAction,
         transport: {
           correlationId: randomUUID(),
@@ -1269,6 +1272,7 @@ for (const state of ['OLD_CLOCK', 'CURRENT'] as const) {
           expect(yield* test.readProofs()).toEqual(original);
         }),
       ).pipe(Effect.provide(services)),
+    // A real P1 expiry wait and a held request lock: the CURRENT case measured 30.3s in CI.
     120_000,
   );
 }
@@ -1284,26 +1288,12 @@ it.live(
         const request = yield* test.readRequest();
         yield* test.expire(first.revalidation.validUntil);
         const revoked = yield* test.chain.revokeBuyer();
-        expect(revoked.outcome).toBe('RECONCILIATION_REQUIRED');
-        expect(revoked.grant.state).toBe('RECONCILIATION_REQUIRED');
-        assert.isOk(revoked.outcome === 'RECONCILIATION_REQUIRED');
-        expect(revoked.reconciliation.staged).toBe(true);
+        // A revoke is final in the owner's own transaction (O62, O67-Q1): the Counterparty grant row
+        // is the whole authority, so there is no staged SpiceDB relation or native protocol left to
+        // settle and no indeterminate window between staging and projection.
+        expect(revoked.outcome).toBe('REVOKED');
+        expect(revoked.grant.state).toBe('REVOKED');
         const entries = test.authorityEntries();
-        const pending = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-          yield* Effect.flip(test.check(randomUUID())),
-        );
-        expect(pending.code).toBe('CURRENT_STATE_INDETERMINATE');
-        expect(pending.reason).toBe('Current buyer authorization is unavailable');
-        expect(test.authorityEntries()).toBe(entries);
-        expect(yield* test.readProofs()).toEqual(original);
-        // Complete the actual staged relation/native protocol explicitly at the fixture seam.
-        // This is not a claim that the production Outbox Worker was executed.
-        const settled = yield* test.owner.settleBuyerRevocation(
-          test.chain.counterpartyRef,
-          revoked.grant.grantRef.resourceId,
-          revoked.reconciliation.mutationId,
-        );
-        expect(settled).toEqual([{ state: 'REVOKED' }]);
         const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
           yield* Effect.flip(test.check(randomUUID())),
         );
@@ -1434,15 +1424,13 @@ for (const scope of ['TENANT', 'STOREFRONT'] as const) {
                   },
             ),
           );
-          if (scope === 'TENANT') {
-            const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(refused);
-            expect(failure.code).toBe('PERMISSION_DENIED');
-            expect(failure.reason).toBe('Revalidation scope must match trusted Counterparty Storefront context');
-            expect(failure.retryable).toBe(false);
-          } else {
-            const failure = yield* Schema.decodeUnknownEffect(ActionPermissionCheckError)(refused);
-            expect(failure.reason).toBe('The declared owner permission targets do not match trusted scope');
-          }
+          // Both mismatches are the governed Action's own trusted-scope guard (O62): the runner no
+          // longer validates a legacy business-permission target, so the same domain rejection answers
+          // a wrong Tenant and a wrong Storefront before the Current authority is consulted.
+          const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(refused);
+          expect(failure.code).toBe('PERMISSION_DENIED');
+          expect(failure.reason).toBe('Revalidation scope must match trusted Counterparty Storefront context');
+          expect(failure.retryable).toBe(false);
           expect(test.authorityEntries()).toBe(entries);
           expect(yield* test.readProofs()).toEqual(original);
           expect(yield* test.readRequest()).toEqual(request);
@@ -1605,11 +1593,14 @@ it.live(
           ...input,
           storefrontId: 'different-native-approval-storefront',
         });
-        const scopeFailure = yield* Schema.decodeUnknownEffect(ReadPermissionUnavailable)(
+        // The v2 owner overlay checks the counterparty's own grant, which is scope-wide here; a
+        // Storefront that does not match the retained proposal is therefore indistinguishable from
+        // an unknown intent, exactly like the tenant and revision mismatches above (O62, O70).
+        const scopeFailure = yield* Schema.decodeUnknownEffect(ReadHandlerNotFound)(
           yield* Effect.flip(read(wrongStorefront)),
         );
-        expect(scopeFailure.code).toBe('read_permission_unavailable');
-        expect(scopeFailure.reason).toBe('The owner permission target cannot be verified in the trusted scope');
+        expect(scopeFailure.code).toBe('read_handler_not_found');
+        expect(scopeFailure.reason).toBe('Approval evidence is unavailable');
         expect(test.authorityEntries()).toBe(authorityEntries);
         expect(yield* test.readProofs()).toEqual(proofs);
         expect(yield* test.readRequest()).toEqual(request);
@@ -1736,24 +1727,23 @@ it.live(
           ...input,
           storefrontId: 'different-native-approval-storefront',
         });
-        const refused = yield* Schema.decodeUnknownEffect(ReadPermissionUnavailable)(
-          yield* Effect.flip(read(wrongStorefront)),
-        );
-        expect(refused.code).toBe('read_permission_unavailable');
-        expect(refused.reason).toBe('The owner permission target cannot be verified in the trusted scope');
+        // The v2 owner overlay checks the counterparty's own scope-wide grant, so a Storefront that
+        // does not match the retained intent recovers exactly as an unknown intent: NOT_FOUND, with
+        // no effect on history (O62, O70).
+        expect(yield* read(wrongStorefront)).toEqual(absent);
         expect(test.authorityEntries()).toBe(entries);
         expect(yield* test.readProofs()).toEqual(proofs);
         expect(yield* test.readRequest()).toEqual(requests);
         const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-        // Seven successful governed results: two FOUND and five indistinguishable NOT_FOUND.
+        // Eight successful governed results: two FOUND and six indistinguishable NOT_FOUND.
         // Core additionally records denied-read evidence for conflicts. No new Action effects.
         const priorAccessIds = new Set(before.accesses.map((access) => access.dataAccessEventId));
         const recoveryReads = after.accesses.filter(
           (access) => !priorAccessIds.has(access.dataAccessEventId) && access.outcome === 'allowed',
         );
-        expect(recoveryReads).toHaveLength(7);
+        expect(recoveryReads).toHaveLength(8);
         expect(recoveryReads.filter((access) => access.resultCount === 1)).toHaveLength(2);
-        expect(recoveryReads.filter((access) => access.resultCount === 0)).toHaveLength(5);
+        expect(recoveryReads.filter((access) => access.resultCount === 0)).toHaveLength(6);
         for (const access of recoveryReads) {
           expect(access.evidencePolicyKey).toBe(
             orderCommitmentApprovalEvidenceRead.descriptor.evidencePolicy.policyKey,
@@ -1833,6 +1823,7 @@ it.live(
         expect(yield* test.readProofs()).toEqual(proofs);
       }),
     ).pipe(Effect.provide(services)),
+  // A real P1 expiry wait, then the registered consumption Actions under the Order actor.
   120_000,
 );
 
@@ -1981,6 +1972,7 @@ it.live(
         }
       }),
     ).pipe(Effect.provide(services)),
+  // A real P1 expiry wait, then the registered consumption Actions under the Order actor.
   120_000,
 );
 
@@ -2032,6 +2024,7 @@ it.live(
         expect(after.outbox).toHaveLength(before.outbox.length + 1);
       }),
     ).pipe(Effect.provide(services)),
+  // A real P1 expiry wait, then the registered consumption Actions under the Order actor.
   120_000,
 );
 
@@ -2100,6 +2093,7 @@ it.live(
         expect(after.outbox).toEqual(committed.outbox);
       }),
     ).pipe(Effect.provide(services)),
+  // A real P1 expiry wait, then the registered consumption Actions under the Order actor.
   120_000,
 );
 

@@ -18,7 +18,7 @@ import type { PlatformError } from 'effect';
 
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { makeCoreDatabase } from '../db/client.ts';
-import { DATABASE_IDENTITIES } from '../db/database-identities.ts';
+import { DATABASE_IDENTITIES, SHARED_RUNTIME_IDENTITY, TRUST_ROUTINES } from '../db/database-identities.ts';
 import { loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
 import type { DatabaseConnectionPair, DatabaseConfigValue } from '../db/config.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../modules/active-application-composition.ts';
@@ -41,6 +41,19 @@ const unavailable = (reason = 'The isolated native test database is unavailable'
   new IsolatedNativeDatabaseError({ cause: Redacted.make(cause), reason });
 const prefix = 'ontos_test_party_gateway_';
 
+/**
+ * The container that serves the local test PostgreSQL. The shared development Compose service is
+ * the default; a suite running against a disposable, lane-owned database names its own container
+ * (`ONTOS_TEST_DB_CONTAINER`) and its own URLs (`DATABASE_ADMIN_URL`, `DATABASE_URL`) instead.
+ */
+const DEFAULT_DATABASE_CONTAINER = 'ontos-db';
+const databaseContainer = Config.option(Config.String('ONTOS_TEST_DB_CONTAINER')).pipe(
+  Effect.map((configured) => {
+    const name = Option.getOrElse(configured, () => DEFAULT_DATABASE_CONTAINER).trim();
+    return name.length === 0 ? DEFAULT_DATABASE_CONTAINER : name;
+  }),
+);
+
 const replaceDatabase = (configuration: DatabaseConfigValue, database: string) => {
   const url = new URL(configuration.connectionString);
   url.pathname = `/${database}`;
@@ -54,8 +67,14 @@ const postgresTool = Effect.fn('IsolatedNativeDatabase.postgresTool')(function* 
   input?: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
 ) {
   const url = new URL(configuration.connectionString);
-  const path = yield* Config.String('PATH').pipe(
-    Effect.mapError((cause) => unavailable('Unable to resolve PostgreSQL tool PATH', cause)),
+  const [path, container] = yield* Effect.all(
+    [
+      Config.String('PATH').pipe(
+        Effect.mapError((cause) => unavailable('Unable to resolve PostgreSQL tool PATH', cause)),
+      ),
+      databaseContainer,
+    ],
+    { concurrency: 2 },
   );
   return yield* ChildProcess.make(
     'docker',
@@ -64,7 +83,7 @@ const postgresTool = Effect.fn('IsolatedNativeDatabase.postgresTool')(function* 
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      container,
       program,
       '--host',
       'localhost',
@@ -627,6 +646,22 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
             yield* transaction.execute(
               sql`revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public,${roleIdentifier}`,
               'objects',
+            );
+            // The shared runtime identity's trust routines, such as the Action access-fence lock (TRUST_ROUTINES).
+            const trustRoutines = TRUST_ROUTINES.filter(({ executableBy }) =>
+              executableBy.includes(SHARED_RUNTIME_IDENTITY.role),
+            );
+            if (trustRoutines.length > 0) {
+              yield* transaction.execute(sql`grant usage on schema trust to ${roleIdentifier}`, 'objects');
+            }
+            yield* Effect.forEach(
+              trustRoutines,
+              ({ signature }) =>
+                transaction.execute(
+                  sql`grant execute on function ${sql.raw(signature)} to ${roleIdentifier}`,
+                  'objects',
+                ),
+              { concurrency: 1, discard: true },
             );
           }),
         )

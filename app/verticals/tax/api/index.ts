@@ -9,11 +9,14 @@ import {
   makeActionRuntimeLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -78,8 +81,15 @@ const runtimeObservabilityLive = Layer.mergeAll(
 );
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const readRuntimeDependenciesLive = Layer.mergeAll(
@@ -87,9 +97,8 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   ContextAccessLive,
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
+  accessEnforcementLive,
 );
-
-/** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */
 const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
@@ -103,6 +112,7 @@ const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, taxRegistra
   Layer.provide(activeApplicationCompositionLive),
 );
 
+/** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */
 export const governedReadRuntimeLive = readRuntimeLive;
 const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, taxRegistration).pipe(
   Layer.provide(
@@ -115,6 +125,7 @@ const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, taxRegi
       moduleStateGateLive,
       moduleEntrypointGatewayLive,
       operationalScopeResolverLive,
+      accessEnforcementLive,
     ),
   ),
   Layer.provide(DatabaseConfigLive),

@@ -67,10 +67,12 @@ describe('privacy scope-foundation acceptance boundary', () => {
     expect(error.code).toBe('privacy_subject_persistence_unavailable');
   });
 
-  it('requires explicit tenant-scoped Action authorization and preserves inactive module state', () => {
-    expect(createProcessingPurposeAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
+  it('requires one tenant-scoped protected Action carrier and preserves inactive module state', () => {
+    expect(createProcessingPurposeAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(createProcessingPurposeAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'privacy.core.processing-purpose.create',
+      kind: 'action',
+      selectors: [],
     });
     expect(createProcessingPurposeAction.descriptor.legalEntityScope).toBe('required');
     expect(privacyManifest.activation.scope).toBe('tenant');

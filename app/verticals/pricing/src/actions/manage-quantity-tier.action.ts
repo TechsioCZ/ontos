@@ -301,6 +301,17 @@ export const handleManageQuantityTier = Effect.fn('ManageQuantityTierAction.hand
 
 export const manageQuantityTierAction = defineAction(
   {
+    // O18: this payload is a union whose RETIRE branch states no money value, so the declaration
+    // names no governed amount. Under an amount ceiling the gate refuses `deny.amount_required`
+    // rather than trusting a caller-supplied total; a per-branch amount needs a contract change.
+    accessDeclaration: {
+      key: 'commerce.pricing.quantity-tier.manage',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'prices', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.manage-quantity-tier.access.v1',
@@ -328,7 +339,7 @@ export const manageQuantityTierAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.manage-quantity-tier',
       moduleKey: MODULE_KEY,
       role: 'action',

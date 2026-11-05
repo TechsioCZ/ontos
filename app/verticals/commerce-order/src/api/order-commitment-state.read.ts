@@ -12,7 +12,7 @@ const moduleKey = 'commerce.order' as const;
 
 const orderCommitmentStateEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.order.api.order-commitment-state',
   moduleKey,
   role: 'api',
@@ -20,6 +20,14 @@ const orderCommitmentStateEntrypoint = defineTenantModuleEntrypoint({
 
 export const orderCommitmentStateRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.order.commitment.read-state',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'orders', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: orderCommitmentStateEntrypoint,
     evidencePolicy: {
@@ -29,7 +37,6 @@ export const orderCommitmentStateRead = defineRead(
     inputSchema: OrderCommitmentStateRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.order.api.order-commitment-state',
     resultSchema: OrderCommitmentStateResponseSchema,
@@ -38,5 +45,4 @@ export const orderCommitmentStateRead = defineRead(
   (input, context: ReadHandlerContext<Effect.Success<ReturnType<typeof orderCommitmentReadServices>>>) =>
     context.services.loadState(input).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   orderCommitmentReadServices,
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

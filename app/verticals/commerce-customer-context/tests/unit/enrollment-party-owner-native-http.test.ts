@@ -1,5 +1,6 @@
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
-import { ConfigProvider, DateTime, Effect, Result, Schema } from 'effect';
+import { Crypto, ConfigProvider, DateTime, Effect, Result, Schema } from 'effect';
 import { Base64Url } from 'effect/encoding';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -15,10 +16,16 @@ import {
 const compositionRevision = 'c'.repeat(64);
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '50000000-0000-4000-8000-000000000001';
-const servicePrincipalId = '60000000-0000-4000-8000-000000000001';
+const subjectPrincipalId = '60000000-0000-4000-8000-000000000001';
+const callingModulePrincipalId = '45000000-0000-4000-8000-000000000001';
+const originatorInvocationId = '31000000-0000-4000-8000-000000000001';
 const actorPrincipalId = '40000000-0000-4000-8000-000000000001';
 const requestCorrelation = 'scheduled-party-owner-native';
 const ownerInvocationId = '30000000-0000-4000-8000-000000000001';
+const crypto = Crypto.make({
+  digest: () => Effect.succeed(new Uint8Array()),
+  randomBytes: (size) => new Uint8Array(size).fill(1),
+});
 const partyRef = { moduleId: 'party.registry', resourceId: 'party-1', resourceType: 'party.registry.party', tenantId };
 const decisionRef = {
   moduleId: 'party.registry',
@@ -35,7 +42,9 @@ const input: RetailPartyCandidateOwnerInput = {
     validFrom: DateTime.makeUnsafe('2026-09-19T10:00:00.000Z'),
   },
   compositionRevision,
+  crypto,
   legalEntityId,
+  originator: { actionInvocationId: originatorInvocationId, compositionRevision, tenantId },
   requestCorrelation,
   tenantId,
 };
@@ -53,12 +62,15 @@ const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
 });
 const configuration = ConfigProvider.layer(
   ConfigProvider.fromUnknown({
-    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'scheduled-service-api-key',
+    ONTOS_GATEWAY_MODULE_API_KEY: 'scheduled-module-credential',
     ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
   }),
 );
+const issuanceUrl = 'https://shell.example.test/shell-super-app-api/auth/delegated/gateway-context';
+/** A version 3 assertion: the Originator subject, with the calling Commerce module as its verified actor. */
 const tokenFor = (claimsTenantId = tenantId, claimsRevision = compositionRevision, tokenId = 1) => {
   const claims = {
+    act: { appId: 'commerce-customer-context', buildMarker: 'ccc-release-1', principalId: callingModulePrincipalId },
     aud: 'party-registry',
     compositionRevision: claimsRevision,
     exp: 1_700_000_300,
@@ -67,15 +79,16 @@ const tokenFor = (claimsTenantId = tenantId, claimsRevision = compositionRevisio
     jti: `70000000-0000-4000-8000-${String(tokenId).padStart(12, '0')}`,
     principal: {
       authBindingId: '80000000-0000-4000-8000-000000000001',
-      authContextRef: 'key:scheduled-service',
-      authMethod: 'api_key',
+      authContextRef: 'better-auth-session:enrollment-originator',
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+      authMethod: 'session',
       legalEntityId,
-      principalId: servicePrincipalId,
+      principalId: subjectPrincipalId,
       tenantId: claimsTenantId,
     },
-    sub: servicePrincipalId,
+    sub: subjectPrincipalId,
     targetBuildMarker: 'party-release-1',
-    ver: 1,
+    ver: 3,
   };
   return `${Base64Url.encode('{}')}.${Base64Url.encode(JSON.stringify(claims))}.test-signature`;
 };
@@ -105,17 +118,18 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration));
     expect(outcome.status).toBe('SUCCEEDED');
     expect(requests.map((request) => request.url)).toEqual([
-      'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
+      issuanceUrl,
       'https://shell.example.test/api/approved/party-registry/reads/party-match',
-      'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
+      issuanceUrl,
       'https://shell.example.test/api/approved/party-registry/party-registry/actions/create-party',
     ]);
     for (const request of [requests[0], requests[2]]) {
-      expect(request?.headers.get('x-api-key')).toBe('scheduled-service-api-key');
-      expect(yield* Effect.promise(() => request.json())).toEqual({
+      expect(request?.headers.get('x-api-key')).toBe('scheduled-module-credential');
+      expect(yield* Effect.promise(() => request.json())).toMatchObject({
         audience: 'party-registry',
         compositionRevision,
-        legalEntityId,
+        legalEntityScope: 'subject',
+        subject: { _tag: 'Originator', actionInvocationId: originatorInvocationId, tenantId },
       });
     }
     expect(requests[1]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 1)}`);
@@ -151,10 +165,11 @@ it.effect('a stale original Attempt is denied by issuance before contacting Part
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
     expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
     expect(requests).toHaveLength(1);
-    expect(yield* Effect.promise(() => requests[0].json())).toEqual({
+    expect(yield* Effect.promise(() => requests[0].json())).toMatchObject({
       audience: 'party-registry',
       compositionRevision,
-      legalEntityId,
+      legalEntityScope: 'subject',
+      subject: { _tag: 'Originator', actionInvocationId: originatorInvocationId, tenantId },
     });
   }),
 );
@@ -206,10 +221,11 @@ it.effect('keeps the original Attempt revision and scope when a caller later mut
       .dispatch(transition)
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration));
     expect(outcome.resultReference).toBe(partyRef.resourceId);
-    expect(yield* Effect.promise(() => requests[0].json())).toEqual({
+    expect(yield* Effect.promise(() => requests[0].json())).toMatchObject({
       audience: 'party-registry',
       compositionRevision,
-      legalEntityId,
+      legalEntityScope: 'subject',
+      subject: { _tag: 'Originator', actionInvocationId: originatorInvocationId, tenantId },
     });
     expect(requests[1]?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
     expect(requests[1]?.headers.get('x-correlation-id')).toBe(requestCorrelation);
@@ -262,7 +278,7 @@ it.effect('committed native recovery acquires distinct one-use assertions for co
     const fakeFetch: typeof fetch = (target, init) => {
       const request = new Request(target, init);
       requests.push(request);
-      if (request.url.endsWith('/auth/api-key/gateway-context')) {
+      if (request.url === issuanceUrl) {
         issued += 1;
         return Promise.resolve(Response.json(gatewayResponse(tenantId, issued)));
       }

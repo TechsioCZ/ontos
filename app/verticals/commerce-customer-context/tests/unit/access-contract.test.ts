@@ -15,7 +15,6 @@ import {
 import type { CounterpartyAccessInvitation } from '../../shared/domain/invitation-contract.ts';
 import {
   COUNTERPARTY_AUTHORITY_GROUPS,
-  COUNTERPARTY_BUSINESS_PERMISSION_CATALOG,
   COUNTERPARTY_PERMISSION_CATALOG,
   COUNTERPARTY_PERMISSION_CODES,
   CounterpartyPermissionCodeSchema,
@@ -120,8 +119,8 @@ describe('Counterparty Permission catalog', () => {
         'counterparty.address_book.use',
       ],
     });
-    expect(COUNTERPARTY_BUSINESS_PERMISSION_CATALOG.permissions).toHaveLength(15);
-    expect(Object.isFrozen(COUNTERPARTY_BUSINESS_PERMISSION_CATALOG)).toBe(true);
+    expect(Object.values(COUNTERPARTY_PERMISSION_CATALOG)).toHaveLength(15);
+    expect(Object.isFrozen(COUNTERPARTY_PERMISSION_CATALOG)).toBe(true);
     for (const metadata of Object.values(COUNTERPARTY_PERMISSION_CATALOG)) {
       expect(metadata.owningCapability.length).toBeGreaterThan(0);
       expect(metadata.protectedEntrypoints.length).toBeGreaterThan(0);
@@ -166,15 +165,13 @@ describe('Counterparty Commerce Access decisions', () => {
     ).toBe('DENIED');
   });
 
-  it('fails closed on reconciliation but lets another matching active grant authorize', () => {
-    expect(decide([grant('uncertain', 'RECONCILIATION_REQUIRED')], { kind: 'counterparty' })).toBe('UNAVAILABLE');
+  it('authorizes only from an active grant, which a revoked row never shadows', () => {
+    expect(decide([grant('revoked', 'REVOKED')], { kind: 'counterparty' })).toBe('DENIED');
     expect(
-      decide([grant('uncertain', 'RECONCILIATION_REQUIRED'), grant('active', 'ACTIVE')], {
+      decide([grant('revoked', 'REVOKED'), grant('active', 'ACTIVE')], {
         kind: 'counterparty',
       }),
     ).toBe('ALLOWED');
-    expect(decide([grant('pending', 'PENDING_GRANT')], { kind: 'counterparty' })).toBe('DENIED');
-    expect(decide([grant('revoked', 'REVOKED')], { kind: 'counterparty' })).toBe('DENIED');
   });
 
   it('never treats a same-valued Principal id from another Tenant as authorized', () => {
@@ -224,7 +221,7 @@ describe('Counterparty Access Invitation lifecycle', () => {
     expect(invitationCanBeResent(pending, '2026-09-09T12:00:00.000Z')).toBe(true);
     expect(invitationCanBeginClaim(pending, '2026-09-10T12:00:00.000Z')).toBe(false);
     expect(invitationCanBeRevoked(pending)).toBe(true);
-    expect(invitationCanBeRevoked(invitation('CLAIMING'))).toBe(true);
+    expect(invitationCanBeRevoked(invitation('CLAIMING'))).toBe(false);
     expect(invitationCanBeRevoked(invitation('CLAIMED'))).toBe(false);
   });
 
@@ -259,19 +256,8 @@ describe('Counterparty Access Invitation lifecycle', () => {
         ],
       ),
     ).toBe('CLAIMED');
-    expect(
-      invitationCompletionState(
-        ['counterparty.purchase.prepare'],
-        [
-          {
-            grantRef: progressGrantRef,
-            permission: 'counterparty.purchase.prepare',
-            state: 'RECONCILIATION_REQUIRED',
-          },
-        ],
-      ),
-    ).toBe('RECONCILIATION_REQUIRED');
     expect(invitationCanTransition('PENDING', 'CLAIMING')).toBe(true);
+    expect(invitationCanTransition('CLAIMING', 'PENDING')).toBe(true);
     expect(invitationCanTransition('CLAIMED', 'PENDING')).toBe(false);
   });
 
@@ -305,7 +291,7 @@ describe('Counterparty Access Invitation lifecycle', () => {
           },
         ],
       ),
-    ).toBe('RECONCILIATION_REQUIRED');
-    expect(invitationCanBeRevoked({ ...claimed, state: 'RECONCILIATION_REQUIRED' })).toBe(true);
+    ).toBeUndefined();
+    expect(invitationCanBeRevoked(claimed)).toBe(false);
   });
 });

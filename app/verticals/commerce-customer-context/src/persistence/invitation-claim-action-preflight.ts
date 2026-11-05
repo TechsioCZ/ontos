@@ -2,7 +2,6 @@ import {
   ActionAuthorizationPreflight,
   ActionAuthorizationPreflightDatabase,
   ActionPermissionCheckError,
-  ContextAccess,
   makeActionAuthorizationPreflightPermit,
   PrincipalEligibility,
   scopedRoutineInvokerFromTransaction,
@@ -81,7 +80,6 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
   function* runInvitationClaimPreflight(
     // oxlint-disable-next-line effect-native/no-dependency-parameters -- The operation captures the already-yielded Core preflight database seam; expires: 2027-03-31.
     database: ActionAuthorizationPreflightDatabaseService,
-    contextAccess: Pick<(typeof ContextAccess)['Service'], 'ownerPermissions'>,
     // oxlint-disable-next-line effect-native/no-dependency-parameters -- The operation captures the already-yielded eligibility service for this owner-local preflight; expires: 2027-03-31.
     eligibility: (typeof PrincipalEligibility)['Service'],
     input: ActionAuthorizationPreflightInput,
@@ -120,7 +118,6 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
         });
         return yield* verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
           {
-            contextAccess,
             currentOwnerAccess,
             transaction: invoker,
           },
@@ -139,11 +136,9 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
   },
 );
 
-// oxlint-disable-next-line effect-native/no-wide-factory-signature -- This public factory preserves the direct unit-test seam while capturing three already-yielded Core services; expires: 2027-03-31.
 export const makeInvitationClaimActionAuthorizationPreflight = (
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The factory captures the already-yielded Core preflight database seam; expires: 2027-03-31.
   database: ActionAuthorizationPreflightDatabaseService,
-  contextAccess: Pick<(typeof ContextAccess)['Service'], 'ownerPermissions'>,
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The factory captures the already-yielded eligibility service for this owner-local preflight; expires: 2027-03-31.
   eligibility: (typeof PrincipalEligibility)['Service'],
 ): ActionAuthorizationPreflightService =>
@@ -156,7 +151,7 @@ export const makeInvitationClaimActionAuthorizationPreflight = (
       if (payload === undefined || !payloadMatchesTrustedClaim(payload, input)) {
         return Effect.succeed({ outcome: 'denied' } as const);
       }
-      return runInvitationClaimPreflight(database, contextAccess, eligibility, input, payload).pipe(
+      return runInvitationClaimPreflight(database, eligibility, input, payload).pipe(
         Effect.map(() => ({
           outcome: 'allowed' as const,
           permit: makeActionAuthorizationPreflightPermit({
@@ -178,10 +173,10 @@ export const makeInvitationClaimActionAuthorizationPreflight = (
 export const commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive = Layer.effect(
   ActionAuthorizationPreflight,
   Effect.gen(function* makeInvitationClaimPreflightLive() {
-    const [database, contextAccess, eligibility] = yield* Effect.all(
-      [ActionAuthorizationPreflightDatabase, ContextAccess, PrincipalEligibility] as const,
+    const [database, eligibility] = yield* Effect.all(
+      [ActionAuthorizationPreflightDatabase, PrincipalEligibility] as const,
       { concurrency: 1 },
     );
-    return makeInvitationClaimActionAuthorizationPreflight(database, contextAccess, eligibility);
+    return makeInvitationClaimActionAuthorizationPreflight(database, eligibility);
   }),
 );

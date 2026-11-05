@@ -2,12 +2,12 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug stock-issue
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { StockIssuePayloadSchema, StockIssueResultSchema } from '../actions/stock-issue.ts';
 
 export { StockIssuePayloadSchema } from '../actions/stock-issue.ts';
-
 const StockIssueActionHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -22,6 +22,7 @@ export const StockIssueActionForbiddenProblemSchema = makeProblemDetailsSchema(
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -136,7 +137,7 @@ export const stockIssueActionGroupDefinition = HttpApiGroup.make('stockIssueActi
       error: actionErrors,
       headers: StockIssueActionHeadersSchema,
       payload: Schema.toEncoded(StockIssuePayloadSchema),
-      success: StockIssueResultSchema,
+      success: [ActionProposalAcceptedSchema, StockIssueResultSchema],
     }),
   )
   .middleware(StockIssueActionSchemaErrorMiddleware);

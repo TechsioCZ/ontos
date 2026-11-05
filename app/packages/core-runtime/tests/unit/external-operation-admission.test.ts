@@ -25,6 +25,7 @@ import {
 } from '../../src/auth/external-identity/verifier.ts';
 import type { TrustedAdmissionObservationService } from '../../src/auth/external-identity/verifier.ts';
 import { makeOperationalScopeResolver } from '../../src/operations/context.ts';
+import { makeTestOperationalScopeAccess } from '../../src/testing/access-gate.ts';
 import type { PersistedScopeRecord } from '../../src/operations/repository-context.ts';
 import { OperationAuthenticationRequired, OperationContextUnavailable } from '../../src/operations/errors.ts';
 import { externalIdentityFailure } from '../../src/auth/external-identity/errors.ts';
@@ -106,7 +107,7 @@ const input = {
   legalEntityScope: 'forbidden' as const,
   principal,
 };
-const access = { legalEntities: () => Effect.succeed([]) };
+const access = makeTestOperationalScopeAccess({ legalEntityIds: () => [] });
 
 const preBindingRequest = {
   ...Schema.decodeSync(ExternalAuthenticationSubjectSchema)({

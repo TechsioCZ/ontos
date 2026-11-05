@@ -71,7 +71,7 @@ export const readEffectiveAttributeValuesCurrent = Effect.fn('EffectiveAttribute
 
 const effectiveAttributeValuesCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.effective-attribute-values-current' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.effective-attribute-values-current',
   moduleKey,
   role: 'api',
@@ -79,6 +79,14 @@ const effectiveAttributeValuesCurrentEntrypoint = defineTenantModuleEntrypoint({
 
 export const effectiveAttributeValuesCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.effective-attribute-values-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: effectiveAttributeValuesCurrentEntrypoint,
     evidencePolicy: {
@@ -88,7 +96,6 @@ export const effectiveAttributeValuesCurrentRead = defineRead(
     inputSchema: EffectiveAttributeValuesCurrentRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.effective-attribute-values-current',
     resultSchema: EffectiveAttributeValuesCurrentResponseSchema,
@@ -101,5 +108,4 @@ export const effectiveAttributeValuesCurrentRead = defineRead(
     return yield* readEffectiveAttributeValuesCurrent(input, context.scope.tenantId, context.services);
   }),
   (transaction, scope) => effectiveAttributeValueReadsForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

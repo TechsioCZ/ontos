@@ -750,6 +750,19 @@ const actionServicesForScope = Effect.fn('ManageCommitmentConfirmationAction.act
 
 export const manageCommitmentConfirmationAction = defineAction(
   {
+    accessActor: {
+      callers: ['commerce-order'],
+      reason: 'Order finalization records the commitment confirmation for the buyer it acts for.',
+      subject: 'identity',
+    },
+    accessDeclaration: {
+      key: 'commerce.pricing.commitment-confirmation.manage',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'commercial-commitments', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.pricing.manage-commitment-confirmation.access.v1',
@@ -766,7 +779,7 @@ export const manageCommitmentConfirmationAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.pricing.manage-commitment-confirmation',
       moduleKey: MODULE_KEY,
       role: 'action',

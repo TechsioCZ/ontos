@@ -2,6 +2,7 @@
 // @ontos-action-http-owner payment.term-catalog
 // @ontos-action-http-slug accept-payment-term-source-statement
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/accept-payment-term-source-statement.ts';
 
 export { AcceptPaymentTermSourceStatementPayloadSchema } from '../actions/accept-payment-term-source-statement.ts';
-
 export const AcceptPaymentTermSourceStatementActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AcceptPaymentTermSourceStatementActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const AcceptPaymentTermSourceStatementActionForbiddenProblemSchema = make
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const acceptPaymentTermSourceStatementActionGroupDefinition = HttpApiGrou
     HttpApiEndpoint.post('execute', '/payment-term-catalog/actions/accept-payment-term-source-statement', {
       error: actionErrors,
       payload: Schema.toEncoded(AcceptPaymentTermSourceStatementPayloadSchema),
-      success: AcceptPaymentTermSourceStatementResultSchema,
+      success: [ActionProposalAcceptedSchema, AcceptPaymentTermSourceStatementResultSchema],
     }),
   )
   .middleware(AcceptPaymentTermSourceStatementActionSchemaErrorMiddleware);

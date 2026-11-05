@@ -1,7 +1,6 @@
 import type { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import { Context } from 'effect';
 
-import type { CatalogSelectionGatewayCredentialIssuer } from '../../shared/domain/catalog-selection-gateway-credential.ts';
 import type {
   CurrentPricingDecisionExternalOwnerEvidencePort,
   CurrentPricingDecisionWholeCompositionPort,
@@ -14,7 +13,6 @@ export type JoinedObservation1225 = Parameters<
 export class JoinedPrerequisites1225 extends Context.Service<
   JoinedPrerequisites1225,
   {
-    readonly catalogIssuer: CatalogSelectionGatewayCredentialIssuer;
     readonly external: CurrentPricingDecisionExternalOwnerEvidencePort;
     readonly observe: (input: JoinedObservation1225) => void;
     readonly purchaseContextEvidence: typeof PricingPurchaseContextVerificationEvidenceSchema.Type;

@@ -17,7 +17,7 @@ import {
 
 const marketRetirementEffectRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.market-catalog.api.market-retirement-effect-recovery',
   moduleKey: 'commerce.market-catalog',
   role: 'api',
@@ -25,6 +25,14 @@ const marketRetirementEffectRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const marketRetirementEffectRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.market-catalog.market-retirement.recover',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'markets', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: marketRetirementEffectRecoveryEntrypoint,
     evidencePolicy: {
@@ -34,7 +42,6 @@ export const marketRetirementEffectRecoveryRead = defineRead(
     inputSchema: MarketRetirementEffectRecoveryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: 'commerce.market-catalog',
-    permissionTarget: 'resource',
     policies: [],
     readKey: 'commerce.market-catalog.api.market-retirement-effect-recovery',
     resultSchema: MarketRetirementEffectRecoveryResponseSchema,
@@ -68,5 +75,4 @@ export const marketRetirementEffectRecoveryRead = defineRead(
           }),
         )
       : marketRetirementRecoveryService(transaction, scope, compositionRevision),
-  (input) => ({ kind: 'resource', resource: input.marketRef }),
 );

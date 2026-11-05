@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug import-source-assertion
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/import-source-assertion.ts';
 
 export { ImportSourceAssertionPayloadSchema } from '../actions/import-source-assertion.ts';
-
 export const ImportSourceAssertionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ImportSourceAssertionActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const ImportSourceAssertionActionForbiddenProblemSchema = makeProblemDeta
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const importSourceAssertionActionGroupDefinition = HttpApiGroup.make('imp
     HttpApiEndpoint.post('execute', '/inventory/actions/import-source-assertion', {
       error: actionErrors,
       payload: Schema.toEncoded(ImportSourceAssertionPayloadSchema),
-      success: ImportSourceAssertionResultSchema,
+      success: [ActionProposalAcceptedSchema, ImportSourceAssertionResultSchema],
     }),
   )
   .middleware(ImportSourceAssertionActionSchemaErrorMiddleware);

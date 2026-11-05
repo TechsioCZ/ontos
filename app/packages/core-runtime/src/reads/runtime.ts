@@ -16,7 +16,18 @@ import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Cause, Context, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
+import type { AccessDeclaration, AccessFieldGroup, AccessTarget } from '../authorization/access-declaration.ts';
+import type { AccessDecision, AccessRecordTarget, ParentReadRequirement } from '../access/decision/contract.ts';
+import type { GateInput } from '../access/enforcement/contract.ts';
+import type { ListAccessResolution } from '../access/decision/engine.ts';
+import { capabilityPolicyOf } from '../access/enforcement/capability.ts';
+import { withOptional } from '../access/decision/optional.ts';
+import type { ListAccessPredicate } from '../access/decision/list-access.ts';
+import { ModuleKeySchema, RecordKeySchema } from '../access/ids.ts';
+import type { BoundAccessGate } from '../operations/access-gate.ts';
+import { bindLiveAccessGate } from '../operations/access-gate.ts';
+import type { ActionPolicyTarget } from '../actions/policy.ts';
 import { transportIdentifier } from '../actions/string-schemas.ts';
 import { computeCanonicalValueHash } from '../actions/repository.ts';
 import {
@@ -39,11 +50,8 @@ import {
   toContextPermissionAccessKey,
 } from '../permissions/context-access.ts';
 import { LEGAL_ENTITY_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
-import {
-  OwnerAuthorizationOverlay,
-  failClosedOwnerAuthorizationOverlay,
-} from '../permissions/owner-authorization-overlay.ts';
-import type { OwnerAuthorizationTarget } from '../permissions/owner-authorization-overlay.ts';
+import { OwnerAuthorizationOverlay, failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
+import type { OwnerAccessFacts, OwnerAuthorizationTarget } from '../access/enforcement/owner-overlay.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
 import type {
   AtomicResolvedReadPermissionTarget,
@@ -54,6 +62,8 @@ import type {
   ResolvedReadPermissionTarget,
 } from './definition.ts';
 import {
+  getReadAccessTargetResolver,
+  getReadOwnerFactsResolver,
   getReadConditionalPermissionPlan,
   isReadRegistration,
   getReadDomainErrorSchema,
@@ -63,9 +73,11 @@ import {
   getReadResourcePermissionTargetResolver,
   getReadResultPermissionTargetResolver,
   getReadServiceFactory,
+  projectReadResultFields,
 } from './definition.ts';
 import type { ReadCoreError } from './errors.ts';
 import {
+  ReadEvidencePersistenceError,
   ReadHandlerExecutionError,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
@@ -123,6 +135,13 @@ export const READ_RUNTIME_STAGES = [
 export type ReadRuntimeStage = (typeof READ_RUNTIME_STAGES)[number];
 
 export interface ReadRuntimeOptions {
+  /**
+   * The access gate bound to this composition's enforcement ports (CUTOVER-PLAN §3.1). Every read
+   * that carries a v2 access carrier is decided here and nowhere else, and a composition without it
+   * refuses every such read with a retryable 503 instead of an implicit allow (O62). Reads still on a
+   * legacy kind keep the legacy checks until the codemod moves them (C05).
+   */
+  readonly accessDecision?: BoundAccessGate;
   readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
   readonly expectedDeployment?: typeof OntosDeploymentIdentitySchema.Type;
   readonly onStage?: (stage: ReadRuntimeStage) => void;
@@ -304,7 +323,12 @@ const resolveConditionalPermissionPlan = <Input>(
     },
   });
 
-const targetMetadata = (target: ResolvedReadPermissionTarget, _scope: OperationalScope) => {
+/**
+ * The policy/evidence metadata of one legacy permission target, named by the owner contract the
+ * policy input and the evidence row share. Every branch is checked against that contract instead of
+ * widening into a union of object literals whose absent keys would carry an explicit `undefined`.
+ */
+const targetMetadata = (target: ResolvedReadPermissionTarget, _scope: OperationalScope): ActionPolicyTarget => {
   const canonical = canonicalPermissionTarget(target);
 
   if (canonical.kind === 'legal_entity') {
@@ -672,10 +696,17 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
     scope: OperationalScope,
   ) {
     const permissionResolver = getReadPermissionTargetResolver(registration);
+    const declaredPermissionTarget = registration.descriptor.permissionTarget;
+    if (declaredPermissionTarget === undefined) {
+      return yield* new ReadHandlerExecutionError({
+        code: 'read_handler_execution_failed',
+        reason: 'The legacy Read permission target is unavailable',
+      });
+    }
     let permissionTarget: ResolvedReadPermissionTarget;
     let conditionalAdditionalTargets: readonly AtomicResolvedReadPermissionTarget[] = [];
-    if (registration.descriptor.permissionTarget === 'conditional') {
-      if (Predicate.isFunction(permissionResolver)) {
+    if (declaredPermissionTarget === 'conditional') {
+      if (permissionResolver === undefined || Predicate.isFunction(permissionResolver)) {
         return yield* new ReadHandlerExecutionError({
           code: 'read_handler_execution_failed',
           reason: 'The conditional Read permission declaration is unavailable',
@@ -704,7 +735,7 @@ const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarg
         try: () => permissionResolver(decodedInput, scope),
       });
       if (
-        !targetIsValid(registration.descriptor.permissionTarget, permissionTarget, scope) ||
+        !targetIsValid(declaredPermissionTarget, permissionTarget, scope) ||
         (getReadResultPermissionTargetResolver(registration) !== undefined && permissionTarget.kind === 'any_of')
       ) {
         if (permissionTarget.kind === 'owner_permission') {
@@ -879,6 +910,159 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   return yield* Effect.void;
 });
 
+/**
+ * The record target of a record-scoped read, resolved from the declaration's own resolver (O9, O27).
+ * A malformed target is a Core authoring defect, so it is a retryable unavailability, never an allow.
+ */
+const ReadAccessRecordTargetSchema = Schema.Struct({ moduleKey: ModuleKeySchema, recordKey: RecordKeySchema });
+const decodeReadAccessRecordTarget = Schema.decodeUnknownOption(ReadAccessRecordTargetSchema);
+
+const resolveReadAccessTarget = <Input>(
+  input: Input,
+  scope: OperationalScope,
+  resolver: ((input: Input, scope: OperationalScope) => AccessTarget) | undefined,
+): Effect.Effect<Option.Option<AccessRecordTarget>, ReadPermissionUnavailable> => {
+  if (resolver === undefined) {
+    return Effect.succeed(Option.none<AccessRecordTarget>());
+  }
+  return Effect.try({
+    catch: (cause) =>
+      preserveFailureCause(
+        new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'The declared read access target could not be resolved safely',
+        }),
+        cause,
+      ),
+    try: () => resolver(input, scope),
+  }).pipe(
+    Effect.flatMap((declared) => {
+      const decoded = decodeReadAccessRecordTarget(declared);
+      return Option.isNone(decoded)
+        ? Effect.fail(
+            new ReadPermissionUnavailable({
+              code: 'read_permission_unavailable',
+              reason: 'The declared read access target is invalid',
+            }),
+          )
+        : Effect.succeed(Option.some(decoded.value));
+    }),
+  );
+};
+
+/** The evidence/policy metadata of a v2 record target; a scope-wide read names no record (Q2). */
+const accessTargetMetadata = (
+  declaration: AccessDeclaration | undefined,
+  target: Option.Option<AccessRecordTarget>,
+): Readonly<Record<string, string>> =>
+  Option.isNone(target)
+    ? {}
+    : {
+        targetModuleKey: target.value.moduleKey,
+        targetResourceId: target.value.recordKey,
+        targetResourceType: declaration?.key ?? target.value.moduleKey,
+      };
+
+/** Reads that answer one row per query: their rows are filtered by the gate's list predicate (O25). */
+const ROW_SCOPED_READ_ACCESS_KINDS: ReadonlySet<string> = new Set(['list', 'report', 'search']);
+
+/**
+ * The owner-local facts of a governed read (O70): a flat string map naming the owner records the
+ * owner's own business rule is about. They are resolved from the decoded input before the decision,
+ * handed to the owner overlay only, and never reach the decision engine. An empty map is no facts,
+ * and a defect or a non-string fact is a retryable 503, never an allow.
+ */
+const OwnerAccessFactsSchema = Schema.Record(Schema.String, Schema.String);
+const decodeOwnerAccessFacts = Schema.decodeUnknownOption(OwnerAccessFactsSchema);
+
+const resolveReadOwnerFacts = <Input>(
+  input: Input,
+  scope: OperationalScope,
+  resolver: ((input: Input, scope: OperationalScope) => OwnerAccessFacts) | undefined,
+): Effect.Effect<Option.Option<OwnerAccessFacts>, ReadPermissionUnavailable> => {
+  if (resolver === undefined) {
+    return Effect.succeed(Option.none<OwnerAccessFacts>());
+  }
+  return Effect.try({
+    catch: (cause) =>
+      preserveFailureCause(
+        new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'The owner-local facts of this read could not be resolved safely',
+        }),
+        cause,
+      ),
+    try: () => resolver(input, scope),
+  }).pipe(
+    Effect.flatMap((declared) => {
+      const decoded = decodeOwnerAccessFacts(declared);
+      return Option.isNone(decoded)
+        ? Effect.fail(
+            new ReadPermissionUnavailable({
+              code: 'read_permission_unavailable',
+              reason: 'The owner-local facts of this read are invalid',
+            }),
+          )
+        : Effect.succeed(Option.some(decoded.value));
+    }),
+  );
+};
+
+const NO_OWNER_AUTHORIZATION_TARGETS: readonly OwnerAuthorizationTarget[] = Object.freeze([]);
+const NO_PERMISSION_DECISIONS: readonly PermissionDecision[] = Object.freeze([]);
+const NO_ACCESS_FIELD_GROUPS: readonly AccessFieldGroup[] = Object.freeze([]);
+/** No declared result path is projected out; one shared empty list, never a fresh mutable array. */
+const NO_FIELD_PATHS: readonly (readonly string[])[] = Object.freeze([]);
+
+/**
+ * What the access gate answered for one read (CUTOVER-PLAN §3.1): the decision, the row predicate a
+ * list hands to its owner (O25) and the declared result paths this caller may not see (O17).
+ */
+interface ReadGateAuthorization {
+  readonly decision: PermissionDecision;
+  /** The declared result paths this caller may not see; empty when every field group is granted. */
+  readonly deniedFieldPaths: readonly (readonly string[])[];
+  /** Present exactly for a row-scoped read; the owner applies it inside its own query (D16, O25). */
+  readonly listAccess?: ListAccessPredicate;
+}
+
+/** A composition without the gate, and an unavailable gate, answer the same retryable 503 (O62). */
+const UNAVAILABLE_GATE_AUTHORIZATION: ReadGateAuthorization = Object.freeze({
+  decision: 'unavailable',
+  deniedFieldPaths: NO_FIELD_PATHS,
+});
+
+/** A read still on a legacy kind is not decided here, so it receives no predicate and no projection. */
+const LEGACY_GATE_AUTHORIZATION: ReadGateAuthorization = Object.freeze({
+  decision: 'allowed',
+  deniedFieldPaths: NO_FIELD_PATHS,
+});
+
+/**
+ * The parent read of one declared field group (D14, O58, O74). A record-scoped read names the one
+ * record it returns; a scope-wide read names none, because its own capability is the parent read,
+ * decided scope-wide in this same scope.
+ */
+const parentReadOf = (
+  readTarget: Option.Option<AccessRecordTarget>,
+  parent: AccessDeclaration,
+): ParentReadRequirement | undefined => {
+  const capability = capabilityPolicyOf(parent);
+  if (Option.isSome(readTarget)) {
+    return { capability, target: readTarget.value };
+  }
+  return parent.selectors.length === 0 ? { capability } : undefined;
+};
+
+/** The legacy targets and metadata of a read still on a legacy kind; removed with those kinds (C03b). */
+interface LegacyReadAuthorization {
+  readonly conditionalAdditionalTargets: readonly AtomicResolvedReadPermissionTarget[];
+  readonly ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[];
+  readonly permissionTarget: ResolvedReadPermissionTarget;
+  readonly permissionTargetMetadata: ActionPolicyTarget;
+  readonly resourcePermissionTarget: Option.Option<ReadResourcePermissionTarget>;
+}
+
 const unavailableReadComposition = (cause?: unknown) =>
   preserveFailureCause(
     new ReadHandlerUnavailable({
@@ -921,6 +1105,7 @@ const readRuntimeFromDependencies = <
   const operationAuthority = options.expectedDeployment === undefined ? undefined : options.applicationComposition;
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
   const ownerAuthorizationOverlay = options.ownerAuthorizationOverlay ?? failClosedOwnerAuthorizationOverlay;
+  const { accessDecision } = options;
 
   const runReadBoundary = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
     InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -1004,8 +1189,284 @@ const readRuntimeFromDependencies = <
       ),
     );
     stage('input_decoded');
+    const { descriptor } = input.registration;
+    const usesAccessGate = descriptor.entrypoint.authorization.kind === 'protected';
+    /**
+     * The registered, decoded carriers of this read: definition time already decoded, validated and
+     * froze them, so no request decodes them again (O5, O58, O59, O72). A protected read without any
+     * carrier is answered by the gate's own `deny.declaration_missing`, never by an implicit allow
+     * (O62).
+     */
+    // An absent carrier stays absent, so the gate sees exactly what the descriptor declares (O59, D5).
+    const accessCarrier: GateInput['carrier'] = withOptional(
+      withOptional(
+        withOptional({}, 'accessDeclaration', descriptor.accessDeclaration),
+        'accessWorkload',
+        descriptor.accessWorkload,
+      ),
+      'accessActor',
+      descriptor.accessActor,
+    );
+    /**
+     * A field group is always decided on rights (D6, O17). An `identity` read admits its relayed subject
+     * before any grant is read, so its groups keep the read's callers but decide the subject's own grants
+     * for the field capability. A workload subject holds no field grant, so the groups name no workload
+     * subject and its governed fields are projected out, whichever mode admitted it to the read.
+     */
+    const fieldGroupActor =
+      descriptor.accessActor === undefined
+        ? undefined
+        : Object.freeze({
+            callers: descriptor.accessActor.callers,
+            reason: descriptor.accessActor.reason,
+            subject: 'rights' as const,
+          });
+
+    /** The legacy resolution of a read still on a legacy kind; removed with those kinds (C03b). */
+    const prepareLegacyReadAuthorization = Effect.fn('ReadRuntime.prepareLegacyReadAuthorization')(
+      function* prepareLegacyReadAuthorizationEffect(
+        legacyInput: InputSchema['Type'],
+        scope: OperationalScope,
+      ): Effect.fn.Return<LegacyReadAuthorization, ReadCoreError> {
+        const { conditionalAdditionalTargets, permissionTarget } = yield* resolveReadPermissionTarget(
+          input.registration,
+          legacyInput,
+          scope,
+        );
+        // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Preserve primary-before-resource resolver execution because owner callbacks may throw or observe mutable state.
+        const resourcePermissionTarget = yield* resolveReadResourcePermissionTarget(
+          legacyInput,
+          scope,
+          getReadResourcePermissionTargetResolver(input.registration),
+        );
+        const ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[] = Object.freeze([
+          ...(permissionTarget.kind === 'any_of' ? permissionTarget.targets : [permissionTarget]).map((target) =>
+            toOwnerAuthorizationTarget(target, scope),
+          ),
+          ...conditionalAdditionalTargets.map((target) => toOwnerAuthorizationTarget(target, scope)),
+          ...(Option.isNone(resourcePermissionTarget)
+            ? []
+            : [
+                {
+                  kind: 'resource' as const,
+                  permission: 'read' as const,
+                  resource: resourcePermissionTarget.value.resource,
+                },
+              ]),
+        ]);
+        return Object.freeze({
+          conditionalAdditionalTargets,
+          ownerAuthorizationTargets,
+          permissionTarget,
+          permissionTargetMetadata: targetMetadata(permissionTarget, scope),
+          resourcePermissionTarget,
+        });
+      },
+    );
+
+    /**
+     * The one v2 authorization question this read asks (CUTOVER-PLAN §3.1): a single-record read is
+     * decided with its record target, a list, report or search read is decided as a list whose
+     * predicate the owner applies inside its own query (O25), and the field groups this caller lacks
+     * are projected out of the result (D14, O58, O17).
+     */
+    const authorizeThroughGate = Effect.fn('ReadRuntime.authorizeThroughGate')(function* authorizeThroughGateEffect(
+      readScope: OperationalScope,
+      readTarget: Option.Option<AccessRecordTarget>,
+      // A governed read decides inside the transaction it already holds (O75): a decision that opened
+      // its own REPEATABLE READ transaction there would nest into it after the composition lock ran.
+      ownedTransaction: CoreTransaction | undefined,
+    ): Effect.fn.Return<ReadGateAuthorization, ReadPermissionUnavailable> {
+      if (accessDecision === undefined) {
+        return UNAVAILABLE_GATE_AUTHORIZATION;
+      }
+      const now = yield* DateTime.nowAsDate;
+      const question = withOptionalProperty(
+        {
+          carrier: accessCarrier,
+          legalEntityScope: descriptor.legalEntityScope,
+          now,
+          scope: readScope,
+        },
+        Option.isSome(readTarget),
+        'target',
+        Option.getOrUndefined(readTarget),
+        {},
+      );
+      const rowScoped = ROW_SCOPED_READ_ACCESS_KINDS.has(descriptor.accessKind);
+      const listing: ListAccessResolution | undefined = rowScoped
+        ? yield* accessDecision.list(question, ownedTransaction)
+        : undefined;
+      const decision: AccessDecision =
+        listing === undefined ? yield* accessDecision.decide(question, ownedTransaction) : listing.decision;
+      // A read is never proposable, so only an ALLOWED decision may read (O45).
+      if (decision.outcome !== 'ALLOWED') {
+        return decision.outcome === 'UNAVAILABLE'
+          ? UNAVAILABLE_GATE_AUTHORIZATION
+          : { decision: 'denied', deniedFieldPaths: NO_FIELD_PATHS };
+      }
+      const listAccess = listing?.predicate;
+      if (rowScoped && listAccess === undefined) {
+        // A list answer without a predicate describes no matching row, so it never widens into an
+        // unfiltered read of the scope (B1, D16, O25).
+        return { decision: 'denied', deniedFieldPaths: NO_FIELD_PATHS };
+      }
+      const deniedFieldPaths = yield* decideReadFieldPaths(now, readScope, readTarget, ownedTransaction);
+      return withOptionalProperty(
+        { decision: 'allowed' as const, deniedFieldPaths },
+        listAccess !== undefined,
+        'listAccess',
+        listAccess,
+        {},
+      );
+    });
+
+    /**
+     * The declared result paths this caller may not read (O17). Field access rides the parent read it
+     * belongs to (D14, O58, O74): a record-scoped read decides each group with the record it returns
+     * and that record's own parent read; a scope-wide read has no record, so its groups ride the
+     * read's own capability decided scope-wide in this same scope; and a row-scoped read applies that
+     * same scope-wide shape with its row filter bounding the rows they apply to (O25).
+     */
+    const decideReadFieldPaths = Effect.fn('ReadRuntime.decideReadFieldPaths')(function* decideReadFieldPathsEffect(
+      decidedAt: Date,
+      readScope: OperationalScope,
+      readTarget: Option.Option<AccessRecordTarget>,
+      ownedTransaction: CoreTransaction | undefined,
+    ): Effect.fn.Return<readonly (readonly string[])[], ReadPermissionUnavailable> {
+      const groups = descriptor.accessFieldGroups ?? NO_ACCESS_FIELD_GROUPS;
+      const parent = descriptor.accessDeclaration;
+      if (groups.length === 0) {
+        return NO_FIELD_PATHS;
+      }
+      if (accessDecision === undefined || parent === undefined) {
+        // Definition time refuses a field group without its parent declaration (O58); a registration
+        // that lost one is a Core defect, so the read answers a retryable 503, never a projection.
+        return yield* new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'The declared read field groups could not be decided',
+        });
+      }
+      const rowScoped = ROW_SCOPED_READ_ACCESS_KINDS.has(descriptor.accessKind);
+      const parentRead = parentReadOf(readTarget, parent);
+      const answers = yield* Effect.forEach(
+        groups,
+        (group) => {
+          // A group rides its read's caller contract: a relayed or workload caller the read admits is
+          // decided on the group, not refused for a carrier that names no actor (D6).
+          const carrier = withOptional({ ...accessCarrier, accessDeclaration: group }, 'accessActor', fieldGroupActor);
+          return rowScoped
+            ? accessDecision
+                .list(
+                  { carrier, legalEntityScope: descriptor.legalEntityScope, now: decidedAt, scope: readScope },
+                  ownedTransaction,
+                )
+                .pipe(Effect.map((listing) => listing.decision))
+            : accessDecision.decide(
+                withOptionalProperty(
+                  withOptionalProperty(
+                    {
+                      carrier,
+                      legalEntityScope: descriptor.legalEntityScope,
+                      now: decidedAt,
+                      scope: readScope,
+                    },
+                    parentRead !== undefined,
+                    'parentRead',
+                    parentRead,
+                    {},
+                  ),
+                  Option.isSome(readTarget),
+                  'target',
+                  Option.getOrUndefined(readTarget),
+                  {},
+                ),
+                ownedTransaction,
+              );
+        },
+        { concurrency: 1 },
+      );
+      const unavailable = answers.some((answer) => answer.outcome === 'UNAVAILABLE');
+      if (unavailable) {
+        // An unreadable field decision is retryable, never a silent projection (O48b).
+        return yield* new ReadPermissionUnavailable({
+          code: 'read_permission_unavailable',
+          reason: 'Read field authorization is temporarily unavailable',
+        });
+      }
+      return groups.flatMap((group, index) =>
+        answers[index]?.outcome === 'ALLOWED' ? [] : group.fields.map((field) => field.split('.')),
+      );
+    });
+
+    /** Transitional: the legacy checks of a read still on a legacy kind; removed with those kinds (C03b). */
+    const checkLegacyReadAuthorization = Effect.fn('ReadRuntime.checkLegacyReadAuthorization')(
+      function* checkLegacyReadAuthorizationEffect(legacy: LegacyReadAuthorization, readScope: OperationalScope) {
+        const permissionDecision = yield* checkPermissionTarget(
+          contextAccess,
+          readScope,
+          legacy.permissionTarget,
+          input.registration.descriptor.legalEntityScope === 'forbidden',
+        );
+        const resourcePermissionDecision: PermissionDecision = Option.isSome(legacy.resourcePermissionTarget)
+          ? yield* checkAtomicPermissionTarget(
+              contextAccess,
+              readScope,
+              { kind: 'resource', resource: legacy.resourcePermissionTarget.value.resource },
+              false,
+            )
+          : 'allowed';
+        const conditionalAdditionalDecisions = yield* Effect.forEach(
+          legacy.conditionalAdditionalTargets,
+          (target) => checkAtomicPermissionTarget(contextAccess, readScope, target, false),
+          { concurrency: 3 },
+        );
+        const entrypointPermissionDecision = yield* checkEntrypointContextPermission(
+          contextAccess,
+          readScope,
+          input.registration.descriptor,
+          canonicalPermissionTarget(legacy.permissionTarget),
+          permissionDecision,
+        );
+        return [
+          permissionDecision,
+          resourcePermissionDecision,
+          ...conditionalAdditionalDecisions,
+          entrypointPermissionDecision,
+        ];
+      },
+    );
+
+    /** The receiving owner release must be the one the active Application Composition admits. */
+    const admitReadComposition = Effect.fn('ReadRuntime.admitReadComposition')(function* admitReadCompositionEffect(
+      earlyCompositionRevision: string | undefined,
+    ) {
+      const admission =
+        options.applicationComposition !== undefined && options.expectedDeployment !== undefined
+          ? yield* loadModuleOperationAdmission(
+              options.applicationComposition,
+              options.expectedDeployment,
+              input.registration,
+              principal,
+              options.ownerRegistration,
+              shellSystemReads,
+            ).pipe(Effect.mapError(unavailableReadComposition))
+          : undefined;
+      const admittedCompositionRevision = admission?.revision ?? compositionRevision;
+      if (earlyCompositionRevision !== undefined && earlyCompositionRevision !== admittedCompositionRevision) {
+        return yield* unavailableReadComposition();
+      }
+      if (admission?.catalog !== undefined) {
+        yield* validateBoundOperationOwner(input.registration, admission.catalog, options.ownerRegistration).pipe(
+          Effect.mapError(unavailableReadComposition),
+        );
+      }
+      return admittedCompositionRevision;
+    });
+
     const executeTrustedRead = Effect.fn('ReadRuntime.executeTrustedRead')(function* executeTrustedReadEffect(
       executor: CoreDbExecutor,
+      ownedTransaction?: CoreTransaction,
     ) {
       const scope = yield* scopeResolver.resolve(
         withOptionalProperty(
@@ -1027,33 +1488,26 @@ const readRuntimeFromDependencies = <
         ),
       );
       stage('scope_validated');
-      const { conditionalAdditionalTargets, permissionTarget } = yield* resolveReadPermissionTarget(
-        input.registration,
-        decodedInput,
-        scope,
-      );
-      // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Preserve primary-before-resource resolver execution because owner callbacks may throw or observe mutable state.
-      const resourcePermissionTarget = yield* resolveReadResourcePermissionTarget(
-        decodedInput,
-        scope,
-        getReadResourcePermissionTargetResolver(input.registration),
-      );
-      const ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[] = Object.freeze([
-        ...(permissionTarget.kind === 'any_of' ? permissionTarget.targets : [permissionTarget]).map((target) =>
-          toOwnerAuthorizationTarget(target, scope),
-        ),
-        ...conditionalAdditionalTargets.map((target) => toOwnerAuthorizationTarget(target, scope)),
-        ...(Option.isNone(resourcePermissionTarget)
-          ? []
-          : [
-              {
-                kind: 'resource' as const,
-                permission: 'read' as const,
-                resource: resourcePermissionTarget.value.resource,
-              },
-            ]),
-      ]);
-      const permissionTargetMetadata = targetMetadata(permissionTarget, scope);
+      // The descriptor decides which authority answers (O62, O68): a v2 carrier is decided by the one
+      // access gate, and a descriptor still on a legacy kind keeps the legacy checks until C05 moves it.
+      const accessTarget = usesAccessGate
+        ? yield* resolveReadAccessTarget(decodedInput, scope, getReadAccessTargetResolver(input.registration))
+        : Option.none<AccessRecordTarget>();
+      const accessOwnerFacts = usesAccessGate
+        ? yield* resolveReadOwnerFacts(decodedInput, scope, getReadOwnerFactsResolver(input.registration))
+        : Option.none<OwnerAccessFacts>();
+      const legacyAuthorization = usesAccessGate
+        ? Option.none<LegacyReadAuthorization>()
+        : Option.some(yield* prepareLegacyReadAuthorization(decodedInput, scope));
+      const permissionTarget = Option.isSome(legacyAuthorization)
+        ? legacyAuthorization.value.permissionTarget
+        : undefined;
+      const ownerAuthorizationTargets: readonly OwnerAuthorizationTarget[] = Option.isSome(legacyAuthorization)
+        ? legacyAuthorization.value.ownerAuthorizationTargets
+        : NO_OWNER_AUTHORIZATION_TARGETS;
+      const permissionTargetMetadata = Option.isSome(legacyAuthorization)
+        ? legacyAuthorization.value.permissionTargetMetadata
+        : accessTargetMetadata(descriptor.accessDeclaration, accessTarget);
       const { earlyCompositionRevision, intrinsicDependencies } = yield* prepareOperationIntrinsicState(
         input.registration,
         principal,
@@ -1067,40 +1521,16 @@ const readRuntimeFromDependencies = <
       yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
       stage('module_state_checked');
 
-      const permissionDecision = yield* checkPermissionTarget(
-        contextAccess,
-        scope,
-        permissionTarget,
-        input.registration.descriptor.legalEntityScope === 'forbidden',
-      );
-      const resourcePermissionDecision = Option.isNone(resourcePermissionTarget)
-        ? 'allowed'
-        : yield* checkAtomicPermissionTarget(
-            contextAccess,
-            scope,
-            {
-              kind: 'resource',
-              resource: resourcePermissionTarget.value.resource,
-            },
-            false,
-          );
-      const conditionalAdditionalDecisions = yield* Effect.forEach(
-        conditionalAdditionalTargets,
-        (target) => checkAtomicPermissionTarget(contextAccess, scope, target, false),
-        { concurrency: 3 },
-      );
-      const entrypointPermissionDecision = yield* checkEntrypointContextPermission(
-        contextAccess,
-        scope,
-        input.registration.descriptor,
-        canonicalPermissionTarget(permissionTarget),
-        permissionDecision,
-      );
-      const authorizationDecisions = [
-        permissionDecision,
-        resourcePermissionDecision,
-        ...conditionalAdditionalDecisions,
-        entrypointPermissionDecision,
+      const gateAuthorization: ReadGateAuthorization = usesAccessGate
+        ? yield* authorizeThroughGate(scope, accessTarget, ownedTransaction)
+        : LEGACY_GATE_AUTHORIZATION;
+      const gatePermissionDecision: PermissionDecision = gateAuthorization.decision;
+      const legacyPermissionDecisions: readonly PermissionDecision[] = Option.isSome(legacyAuthorization)
+        ? yield* checkLegacyReadAuthorization(legacyAuthorization.value, scope)
+        : NO_PERMISSION_DECISIONS;
+      const authorizationDecisions: readonly PermissionDecision[] = [
+        gatePermissionDecision,
+        ...legacyPermissionDecisions,
       ];
       stage('permission_checked');
       if (authorizationDecisions.includes('denied')) {
@@ -1111,7 +1541,7 @@ const readRuntimeFromDependencies = <
               accessKind: input.registration.descriptor.accessKind,
               captureMode: input.registration.descriptor.evidencePolicy.captureMode,
               outcome: 'denied',
-              outcomeCode: 'spicedb_permission_denied',
+              outcomeCode: usesAccessGate ? 'access_denied' : 'spicedb_permission_denied',
               outcomeStage: 'authz',
               policyKey: input.registration.descriptor.evidencePolicy.policyKey,
             },
@@ -1139,26 +1569,7 @@ const readRuntimeFromDependencies = <
         });
       }
 
-      const admission =
-        options.applicationComposition !== undefined && options.expectedDeployment !== undefined
-          ? yield* loadModuleOperationAdmission(
-              options.applicationComposition,
-              options.expectedDeployment,
-              input.registration,
-              principal,
-              options.ownerRegistration,
-              shellSystemReads,
-            ).pipe(Effect.mapError(unavailableReadComposition))
-          : undefined;
-      const admittedCompositionRevision = admission?.revision ?? compositionRevision;
-      if (earlyCompositionRevision !== undefined && earlyCompositionRevision !== admittedCompositionRevision) {
-        return yield* unavailableReadComposition();
-      }
-      if (admission?.catalog !== undefined) {
-        yield* validateBoundOperationOwner(input.registration, admission.catalog, options.ownerRegistration).pipe(
-          Effect.mapError(unavailableReadComposition),
-        );
-      }
+      const admittedCompositionRevision = yield* admitReadComposition(earlyCompositionRevision);
       const executionRevision = admittedCompositionRevision ?? '';
       const policies = getReadPolicyImplementations(input.registration);
       yield* withReadExecution(
@@ -1182,7 +1593,6 @@ const readRuntimeFromDependencies = <
                 }),
               );
             }
-            const { descriptor } = input.registration;
             return policy
               .evaluate({
                 action: {
@@ -1255,14 +1665,29 @@ const readRuntimeFromDependencies = <
             const operationAt = yield* trustedTransactionTime(transaction);
             const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
               scoped,
-              Object.freeze({
-                operation: 'read' as const,
-                operationAt,
-                operationKey: input.registration.descriptor.readKey,
-                owningModuleKey: input.registration.descriptor.owningModuleKey,
-                scope,
-                targets: ownerAuthorizationTargets,
-              }),
+              Object.freeze(
+                withOptionalProperty(
+                  withOptionalProperty(
+                    {
+                      capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
+                      operation: 'read' as const,
+                      operationAt,
+                      operationKey: input.registration.descriptor.readKey,
+                      owningModuleKey: input.registration.descriptor.owningModuleKey,
+                      scope,
+                      targets: ownerAuthorizationTargets,
+                    },
+                    Option.isSome(accessTarget),
+                    'target',
+                    Option.getOrUndefined(accessTarget),
+                    {},
+                  ),
+                  Option.isSome(accessOwnerFacts),
+                  'ownerFacts',
+                  Option.getOrUndefined(accessOwnerFacts),
+                  {},
+                ),
+              ),
             );
             if (ownerAuthorizationDecision === 'denied') {
               return yield* new ReadPermissionDenied({
@@ -1280,15 +1705,32 @@ const readRuntimeFromDependencies = <
               scoped,
               scope,
               admittedCompositionRevision,
+              gateAuthorization.listAccess,
             );
             const handlerResult = yield* Effect.suspend(() =>
               getReadHandler(input.registration)(
                 decodedInput,
-                Object.freeze({
-                  readKey: input.registration.descriptor.readKey,
-                  scope,
-                  services,
-                }),
+                Object.freeze(
+                  withOptionalProperty(
+                    withOptionalProperty(
+                      {
+                        readKey: descriptor.readKey,
+                        scope,
+                        services,
+                      },
+                      gateAuthorization.listAccess !== undefined,
+                      'listAccess',
+                      gateAuthorization.listAccess,
+                      {},
+                    ),
+                    // The gate's own field answer, never a request payload fact (O17, O25): present
+                    // exactly for the reads it decided, so an owner can tell granted from unasked.
+                    usesAccessGate,
+                    'deniedFieldPaths',
+                    gateAuthorization.deniedFieldPaths,
+                    {},
+                  ),
+                ),
               ),
             ).pipe(
               Effect.mapError((failure) =>
@@ -1314,7 +1756,9 @@ const readRuntimeFromDependencies = <
             );
             stage('result_decoded');
             const resultPermissionResolver = getReadResultPermissionTargetResolver(input.registration);
-            if (resultPermissionResolver !== undefined) {
+            if (resultPermissionResolver !== undefined && permissionTarget !== undefined) {
+              // Legacy result filtering; a v2 row-scoped read applies the gate's list predicate in its
+              // own query instead (O25), so this path belongs to the legacy kinds only (C03b).
               yield* checkResultPermissions(contextAccess, result, scope, permissionTarget, resultPermissionResolver);
             }
             const evidence = yield* validateReadEvidenceMetadata(
@@ -1358,7 +1802,20 @@ const readRuntimeFromDependencies = <
               ),
             );
             stage('evidence_persisted');
-            return result;
+            // The complete payload was decoded, validated and hashed by its owner above; the caller
+            // receives the projection of the field groups it may read (O17).
+            const projected = projectReadResultFields(
+              result,
+              gateAuthorization.deniedFieldPaths,
+              input.registration.descriptor.resultSchema,
+            );
+            if (Option.isNone(projected)) {
+              return yield* new ReadPermissionUnavailable({
+                code: 'read_permission_unavailable',
+                reason: 'The read result could not be projected onto the field groups this caller may read',
+              });
+            }
+            return projected.value;
           }, trustedSettlement.capture),
         )
         .pipe(
@@ -1443,13 +1900,17 @@ const readRuntimeFromDependencies = <
               ),
             ),
           );
-          const executionExit = yield* Effect.exit(executeTrustedRead(transaction));
+          // The decision row was written into this transaction, so an owner's typed answer commits it and
+          // the caller still receives that same failure below. Defects and interrupts roll back, and so do an
+          // owner outage and a failed evidence write, either of which may leave the transaction unusable.
+          const executionExit = yield* Effect.exit(executeTrustedRead(transaction, transaction));
           if (
             Exit.isFailure(executionExit) &&
             !executionExit.cause.reasons.every(
               (reason) =>
                 Cause.isFailReason(reason) &&
-                (Schema.is(ReadPermissionDenied)(reason.error) || Schema.is(ReadPolicyDenied)(reason.error)),
+                !Schema.is(ReadEvidencePersistenceError)(reason.error) &&
+                !Schema.is(ReadHandlerUnavailable)(reason.error),
             )
           ) {
             return yield* Effect.failCause(executionExit.cause);
@@ -1495,7 +1956,9 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
   const gateway = yield* ModuleEntrypointGateway;
   const scopeResolver = yield* OperationalScopeResolver;
   const contextAccess = yield* ContextAccess;
+  const accessDecision = yield* bindLiveAccessGate;
   return {
+    accessDecision,
     contextAccess,
     database,
     gateway,
@@ -1510,8 +1973,11 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
 export const ReadRuntimeLive = Layer.effect(
   ReadRuntime,
   readRuntimeDependencies.pipe(
-    Effect.map(({ contextAccess, database, gateway, ownerAuthorizationOverlay, scopeResolver }) =>
-      readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, { ownerAuthorizationOverlay }),
+    Effect.map(({ accessDecision, contextAccess, database, gateway, ownerAuthorizationOverlay, scopeResolver }) =>
+      readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, {
+        accessDecision,
+        ownerAuthorizationOverlay,
+      }),
     ),
   ),
 );
@@ -1525,15 +1991,21 @@ export const makeReadRuntimeLive = (
     ReadRuntime,
     Effect.gen(function* makeOwnedReadRuntimeService() {
       const applicationComposition = yield* ActiveApplicationCompositionService;
-      const { contextAccess, database, gateway, ownerAuthorizationOverlay, scopeResolver } =
+      const { accessDecision, contextAccess, database, gateway, ownerAuthorizationOverlay, scopeResolver } =
         yield* readRuntimeDependencies;
       const ownerRegistration = hosting !== undefined && 'shellSystemReads' in hosting ? undefined : hosting;
       const shellSystemReads =
         hosting !== undefined && 'shellSystemReads' in hosting ? hosting.shellSystemReads : undefined;
       const options: ReadRuntimeOptions =
         ownerRegistration === undefined
-          ? { applicationComposition, expectedDeployment, ownerAuthorizationOverlay }
-          : { applicationComposition, expectedDeployment, ownerAuthorizationOverlay, ownerRegistration };
+          ? { accessDecision, applicationComposition, expectedDeployment, ownerAuthorizationOverlay }
+          : {
+              accessDecision,
+              applicationComposition,
+              expectedDeployment,
+              ownerAuthorizationOverlay,
+              ownerRegistration,
+            };
       return readRuntimeFromDependencies(
         database,
         gateway,

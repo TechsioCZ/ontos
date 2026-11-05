@@ -26,7 +26,13 @@ import {
 import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
 import { DatabaseLoginRoles } from '../ops/database-identities.mts';
 import { DATABASE_IDENTITY_SECRETS, migratorSecretReference } from '../ops/database-identity-secrets.mts';
-import { OWNER_RUNTIME_CONFIGURATIONS } from '../ops/owner-runtime-configuration.mts';
+import {
+  GATEWAY_MODULE_API_KEY_VARIABLE,
+  GATEWAY_MODULE_BINDINGS_VARIABLE,
+  GATEWAY_MODULE_UNITS,
+  OWNER_RUNTIME_CONFIGURATIONS,
+  moduleCredentialVariable,
+} from '../ops/owner-runtime-configuration.mts';
 import { SPICEDB_GRPC_TLS, SPICEDB_HTTP_TLS, spicedbTlsState } from '../ops/spicedb-tls.mts';
 import { ciPolicy, killSwitchRule, peoplePolicy, usageAlert } from '../ops/cloudflare-stage-cost-guard.mts';
 import {
@@ -64,30 +70,28 @@ const PRIVATE_JWK = JSON.stringify({
   x: 'public-x',
 });
 const SPICEDB_KEY = 'spicedb-key-secret';
-const CUSTOMER_CONTEXT_GATEWAY_API_KEY = 'customer-context-gateway-key-secret';
-const MARKET_GATEWAY_API_KEY = 'market-gateway-key-secret';
-const PRICING_GATEWAY_API_KEY = 'pricing-gateway-key-secret';
-const ORDER_APPROVAL_GATEWAY_API_KEY = 'order-approval-gateway-key-secret';
-const ORDER_FINALIZATION_GATEWAY_API_KEY = 'order-finalization-gateway-key-secret';
-/** The operator-issued Principal IDs of the API-key callers Commerce Order admits. */
-const ORDER_CALLER_PRINCIPAL_IDS = {
-  ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID: '0190c0de-0000-7000-8000-000000000001',
-  ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID: '0190c0de-0000-7000-8000-000000000002',
-  ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID: '0190c0de-0000-7000-8000-000000000003',
-};
+const CART_MODULE_CREDENTIAL = moduleCredentialVariable('commerce-cart');
+const CUSTOMER_CONTEXT_MODULE_CREDENTIAL = moduleCredentialVariable('commerce-customer-context');
+const ORDER_MODULE_CREDENTIAL = moduleCredentialVariable('commerce-order');
+const PRICING_MODULE_CREDENTIAL = moduleCredentialVariable('pricing');
+const MARKET_CATALOG_MODULE_CREDENTIAL = moduleCredentialVariable('commerce-market-catalog');
 /** A valid value of a setting's format; credentials end in `-secret`, so the leak checks look for them. */
-const fixtureSetting = (format: string, variable: string, index: number) => {
+const fixtureSetting = (format: string, variable: string) => {
   const name = variable.toLowerCase().replaceAll('_', '-');
-  if (format === 'uuid') {
-    return `0190c0de-0000-7000-8000-${String(index + 1).padStart(12, '0')}`;
-  }
-  if (format === 'json') {
-    return JSON.stringify([{ fixture: name }]);
+  if (format === 'module-bindings') {
+    return JSON.stringify(
+      GATEWAY_MODULE_UNITS.map((sourceAppId) => ({
+        compositionRevision: 'a'.repeat(64),
+        providerKeyId: `${sourceAppId}-key`,
+        sourceAppId,
+        sourceBuildMarker: `${sourceAppId}-build`,
+      })),
+    );
   }
   return format === 'reference' ? `${name}-ref` : `${name}-secret`;
 };
 const OWNER_SETTING_VALUES: Readonly<Record<string, string>> = Object.fromEntries(
-  OWNER_SETTINGS.map(({ format, variable }, index) => [variable, fixtureSetting(format, variable, index)]),
+  OWNER_SETTINGS.map(({ format, variable }) => [variable, fixtureSetting(format, variable)]),
 );
 const CREDENTIAL_SETTINGS = OWNER_SETTINGS.filter(({ format }) => format === 'nonEmpty').map(
   ({ variable }) => variable,
@@ -105,6 +109,7 @@ const MARKET_WORKER = 'app-commerce-market-catalog';
 const PRICING_WORKER = 'app-pricing';
 const ORDER_WORKER = 'app-commerce-order';
 const CART_WORKER = 'app-commerce-cart';
+const PARTY_WORKER = 'app-party-registry';
 const SHELL_GATEWAY_BASE_URL = 'https://app.stage.example.com/shell-super-app-api';
 const DEPLOYMENT_ENVIRONMENT = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 const PLACEMENT_FILE = 'topology/cloudflare-placement.json';
@@ -171,12 +176,6 @@ const SENSITIVE_KEYS = ['db18_password', 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'];
 /** The Shell's secrets, which the settings file holds since the Zerops Shell retired. */
 const SHELL_SETTINGS = {
   ...OWNER_SETTING_VALUES,
-  ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: CUSTOMER_CONTEXT_GATEWAY_API_KEY,
-  ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: MARKET_GATEWAY_API_KEY,
-  ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY: ORDER_APPROVAL_GATEWAY_API_KEY,
-  ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: ORDER_FINALIZATION_GATEWAY_API_KEY,
-  ONTOS_PRICING_GATEWAY_API_KEY: PRICING_GATEWAY_API_KEY,
-  ...ORDER_CALLER_PRINCIPAL_IDS,
   shellsuperapp_BETTER_AUTH_SECRET: AUTH_SECRET,
   shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
 };
@@ -191,11 +190,6 @@ const SECRETS = [
   AUTH_SECRET,
   'private-jwk-secret',
   SPICEDB_KEY,
-  CUSTOMER_CONTEXT_GATEWAY_API_KEY,
-  MARKET_GATEWAY_API_KEY,
-  PRICING_GATEWAY_API_KEY,
-  ORDER_APPROVAL_GATEWAY_API_KEY,
-  ORDER_FINALIZATION_GATEWAY_API_KEY,
   ...CREDENTIAL_SETTINGS.map((variable) => settingValue(variable) ?? variable),
   'tunnel-connector-token',
   'service-token-secret',
@@ -479,6 +473,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
       BETTER_AUTH_TRUSTED_ORIGINS: SHELL_ORIGIN,
       BETTER_AUTH_URL: SHELL_ORIGIN,
       [DEPLOYMENT_ENVIRONMENT]: 'stage',
+      [GATEWAY_MODULE_BINDINGS_VARIABLE]: settingValue(GATEWAY_MODULE_BINDINGS_VARIABLE),
       ONTOS_GATEWAY_ISSUER: SHELL_ORIGIN,
       ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
       SPICEDB_ENDPOINT: GATEWAY_HOSTNAME,
@@ -823,7 +818,10 @@ const brokenOwnerSettings = (variables: readonly string[]) =>
     [variable, Object.fromEntries(Object.entries(SHELL_SETTINGS).filter(([key]) => key !== variable))] as const,
     [
       variable,
-      { ...SHELL_SETTINGS, [variable]: { json: '{', nonEmpty: '', reference: ' padded ', uuid: 'not-a-uuid' }[format] },
+      {
+        ...SHELL_SETTINGS,
+        [variable]: { 'module-bindings': '[', nonEmpty: '', reference: ' padded ' }[format],
+      },
     ] as const,
   ]);
 
@@ -845,14 +843,11 @@ it.effect('requires every caller key before writing any Worker secret', () =>
   Effect.gen(function* requiresCallerGatewayKeys() {
     expect(CREDENTIAL_SETTINGS).toStrictEqual(
       expect.arrayContaining([
-        'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY',
-        'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY',
-        'ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY',
-        'ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY',
-        'ONTOS_PRICING_GATEWAY_API_KEY',
-        'ONTOS_CCC_ORDER_GATEWAY_API_KEY',
-        'ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY',
-        'ONTOS_CART_FINALIZATION_SERVICE_API_KEY',
+        MARKET_CATALOG_MODULE_CREDENTIAL,
+        CART_MODULE_CREDENTIAL,
+        CUSTOMER_CONTEXT_MODULE_CREDENTIAL,
+        ORDER_MODULE_CREDENTIAL,
+        PRICING_MODULE_CREDENTIAL,
         'ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET',
       ]),
     );
@@ -867,17 +862,13 @@ it.effect('requires every per-environment owner value, in its format, before wri
     );
     expect(values).toStrictEqual(
       expect.arrayContaining([
-        ...Object.keys(ORDER_CALLER_PRINCIPAL_IDS),
-        'ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID',
-        'ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID',
-        'ONTOS_CCC_ORDER_CONSUMER_TENANT_ID',
-        'ONTOS_CCC_ORDER_FINALIZATION_SERVICE_GRANTS',
-        'ONTOS_PRICING_ORDER_PRINCIPAL_ID',
-        'ONTOS_PRICING_PREPROPOSAL_PRINCIPAL_ID',
-        'ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS',
+        'ONTOS_PRICING_CONFIRMATION_KEY_LINEAGE_REF',
+        'ONTOS_PRICING_CONFIRMATION_KEY_REF',
+        'ONTOS_PRICING_CONFIRMATION_KEY_VERSION',
       ]),
     );
     yield* expectOwnerSettingRequired(values);
+    yield* expectOwnerSettingRequired([GATEWAY_MODULE_BINDINGS_VARIABLE]);
   }),
 );
 
@@ -1256,7 +1247,7 @@ it.effect('names the unplaced units and unset build variables of an incomplete p
   }),
 );
 
-it.effect('gives each caller its own redacted gateway key and the native Shell URL', () =>
+it.effect('gives each module Worker its own redacted module credential and the native Shell URL', () =>
   Effect.gen(function* plansWorkerSecrets() {
     const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
     const secret = Redacted.make('value');
@@ -1274,48 +1265,36 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
 
     expect([...plan.keys()]).toHaveLength(17);
     expect(reveal(CUSTOMER_CONTEXT_WORKER)).toMatchObject({
-      ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: CUSTOMER_CONTEXT_GATEWAY_API_KEY,
+      ONTOS_GATEWAY_MODULE_API_KEY: settingValue(CUSTOMER_CONTEXT_MODULE_CREDENTIAL),
       ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,
     });
     expect(reveal(MARKET_WORKER)).toMatchObject({
-      ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: MARKET_GATEWAY_API_KEY,
+      ONTOS_GATEWAY_MODULE_API_KEY: settingValue(MARKET_CATALOG_MODULE_CREDENTIAL),
       ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,
     });
     expect(Arr.sort(Object.keys(reveal(PRICING_WORKER)), Order.String)).toStrictEqual([
       'ONTOS_GATEWAY_ISSUER',
+      'ONTOS_GATEWAY_MODULE_API_KEY',
       'ONTOS_GATEWAY_PUBLIC_JWKS',
       'ONTOS_PRICING_CONFIRMATION_KEY_LINEAGE_REF',
       'ONTOS_PRICING_CONFIRMATION_KEY_REF',
       'ONTOS_PRICING_CONFIRMATION_KEY_VERSION',
       'ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET',
-      'ONTOS_PRICING_GATEWAY_API_KEY',
-      'ONTOS_PRICING_ORDER_NAMESPACE_ID',
-      'ONTOS_PRICING_ORDER_PRINCIPAL_ID',
-      'ONTOS_PRICING_PREPROPOSAL_NAMESPACE_ID',
-      'ONTOS_PRICING_PREPROPOSAL_PRINCIPAL_ID',
       'ONTOS_SHELL_GATEWAY_BASE_URL',
       'SPICEDB_ENDPOINT',
       'SPICEDB_PRESHARED_KEY',
       DEPLOYMENT_ENVIRONMENT,
     ]);
-    const staffNamespace = 'ontos.staff.better-auth.v1';
-    expect(reveal(PRICING_WORKER)).toMatchObject({
-      ONTOS_PRICING_ORDER_NAMESPACE_ID: staffNamespace,
-      ONTOS_PRICING_PREPROPOSAL_NAMESPACE_ID: staffNamespace,
-    });
     // Customer Context reaches Order and Cart by URL; Price Group Catalog stays on its service binding.
     expect(reveal(CUSTOMER_CONTEXT_WORKER)).toMatchObject({
-      ONTOS_CCC_ORDER_CONSUMER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
       ONTOS_COMMERCE_CART_API_BASE_URL: 'https://ontos-stage-commerce-cart.stage.example.com/commerce-cart-api',
       ONTOS_COMMERCE_ORDER_API_BASE_URL: 'https://ontos-stage-commerce-order.stage.example.com/commerce-order-api',
     });
     expect(Arr.sort(Object.keys(reveal(CART_WORKER)), Order.String)).toStrictEqual([
-      'ONTOS_CART_FINALIZATION_SERVICE_API_KEY',
-      'ONTOS_CART_FINAL_CANDIDATE_SERVICE_GRANTS',
-      'ONTOS_CART_PREAPPROVAL_SERVICE_GRANTS',
       'ONTOS_CATALOG_API_BASE_URL',
       'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL',
       'ONTOS_GATEWAY_ISSUER',
+      'ONTOS_GATEWAY_MODULE_API_KEY',
       'ONTOS_GATEWAY_PUBLIC_JWKS',
       'ONTOS_SHELL_GATEWAY_BASE_URL',
       'SPICEDB_ENDPOINT',
@@ -1324,9 +1303,10 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
     ]);
     expect(reveal(CART_WORKER)).toMatchObject({
       ONTOS_CATALOG_API_BASE_URL: 'https://ontos-stage-catalog.stage.example.com/catalog-api',
+      ONTOS_GATEWAY_MODULE_API_KEY: settingValue(CART_MODULE_CREDENTIAL),
       ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,
     });
-    // Order carries both of its keys, and reaches each owner it calls by API key on its custom domain.
+    // Order carries its module credential, and reaches each owner it calls on its custom domain.
     // Only its Outbox Worker, which runs on Zerops, calls the Order API, so the Worker has no Order base.
     expect(reveal(ORDER_WORKER)).toStrictEqual({
       [DEPLOYMENT_ENVIRONMENT]: 'stage',
@@ -1334,13 +1314,8 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
       ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL:
         'https://ontos-stage-commerce-customer-context.stage.example.com/commerce-customer-context-api',
       ONTOS_GATEWAY_ISSUER: 'https://app.stage.example.com',
+      ONTOS_GATEWAY_MODULE_API_KEY: settingValue(ORDER_MODULE_CREDENTIAL),
       ONTOS_GATEWAY_PUBLIC_JWKS: 'value',
-      ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY: ORDER_APPROVAL_GATEWAY_API_KEY,
-      ONTOS_ORDER_CCC_VERIFIER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
-      ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY: ORDER_FINALIZATION_GATEWAY_API_KEY,
-      ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
-      ONTOS_ORDER_PRICING_VERIFIER_AUTHENTICATION_NAMESPACE_ID: staffNamespace,
-      ...ORDER_CALLER_PRINCIPAL_IDS,
       ONTOS_PAYMENT_TERM_CATALOG_API_BASE_URL:
         'https://ontos-stage-payment-term-catalog.stage.example.com/payment-term-catalog-api',
       ONTOS_PRICING_API_BASE_URL: 'https://ontos-stage-pricing.stage.example.com/pricing-api',
@@ -1356,21 +1331,36 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
       expect(Object.keys(secrets)).not.toContain('ONTOS_PRICING_BASE_URL');
       expect(Object.keys(secrets)).not.toContain('ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL');
     }
-    for (const [worker, variable] of [
-      [CUSTOMER_CONTEXT_WORKER, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'],
-      [MARKET_WORKER, 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'],
-      [PRICING_WORKER, 'ONTOS_PRICING_GATEWAY_API_KEY'],
-      [ORDER_WORKER, 'ONTOS_ORDER_APPROVAL_GATEWAY_API_KEY'],
-      [ORDER_WORKER, 'ONTOS_ORDER_FINALIZATION_GATEWAY_API_KEY'],
-      [ORDER_WORKER, 'ONTOS_ORDER_CCC_VERIFIER_PRINCIPAL_ID'],
-      [ORDER_WORKER, 'ONTOS_ORDER_FINALIZATION_WORKER_PRINCIPAL_ID'],
-      [ORDER_WORKER, 'ONTOS_ORDER_PRICING_VERIFIER_PRINCIPAL_ID'],
-      ...OWNER_RUNTIME_CONFIGURATIONS.flatMap(({ credentialVariables, operatorValues, unitId }) =>
+    // Each module Worker receives its own credential under the one name every module process reads.
+    for (const [worker, source] of [
+      [CUSTOMER_CONTEXT_WORKER, CUSTOMER_CONTEXT_MODULE_CREDENTIAL],
+      [MARKET_WORKER, MARKET_CATALOG_MODULE_CREDENTIAL],
+      [PRICING_WORKER, PRICING_MODULE_CREDENTIAL],
+      [ORDER_WORKER, ORDER_MODULE_CREDENTIAL],
+      [CART_WORKER, CART_MODULE_CREDENTIAL],
+    ] as const) {
+      expect(reveal(worker)[GATEWAY_MODULE_API_KEY_VARIABLE]).toBe(settingValue(source));
+      for (const otherWorker of plan.keys()) {
+        if (otherWorker !== worker) {
+          expect(reveal(otherWorker)[GATEWAY_MODULE_API_KEY_VARIABLE]).not.toBe(settingValue(source));
+        }
+      }
+    }
+    // Party Registry is worker-only: its Cloudflare Worker never receives its module credential, which its Outbox Worker holds on Zerops.
+    expect(plan.has(PARTY_WORKER)).toBe(true);
+    expect(reveal(PARTY_WORKER)).not.toHaveProperty(GATEWAY_MODULE_API_KEY_VARIABLE);
+    // Only the Shell Worker receives the module bindings.
+    const bindingHolders = [...plan.keys()].filter((worker) => GATEWAY_MODULE_BINDINGS_VARIABLE in reveal(worker));
+    expect(bindingHolders).toHaveLength(1);
+    expect(reveal(bindingHolders[0] ?? '')[GATEWAY_MODULE_BINDINGS_VARIABLE]).toBe(
+      settingValue(GATEWAY_MODULE_BINDINGS_VARIABLE),
+    );
+    for (const [worker, variable] of OWNER_RUNTIME_CONFIGURATIONS.flatMap(
+      ({ credentialVariables, operatorValues, unitId }) =>
         [...credentialVariables, ...operatorValues.map((value) => value.variable)].map(
           (name) => [`app-${unitId}`, name] as const,
         ),
-      ),
-    ]) {
+    )) {
       expect(Object.entries(reveal(worker))).toContainEqual([variable, settingValue(variable)]);
       for (const otherWorker of plan.keys()) {
         if (otherWorker !== worker) {

@@ -29,6 +29,11 @@ import { makeLiveOperationFixture, makeLiveOperationFixtureRuntime } from '@app/
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  grantTestTenantOwnerAccess,
+  liveFixtureSpiceDb,
+  markServicePrincipal,
+} from '@app/core-runtime/testing/tenant-access';
 import { CreatePartyPayloadSchema, partyRegistryApiContract } from '@app/party-registry/api';
 import {
   createPartyWithAuthorization,
@@ -43,6 +48,8 @@ import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-
 import { shellGatewayContextContract } from '@app/shared-contracts';
 import type { GatewayContextRequestSchema } from '@app/shared-contracts';
 import {
+  ShellNativeRelaySourceBoundCommandSchema,
+  ShellNativeRelaySourceIssueCommandSchema,
   ShellNativeSessionGatewayCommandSchema,
   ShellNativeSessionGatewayResponseSchema,
 } from '@app/shell-super-app/testing/api-key-gateway-native';
@@ -96,10 +103,10 @@ import { Socket } from 'effect/socket';
 import { expect, it } from 'effect-rstest';
 import { base64url, exportJWK, generateKeyPair } from 'jose';
 
+import { requireExecutedAction, requireExecutionResult } from '../support/action-execution-result.ts';
 import {
   RetainedConsentAccountTransportSchema,
   installRetainedAccountEntrypoints,
-  installRetainedManagerPartyRead,
   retainedOwnerCredential,
   retainedConsentAccountActionKeys,
 } from '../support/privacy-retained-purpose-self-service-http.ts';
@@ -116,12 +123,32 @@ import {
   executeRecordConsentDecisionWithAuthorization,
   executeRecordNoticeProvisionWithAuthorization,
 } from '@app/privacy/api/client';
-import { CreatePrivacySubjectPayloadSchema } from '../../shared/actions/create-privacy-subject.ts';
-import { CreateProcessingPurposePayloadSchema } from '../../shared/actions/create-processing-purpose.ts';
-import { CreateNoticeVersionPayloadSchema } from '../../shared/actions/create-notice-version.ts';
-import { RecordConsentDecisionPayloadSchema } from '../../shared/actions/record-consent-decision.ts';
-import { AddProcessingPurposeVersionPayloadSchema } from '../../shared/actions/add-processing-purpose-version.ts';
-import { ConsentSelfServicePayloadSchema } from '../../shared/actions/consent-self-service.ts';
+import { AcknowledgePrivacyNoticeResultSchema } from '../../shared/actions/acknowledge-privacy-notice.ts';
+import {
+  AddProcessingPurposeVersionPayloadSchema,
+  AddProcessingPurposeVersionResultSchema,
+} from '../../shared/actions/add-processing-purpose-version.ts';
+import {
+  ConsentSelfServicePayloadSchema,
+  ConsentSelfServiceResultSchema,
+} from '../../shared/actions/consent-self-service.ts';
+import {
+  CreateNoticeVersionPayloadSchema,
+  CreateNoticeVersionResultSchema,
+} from '../../shared/actions/create-notice-version.ts';
+import {
+  CreatePrivacySubjectPayloadSchema,
+  CreatePrivacySubjectResultSchema,
+} from '../../shared/actions/create-privacy-subject.ts';
+import {
+  CreateProcessingPurposePayloadSchema,
+  CreateProcessingPurposeResultSchema,
+} from '../../shared/actions/create-processing-purpose.ts';
+import {
+  RecordConsentDecisionPayloadSchema,
+  RecordConsentDecisionResultSchema,
+} from '../../shared/actions/record-consent-decision.ts';
+import { RecordNoticeProvisionResultSchema } from '../../shared/actions/record-notice-provision.ts';
 import {
   AcknowledgePrivacyNoticeActionAlreadyCommittedProblemSchema,
   AcknowledgePrivacyNoticeActionAuthenticationProblemSchema,
@@ -193,7 +220,11 @@ const accountReadySchema = Schema.Struct({
   marker: markerSchema,
   type: Schema.Literal('ready'),
 });
-const shellReadySchema = Schema.Struct({ baseUrl: Schema.String, providerUserId: ProviderSubjectIdSchema });
+const shellReadySchema = Schema.Struct({
+  baseUrl: Schema.String,
+  providerUserId: ProviderSubjectIdSchema,
+  relaySourceProviderUserId: ProviderSubjectIdSchema,
+});
 const enrolledReplySchema = Schema.TaggedStruct('enrolled', {
   attemptId: uuid.pipe(Schema.brand('EnrollmentAttemptId')),
   providerSubjectId: ProviderSubjectIdSchema,
@@ -340,9 +371,10 @@ const serverPartyObservationSchema = Schema.TaggedStruct('server-party-observati
     'RESOLVED',
   ]),
 });
+const BindingObservationStateSchema = Schema.Literals(['ACTIVE', 'REVOKED']);
 const bindingObservationSchema = Schema.TaggedStruct('retail-binding-observation', {
-  authorizationState: Schema.Literals(['ACTIVE', 'REVOKED', 'PENDING_GRANT', 'PENDING_REVOKE']),
-  bindingState: Schema.Literals(['ACTIVE', 'REVOKED']),
+  authorizationState: BindingObservationStateSchema,
+  bindingState: BindingObservationStateSchema,
   current: Schema.Boolean,
   manageAllowed: Schema.Boolean,
   profileReadAllowed: Schema.Boolean,
@@ -380,6 +412,8 @@ const ownerControlCommandSchema = Schema.Union([
     tenantId: uuid.pipe(Schema.brand('TenantId')),
   }),
   Schema.TaggedStruct('bound', {}),
+  ShellNativeRelaySourceIssueCommandSchema,
+  ShellNativeRelaySourceBoundCommandSchema,
   Schema.TaggedStruct('enroll', {
     authorization: Schema.RedactedFromValue(Schema.String),
     partyRef: nonempty.pipe(Schema.brand('EnrollmentResourceId')),
@@ -929,6 +963,8 @@ const privateExchange = <A, I>(
         Match.tag('observe-binding', () => knownFailure.success.command === 'observe-binding'),
         Match.tag('issue', () => false),
         Match.tag('bound', () => false),
+        Match.tag('relay-source-issue', () => false),
+        Match.tag('relay-source-bound', () => false),
         Match.tag('session-gateway', () => false),
         Match.exhaustive,
       );
@@ -1331,9 +1367,16 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [{ ...publicKey, ...keyAttributes }] }),
   };
   // Existing bootstrap creator validates the admin/runtime pair; HTTP-only children receive no admin.
+  // Commerce calls other modules with its own module credential, which the Shell attests to Commerce's release.
+  const commerceModuleSource = {
+    compositionRevision: initialSnapshot.composition.revision,
+    sourceAppId: 'commerce-customer-context',
+    sourceBuildMarker: accountDescription.marker.buildMarker,
+  } as const;
   const bootstrap = yield* startOwner(shellArtifact, {
     ...environment,
     DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
+    ONTOS_SHELL_NATIVE_RELAY_SOURCE: JSON.stringify(commerceModuleSource),
     SHELL_GATEWAY_ISSUER_DATABASE_URL: nativeIdentityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL,
   });
   const bootstrapReady = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(shellReadySchema))(
@@ -1366,6 +1409,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   ];
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
+      access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys,
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
@@ -1377,10 +1421,21 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       managerProvisioningNamespaces: [COMMERCE_AUTHENTICATION_NAMESPACE_ID],
       moduleAccess: 'configured-modules',
       moduleKeys: ['core.identity', 'commerce.customer-context', 'party.registry', 'privacy.core'],
+      readerProviderSubjectId: bootstrapReady.relaySourceProviderUserId,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
+  // Commerce decides with the production gate, so the manager owns the Tenant's v2 access.
+  const accessTarget = {
+    adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+    spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
+  };
+  yield* grantTestTenantOwnerAccess({
+    ...accessTarget,
+    legalEntityIds: [fixture.legalEntityId],
+    owner: fixture.manager,
+  });
   const coreEvidenceServices = yield* Layer.build(
     PgClient.layer({ url: Redacted.make(isolated.connections.admin.connectionString) }).pipe(
       Layer.provideMerge(Reactivity.layer),
@@ -1443,6 +1498,60 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   if (!Schema.is(ackReplySchema)(bound)) {
     return yield* failed('shell-key-binding');
   }
+  // Select only real runtime services. The fixture's STAFF-only registry must not override
+  // the receiving owner's reviewed canonical Commerce+STAFF registry at invocation time.
+  const privacyOwner = yield* Effect.succeed(initialSnapshot.composition.modules).pipe(
+    Effect.map((modules) => modules.find(({ moduleId }) => moduleId === 'privacy.core')),
+    Effect.filterOrFail(
+      (owner) => owner !== undefined,
+      () => failed('privacy-owner-contract'),
+    ),
+  );
+  // The Privacy runtime attaches to the creator's own identities, so it attaches before the reader is repurposed.
+  const privacyFixture = yield* Effect.acquireRelease(
+    makeLiveOperationFixtureRuntime({
+      applicationComposition: { load: Effect.succeed(initialSnapshot) },
+      configuration: fixture.runtimeHandoff.configuration,
+      expectedDeployment: privacyOwner.deployment,
+      handoff: fixture.runtimeHandoff,
+      ownerRegistration: privacyRegistration,
+      runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+    }),
+    (value) => value.close().pipe(Effect.orDie),
+  );
+  // The fixture reader becomes Commerce's service principal: it binds the module key, then is marked service.
+  const commerceModule = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(fixture.reader);
+  const moduleIssued = yield* privateExchange(
+    shellReplySchema,
+    nativeClock,
+    bootstrap,
+    yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
+      _tag: 'relay-source-issue',
+      principalId: commerceModule.principalId,
+      tenantId: commerceModule.tenantId,
+    }),
+  );
+  if (!Schema.is(issuedReplySchema)(moduleIssued)) {
+    return yield* failed('commerce-module-key');
+  }
+  yield* action
+    .runAction({
+      payload: { providerSubjectId: moduleIssued.providerKeyId },
+      principal: commerceModule,
+      registration: bindSelfApiKeyAction,
+      transport: { correlationId: `retained-module-bind:${suffix}`, idempotencyKey: `retained-module-bind:${suffix}` },
+    })
+    .pipe(Effect.provideContext(context));
+  yield* coreEvidenceExecutor.execute(
+    markServicePrincipal({ principalId: commerceModule.principalId, tenantId: commerceModule.tenantId }),
+  );
+  const moduleBound = yield* privateExchange(shellReplySchema, nativeClock, bootstrap, { _tag: 'relay-source-bound' });
+  if (!Schema.is(ackReplySchema)(moduleBound)) {
+    return yield* failed('commerce-module-key-binding');
+  }
+  const gatewayModuleBindings = JSON.stringify([
+    { ...commerceModuleSource, providerKeyId: moduleIssued.providerKeyId },
+  ]);
   const party = yield* startOwner(partyArtifact, {
     ...environment,
     PARTY_REGISTRY_DATABASE_URL: nativeIdentityUrls.PARTY_REGISTRY_DATABASE_URL,
@@ -1465,7 +1574,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: '',
     COMMERCE_PORTAL_AUTH_TRUSTED_PROXIES: '',
     COMMERCE_PORTAL_AUTH_URL: 'https://retained-portal.example.test',
-    ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: Redacted.value(issued.secret),
+    ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleIssued.secret),
     ONTOS_RETAINED_CONSENT_SERVER_SCOPE: JSON.stringify({
       compositionRevision: initialSnapshot.composition.revision,
       legalEntityId: fixture.legalEntityId,
@@ -1524,6 +1633,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       providerEndpointAudience: 'commerce-customer-context',
       providerOrigin: accountReady.baseUrl,
     }),
+    ONTOS_GATEWAY_MODULE_BINDINGS: gatewayModuleBindings,
     SHELL_GATEWAY_ISSUER_DATABASE_URL: nativeIdentityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL,
   });
   const shellReady = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(readySchema))(
@@ -1640,10 +1750,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     return reviewed.partyRef;
   });
   expect(actualPartyRef.tenantId).toBe(fixture.tenantId);
-  yield* installRetainedManagerPartyRead(
-    { legalEntityId: fixture.legalEntityId, principalId: principal.principalId, tenantId: fixture.tenantId },
-    actualPartyRef,
-  );
   // Enrollment's governed Actions are Tenant-only. The selling entity remains
   // an explicit journey input, rather than a selected Legal Entity on the caller.
   // Enrollment forbids selected LE; the actual session endpoint selects one, so retain
@@ -1901,7 +2007,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     sessionRef: enrolled.sessionRef,
     tenantId: fixture.tenantId,
   });
-  yield* installRetainedAccountEntrypoints(accountTransport, fixture.denied.principalId, actualPartyRef);
+  yield* installRetainedAccountEntrypoints(accountTransport, accessTarget);
   const request = yield* Schema.decodeUnknownEffect(ExternalGatewayContextRequestSchema)({
     audience: 'commerce-customer-context',
     authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
@@ -1939,26 +2045,29 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     },
     { baseUrl: accountApiBaseUrl, compositionRevision: admitted.composition.revision },
   );
-  const existingProfile = yield* managerClient.ensureRetailCustomerProfileAction
-    .execute({
-      payload: {
-        effectiveAt: DateTime.formatIso(yield* DateTime.now),
-        subject: actualSubject,
-        trigger: 'AUTHORIZED_ONBOARDING',
-      },
-    })
-    .pipe(
-      Effect.tapError(() =>
-        privateExchange(accountReplySchema, nativeClock, account, { _tag: 'observe-party' }).pipe(
-          Effect.tap((observation) =>
-            Schema.is(serverPartyObservationSchema)(observation)
-              ? Effect.logInfo('Retained actual server Party stage', observation)
-              : Effect.void,
+  const existingProfile = yield* requireExecutedAction(
+    () => failed('retail-profile-parked-proposal'),
+    managerClient.ensureRetailCustomerProfileAction
+      .execute({
+        payload: {
+          effectiveAt: DateTime.formatIso(yield* DateTime.now),
+          subject: actualSubject,
+          trigger: 'AUTHORIZED_ONBOARDING',
+        },
+      })
+      .pipe(
+        Effect.tapError(() =>
+          privateExchange(accountReplySchema, nativeClock, account, { _tag: 'observe-party' }).pipe(
+            Effect.tap((observation) =>
+              Schema.is(serverPartyObservationSchema)(observation)
+                ? Effect.logInfo('Retained actual server Party stage', observation)
+                : Effect.void,
+            ),
+            Effect.catch(() => Effect.logInfo('Retained actual server Party observation unavailable')),
           ),
-          Effect.catch(() => Effect.logInfo('Retained actual server Party observation unavailable')),
         ),
       ),
-    );
+  );
   // The approved public onboarding Action produces the actual profile for the reviewed person.
   expect(existingProfile.outcome).toBe('PROFILE_CREATED');
   expect(existingProfile.state).toBe('ACTIVE');
@@ -2014,40 +2123,31 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   expect(ownProfileBinding.outcome).toBe('BINDING_ACTIVATED');
   expect(ownProfileBinding.state).toBe('ACTIVE');
   expect(ownProfileBinding.authorizationOperation).toBe('grant');
-  expect(ownProfileBinding.permissionMutations?.every((mutation) => mutation.staged)).toBe(true);
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const observerCredential = yield* issueManagerSessionGateway({
-      audience: 'commerce-customer-context',
-      compositionRevision: admitted.composition.revision,
-      legalEntityId: fixture.legalEntityId,
-    });
-    const observation = yield* privateExchange(
-      accountReplySchema,
-      nativeClock,
-      account,
-      yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
-        _tag: 'observe-binding',
-        authorization: Redacted.make(`Bearer ${observerCredential.token}`),
-        bindingId: ownProfileBinding.bindingRef.resourceId,
-        principalId: binding.principalId,
-        profileId: existingProfile.profileRef.resourceId,
-      }),
-    ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(bindingObservationSchema)));
-    if (
-      observation.authorizationState === 'ACTIVE' &&
-      observation.current &&
-      observation.profileReadAllowed &&
-      observation.manageAllowed
-    ) {
-      yield* Effect.logInfo('Retained initial binding permission state', observation);
-      break;
-    }
-    if (attempt === 19) {
-      yield* Effect.logInfo('Retained binding permissions did not become current', observation);
-      return yield* failed('binding-authorization-not-current');
-    }
-    yield* Effect.sleep('250 millis').pipe(Effect.provideService(Clock.Clock, defaultNativeClock));
-  }
+  // The binding Action writes its final authorization, so the baseline is Current on return.
+  expect(ownProfileBinding.authorizationState).toBe('ACTIVE');
+  const observerCredential = yield* issueManagerSessionGateway({
+    audience: 'commerce-customer-context',
+    compositionRevision: admitted.composition.revision,
+    legalEntityId: fixture.legalEntityId,
+  });
+  const observation = yield* privateExchange(
+    accountReplySchema,
+    nativeClock,
+    account,
+    yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
+      _tag: 'observe-binding',
+      authorization: Redacted.make(`Bearer ${observerCredential.token}`),
+      bindingId: ownProfileBinding.bindingRef.resourceId,
+      principalId: binding.principalId,
+      profileId: existingProfile.profileRef.resourceId,
+    }),
+  ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(bindingObservationSchema)));
+  expect(observation).toMatchObject({
+    authorizationState: 'ACTIVE',
+    current: true,
+    manageAllowed: true,
+    profileReadAllowed: true,
+  });
   const observeActualAuthority = Effect.fn('RetainedAccount.observeActualAuthority')(
     function* observeActualAuthority() {
       const profileClient = yield* freshRetailClient();
@@ -2132,7 +2232,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       });
       expect(retailBinding.authorizationFreshness.sourceModuleId).toBe('commerce.customer-context');
       expect(retailBinding.authorizationFreshness.revision).toBeDefined();
-      expect(retailBinding.permissionsFreshness.sourceModuleId).toBe('core.identity');
+      expect(retailBinding.permissionsFreshness.sourceModuleId).toBe('commerce.customer-context');
       expect(retailBinding.provenance.filter((row) => row.projection === 'PROFILE')).toMatchObject([
         {
           freshness: {
@@ -2182,7 +2282,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   expect(finalDecision.authorizationFreshness.status).toBe('CURRENT');
   expect(finalDecision.authorizationFreshness.sourceModuleId).toBe('commerce.customer-context');
   expect(finalDecision.provenance.filter((row) => row.projection === 'OWNING_CAPABILITY')).toMatchObject([
-    { freshness: { sourceModuleId: 'core.identity', status: 'CURRENT' } },
+    { freshness: { sourceModuleId: 'commerce.customer-context', status: 'CURRENT' } },
   ]);
   expect(finalDecision.provenance.filter((row) => row.projection === 'RETAIL_BINDING')).toMatchObject([
     {
@@ -2219,26 +2319,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   );
   yield* Effect.logInfo('Retained account real Party read passed');
   yield* Effect.gen(function* actualRetainedPurposeLifecycle() {
-    // Select only real runtime services. The fixture's STAFF-only registry must not override
-    // the receiving owner's reviewed canonical Commerce+STAFF registry at invocation time.
-    const privacyOwner = yield* Effect.succeed(admitted.composition.modules).pipe(
-      Effect.map((modules) => modules.find(({ moduleId }) => moduleId === 'privacy.core')),
-      Effect.filterOrFail(
-        (owner) => owner !== undefined,
-        () => failed('privacy-owner-contract'),
-      ),
-    );
-    const privacyFixture = yield* Effect.acquireRelease(
-      makeLiveOperationFixtureRuntime({
-        applicationComposition: { load: Effect.succeed(admitted) },
-        configuration: fixture.runtimeHandoff.configuration,
-        expectedDeployment: privacyOwner.deployment,
-        handoff: fixture.runtimeHandoff,
-        ownerRegistration: privacyRegistration,
-        runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
-      }),
-      (value) => value.close().pipe(Effect.orDie),
-    );
     const readLayer = Layer.effect(ReadRuntime, ReadRuntime).pipe(
       Layer.provide(privacyFixture.layer),
       Layer.provide(NodeCrypto.layer),
@@ -2306,17 +2386,20 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
         { baseUrl: privacy.baseUrl, compositionRevision: admitted.composition.revision, idempotencyKey: key },
       ] as const;
     });
-    const publicSubject = yield* executeCreatePrivacySubjectWithAuthorization(
-      yield* Schema.decodeUnknownEffect(CreatePrivacySubjectPayloadSchema)({
-        subject: { kind: 'DATA_SUBJECT', partyRef: actualPartyRef },
-        subjectRef: {
-          moduleId: 'privacy.core',
-          resourceId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
-          resourceType: 'privacy.core.privacy-subject',
-          tenantId: fixture.tenantId,
-        },
-      }),
-      ...(yield* privacyTransport('manager', `retained-subject:${suffix}`)),
+    const publicSubject = yield* requireExecutionResult(
+      CreatePrivacySubjectResultSchema,
+      executeCreatePrivacySubjectWithAuthorization(
+        yield* Schema.decodeUnknownEffect(CreatePrivacySubjectPayloadSchema)({
+          subject: { kind: 'DATA_SUBJECT', partyRef: actualPartyRef },
+          subjectRef: {
+            moduleId: 'privacy.core',
+            resourceId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
+            resourceType: 'privacy.core.privacy-subject',
+            tenantId: fixture.tenantId,
+          },
+        }),
+        ...(yield* privacyTransport('manager', `retained-subject:${suffix}`)),
+      ),
     );
     expect(publicSubject.subject).toEqual({ kind: 'DATA_SUBJECT', partyRef: actualPartyRef });
     expect(publicSubject.ownerAdmission?.partyRef).toEqual(actualPartyRef);
@@ -2331,42 +2414,48 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       processingScopeRef: scopeRef,
       recipientRefs: [],
     };
-    const purpose = yield* executeCreateProcessingPurposeWithAuthorization(
-      yield* Schema.decodeUnknownEffect(CreateProcessingPurposePayloadSchema)({
-        businessCode: `RETAINED_${suffix.replaceAll('-', '').toUpperCase()}`,
-        effectiveFrom: DateTime.formatIso(yield* DateTime.now),
-        governanceOwnerId: principal.principalId,
-        materialScope,
-        meaning: 'Original native V1 consent choice',
-        requiredConsentDimensions: [],
-      }),
-      ...(yield* privacyTransport('manager', `retained-purpose:${suffix}`)),
+    const purpose = yield* requireExecutionResult(
+      CreateProcessingPurposeResultSchema,
+      executeCreateProcessingPurposeWithAuthorization(
+        yield* Schema.decodeUnknownEffect(CreateProcessingPurposePayloadSchema)({
+          businessCode: `RETAINED_${suffix.replaceAll('-', '').toUpperCase()}`,
+          effectiveFrom: DateTime.formatIso(yield* DateTime.now),
+          governanceOwnerId: principal.principalId,
+          materialScope,
+          meaning: 'Original native V1 consent choice',
+          requiredConsentDimensions: [],
+        }),
+        ...(yield* privacyTransport('manager', `retained-purpose:${suffix}`)),
+      ),
     );
     const [version1] = purpose.versions;
     if (version1 === undefined) {
       return yield* failed('public-purpose-v1');
     }
-    const notice = yield* executeCreateNoticeVersionWithAuthorization(
-      yield* Schema.decodeUnknownEffect(CreateNoticeVersionPayloadSchema)({
-        input: {
-          applicableScope: {
-            facts: [
-              { dimension: 'PRIVACY_SUBJECT', value: publicSubject.subjectRef.resourceId },
-              { dimension: 'CONTROLLER_SCOPE', value: controllerRef },
-              { dimension: 'PROCESSING_PURPOSE', value: purpose.purposeRef.resourceId },
-              { dimension: 'PROCESSING_PURPOSE_VERSION', value: version1.versionId },
-            ],
-            operation: 'CONSENT_DECISION',
-            processingScopeRef: { scopeId: scopeRef, scopeType: 'privacy.processing-scope' },
+    const notice = yield* requireExecutionResult(
+      CreateNoticeVersionResultSchema,
+      executeCreateNoticeVersionWithAuthorization(
+        yield* Schema.decodeUnknownEffect(CreateNoticeVersionPayloadSchema)({
+          input: {
+            applicableScope: {
+              facts: [
+                { dimension: 'PRIVACY_SUBJECT', value: publicSubject.subjectRef.resourceId },
+                { dimension: 'CONTROLLER_SCOPE', value: controllerRef },
+                { dimension: 'PROCESSING_PURPOSE', value: purpose.purposeRef.resourceId },
+                { dimension: 'PROCESSING_PURPOSE_VERSION', value: version1.versionId },
+              ],
+              operation: 'CONSENT_DECISION',
+              processingScopeRef: { scopeId: scopeRef, scopeType: 'privacy.processing-scope' },
+            },
+            contentIdentity: `retained-notice:${suffix}`,
+            evidenceArtifactRef: null,
+            language: 'en',
+            wording: 'This exact original V1 Notice explains the native consent choice.',
           },
-          contentIdentity: `retained-notice:${suffix}`,
-          evidenceArtifactRef: null,
-          language: 'en',
-          wording: 'This exact original V1 Notice explains the native consent choice.',
-        },
-        noticeId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
-      }),
-      ...(yield* privacyTransport('manager', `retained-notice:${suffix}`)),
+          noticeId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
+        }),
+        ...(yield* privacyTransport('manager', `retained-notice:${suffix}`)),
+      ),
     );
     // Read-only owner oracles travel through the published creator fixture's scoped transaction.
     // They never fabricate an owner fact or read another deployment's private store.
@@ -2676,9 +2765,9 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       acknowledged: true as const,
       presentationReceipt: presentation.presentationReceipt,
     };
-    const acknowledgement = yield* executeAcknowledgePrivacyNoticeWithAuthorization(
-      acknowledgementPayload,
-      ...acknowledgementTransport,
+    const acknowledgement = yield* requireExecutionResult(
+      AcknowledgePrivacyNoticeResultSchema,
+      executeAcknowledgePrivacyNoticeWithAuthorization(acknowledgementPayload, ...acknowledgementTransport),
     );
     expect(acknowledgement.noticeVersionId).toBe(notice.versionId);
     const acknowledgementAudit = {
@@ -2825,9 +2914,12 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     expect(provisionFailure.code).toBe('action_transaction_failed');
     expect(yield* noticeFacts()).toEqual(ackFacts);
     yield* assertRolledBackEvidence(`retained-provision-rollback:${suffix}`);
-    const provision = yield* executeRecordNoticeProvisionWithAuthorization(
-      provisionPayload,
-      ...(yield* privacyTransport('account', `retained-provision:${suffix}`)),
+    const provision = yield* requireExecutionResult(
+      RecordNoticeProvisionResultSchema,
+      executeRecordNoticeProvisionWithAuthorization(
+        provisionPayload,
+        ...(yield* privacyTransport('account', `retained-provision:${suffix}`)),
+      ),
     );
     expect(provision.outcome).toBe('PROVEN_PROVISION');
     const provisionAudit = {
@@ -2895,9 +2987,12 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
         scope: originalScope,
       },
     });
-    const grant = yield* executeRecordConsentDecisionWithAuthorization(
-      grantPayload,
-      ...(yield* privacyTransport('account', `retained-grant:${suffix}`)),
+    const grant = yield* requireExecutionResult(
+      RecordConsentDecisionResultSchema,
+      executeRecordConsentDecisionWithAuthorization(
+        grantPayload,
+        ...(yield* privacyTransport('account', `retained-grant:${suffix}`)),
+      ),
     );
     expect(grant.decision).toBe('GRANTED');
     expect(grant.scope).toEqual(originalScope);
@@ -2930,22 +3025,25 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     expect(DateTime.toEpochMillis(DateTime.makeUnsafe(version2At))).toBeGreaterThan(
       DateTime.toEpochMillis(DateTime.makeUnsafe(grant.effectiveAt)),
     );
-    const appended = yield* executeAddProcessingPurposeVersionWithAuthorization(
-      yield* Schema.decodeUnknownEffect(AddProcessingPurposeVersionPayloadSchema)({
-        purposeRef: purpose.purposeRef,
-        version: {
-          effectiveFrom: version2At,
-          materialChange: {
-            affectedPrivacySubjectRefs: [publicSubject.subjectRef.resourceId],
-            changedAt: version2At,
-            changeRef: `retained-change:${suffix}`,
+    const appended = yield* requireExecutionResult(
+      AddProcessingPurposeVersionResultSchema,
+      executeAddProcessingPurposeVersionWithAuthorization(
+        yield* Schema.decodeUnknownEffect(AddProcessingPurposeVersionPayloadSchema)({
+          purposeRef: purpose.purposeRef,
+          version: {
+            effectiveFrom: version2At,
+            materialChange: {
+              affectedPrivacySubjectRefs: [publicSubject.subjectRef.resourceId],
+              changedAt: version2At,
+              changeRef: `retained-change:${suffix}`,
+            },
+            materialScope,
+            meaning: 'Current V2 must not inherit original V1 consent',
+            requiredConsentDimensions: [],
           },
-          materialScope,
-          meaning: 'Current V2 must not inherit original V1 consent',
-          requiredConsentDimensions: [],
-        },
-      }),
-      ...(yield* privacyTransport('manager', `retained-append:${suffix}`)),
+        }),
+        ...(yield* privacyTransport('manager', `retained-append:${suffix}`)),
+      ),
     );
     expect(appended.versions).toHaveLength(2);
     expect(appended.versions[0]).toMatchObject({
@@ -2976,22 +3074,25 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       endedGrant.failure,
     );
     expect(endedProblem.code).toBe('privacy_action_rejected');
-    const withdrawal = yield* executeConsentSelfServiceWithAuthorization(
-      yield* Schema.decodeUnknownEffect(ConsentSelfServicePayloadSchema)({
-        decision: 'WITHDRAWN',
-        noticeEvidenceRefs: [provision.provisionId],
-        path: {
-          kind: 'CURRENT_PROFILE_BINDING',
-          operation: 'CONSENT_WITHDRAW',
-          operationRef: `retained-withdraw:${suffix}`,
-          profileRef: existingProfile.profileRef.resourceId,
-          requestRef: `retained-withdraw:${suffix}`,
-          scopeRef,
-          subjectRef: publicSubject.subjectRef,
-        },
-        scope: originalScope,
-      }),
-      ...(yield* privacyTransport('account', `retained-withdraw:${suffix}`)),
+    const withdrawal = yield* requireExecutionResult(
+      ConsentSelfServiceResultSchema,
+      executeConsentSelfServiceWithAuthorization(
+        yield* Schema.decodeUnknownEffect(ConsentSelfServicePayloadSchema)({
+          decision: 'WITHDRAWN',
+          noticeEvidenceRefs: [provision.provisionId],
+          path: {
+            kind: 'CURRENT_PROFILE_BINDING',
+            operation: 'CONSENT_WITHDRAW',
+            operationRef: `retained-withdraw:${suffix}`,
+            profileRef: existingProfile.profileRef.resourceId,
+            requestRef: `retained-withdraw:${suffix}`,
+            scopeRef,
+            subjectRef: publicSubject.subjectRef,
+          },
+          scope: originalScope,
+        }),
+        ...(yield* privacyTransport('account', `retained-withdraw:${suffix}`)),
+      ),
     );
     expect(withdrawal.authorization).toMatchObject({
       actorPrincipalRef: { principalId: binding.principalId, tenantId: fixture.tenantId },
@@ -3113,37 +3214,24 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     expect(revoked.outcome).toBe('BINDING_REVOKED');
     expect(revoked.state).toBe('REVOKED');
     expect(revoked.authorizationOperation).toBe('revoke');
-    expect(revoked.permissionMutations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ operation: 'revoke', permission: 'retail.consent.manage', staged: true }),
-      ]),
-    );
-    const observedRevocation = yield* Effect.gen(function* awaitRevokedBindingPermissions() {
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const observerCredential = yield* issueManagerSessionGateway({
-          audience: 'commerce-customer-context',
-          compositionRevision: admitted.composition.revision,
-          legalEntityId: fixture.legalEntityId,
-        });
-        const observation = yield* privateExchange(
-          accountReplySchema,
-          nativeClock,
-          account,
-          yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
-            _tag: 'observe-binding',
-            authorization: Redacted.make(`Bearer ${observerCredential.token}`),
-            bindingId: revoked.bindingRef.resourceId,
-            principalId: binding.principalId,
-            profileId: existingProfile.profileRef.resourceId,
-          }),
-        ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(bindingObservationSchema)));
-        if (observation.authorizationState === 'REVOKED' && observation.current && !observation.manageAllowed) {
-          return observation;
-        }
-        yield* Effect.sleep('250 millis').pipe(Effect.provideService(Clock.Clock, defaultNativeClock));
-      }
-      return yield* failed('revoked-binding-authorization-not-current');
+    expect(revoked.authorizationState).toBe('REVOKED');
+    const revocationObserverCredential = yield* issueManagerSessionGateway({
+      audience: 'commerce-customer-context',
+      compositionRevision: admitted.composition.revision,
+      legalEntityId: fixture.legalEntityId,
     });
+    const observedRevocation = yield* privateExchange(
+      accountReplySchema,
+      nativeClock,
+      account,
+      yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
+        _tag: 'observe-binding',
+        authorization: Redacted.make(`Bearer ${revocationObserverCredential.token}`),
+        bindingId: revoked.bindingRef.resourceId,
+        principalId: binding.principalId,
+        profileId: existingProfile.profileRef.resourceId,
+      }),
+    ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(bindingObservationSchema)));
     expect(observedRevocation.bindingState).toBe('REVOKED');
     expect(observedRevocation.authorizationState).toBe('REVOKED');
     expect(observedRevocation.current).toBe(true);

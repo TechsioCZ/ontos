@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug promote-package-definition
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/promote-package-definition.ts';
 
 export { PromotePackageDefinitionPayloadSchema } from '../actions/promote-package-definition.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const PromotePackageDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'PromotePackageDefinitionActionInvalidProblem',
@@ -24,6 +26,7 @@ export const PromotePackageDefinitionActionForbiddenProblemSchema = makeProblemD
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -133,7 +136,7 @@ export const PromotePackageDefinitionActionApi = HttpApi.make('PromotePackageDef
       HttpApiEndpoint.post('execute', '/catalog/actions/promote-package-definition', {
         error: actionErrors,
         payload: Schema.toEncoded(PromotePackageDefinitionPayloadSchema),
-        success: PromotePackageDefinitionResultSchema,
+        success: [ActionProposalAcceptedSchema, PromotePackageDefinitionResultSchema],
       }),
     )
     .middleware(PromotePackageDefinitionActionSchemaErrorMiddleware),

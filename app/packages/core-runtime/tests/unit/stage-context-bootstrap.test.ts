@@ -1,22 +1,67 @@
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { STAGE_GRANTABLE_TENANT_RELATIONS, parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
+import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
+import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
 import {
-  buildRetiredStageContextRelationships,
-  buildStageContextRelationships,
-  stageContextsFromAccountsFile,
+  installedModuleKeysOf,
+  stageBootstrapRefusal,
+  stageScopeOf,
+  stageTenantsFromAccountsFile,
 } from '../../src/install/stage-context-bootstrap.ts';
 
-const fixturePassword = (account: string): string => `fixture-${account}-password`;
+/*
+ * The stage bootstrap's decisions that do not need a database: how the operator file becomes the tenants
+ * it creates, which modules a stage tenant installs, the scope each write runs in, and the refusals that
+ * must happen before anything is written. The bootstrap itself — owner, memberships, release, projection,
+ * gate answer — is proven against PostgreSQL and SpiceDB in
+ * `tests/integration/stage-context-bootstrap-access.test.ts`.
+ */
 
-const accountsFileSource = JSON.stringify({
+/** The composition a stage run is handed: the tenant's module and Core's own. */
+const entrypoint = (moduleKey: string, entrypointKey: string) =>
+  defineTenantModuleEntrypoint({
+    access: 'read',
+    authorization: { kind: 'protected' },
+    entrypointKey,
+    moduleKey,
+    role: 'api',
+  });
+
+const declaration = (key: string, moduleKey: string) => {
+  const owner = entrypoint(moduleKey, `${key}.read`);
+  return {
+    accessDeclaration: decodeAccessDeclarationOrThrow(
+      {
+        key,
+        kind: 'read' as const,
+        modes: ['run' as const],
+        placement: { group: 'stage', level: 'basic' },
+        risk: 'routine' as const,
+        selectors: [],
+      },
+      owner,
+    ),
+    entrypoint: owner,
+  };
+};
+
+const modules: readonly AccessCatalogModule[] = [
+  { descriptors: [declaration('core.shell.composition.read', 'core.shell')], moduleId: 'core.shell' },
+  { descriptors: [declaration('core.identity.principal.read', 'core.identity')], moduleId: 'core.identity' },
+  { descriptors: [declaration('party.registry.party.read', 'party.registry')], moduleId: 'party.registry' },
+  { descriptors: [declaration('commerce.catalog.product.read', 'commerce.catalog')], moduleId: 'commerce.catalog' },
+];
+
+const accountsFile = JSON.stringify({
   retiredAccountEmails: [],
   retiredTenants: [
     {
-      legalEntityId: '11000000-0000-4000-8000-0000000000b0',
-      principalIds: ['20000000-0000-4000-8000-0000000000b1'],
-      tenantId: '10000000-0000-4000-8000-0000000000b0',
+      legalEntityId: '11000000-0000-4000-8000-0000000000c0',
+      principalIds: ['20000000-0000-4000-8000-0000000000c1'],
+      tenantId: '10000000-0000-4000-8000-0000000000c0',
     },
   ],
   schemaVersion: 2,
@@ -25,18 +70,18 @@ const accountsFileSource = JSON.stringify({
       accounts: [
         {
           authBindingId: '30000000-0000-4000-8000-0000000000a1',
-          displayName: 'Tenant A account 1',
-          email: 'account-a-1@example.invalid',
-          grants: { explicitActions: [], tenantRelations: ['party_identity_reader'] },
-          password: fixturePassword('a-1'),
+          displayName: 'Owner account',
+          email: 'owner@example.invalid',
+          grants: { owner: true, roles: [] },
+          password: ['fixture', 'owner', 'credential'].join('-'),
           principalId: '20000000-0000-4000-8000-0000000000a1',
         },
         {
           authBindingId: '30000000-0000-4000-8000-0000000000a2',
-          displayName: 'Tenant A account 2',
-          email: 'account-a-2@example.invalid',
-          grants: { explicitActions: 'all', tenantRelations: ['identity_admin', 'party_identity_manager'] },
-          password: fixturePassword('a-2'),
+          displayName: 'Colleague account',
+          email: 'colleague@example.invalid',
+          grants: { owner: false, roles: ['full_access'] },
+          password: ['fixture', 'colleague', 'credential'].join('-'),
           principalId: '20000000-0000-4000-8000-0000000000a2',
         },
       ],
@@ -55,63 +100,101 @@ const accountsFileSource = JSON.stringify({
   ],
 });
 
-const loadAccountsFile = parseStageAccountsFile({ mode: 0o600, source: accountsFileSource });
+const providerUserIds = new Map<string, string>([
+  ['20000000-0000-4000-8000-0000000000a1', 'auth-user-owner'],
+  ['20000000-0000-4000-8000-0000000000a2', 'auth-user-colleague'],
+]);
 
-it.effect('flattens the accounts file into stage contexts in file order', () =>
-  Effect.gen(function* flattensAccountsFile() {
-    const contexts = stageContextsFromAccountsFile(yield* loadAccountsFile);
-    expect(contexts.map(({ principalDisplayName, tenantSlug }) => ({ principalDisplayName, tenantSlug }))).toEqual([
-      { principalDisplayName: 'Tenant A account 1', tenantSlug: 'tenant-a' },
-      { principalDisplayName: 'Tenant A account 2', tenantSlug: 'tenant-a' },
+const loadFile = parseStageAccountsFile({ mode: 0o600, source: accountsFile });
+
+it.effect('turns the accounts file into the tenants a stage run creates', () =>
+  Effect.gen(function* readsAccountsFile() {
+    const tenants = yield* stageTenantsFromAccountsFile(yield* loadFile, providerUserIds);
+    expect(tenants.map(({ tenant }) => tenant.slug)).toEqual(['tenant-a']);
+    const [tenant] = tenants;
+    expect(tenant?.tenant).toMatchObject({
+      moduleKey: 'party.registry',
+      moduleStateId: '40000000-0000-4000-8000-0000000000a0',
+    });
+    expect(tenant?.accounts.map(({ owner, principalId, roles }) => ({ owner, principalId, roles }))).toEqual([
+      { owner: true, principalId: '20000000-0000-4000-8000-0000000000a1', roles: [] },
+      { owner: false, principalId: '20000000-0000-4000-8000-0000000000a2', roles: ['full_access'] },
     ]);
-    expect(contexts[0]).toMatchObject({
-      legalName: 'Tenant A Legal',
-      moduleId: 'party.registry',
-      tenantName: 'Tenant A',
-      tenantRelations: ['party_identity_reader'],
+    expect(tenant?.accounts.map(({ providerUserId }) => providerUserId)).toEqual([
+      'auth-user-owner',
+      'auth-user-colleague',
+    ]);
+  }),
+);
+
+it.effect('refuses a stage account whose Better Auth user was not created', () =>
+  Effect.gen(function* refusesMissingAuthUser() {
+    const incomplete = new Map([...providerUserIds].slice(0, 1));
+    const refused = yield* stageTenantsFromAccountsFile(yield* loadFile, incomplete).pipe(Effect.flip);
+    expect(refused.code).toBe('stage_context_bootstrap_failed');
+    expect(refused.reason).toMatch(/Better Auth user/u);
+  }),
+);
+
+it.effect('installs the tenant module and Core, never a vertical the tenant does not have', () =>
+  Effect.sync(() => {
+    // Core is never optional: the shell and the identity screens are served in every tenant.
+    expect(installedModuleKeysOf(['party.registry'], modules)).toEqual([
+      'core.identity',
+      'core.shell',
+      'party.registry',
+    ]);
+    // A vertical module the accounts file does not name stays out of the tenant's installations, so its
+    // capabilities never enter the release: the negative control for a bootstrap that installs everything.
+    expect(installedModuleKeysOf(['party.registry'], modules)).not.toContain('commerce.catalog');
+  }),
+);
+
+it.effect('scopes every write to the tenant it names, in the context the request selected', () =>
+  Effect.gen(function* scopesWrites() {
+    const tenantContext = yield* stageScopeOf({
+      principalId: '20000000-0000-4000-8000-0000000000a1',
+      tenantId: '10000000-0000-4000-8000-0000000000a0',
     });
-    expect(contexts.some((context) => Object.hasOwn(context, 'password') || Object.hasOwn(context, 'email'))).toBe(
-      false,
+    expect(tenantContext).toMatchObject({
+      correlationId: 'stage-context-bootstrap',
+      principalId: '20000000-0000-4000-8000-0000000000a1',
+      tenantId: '10000000-0000-4000-8000-0000000000a0',
+    });
+    expect(tenantContext.legalEntityId).toBeUndefined();
+    const company = yield* stageScopeOf({
+      legalEntityId: '11000000-0000-4000-8000-0000000000a0',
+      principalId: '20000000-0000-4000-8000-0000000000a1',
+      tenantId: '10000000-0000-4000-8000-0000000000a0',
+    });
+    expect(company.legalEntityId).toBe('11000000-0000-4000-8000-0000000000a0');
+    const refused = yield* stageScopeOf({ principalId: 'not-a-uuid', tenantId: 'also-not-a-uuid' }).pipe(Effect.flip);
+    expect(refused.reason).toMatch(/scope is invalid/u);
+  }),
+);
+
+it.effect('refuses a stage run with no tenant, no declaration set or no owner account', () =>
+  Effect.gen(function* refusesUnbootstrappableRuns() {
+    const tenants = yield* stageTenantsFromAccountsFile(yield* loadFile, providerUserIds);
+    const [tenant] = tenants;
+    if (tenant === undefined) {
+      return yield* Effect.die(new Error('the fixture must declare one tenant'));
+    }
+    const options = { authenticationNamespaceId: 'namespace', modules };
+    expect(stageBootstrapRefusal({ retiredTenants: [], tenants: [] }, options)?.reason).toMatch(/At least one/u);
+    // A composition that declares nothing would publish an empty release and deny the owner everything.
+    expect(stageBootstrapRefusal({ retiredTenants: [], tenants }, { ...options, modules: [] })?.reason).toMatch(
+      /declarations of the running composition/u,
     );
-  }),
-);
-
-it.effect('writes exactly the Tenant relations listed in grant data, only inside the own Tenant', () =>
-  Effect.gen(function* writesListedRelations() {
-    for (const context of stageContextsFromAccountsFile(yield* loadAccountsFile)) {
-      const relationships = yield* buildStageContextRelationships(context);
-      expect(
-        relationships
-          .filter(({ relation, resourceType }) => resourceType === 'tenant' && relation !== 'member')
-          .map(({ relation }) => relation),
-      ).toEqual([...context.tenantRelations]);
-      expect(
-        relationships
-          .filter(({ resourceType }) => resourceType === 'tenant')
-          .every(({ resourceId }) => resourceId === context.tenantId),
-      ).toBe(true);
-    }
-  }),
-);
-
-it.effect('deletes every relationship a bootstrap can have written for a retired Tenant', () =>
-  Effect.gen(function* retiresTenant() {
-    const [retired] = (yield* loadAccountsFile).retiredTenants;
-    expect(retired).toBeDefined();
-    if (retired === undefined) {
-      return;
-    }
-    const relationships = yield* buildRetiredStageContextRelationships(retired);
-    expect(relationships).toHaveLength(2 + retired.principalIds.length * (STAGE_GRANTABLE_TENANT_RELATIONS.length + 3));
-    expect(relationships).toContainEqual({
-      relation: 'member',
-      resourceId: retired.tenantId,
-      resourceType: 'tenant',
-      subjectId: retired.principalIds[0],
-      subjectType: 'principal',
-    });
-    expect(
-      relationships.filter(({ resourceType }) => resourceType === 'tenant').map(({ relation }) => relation),
-    ).toEqual(['member', ...STAGE_GRANTABLE_TENANT_RELATIONS]);
+    const withoutOwner = [{ ...tenant, accounts: tenant.accounts.map((account) => ({ ...account, owner: false })) }];
+    expect(stageBootstrapRefusal({ retiredTenants: [], tenants: withoutOwner }, options)?.reason).toMatch(
+      /exactly one owner/u,
+    );
+    const twoOwners = [{ ...tenant, accounts: tenant.accounts.map((account) => ({ ...account, owner: true })) }];
+    expect(stageBootstrapRefusal({ retiredTenants: [], tenants: twoOwners }, options)?.reason).toMatch(
+      /exactly one owner/u,
+    );
+    expect(stageBootstrapRefusal({ retiredTenants: [], tenants }, options)).toBeUndefined();
+    return yield* Effect.void;
   }),
 );

@@ -11,6 +11,90 @@ export {
   decodeEntrypointAuthorization,
 } from './authorization/entrypoint-classification.ts';
 export {
+  ACCESS_FIELD_GROUP_KINDS,
+  ACCESS_KINDS,
+  ACCESS_MODES,
+  ACCESS_PLACEMENT_LEVELS,
+  ACCESS_RISKS,
+  ACCESS_SELECTORS,
+  AGENT_POLICIES,
+  AccessActorSchema,
+  AccessDeclarationSchema,
+  AccessFieldGroupSchema,
+  AccessKeySchema,
+  AccessWorkloadSchema,
+  DANGEROUS_ACCESS_VERBS,
+  SENSITIVE_FIELD_CLASSES,
+  TERMINAL_ACCESS_VERBS,
+  accessActorEntrypointIssue,
+  accessCarrierIssue,
+  accessFieldGroupEntrypointIssue,
+  accessWorkloadEntrypointIssue,
+  collectAccessCatalog,
+  decodeAccessActor,
+  decodeAccessDeclaration,
+  decodeAccessDeclarationOrThrow,
+  decodeAccessFieldGroups,
+  decodeAccessWorkload,
+  declaredAccessCarrier,
+  declaredAccessDeclaration,
+  deriveAgentPolicy,
+  deriveCarrierAgentPolicy,
+  hasDangerousAccessVerb,
+  isProtectedAccessEntrypoint,
+  missingAccessCarrierIssue,
+} from './authorization/access-declaration.ts';
+export type {
+  AccessActor,
+  AccessActorInput,
+  AccessCarrierInput,
+  AccessCatalog,
+  AccessCatalogDescriptor,
+  AccessCatalogEntry,
+  AccessCatalogEntryDeclaration,
+  AccessCatalogFinding,
+  AccessCatalogModule,
+  AccessDeclaration,
+  AccessDeclarationInput,
+  AccessDeclarationOwner,
+  AccessFieldGroup,
+  AccessFieldGroupCarrier,
+  AccessFieldGroupInput,
+  AccessKey,
+  AccessWorkload,
+  AccessWorkloadInput,
+  AgentPolicy,
+  DeclaredAccessCarrier,
+} from './authorization/access-declaration.ts';
+export { AccessEnforcementPortsLive, bindAccessGate, bindLiveAccessGate } from './operations/access-gate.ts';
+export type { AccessEnforcementPorts, BoundAccessGate } from './operations/access-gate.ts';
+export { ProtectedAuthorizationSchema } from './authorization/entrypoint-classification.ts';
+export type {
+  CapabilityIssuanceAuthorization,
+  ContextPermissionAuthorization,
+  OwnerLocalBackgroundAuthorization,
+  ProtectedAuthorization,
+} from './authorization/entrypoint-classification.ts';
+export { AccessKeySyntaxSchema } from './authorization/access-declaration.ts';
+export type { AccessAmount, AccessTarget } from './authorization/access-declaration.ts';
+export type { EntrypointAuthorizationForRole } from './modules/module-entrypoint.ts';
+export {
+  getActionAccessAmountResolver,
+  getActionAccessTargetResolver,
+  getActionOwnerFactsResolver,
+  getActionReducesAuthorityResolver,
+} from './actions/definition.ts';
+export type {
+  ActionAccessAmountResolver,
+  ActionAccessTargetResolver,
+  ActionOwnerFactsResolver,
+  ActionReducesAuthorityResolver,
+} from './actions/definition.ts';
+export { getReadAccessTargetResolver, getReadOwnerFactsResolver } from './reads/definition.ts';
+export type { ReadAccessOwnerFactsResolver, ReadAccessTargetResolver } from './reads/definition.ts';
+export { defineRouteMeta, RouteMetaSchema, routeMetaIssue } from './modules/route-meta.ts';
+export type { RouteMeta, RouteMetaInput } from './modules/route-meta.ts';
+export {
   AUTHORIZATION_WOULD_DENY_SCHEMA_VERSION,
   decideAuthorizationRollout,
 } from './authorization/rollout-decision.ts';
@@ -123,6 +207,7 @@ export type { DatabaseConnectionPair } from './db/config.ts';
 export type { DatabaseRuntime } from './db/database-runtime.ts';
 export type { DatabaseIdentityConnections } from './db/config.ts';
 export {
+  ACCESS_DECISION_REQUEST_GRANTS,
   BEARER_ASSERTION_ROLE_SETTINGS,
   DATABASE_IDENTITIES,
   DEDICATED_IDENTITY_MODULE_KEYS,
@@ -206,6 +291,8 @@ export {
   DatabaseTransactionFailure,
   decodeDatabaseDriverFailure,
   isDatabaseCommitAcknowledgementAmbiguous,
+  isDatabaseGuardRefusal,
+  isDatabaseIntegrityRefusal,
   isDatabaseUnavailableFailure,
 } from './database/driver-failure.ts';
 export type {
@@ -249,20 +336,21 @@ export {
   OwnerAuthorizationOverlayAllowLive,
   allowOwnerAuthorizationOverlay,
   failClosedOwnerAuthorizationOverlay,
-} from './permissions/owner-authorization-overlay.ts';
+} from './access/enforcement/owner-overlay.ts';
 export type {
+  OwnerAccessFacts,
   OwnerAuthorizationDecision,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
   OwnerAuthorizationTarget,
-} from './permissions/owner-authorization-overlay.ts';
+} from './access/enforcement/owner-overlay.ts';
 export {
   ActionAuthorizationPreflight,
   ActionAuthorizationPreflightDatabase,
   ActionAuthorizationPreflightDatabaseLive,
   makeActionAuthorizationPreflightPermit,
   unavailableActionAuthorizationPreflight,
-} from './permissions/action-authorization-preflight.ts';
+} from './actions/owner-proof-preflight.ts';
 export type {
   ActionAuthorizationPreflightDecision,
   ActionAuthorizationPreflightDatabaseService,
@@ -270,7 +358,7 @@ export type {
   ActionAuthorizationPreflightPermit,
   ActionAuthorizationPreflightService,
   ActionAuthorizationPreflightTransaction,
-} from './permissions/action-authorization-preflight.ts';
+} from './actions/owner-proof-preflight.ts';
 export {
   BusinessPermissionAuditSensitivitySchema,
   BusinessPermissionCodeSchema,
@@ -300,63 +388,6 @@ export type {
   PrincipalRef,
 } from './permissions/principal-ref.ts';
 export { PrincipalEligibilityLive, principalEligibilityForTransaction } from './permissions/principal-eligibility.ts';
-export {
-  AUTHORIZATION_MUTATION_STATES,
-  AUTHORIZATION_MUTATION_TRANSITIONS,
-  AuthorizationMutationJournal,
-  AuthorizationMutationStateSchema,
-  canTransitionAuthorizationMutation,
-} from './permissions/authorization-mutation.ts';
-export type {
-  AuthorizationMutationJournalEntry,
-  AuthorizationMutationJournalService,
-  AuthorizationMutationState,
-} from './permissions/authorization-mutation.ts';
-export {
-  AuthorizationMutationReconciler,
-  AuthorizationMutationReconciliationUnavailable,
-} from './permissions/authorization-reconciler.ts';
-export type {
-  AuthorizationMutationReconcilerService,
-  AuthorizationMutationReconciliationSummary,
-} from './permissions/authorization-reconciler.ts';
-export {
-  AuthorizationMutationSagaError,
-  reconcileCommittedAuthorizationMutation,
-} from './permissions/authorization-mutation-saga.ts';
-export type {
-  AuthorizationMutationSagaErrorCode,
-  AuthorizationMutationSagaFinalizer,
-  AuthorizationMutationSagaResult,
-} from './permissions/authorization-mutation-saga.ts';
-export {
-  BusinessPermissionMutationUnavailable,
-  BusinessPermissionRelationshipMutation,
-  BusinessPermissionRelationshipMutationLive,
-  createBusinessPermissionRelationshipMutationClient,
-  makeBusinessPermissionRelationshipMutation,
-  makeBusinessPermissionRelationshipMutationLive,
-} from './permissions/business-permission-mutation.ts';
-export type {
-  BusinessPermissionRelationshipMutationClient,
-  BusinessPermissionRelationshipMutationInput,
-  BusinessPermissionRelationshipMutationService,
-} from './permissions/business-permission-mutation.ts';
-export {
-  ResourceContainmentMutationUnavailable,
-  ResourceContainmentRelationshipMutation,
-  createResourceContainmentRelationshipMutationClient,
-  makeResourceContainmentRelationshipMutation,
-  makeResourceContainmentRelationshipMutationLive,
-} from './permissions/resource-containment-mutation.ts';
-export type {
-  ResourceContainmentRelationship,
-  ResourceContainmentRelationshipMutationClient,
-  ResourceContainmentRelationshipMutationInput,
-  ResourceContainmentPreparation,
-  ResourceContainmentRelationshipMutationService,
-  SpiceDbResourceReference,
-} from './permissions/resource-containment-mutation.ts';
 export {
   ContextPermissionMutationUnavailable,
   ContextPermissionRelationshipMutation,
@@ -434,12 +465,13 @@ export type {
 export {
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
   trustResolvedSystemPrincipalContext,
   trustVerifiedGatewayPrincipalContext,
 } from './auth/system-principal-context-provenance.ts';
-export type { GatewayScopeAssertion } from './auth/system-principal-context-provenance.ts';
+export type { GatewayScopeAssertion, VerifiedGatewayActor } from './auth/system-principal-context-provenance.ts';
 export {
   GatewayScopeGrantRegistrar,
   GatewayScopeGrantRegistrarLive,
@@ -547,6 +579,7 @@ export {
   makeInMemoryCoreSearchProjectionStore,
 } from './search/projection.ts';
 export type {
+  CoreSearchAuthorization,
   CoreSearchFacet,
   CoreSearchMetadataField,
   CoreSearchProjectionDocument,
@@ -556,6 +589,7 @@ export type {
   CoreSearchQueryRuntimeService,
   CoreSearchResourceRef,
   CoreSearchTemporalFacet,
+  CoreSearchTextField,
   CoreSearchProjectionMutation,
   CoreSearchProjectionReplacement,
 } from './search/projection.ts';
@@ -859,6 +893,8 @@ export type { CoreActionDescriptor } from './modules/actions/catalog.ts';
 export { ONTOS_SPICEDB_SCHEMA } from './permissions/schema.ts';
 
 export { bindingSubjectRead, readPrincipalBinding, resolveExternalSubjectRead } from './auth/external-identity/read.ts';
+export { GrantedProvisioningNamespaces } from './auth/external-identity/namespace-authority.ts';
+export type { GrantedProvisioningNamespacesService } from './auth/external-identity/namespace-authority.ts';
 export {
   ExternalIdentityAdmission,
   resolveExternalSubject,

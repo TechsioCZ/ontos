@@ -174,6 +174,14 @@ export const handleRecordNoticeProvision = Effect.fn('RecordNoticeProvisionActio
 
 export const recordNoticeProvisionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.notice-provision.record',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'notices', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.record-notice-provision.access.v1',
@@ -185,7 +193,7 @@ export const recordNoticeProvisionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.record-notice-provision',
       moduleKey: MODULE_KEY,
       role: 'action',

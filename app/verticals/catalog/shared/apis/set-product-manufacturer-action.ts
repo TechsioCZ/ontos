@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.catalog
 // @ontos-action-http-slug set-product-manufacturer
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../actions/set-product-manufacturer.ts';
 
 export { SetProductManufacturerPayloadSchema } from '../actions/set-product-manufacturer.ts';
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const SetProductManufacturerActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetProductManufacturerActionInvalidProblem',
@@ -24,6 +26,7 @@ export const SetProductManufacturerActionForbiddenProblemSchema = makeProblemDet
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -131,7 +134,7 @@ export const SetProductManufacturerActionApi = HttpApi.make('SetProductManufactu
       HttpApiEndpoint.post('execute', '/catalog/actions/set-product-manufacturer', {
         error: actionErrors,
         payload: Schema.toEncoded(SetProductManufacturerPayloadSchema),
-        success: SetProductManufacturerResultSchema,
+        success: [ActionProposalAcceptedSchema, SetProductManufacturerResultSchema],
       }),
     )
     .middleware(SetProductManufacturerActionSchemaErrorMiddleware),

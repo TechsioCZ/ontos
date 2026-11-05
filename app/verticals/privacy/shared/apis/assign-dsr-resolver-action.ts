@@ -2,12 +2,12 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug assign-dsr-resolver
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { AssignDsrResolverPayloadSchema, AssignDsrResolverResultSchema } from '../actions/assign-dsr-resolver.ts';
 
 export { AssignDsrResolverPayloadSchema } from '../actions/assign-dsr-resolver.ts';
-
 export const AssignDsrResolverActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignDsrResolverActionInvalidProblem',
   400,
@@ -21,6 +21,7 @@ export const AssignDsrResolverActionForbiddenProblemSchema = makeProblemDetailsS
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -139,7 +140,7 @@ export const assignDsrResolverActionGroupDefinition = HttpApiGroup.make('assignD
     HttpApiEndpoint.post('execute', '/privacy/actions/assign-dsr-resolver', {
       error: actionErrors,
       payload: Schema.toEncoded(AssignDsrResolverPayloadSchema),
-      success: AssignDsrResolverResultSchema,
+      success: [ActionProposalAcceptedSchema, AssignDsrResolverResultSchema],
     }),
   )
   .middleware(AssignDsrResolverActionSchemaErrorMiddleware);

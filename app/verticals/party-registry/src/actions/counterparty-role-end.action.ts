@@ -2,12 +2,7 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug counterparty-role-end
 import type { ActionHandlerContext } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-  OperationContextUnavailable,
-} from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 
 import {
@@ -28,7 +23,7 @@ import {
 import { OutboxPayloadSchema as CounterpartyRoleEndedEventSchema } from '../../shared/outbox/party-registry-counterparty-role-ended-v1.ts';
 import { endCounterpartyRoleRecord } from '../services/counterparty-persistence.service.ts';
 import type { EndCounterpartyRoleResult as PersistenceResult } from '../services/counterparty-persistence.service.ts';
-import { counterpartyRoleWritePermission, failCounterpartyNotFound } from './counterparty-role-action-support.ts';
+import { failCounterpartyNotFound } from './counterparty-role-action-support.ts';
 import { createCounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxMessage } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
 
 export {
@@ -161,6 +156,15 @@ const handleCounterpartyRoleEnd = Effect.fn('CounterpartyRoleEndAction.handleCou
 
 export const counterpartyRoleEndAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.counterparty-role.end',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'counterparties', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.counterpartyRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.counterparty-role-end.access.v1',
@@ -174,10 +178,7 @@ export const counterpartyRoleEndAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.counterparty-role-end',
       moduleKey: 'party.registry',
       role: 'action',
@@ -187,7 +188,6 @@ export const counterpartyRoleEndAction = defineAction(
     owningModuleKey: 'party.registry',
     payloadSchema: CounterpartyRoleEndPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CounterpartyRoleEndPayload>(counterpartyRoleWritePermission),
     resultSchema: CounterpartyRoleEndResultSchema,
     schemaVersion: '1',
   },

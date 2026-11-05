@@ -2,7 +2,7 @@ import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import type { ActionHandlerContext, DataAccessEventInput } from '@app/core-runtime';
-import { getActionOwnerPermissionTargetResolver } from '@app/core-runtime/testing/actions';
+import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
 import {
   InventorySourceImportActionInvocationIdSchema,
@@ -167,40 +167,17 @@ const actionId = Schema.decodeSync(InventorySourceImportActionInvocationIdSchema
 const actionIdFor = (value: number) => Schema.decodeSync(InventorySourceImportActionInvocationIdSchema)(uuidFor(value));
 
 describe('Inventory source import service', () => {
-  it('requires Inventory Migration permission for the batch exact Position target', () => {
+  it('declares the scope-wide import capability instead of a per-Position target', () => {
+    // O67-Q2: the batch import is the Action's own capability in the Tenant context. The exact
+    // Position identity stays a payload invariant the handler enforces for every item.
     const first = proposal(1);
-    const payload = Schema.decodeUnknownSync(importSourceAssertionAction.descriptor.payloadSchema)({
-      authorizationTargetRef: first.positionRef,
-      items: [first],
+    expect(importSourceAssertionAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.inventory.source-assertion.import',
+      kind: 'action',
+      selectors: [],
     });
-    const scope = trustVerifiedGatewayPrincipalContext(
-      {
-        authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
-        authContextRef: 'test:inventory-source-import',
-        authMethod: 'api_key',
-        correlationId: 'inventory-source-import',
-        principalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
-        tenantId,
-      },
-      compositionRevision,
-    );
-
-    expect(
-      getActionOwnerPermissionTargetResolver(importSourceAssertionAction)?.(payload, scope)?.map(
-        ({ definition, target }) => ({ permission: definition.key, target }),
-      )[0],
-    ).toEqual({
-      permission: 'inventory.migration.manage',
-      target: {
-        kind: 'inventory_resource',
-        resource: {
-          moduleId: first.positionRef.moduleId,
-          resourceId: first.positionRef.resourceId,
-          resourceType: first.positionRef.resourceType,
-        },
-        tenantId,
-      },
-    });
+    expect(getActionOwnerPermissionTargetResolver(importSourceAssertionAction)).toBeUndefined();
+    expect(first.positionRef.tenantId).toBe(tenantId);
   });
 
   it('rejects mixed Position targets before entering the Action lifecycle', () => {
@@ -221,7 +198,7 @@ describe('Inventory source import service', () => {
     expect(importSourceAssertionAction.descriptor).toMatchObject({
       actionKey: 'commerce.inventory.import-source-assertion',
       entrypoint: {
-        authorization: { kind: 'action_execution', provisioning: 'explicit' },
+        authorization: { kind: 'protected' },
         scope: 'tenant',
       },
       idempotency: 'required',

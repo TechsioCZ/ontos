@@ -54,13 +54,25 @@ const stored = {
 
 describe('Tenant Currency Support owner-read acceptance', () => {
   it('keeps Tenant support administration explicit and independent of a selected Legal Entity', () => {
-    expect(setSupportedCurrenciesAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
+    expect(setSupportedCurrenciesAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
+    expect(setSupportedCurrenciesAction.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.pricing.currency-support.set',
+      kind: 'action',
+      selectors: [],
     });
     expect(setSupportedCurrenciesAction.descriptor.legalEntityScope).toBe('forbidden');
     expect(currentSupportedCurrenciesRead.descriptor.legalEntityScope).toBe('forbidden');
-    expect(currentSupportedCurrenciesRead.descriptor.permissionTarget).toBe('module');
+    expect(currentSupportedCurrenciesRead.descriptor.accessActor).toMatchObject({
+      callers: ['commerce-customer-context'],
+      subject: 'identity',
+    });
+    // The read carries its own scope-wide capability and no legacy permission target (O62).
+    expect(currentSupportedCurrenciesRead.descriptor.accessDeclaration).toMatchObject({
+      key: 'commerce.pricing.currency-support.read-current',
+      kind: 'read',
+      selectors: [],
+    });
+    expect(Object.keys(currentSupportedCurrenciesRead.descriptor)).not.toContain('permissionTarget');
   });
 
   it.effect('returns one Tenant root regardless of the caller purchase context', () =>

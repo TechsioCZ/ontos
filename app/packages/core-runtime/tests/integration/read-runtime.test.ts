@@ -17,6 +17,7 @@ import {
 } from '../../src/modules/application-composition-authority.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
+import { makeTestOperationalScopeAccess } from '../../src/testing/access-gate.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
@@ -26,6 +27,7 @@ import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/databas
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
 import { makeTestOperationOwner } from '../support/action-runtime-options.ts';
+import { fixtureReadAccess } from '../support/access-declaration-fixtures.ts';
 
 const readDatabaseClients = Effect.gen(function* acquireReadDatabaseClients() {
   const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
@@ -68,6 +70,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
         const correlationId = yield* nextUuid;
         const registration = defineRead(
           {
+            accessDeclaration: fixtureReadAccess('core.shell'),
             accessKind: 'list',
             entrypoint: defineSystemModuleEntrypoint({
               access: 'read',
@@ -134,7 +137,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
           openModuleEntrypointGateway,
           yield* makeOperationalScopeResolver(
             makeOperationalScopeRepository({ executor: runtimeDatabase }),
-            contextAccess,
+            makeTestOperationalScopeAccess(),
           ),
           contextAccess,
           {
@@ -238,6 +241,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
           });
           const registration = defineRead(
             {
+              accessDeclaration: fixtureReadAccess('core.shell'),
               accessKind: 'list',
               entrypoint: defineSystemModuleEntrypoint({
                 access: 'read',

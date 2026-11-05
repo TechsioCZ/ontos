@@ -43,13 +43,7 @@ const WORKER_ENTRY = 'src/worker-host/entry.ts';
 const WORKER_BUNDLE = 'worker.mjs';
 const WORKER_ARTIFACT = 'worker-artifact.json';
 const WORKER_RUNTIME_ROOT = '.zerops/runtime';
-const REVIEWED_HOST_OWNER_IDS = [
-  'party-registry',
-  'commerce-customer-context',
-  'price-group-catalog',
-  'inventory',
-  'privacy',
-];
+const REVIEWED_HOST_OWNER_IDS = ['party-registry', 'commerce-customer-context', 'inventory', 'privacy'];
 const OWNER_MARKER_SOURCE = 'shared/ultramodern-build.ts';
 const ENV_COMMAND = '/usr/bin/env';
 const PACKAGE_MANIFEST = 'package.json';
@@ -249,12 +243,16 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
     expect(host?.match(/path: '\/live'/gu)).toHaveLength(2);
     expect(host).not.toContain("path: '/ready'");
     expect(host).toContain(`start: sh -c 'cd app/.zerops/runtime/outbox-worker-host && `);
-    expect(hostEntry).toContain("import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';");
+    expect(hostEntry).toContain(
+      "import { hostedOutboxWorkerEntry, startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';",
+    );
     expect(hostEntry).toContain(
       "import { outboxWorkerEntry as ledgerOutboxWorkerEntry } from '@app/ledger/outbox-worker-host';",
     );
     expect(hostEntry).not.toContain('/src/');
     expect(hostEntry).toContain('    ledgerOutboxWorkerEntry,\n');
+    // The ledger owner holds no module credential, so the host runs its entry as published.
+    expect(hostEntry).not.toContain('hostedOutboxWorkerEntry(ledgerOutboxWorkerEntry');
   }),
 );
 
@@ -433,6 +431,8 @@ it.live('bundles only reviewed hosted owners and admits their compiled markers t
     );
     expect(artifact.serviceId).toBe(OUTBOX_WORKER_HOST.id);
     expect(runtimePackage.name).toBe('outbox-worker-host-runtime');
+    // The price-group-catalog worker host is gone with its SpiceDB containment mirror (O62); the
+    // surviving owner workers keep their host entry.
     for (const owner of REVIEWED_HOST_OWNER_IDS) {
       expect(artifact.sourceInputs).toContain(`verticals/${owner}/src/worker-host/entry.ts`);
       expect(artifact.sourceInputs).not.toContain(`verticals/${owner}/src/worker-host/main.ts`);

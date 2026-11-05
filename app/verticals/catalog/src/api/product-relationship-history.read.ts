@@ -23,7 +23,7 @@ const catalogModuleKey = 'commerce.catalog';
 
 const productRelationshipHistoryEntrypoint = defineTenantModuleEntrypoint({
   access: 'historical_read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-relationship-history' },
+  authorization: { kind: 'protected' },
   entrypointKey: historyReadKey,
   moduleKey: catalogModuleKey,
   role: 'api',
@@ -76,6 +76,14 @@ export const readProductRelationshipHistory = Effect.fn('ProductRelationshipHist
 
 export const productRelationshipHistoryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-relationship-history.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product-relationship', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: productRelationshipHistoryEntrypoint,
     evidencePolicy: {
@@ -85,7 +93,6 @@ export const productRelationshipHistoryRead = defineRead(
     inputSchema: ProductRelationshipHistoryRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: catalogModuleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: historyReadKey,
     resultSchema: ProductRelationshipHistoryResponseSchema,
@@ -96,6 +103,4 @@ export const productRelationshipHistoryRead = defineRead(
       Effect.map((result) => ({ evidence: { resultCount: result.revisions.length }, result })),
     ),
   (transaction, scope) => Effect.succeed(productRelationshipReadsForScope(transaction, scope)),
-  () => ({ kind: 'module', moduleId: catalogModuleKey }),
-  ({ revisions }) => revisions.flatMap(({ relationship }) => [relationship.source, relationship.target]),
 );

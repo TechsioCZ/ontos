@@ -1,12 +1,25 @@
 // @effect-diagnostics asyncFunction:off -- Native proof fixture child owns a Node HTTP listener and its lifecycle at the process entrypoint; expires: 2027-03-31.
+import { makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
 import { createEffectBffTestHandler, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Exit, Layer, Predicate, Schema, Tracer } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
-import apiRuntime from '../../api/index.ts';
+import { partyRegistryApiRuntime } from './party-registry-api-runtime.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive,
+} from '../../api/auth/gateway-assertion-redemption.ts';
+import {
+  partyRegistryActionRuntimeLive,
+  partyRegistryAresSubjectServiceLive,
+  partyRegistryReadRuntimeLive,
+  partyRegistrySearchProjectionGatewayLive,
+} from '../../api/party-registry-production-layers.ts';
 import { partyRegistryApiContract } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { partyTestAccessGate } from './party-test-access-gate.ts';
 
 const REDACTED = '[REDACTED]';
 const redactCredentials = (text: string) =>
@@ -38,10 +51,42 @@ const defectTracer = Tracer.make({
     return span;
   },
 });
+const partyRegistryDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY);
+
+/**
+ * The Party suite's own authority, flipped over the fixture's HTTP surface (see
+ * `party-test-access-gate.ts`). The isolated database carries no v2 access intent and reaches no
+ * engine, so the production default would refuse every protected read and Action; the suite still
+ * proves a real revocation because the control really changes the gate's answer.
+ */
+const accessGate = partyTestAccessGate();
+const runtimeDependenciesLive = Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer, accessGate.layer);
+const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(partyRegistryDatabaseConfigLive),
+);
+const testPartyRuntime = partyRegistryApiRuntime(
+  partyRegistryReadRuntimeLive.pipe(Layer.provide(runtimeDependenciesLive)),
+  partyRegistryAresSubjectServiceLive,
+  partyRegistrySearchProjectionGatewayLive.pipe(Layer.provide(partyRegistryDatabaseConfigLive)),
+  partyRegistryActionRuntimeLive.pipe(Layer.provide(runtimeDependenciesLive)),
+  gatewayAssertionRedemptionLive,
+);
+
 const observedRuntime = defineEffectBff({
-  ...apiRuntime,
-  layer: apiRuntime.layer.pipe(Layer.provide(Layer.succeed(Tracer.Tracer, defectTracer))),
+  ...testPartyRuntime,
+  layer: testPartyRuntime.layer.pipe(Layer.provide(Layer.succeed(Tracer.Tracer, defectTracer))),
 });
+
+/** Every Privacy-measure capability this module owns: the receipt read and the execution Action. */
+const partyPrivacyMeasureCapabilityPrefix = 'party.registry.privacy-measure';
+/**
+ * The capability family a control flips. It defaults to this module's Privacy-measure pair, and a
+ * suite that needs a different declared capability names it with a `capabilityPrefix` query
+ * parameter, so both suites still prove a real refusal through this fixture's own gate.
+ */
+const controlledCapabilityPrefix = (requestUrl: string) =>
+  new URL(requestUrl, 'http://localhost').searchParams.get('capabilityPrefix') ?? partyPrivacyMeasureCapabilityPrefix;
 
 // Test-only: the default Effect logger writes to stdout (the protocol channel); copy error-level lines to private stderr.
 const writeStdout = process.stdout.write.bind(process.stdout);
@@ -105,6 +150,17 @@ const serve = Effect.scoped(
     const server = yield* HttpServer.HttpServer;
     const application = Effect.gen(function* partyDefaultRuntimeRequest() {
       const request = yield* HttpServerRequest.HttpServerRequest;
+      // Suite controls: they flip this fixture's own gate answer, so the suite proves both a real
+      // refusal and the same request succeeding once the capability is restored.
+      const control = new URL(request.url, 'http://localhost');
+      if (request.method === 'POST' && control.pathname === '/__1258/revoke-party-read') {
+        accessGate.revoke(controlledCapabilityPrefix(request.url));
+        return HttpServerResponse.empty();
+      }
+      if (request.method === 'POST' && control.pathname === '/__1258/grant-party-read') {
+        accessGate.restore(controlledCapabilityPrefix(request.url));
+        return HttpServerResponse.empty();
+      }
       const webRequest = yield* HttpServerRequest.toWeb(request);
       process.stderr.write(`party-request ${webRequest.method} ${new URL(webRequest.url).pathname}\n`);
       const response = yield* Effect.tryPromise({

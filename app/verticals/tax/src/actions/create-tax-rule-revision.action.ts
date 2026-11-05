@@ -4,7 +4,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
-import { defineTaxRuleActionPermissions } from '../permissions/authorization.ts';
 
 import {
   CreateTaxRuleRevisionPayloadSchema,
@@ -63,6 +62,14 @@ export const handleCreateTaxRuleRevision = Effect.fn('CreateTaxRuleRevisionActio
 
 export const createTaxRuleRevisionAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.tax.tax-rule-revision.create',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'tax-rules', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.tax.create-tax-rule-revision.access.v1',
@@ -74,14 +81,13 @@ export const createTaxRuleRevisionAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'commerce.tax.create-tax-rule-revision',
       moduleKey: 'commerce.tax',
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    ownerPermissions: defineTaxRuleActionPermissions<CreateTaxRuleRevisionPayload>(),
     owningModuleKey: 'commerce.tax',
     payloadSchema: CreateTaxRuleRevisionPayloadSchema,
     policies: [],

@@ -199,6 +199,7 @@ const verifyObservedOwnerRuntime = Effect.fn('PrivacyCompletionTest.verifyObserv
 );
 const partyDescriptionSchema = Schema.Struct({
   marker: markerSchema,
+  originatorActions: Schema.Array(Schema.String),
   runtime: ownerRuntimeDescriptionSchema,
   subscriptions: Schema.Array(OntosOutboxSubscriptionContractSchema),
 });
@@ -208,6 +209,8 @@ const shellReadySchema = Schema.Struct({
   apiKey: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))),
   legalEntityId: Schema.requiredKey(TrustedPrincipalContextSchema.fields.legalEntityId),
   marker: shellMarkerSchema,
+  // The Party worker's own module deployment credential; the Shell binds it to the Party release.
+  moduleApiKey: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))),
   port: Schema.Int.check(Schema.isBetween({ maximum: 65_535, minimum: 1 })),
   principal: TrustedPrincipalContextSchema,
   protocolVersion: Schema.Literal(2),
@@ -449,6 +452,13 @@ const fixtureRuntimeInventory = [
     rls: false,
     schema: 'auth',
     tables: ['support_impersonation_recovery'],
+  },
+  {
+    // The Shell's delegated-context replay ledger: prune expired slots, then reserve one per exchange.
+    operations: 'select, insert, delete',
+    rls: false,
+    schema: 'auth',
+    tables: ['gateway_relay_exchanges'],
   },
   {
     operations: 'select, insert, update, delete',
@@ -1193,8 +1203,11 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     Effect.acquireRelease(
       makeLiveOperationFixture({
         ...additionalLegalEntityConfiguration,
+        access: 'allowed',
         actionKeys: [
           'core.identity.bind-self-api-key',
+          'core.identity.create-non-human-principal',
+          'core.identity.bind-managed-api-key',
           'core.modules.change-tenant-module-state',
           'privacy.core.dispatch-privacy-measure',
           'privacy.core.record-owner-execution-outcome',
@@ -1236,7 +1249,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   const shell = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(shellReadySchema))(shellProcess.line).pipe(
     Effect.mapError(() => failure('Shell fixture failed to start')),
   );
-  const { apiKey } = shell;
+  const { apiKey, moduleApiKey } = shell;
   const { secondaryLegalEntityId } = yield* Deferred.await(preparedHandoff);
   expect(shell.marker).toEqual(shellDescription.marker);
   expect(shell.principal.tenantId).toBe(shell.tenantId);
@@ -1397,11 +1410,17 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
         ),
       ),
     );
-  const control = (owner: 'privacy' | 'shell', path: string) =>
+  const control = (owner: 'privacy' | 'party' | 'shell', path: string) =>
     Effect.tryPromise({
       catch: () => failure('A closed TEST fixture control failed'),
       try: async () => {
-        const response = await fetch(`${owner === 'privacy' ? privacyUrl : shellUrl}/__1258/${path}`, {
+        // The party controls live on the fixture's own listener root, beside its API prefix.
+        const controlBaseUrls = {
+          party: `http://127.0.0.1:${partyReady.port}`,
+          privacy: privacyUrl,
+          shell: shellUrl,
+        } as const;
+        const response = await fetch(`${controlBaseUrls[owner]}/__1258/${path}`, {
           method: 'POST',
         });
         return response.status;
@@ -1419,6 +1438,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       ONTOS_1258_TEST_BARRIER: options.barrier ?? 'none',
       ONTOS_1258_TEST_CLOCK_ADVANCE_MS: String(options.advanceMs ?? 0),
       ONTOS_1258_TEST_REVISION: options.revision ?? snapshot.composition.revision,
+      ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleApiKey),
       ONTOS_PRIVACY_API_BASE_URL: privacyUrl,
     });
   const cycle = (advanceMs = 0) =>
@@ -1446,6 +1466,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
         ONTOS_1258_TEST_CLOCK_ADVANCE_MS: '0',
         ONTOS_1258_TEST_RETRY_SESSION: 'dead-letter',
         ONTOS_1258_TEST_REVISION: snapshot.composition.revision,
+        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleApiKey),
         ONTOS_PRIVACY_API_BASE_URL: privacyUrl,
       },
       false,
@@ -1832,6 +1853,7 @@ it.effect('requires the current closed Shell readiness protocol and redacts its 
       apiKey: 'TEST:private-parent-credential',
       legalEntityId: principal.legalEntityId,
       marker,
+      moduleApiKey: 'TEST:private-module-credential',
       port: 3020,
       principal,
       protocolVersion: 2,
@@ -1841,10 +1863,12 @@ it.effect('requires the current closed Shell readiness protocol and redacts its 
     };
     const decoded = yield* Schema.decodeUnknownEffect(shellReadySchema)(ready);
     expect(Redacted.isRedacted(decoded.apiKey)).toBe(true);
+    expect(Redacted.isRedacted(decoded.moduleApiKey)).toBe(true);
     expect(decoded.principal.tenantId).toBe(decoded.tenantId);
     expect(decoded.principal.legalEntityId).toBe(decoded.legalEntityId);
     for (const changed of [
       { ...ready, apiKey: '' },
+      { ...ready, moduleApiKey: '' },
       Object.fromEntries(Object.entries(ready).filter(([key]) => key !== 'legalEntityId')),
       { ...ready, principal: null },
       { ...ready, protocolVersion: 1 },
@@ -2711,7 +2735,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             `Bearer ${credential.token}`,
             f.suffix,
             { baseUrl: f.partyUrl, compositionRevision: f.revision, idempotencyKey: `${f.suffix}-prior-owner` },
-          );
+          ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(OwnerExecutionOutcomeSchema)));
           expect(priorOutcome.status).toBe('BUSINESS_REJECTED');
           const priorReceipt = yield* f.receipt();
           expect(Option.isSome(priorReceipt)).toBe(true);
@@ -2881,7 +2905,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           const f = yield* fixture;
           yield* f.dispatch(f.suffix);
           yield* f.isolated.composition.closeAdmission();
-          expect(yield* f.control('shell', 'revoke-party-read')).toBe(204);
+          expect(yield* f.control('party', 'revoke-party-read')).toBe(204);
           expect(yield* f.cycle()).toMatchObject({ claimed: 1, failed: 1, succeeded: 0 });
           yield* pending(f);
           const deniedRead = yield* Effect.result(f.receipt());
@@ -2894,7 +2918,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
               (row) => row.actionKey === 'party.registry.execute-privacy-measure',
             ),
           ).toHaveLength(0);
-          expect(yield* f.control('shell', 'grant-party-read')).toBe(204);
+          expect(yield* f.control('party', 'grant-party-read')).toBe(204);
           expect(Option.isNone(yield* f.receipt())).toBe(true);
           expect(yield* f.control('shell', 'deactivate-party')).toBe(204);
           // Consumer background eligibility prevents even claiming; no fabricated handler failure.
@@ -3016,20 +3040,22 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
               'party.registry|party.registry.counterparty|ffffffff-ffff-4fff-8fff-ffffffffffff|eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
             ],
           };
-          // Public dispatch preserves the declared work; the worker must independently
-          // obtain current authority for the Legal Entity in that immutable target.
+          // Public dispatch preserves the declared work. The worker acts in the requester's own Legal
+          // Entity, so Party refuses the foreign target as a scope mismatch: it never completes or reports.
           expect(yield* f.dispatch(f.suffix, foreignHandoff)).toEqual(foreignHandoff);
           yield* f.isolated.composition.closeAdmission();
           expect(yield* f.cycle()).toMatchObject({ claimed: 1, failed: 1, succeeded: 0 });
           yield* pending(f);
           expect(yield* f.outcomes()).toEqual([]);
           expect(Option.isNone(yield* f.receipt())).toBe(true);
+          const { invocations } = yield* f.evidence();
           expect(
-            (yield* f.evidence()).invocations.filter((row) =>
-              ['party.registry.execute-privacy-measure', 'privacy.core.record-owner-execution-outcome'].includes(
-                row.actionKey,
-              ),
+            invocations.filter(
+              (row) => row.actionKey === 'party.registry.execute-privacy-measure' && row.status === 'succeeded',
             ),
+          ).toHaveLength(0);
+          expect(
+            invocations.filter((row) => row.actionKey === 'privacy.core.record-owner-execution-outcome'),
           ).toHaveLength(0);
         }),
       120_000,
@@ -3044,7 +3070,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           const f = yield* fixture;
           yield* f.dispatch(f.suffix);
           yield* f.isolated.composition.closeAdmission();
-          expect(yield* f.control('shell', 'revoke-party-read')).toBe(204);
+          expect(yield* f.control('party', 'revoke-party-read')).toBe(204);
           const retry = yield* f.retrySession;
           const advances = [0, 2000, 5000, 10_000, 19_000, 36_000, 69_000, 130_000];
           for (const [index, advance] of advances.entries()) {
@@ -3057,7 +3083,7 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             });
             yield* pending(f);
           }
-          expect(yield* f.control('shell', 'grant-party-read')).toBe(204);
+          expect(yield* f.control('party', 'grant-party-read')).toBe(204);
           expect(yield* retry.cycle(200_000)).toMatchObject({ claimed: 0, succeeded: 0 });
           yield* pending(f);
           yield* retry.finish;

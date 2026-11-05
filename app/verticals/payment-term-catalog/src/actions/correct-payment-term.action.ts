@@ -2,7 +2,7 @@
 // @ontos-action-owner payment.term-catalog
 // @ontos-action-slug correct-payment-term
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Option, Schema } from 'effect';
 import {
   CorrectPaymentTermPayloadSchema,
@@ -171,6 +171,14 @@ export const handleCorrectPaymentTerm = Effect.fn('CorrectPaymentTermAction.hand
 
 export const correctPaymentTermAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'payment.term-catalog.payment-term.correct',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'payment-terms', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'payment.term-catalog.correct-payment-term.access.v1',
@@ -182,7 +190,7 @@ export const correctPaymentTermAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'payment.term-catalog.correct-payment-term',
       moduleKey: MODULE_KEY,
       role: 'action',
@@ -192,10 +200,6 @@ export const correctPaymentTermAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: CorrectPaymentTermPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CorrectPaymentTermPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.paymentTermRef,
-    })),
     resultSchema: CorrectPaymentTermResultSchema,
     schemaVersion: '1',
   },

@@ -2,6 +2,7 @@
 // @ontos-action-http-owner privacy.core
 // @ontos-action-http-slug record-owner-execution-outcome
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/record-owner-execution-outcome.ts';
 
 export { RecordOwnerExecutionOutcomePayloadSchema } from '../actions/record-owner-execution-outcome.ts';
-
 export const RecordOwnerExecutionOutcomeActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordOwnerExecutionOutcomeActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const RecordOwnerExecutionOutcomeActionForbiddenProblemSchema = makeProbl
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -142,7 +143,7 @@ export const recordOwnerExecutionOutcomeActionGroupDefinition = HttpApiGroup.mak
     HttpApiEndpoint.post('execute', '/privacy/actions/record-owner-execution-outcome', {
       error: actionErrors,
       payload: Schema.toEncoded(RecordOwnerExecutionOutcomePayloadSchema),
-      success: RecordOwnerExecutionOutcomeResultSchema,
+      success: [ActionProposalAcceptedSchema, RecordOwnerExecutionOutcomeResultSchema],
     }),
   )
   .middleware(RecordOwnerExecutionOutcomeActionSchemaErrorMiddleware);

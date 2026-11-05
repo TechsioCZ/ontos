@@ -67,6 +67,15 @@ export interface ExternalIdentityWorkloadAuthorizationService {
     ExternalIdentityWorkloadAuthorizationError,
     ExternalIdentityHttpConfigurationService
   >;
+  /** The target namespaces the deployment grants this principal for one audience-free operation. */
+  readonly grantedNamespaces: (
+    principal: TrustedPrincipalContext,
+    operation: ExternalIdentityWorkloadOperation,
+  ) => Effect.Effect<
+    readonly string[],
+    ExternalIdentityWorkloadAuthorizationError,
+    ExternalIdentityHttpConfigurationService
+  >;
 }
 
 export class ExternalIdentityWorkloadAuthorization extends Context.Service<
@@ -190,6 +199,26 @@ const authorizeWorkloadPrincipal = Effect.fn('ExternalIdentityWorkloadAuthorizat
   },
 );
 
+const grantedWorkloadNamespaces = Effect.fn('ExternalIdentityWorkloadAuthorization.grantedNamespaces')(
+  function* grantedWorkloadNamespaces(
+    principal: TrustedPrincipalContext,
+    operation: ExternalIdentityWorkloadOperation,
+  ): Effect.fn.Return<
+    readonly string[],
+    ExternalIdentityWorkloadAuthorizationError,
+    ExternalIdentityHttpConfigurationService
+  > {
+    const configuration = yield* ExternalIdentityHttpConfigurationService.pipe(Effect.flatMap(decodeHttpConfiguration));
+    return configuration.grants.flatMap((grant) => {
+      const { targetAuthenticationNamespaceId } = grant;
+      return targetAuthenticationNamespaceId !== undefined &&
+        matchesWorkloadGrant(principal, { operation, targetAuthenticationNamespaceId }, configuration, grant)
+        ? [targetAuthenticationNamespaceId]
+        : [];
+    });
+  },
+);
+
 const authorizeWorkload = Effect.fn('ExternalIdentityWorkloadAuthorization.authorize')(function* authorizeWorkload(
   input: ExternalIdentityWorkloadAuthorizationInput,
 ): Effect.fn.Return<
@@ -205,4 +234,5 @@ export const externalIdentityWorkloadAuthorizationLive = Layer.succeed(ExternalI
   authenticate: authenticateWorkload,
   authorize: authorizeWorkload,
   authorizePrincipal: authorizeWorkloadPrincipal,
+  grantedNamespaces: grantedWorkloadNamespaces,
 });

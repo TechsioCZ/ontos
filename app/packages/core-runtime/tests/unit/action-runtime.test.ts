@@ -74,13 +74,15 @@ import {
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeOptions, ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
-import { makeActionAuthorizationPreflightPermit } from '../../src/permissions/action-authorization-preflight.ts';
-import type { ActionAuthorizationPreflightService } from '../../src/permissions/action-authorization-preflight.ts';
-import { allowOwnerAuthorizationOverlay } from '../../src/permissions/owner-authorization-overlay.ts';
+import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
+import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
+import { makeActionAuthorizationPreflightPermit } from '../../src/actions/owner-proof-preflight.ts';
+import type { ActionAuthorizationPreflightService } from '../../src/actions/owner-proof-preflight.ts';
+import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
 import type {
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
-} from '../../src/permissions/owner-authorization-overlay.ts';
+} from '../../src/access/enforcement/owner-overlay.ts';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
@@ -99,6 +101,7 @@ import type { TenantModuleState } from '../../src/modules/tenant-module-state-se
 import type { ActionPermissionDecision, CheckActionPermissionInput } from '../../src/permissions/service.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { fixtureActionAccess } from '../support/access-declaration-fixtures.ts';
 
 const historicalActionPermissions = <Payload>(
   permission: string,
@@ -181,6 +184,8 @@ interface TestCompositionAuthority {
 }
 
 interface HarnessOptions {
+  /** A scripted gate answer for this run: `denied` proves the reduction exemption is real (O71). */
+  readonly access?: TestAccessOutcome;
   readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
   readonly authorizationPreflight?: ActionAuthorizationPreflightService;
   readonly businessPermissionDecision?: PermissionDecision;
@@ -645,6 +650,10 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   if (options.authorizationPreflight !== undefined) {
     runtimeOptions = { ...runtimeOptions, authorizationPreflight: options.authorizationPreflight };
   }
+  const scriptedAccess = options.access === undefined ? undefined : makeScriptedBoundAccessGate(options.access);
+  if (scriptedAccess !== undefined) {
+    runtimeOptions = { ...runtimeOptions, accessDecision: scriptedAccess.bound };
+  }
   const baseRuntime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, runtimeOptions);
   const runAction: typeof baseRuntime.runAction = (input) =>
     options.omitOwnerRegistration === true || options.ownerRegistration !== undefined
@@ -656,6 +665,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   const runtime = { resolveActionCommit: baseRuntime.resolveActionCommit, runAction };
 
   return {
+    accessQuestions: () => scriptedAccess?.accessDecision.askedDecisions ?? [],
     businessPermissionChecks,
     compositionAuthority: () => ({
       lockCount: compositionAuthorityLockCount,
@@ -810,6 +820,7 @@ it('repository cause readers reject foreign objects carrying the former cause pr
 const registration = () =>
   defineAction(
     {
+      accessDeclaration: fixtureActionAccess('core.shell'),
       accessEvidencePolicy: {
         captureMode: 'metadata_only',
         policyKey: 'counter.read.v1',
@@ -875,6 +886,7 @@ it.effect('runs the decoded-success hook before evidence flush and rolls back it
   Effect.gen(function* decodedSuccessHook() {
     const calls: string[] = [];
     const descriptor = {
+      accessDeclaration: fixtureActionAccess('core.shell'),
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
       actionKey: 'shell.counter.snapshot',
       auditProfile: 'standard',
@@ -1301,6 +1313,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'shell.temporal.v1',
@@ -1381,10 +1394,7 @@ it.effect(
       originalSessionId: 'expired-original-session',
       tenantId: principal.tenantId,
     });
-    const harness = yield* makeHarness({
-      permissionDecision: 'allowed',
-      tenantPermissionDecision: 'denied',
-    });
+    const harness = yield* makeHarness({ access: 'denied', permissionDecision: 'allowed' });
 
     const result = yield* harness.runtime
       .runAction({
@@ -1402,34 +1412,30 @@ it.effect(
       .pipe(providePrincipalManagementRepository);
 
     expect(result).toEqual({ checkpoint: 'stopped', recorded: true });
-    expect(harness.permissionCounts()).toEqual({
-      permissionCheckCount: 1,
-      rejectionCount: 0,
-    });
+    // Ending an impersonation only takes authority away, so the grant is never asked (O35, O71):
+    // the denying composition above still runs the stop and records it.
+    expect(harness.accessQuestions()).toEqual([]);
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 0, rejectionCount: 0 });
 
-    const deniedHarness = yield* makeHarness({ permissionDecision: 'denied' });
-    const denied = yield* Effect.flip(
-      deniedHarness.runtime
+    // The same denied gate does refuse a start, because a start is not a reduction.
+    const deniedStart = yield* Effect.flip(
+      harness.runtime
         .runAction({
           payload: {
-            checkpoint: 'stopped',
+            checkpoint: 'requested',
             originalPrincipalId: principal.principalId,
-            reason: 'Securely terminate support access',
-            sessionRef: 'better-auth-session:impersonated-session',
+            reason: 'Start an impersonation without a grant',
             targetPrincipalId: '00000000-0000-4000-8000-000000000099',
           },
-          principal: recoveryPrincipal,
+          principal,
           registration: recordSupportImpersonationAction,
-          transport: transport('support-recovery-denied'),
+          transport: transport('support-start-denied'),
         })
         .pipe(providePrincipalManagementRepository),
     );
-    expect(Predicate.isTagged(denied, 'ActionPermissionDenied')).toBe(true);
-
-    expect(deniedHarness.permissionCounts()).toEqual({
-      permissionCheckCount: 1,
-      rejectionCount: 1,
-    });
+    expect(Predicate.isTagged(deniedStart, 'ActionPermissionDenied')).toBe(true);
+    expect(harness.accessQuestions().length).toBe(1);
+    expect(harness.permissionCounts()).toEqual({ permissionCheckCount: 0, rejectionCount: 1 });
 
     const wrongCheckpoint = yield* Effect.flip(
       harness.runtime
@@ -1473,6 +1479,7 @@ it.effect(
         const harness = yield* makeHarness({ moduleState: state });
         const action = defineAction(
           {
+            accessDeclaration: fixtureActionAccess('inventory.stock'),
             accessEvidencePolicy: {
               captureMode: 'metadata_only',
               policyKey: 'stock.read.v1',
@@ -1546,6 +1553,7 @@ it.effect(
   Effect.fn(function* testProgram9() {
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('inventory.stock'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'stock.read.v1',
@@ -1636,6 +1644,7 @@ it.effect(
   Effect.fn(function* testProgram11() {
     const tenantAuthorizedRegistration = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.identity'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'identity.read.v1',
@@ -1719,6 +1728,7 @@ it.effect(
         const actionKey = `party.registry.permission-${index}`;
         const action = defineAction(
           {
+            accessDeclaration: fixtureActionAccess('party.registry'),
             accessEvidencePolicy: {
               captureMode: 'metadata_only',
               policyKey: 'party.read.v1',
@@ -1776,6 +1786,7 @@ it.effect(
   Effect.fn(function* testProgram15() {
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.identity'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'identity.read.v1',
@@ -1846,6 +1857,7 @@ it.effect(
     let policyCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('party.registry'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counterparty.read.v1',
@@ -1968,6 +1980,7 @@ it.effect(
     let policyCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('party.registry'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counterparty.read.v1',
@@ -2098,6 +2111,7 @@ it.effect(
     );
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.customer-context'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'retail-profile.write.v1',
@@ -2235,6 +2249,7 @@ it.effect(
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('pricing.price-group-catalog'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'pricing.price-group.read.v1',
@@ -2373,6 +2388,7 @@ it.effect(
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.inventory'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'inventory.stock-correction.v1',
@@ -2476,6 +2492,7 @@ it.effect(
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.tax'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'commerce.tax.create-tax-rule.access.v1',
@@ -2569,6 +2586,7 @@ it.effect(
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('pricing.price-group-catalog'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'pricing.price-group.mismatched-target.v1',
@@ -2635,6 +2653,7 @@ it.effect(
     let handlerCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.customer-context'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counterparty-storefront.write.v1',
@@ -2743,6 +2762,7 @@ it.effect('checks every plural Owner target conjunctively before the handler', (
     let serviceFactoryCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.fixture'),
         accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'owner.replace.v1' },
         actionKey: 'commerce.fixture.replace-binding',
         auditProfile: 'standard',
@@ -2859,6 +2879,7 @@ it.effect(
       let handlerCalls = 0;
       const action = defineAction(
         {
+          accessDeclaration: fixtureActionAccess('commerce.fixture'),
           accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'fixture.current.v1' },
           actionKey: 'commerce.fixture.current',
           auditProfile: 'standard',
@@ -2984,6 +3005,7 @@ it.effect('rejects resolver-selected owner contracts and copied definitions befo
     const PayloadSchema = Schema.Struct({ mode: SubstitutionModeSchema });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.fixture'),
         accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'fixture.bound.v1' },
         actionKey: 'commerce.fixture.bound',
         auditProfile: 'standard',
@@ -3047,6 +3069,7 @@ it.effect('fails closed for an owner target outside the declared scope kinds', (
     let serviceFactoryCalls = 0;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('commerce.fixture'),
         accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'owner.configuration.v1' },
         actionKey: 'commerce.fixture.configuration-check',
         auditProfile: 'standard',
@@ -3104,6 +3127,7 @@ it.effect(
     const harness = yield* makeHarness({ permissionDecision: 'denied' });
     const deniedRegistration = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3476,6 +3500,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('inventory.stock'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3559,6 +3584,7 @@ it.effect(
     ] as const;
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3652,6 +3678,7 @@ it.effect(
         });
         const action = defineAction(
           {
+            accessDeclaration: fixtureActionAccess('core.shell'),
             accessEvidencePolicy: {
               captureMode: 'metadata_only',
               policyKey: 'counter.read.v1',
@@ -3719,6 +3746,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3807,6 +3835,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -3932,6 +3961,7 @@ it.effect(
     });
     const rejected = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -4004,6 +4034,7 @@ it.effect(
     const harness = yield* makeHarness();
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
         actionKey: 'shell.counter.commit-then-reject',
         auditProfile: 'standard',
@@ -4105,6 +4136,7 @@ it.effect(
       const harness = yield* makeHarness();
       const action = defineAction(
         {
+          accessDeclaration: fixtureActionAccess('core.shell'),
           accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
           actionKey: `shell.counter.${id}-committed-rejection`,
           auditProfile: 'standard',
@@ -4168,6 +4200,7 @@ it.effect(
     const defectHarness = yield* makeHarness();
     const defective = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -4208,6 +4241,7 @@ it.effect(
     const resultHarness = yield* makeHarness();
     const invalidResult = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -4278,6 +4312,7 @@ it.effect(
     const harness = yield* makeHarness();
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'counter.read.v1',
@@ -4599,6 +4634,7 @@ it.effect(
     });
     const action = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('core.shell'),
         accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
         actionKey: 'shell.counter.concurrent-permission-winner',
         auditProfile: 'standard',
@@ -4722,6 +4758,7 @@ it.effect(
     const microvertical = yield* makeHarness();
     const moduleRegistration = defineAction(
       {
+        accessDeclaration: fixtureActionAccess('inventory.stock'),
         accessEvidencePolicy: {
           captureMode: 'metadata_only',
           policyKey: 'stock.read.v1',
@@ -5195,6 +5232,7 @@ for (const row of remainingPermissionBaselines) {
       const key = `${row.owner}.baseline.${row.target.kind.replaceAll('_', '-')}`;
       const action = defineAction(
         {
+          accessDeclaration: fixtureActionAccess(row.owner),
           accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${key}.access.v1` },
           actionKey: key,
           auditProfile: 'sensitive',
@@ -5312,7 +5350,9 @@ it.layer(NodeCrypto.layer)('Core Actions hosted by genuine registered modules', 
         .runAction(hostedCoreActionInput())
         .pipe(providePrincipalManagementRepository);
       expect(result).toEqual({ checkpoint: 'stopped', recorded: true });
-      expect(harness.permissionCounts().permissionCheckCount).toBe(1);
+      // Ending an impersonation only takes authority away, so no grant is decided (O35, O71).
+      expect(harness.accessQuestions()).toEqual([]);
+      expect(harness.permissionCounts().permissionCheckCount).toBe(0);
       expect(harness.gateCounts().handlerResolutionCount).toBe(1);
       expect(harness.flushed).toHaveLength(1);
       expect(harness.compositionAuthority().lockCount).toBe(1);

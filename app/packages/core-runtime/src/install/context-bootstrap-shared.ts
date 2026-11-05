@@ -1,4 +1,3 @@
-import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
 
 import { legalEntities, principalAuthBindings, principals } from '../db/schema.ts';
@@ -93,33 +92,3 @@ export const bootstrapPrincipalRecord = (context: BootstrapIdentity) =>
     status: 'active',
     tenantId: context.tenantId,
   }) as const;
-
-interface BootstrapRelationship {
-  readonly relation: string;
-  readonly resourceId: string;
-  readonly resourceType: string;
-  readonly subjectId: string;
-  readonly subjectType: string;
-}
-
-export const bootstrapRelationshipRequest = (relationships: readonly BootstrapRelationship[]) =>
-  v1.WriteRelationshipsRequest.create({
-    updates: relationships.map((item) =>
-      v1.RelationshipUpdate.create({
-        operation: v1.RelationshipUpdate_Operation.TOUCH,
-        relationship: v1.Relationship.create({
-          relation: item.relation,
-          resource: v1.ObjectReference.create({
-            objectId: item.resourceId,
-            objectType: item.resourceType,
-          }),
-          subject: v1.SubjectReference.create({
-            object: v1.ObjectReference.create({
-              objectId: item.subjectId,
-              objectType: item.subjectType,
-            }),
-          }),
-        }),
-      }),
-    ),
-  });

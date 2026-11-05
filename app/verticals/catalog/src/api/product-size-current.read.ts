@@ -4,7 +4,6 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   defineRead,
-  defineReadResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
@@ -33,7 +32,7 @@ const unavailable = (cause: unknown) => {
 
 const productSizeCurrentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.product-size-current' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.product-size-current',
   moduleKey,
   role: 'api',
@@ -41,6 +40,14 @@ const productSizeCurrentEntrypoint = defineTenantModuleEntrypoint({
 
 export const productSizeCurrentRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.product-size-current.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'product', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: productSizeCurrentEntrypoint,
     evidencePolicy: {
@@ -50,13 +57,8 @@ export const productSizeCurrentRead = defineRead(
     inputSchema: ProductSizeCurrentRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: moduleKey,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.catalog.api.product-size-current',
-    resourcePermission: defineReadResourcePermission<ProductSizeCurrentRequest>(({ productRef }) => ({
-      permission: 'read',
-      resource: productRef,
-    })),
     resultSchema: ProductSizeCurrentResponseSchema,
     schemaVersion: '1',
   },
@@ -97,5 +99,4 @@ export const productSizeCurrentRead = defineRead(
         readMeasurements: productMeasurementsReadForScope(transaction, scope).read,
       })),
     ),
-  () => ({ kind: 'module', moduleId: moduleKey }),
 );

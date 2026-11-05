@@ -2,7 +2,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
-import type { OperationalScope, ReadPermissionDenied, ReadPermissionUnavailable } from '@app/core-runtime';
+import type { OperationalScope } from '@app/core-runtime';
 import type {
   PricingPurchaseContextVerificationRequest,
   PricingPurchaseContextVerificationResponse,
@@ -210,14 +210,6 @@ export const evaluateRelevantStockPositionSet = Effect.fn('PositionSet.evaluate'
 );
 
 export const currentRelevantStockPositionSetService = (dependencies: {
-  readonly authorizePositions: (
-    refs: readonly {
-      readonly moduleId: 'commerce.inventory';
-      readonly resourceId: string;
-      readonly resourceType: string;
-      readonly tenantId: string;
-    }[],
-  ) => Effect.Effect<void, RelevantStockPositionSetUnavailable | ReadPermissionDenied | ReadPermissionUnavailable>;
   readonly observe: (
     requested: RelevantStockPositionSetScope,
   ) => Effect.Effect<RelevantStockPositionSetObservation, RelevantStockPositionSetUnavailable>;
@@ -229,11 +221,7 @@ export const currentRelevantStockPositionSetService = (dependencies: {
     const { scope } = dependencies;
     if (input.mode === 'POTENTIALLY_RELEVANT_POSITIONS') {
       const observation = yield* dependencies.observe(input.scope);
-      const result = yield* evaluateRelevantStockPositionSet(input, observation, scope);
-      if (result.outcome === 'COMPLETE') {
-        yield* dependencies.authorizePositions(result.positionRefs);
-      }
-      return result;
+      return yield* evaluateRelevantStockPositionSet(input, observation, scope);
     }
     const request = input.commerceVerificationRequest;
     if (
@@ -272,9 +260,6 @@ export const currentRelevantStockPositionSetService = (dependencies: {
       return unproven('COMMERCE_CONTEXT_UNVERIFIABLE');
     }
     const result = yield* evaluateRelevantStockPositionSet(input, observation, scope);
-    if (result.outcome === 'COMPLETE') {
-      yield* dependencies.authorizePositions(result.positionRefs);
-    }
     return result;
   }),
 });

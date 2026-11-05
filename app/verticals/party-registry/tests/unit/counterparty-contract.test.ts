@@ -1,3 +1,4 @@
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -31,17 +32,25 @@ import {
   CounterpartyRoleEndResultSchema,
   counterpartyRoleEndAction,
 } from '../../src/actions/counterparty-role-end.action.ts';
-import { counterpartyReadPermissionTarget, counterpartyReadRead } from '../../src/api/counterparty-read.read.ts';
-import {
-  counterpartyRoleHistoryPermissionTarget,
-  counterpartyRoleHistoryRead,
-} from '../../src/api/counterparty-role-history.read.ts';
+import { counterpartyReadRead } from '../../src/api/counterparty-read.read.ts';
+import { counterpartyRoleHistoryRead } from '../../src/api/counterparty-role-history.read.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
 const counterpartyId = '40000000-0000-4000-8000-000000000001';
 const rolePeriodId = '50000000-0000-4000-8000-000000000001';
+const principalId = '60000000-0000-4000-8000-000000000001';
+const scope = {
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '70000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:counterparty-contract',
+    authMethod: 'session',
+    principalId,
+    tenantId,
+  }),
+  correlationId: 'counterparty-contract',
+} as const;
 
 const partyRef = {
   moduleId: 'party.registry',
@@ -74,36 +83,36 @@ const provenance = {
   source: 'contracts.core',
 } as const;
 
-it('declares required Legal Entity scope and Counterparty resource authorization', () => {
+it('declares required Legal Entity scope and the Counterparty record its gate decides', () => {
   expect(
     [counterpartyCreateAction, counterpartyRoleAddAction, counterpartyRoleEndAction].map(({ descriptor }) => ({
+      accessDeclaration: descriptor.accessDeclaration?.key,
       actionKey: descriptor.actionKey,
       idempotency: descriptor.idempotency,
-      legalEntityPermission: descriptor.legalEntityPermission,
       legalEntityScope: descriptor.legalEntityScope,
-      resourcePermission: descriptor.resourcePermission?.kind,
+      recordScoped: descriptor.accessTarget !== undefined,
     })),
   ).toEqual([
     {
+      accessDeclaration: 'party.registry.counterparty.create',
       actionKey: 'party.registry.counterparty-create',
       idempotency: 'required',
-      legalEntityPermission: 'manage_counterparty',
       legalEntityScope: 'required',
-      resourcePermission: undefined,
+      recordScoped: false,
     },
     {
+      accessDeclaration: 'party.registry.counterparty-role.add',
       actionKey: 'party.registry.counterparty-role-add',
       idempotency: 'required',
-      legalEntityPermission: undefined,
       legalEntityScope: 'required',
-      resourcePermission: 'resource',
+      recordScoped: true,
     },
     {
+      accessDeclaration: 'party.registry.counterparty-role.end',
       actionKey: 'party.registry.counterparty-role-end',
       idempotency: 'required',
-      legalEntityPermission: undefined,
       legalEntityScope: 'required',
-      resourcePermission: 'resource',
+      recordScoped: true,
     },
   ]);
 });
@@ -426,26 +435,25 @@ it.effect('publishes a minimum Party projection and keeps full role history sepa
         ],
       })).roles[0]?.state,
     ).toBe('ENDED');
-    expect(counterpartyReadRead.descriptor.permissionTarget).toBe('resource');
-    expect(counterpartyRoleHistoryRead.descriptor.permissionTarget).toBe('resource');
+    // Each Counterparty read is one governed record read on the Counterparty it returns (O9, O24): the
+    // role history is its own declaration, never the tenant-wide fallback the legacy target allowed.
+    expect(counterpartyReadRead.descriptor.accessDeclaration?.key).toBe('party.registry.counterparty.read');
+    expect(counterpartyRoleHistoryRead.descriptor.accessDeclaration?.key).toBe(
+      'party.registry.counterparty-role.read-history',
+    );
     expect(counterpartyReadRead.descriptor.legalEntityScope).toBe('optional');
-    expect(counterpartyRoleHistoryRead.descriptor.legalEntityScope).toBe('optional');
-    expect(counterpartyReadPermissionTarget({ counterpartyRef })).toEqual({
-      kind: 'any_of',
-      targets: [
-        {
-          kind: 'resource',
-          resource: {
-            moduleId: 'party.registry',
-            resourceId: counterpartyId,
-            resourceType: 'party.registry.counterparty',
-          },
-        },
-        { kind: 'tenant', permission: 'manage_party_identity' },
-      ],
+    expect(counterpartyReadRead.descriptor.accessActor).toEqual({
+      callers: ['commerce-customer-context'],
+      reason: expect.any(String),
+      subject: 'identity',
     });
-    expect(counterpartyRoleHistoryPermissionTarget({ counterpartyRef })).toEqual(
-      counterpartyReadPermissionTarget({ counterpartyRef }),
+    expect(counterpartyRoleHistoryRead.descriptor.legalEntityScope).toBe('optional');
+    expect(counterpartyReadRead.descriptor.accessTarget?.({ counterpartyRef }, scope)).toEqual({
+      moduleKey: 'party.registry',
+      recordKey: counterpartyId,
+    });
+    expect(counterpartyRoleHistoryRead.descriptor.accessTarget?.({ counterpartyRef }, scope)).toEqual(
+      counterpartyReadRead.descriptor.accessTarget?.({ counterpartyRef }, scope),
     );
   }),
 );

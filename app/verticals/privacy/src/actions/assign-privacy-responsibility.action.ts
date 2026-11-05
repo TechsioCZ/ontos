@@ -53,6 +53,14 @@ const handleAssignPrivacyResponsibility = Effect.fn('AssignPrivacyResponsibility
 
 export const assignPrivacyResponsibilityAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'privacy.core.privacy-responsibility.assign',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'processing-governance', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.assign-privacy-responsibility.access.v1',
@@ -64,7 +72,7 @@ export const assignPrivacyResponsibilityAction = defineAction(
     domainEvents: privacyActionDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: 'privacy.core.assign-privacy-responsibility',
       moduleKey: 'privacy.core',
       role: 'action',

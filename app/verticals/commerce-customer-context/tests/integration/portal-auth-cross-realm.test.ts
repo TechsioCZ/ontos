@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { ContextAccess, ContextAccessLive, DatabaseConfigLive, PrincipalResolver } from '@app/core-runtime';
+import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
 import { eq } from 'drizzle-orm';
 import { Config, Effect, Layer, Redacted } from 'effect';
@@ -62,15 +63,20 @@ const emailDeliveryConfiguration = Layer.succeed(ResendEmailDeliveryConfig, {
 const allowedContextResults = (keys: readonly string[]) =>
   Effect.succeed(keys.map((key) => ({ decision: 'allowed' as const, key })));
 
-const openContextAccess = Layer.succeed(ContextAccess, {
-  legalEntities: ({ legalEntityIds }) => allowedContextResults(legalEntityIds),
-  modules: ({ moduleIds }) => allowedContextResults(moduleIds),
-  resources: ({ resources }) =>
-    allowedContextResults(
-      resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
-    ),
-  tenants: ({ tenantIds }) => allowedContextResults(tenantIds),
-});
+const openContextAccess = Layer.mergeAll(
+  Layer.succeed(ContextAccess, {
+    legalEntities: ({ legalEntityIds }) => allowedContextResults(legalEntityIds),
+    modules: ({ moduleIds }) => allowedContextResults(moduleIds),
+    resources: ({ resources }) =>
+      allowedContextResults(
+        resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
+      ),
+    tenants: ({ tenantIds }) => allowedContextResults(tenantIds),
+  }),
+  // The staff realm's authentication service asks the one v2 gate (CUTOVER-PLAN §3.1); the
+  // cross-realm admission under test is decided by the token's own realm, not by this answer.
+  Layer.succeed(AccessDecisionGate, makeTestAccessDecision({ defaultAnswer: { outcome: 'ALLOWED' } })),
+);
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string =>
   setCookieHeaders.map((header) => header.split(';')[0]).join('; ');

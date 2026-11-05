@@ -87,9 +87,14 @@ it('grants trust routines only to their executors and owner routines only inside
   for (const routine of TRUST_ROUTINES) {
     for (const role of routine.executableBy) {
       const entry = manifestEntryForRole(role);
-      expect(entry?.kind, `${role} executes ${routine.signature}`).toBe('explicit');
+      expect(entry, `${role} executes ${routine.signature}`).toBeDefined();
       if (entry?.kind === 'explicit') {
         expect(entry.grants.routines).toContain(routine.signature);
+      } else {
+        // The legacy shared role holds no routine list; it may only lock its Action access fence.
+        expect(routine.signature, `${role} executes ${routine.signature}`).toBe(
+          'trust.lock_access_scope_fence(uuid,uuid)',
+        );
       }
     }
   }
@@ -106,10 +111,18 @@ it('derives trust routine executors from the identity flags', () => {
     DATABASE_IDENTITIES.filter(({ scopeAuthority }) => scopeAuthority === 'gateway_grant').map(({ role }) => role),
     Order.String,
   );
+  const actionRunners = EffectArray.sort(
+    DATABASE_IDENTITIES.filter(({ runsActions }) => runsActions).map(({ role }) => role),
+    Order.String,
+  );
   for (const routine of TRUST_ROUTINES) {
     const executors = EffectArray.sort(routine.executableBy, Order.String);
     if (routine.signature.startsWith('trust.register_gateway_scope_grant(')) {
       expect(executors).toEqual(registrars);
+      expect(routine.securityDefiner).toBe(true);
+    } else if (routine.signature === 'trust.lock_access_scope_fence(uuid,uuid)') {
+      expect(executors).toEqual(actionRunners);
+      expect(executors).toEqual(['ontos_runtime', 'party_registry_runtime']);
       expect(routine.securityDefiner).toBe(true);
     } else if (routine.securityDefiner) {
       expect(executors, routine.signature).toEqual(gatewayGrantRoles);
@@ -117,7 +130,7 @@ it('derives trust routine executors from the identity flags', () => {
       expect(executors, routine.signature).toEqual([]);
     }
   }
-  expect(TRUST_ROUTINES).toHaveLength(7);
+  expect(TRUST_ROUTINES).toHaveLength(8);
   expect(new Set(TRUST_ROUTINES.map(({ signature }) => signature)).size).toBe(TRUST_ROUTINES.length);
 });
 

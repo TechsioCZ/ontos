@@ -11,11 +11,14 @@ import {
 } from '@app/core-runtime';
 import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
+  AccessEnforcementPortsLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
   OperationalScopeResolverLive,
+  TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -29,7 +32,7 @@ import { FetchHttpClient } from 'effect/http';
 import { assortmentApi, assortmentMarkerSchema, assortmentOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { assortmentOwnerAuthorizationOverlayLive } from '../src/services/owner-authorization-current.ts';
+import { assortmentOwnerAuthorizationOverlayLive } from '../src/services/assortment-currentness.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
@@ -97,8 +100,15 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
 
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
+const accessEnforcementLive = AccessDecisionLive.pipe(
+  Layer.provideMerge(AccessEnforcementPortsLive),
+  Layer.provide(TenantIntentLoaderLive),
+  Layer.provide(CorePersistenceLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(nodeCryptoLayer),
+);
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
-  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
+  Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const readRuntimeDependenciesLive = Layer.mergeAll(
@@ -106,6 +116,7 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   ContextAccessLive,
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
+  accessEnforcementLive,
 );
 
 /** Installs owner Current checks without replacing Core's separate exact Permission checks. */
@@ -138,6 +149,7 @@ const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
       actionAuthorizationPreflightDatabaseLive,
       actionRuntimeDependenciesLive,
       activeApplicationCompositionLive,
+      accessEnforcementLive,
     ),
   ),
 );

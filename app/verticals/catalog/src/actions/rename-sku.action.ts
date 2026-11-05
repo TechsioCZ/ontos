@@ -47,6 +47,14 @@ const handleRenameSku = Effect.fn('RenameSkuAction.handle')(function* handleRena
 
 export const renameSkuAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.sku.rename',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.rename-sku.access.v1',
@@ -58,7 +66,7 @@ export const renameSkuAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

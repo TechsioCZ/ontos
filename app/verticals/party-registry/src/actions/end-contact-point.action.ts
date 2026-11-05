@@ -113,6 +113,15 @@ const handleEndContactPoint = Effect.fn('EndContactPointAction.handleEndContactP
 
 export const endContactPointAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'party.registry.contact-point.end',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'contact-data', level: 'manage' },
+      risk: 'sensitive',
+      selectors: ['all'],
+    },
+    accessTarget: (payload) => ({ moduleKey: 'party.registry', recordKey: payload.contactPointRef.resourceId }),
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'party.registry.end-contact-point.access.v1',
@@ -125,10 +134,7 @@ export const endContactPointAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: {
-        kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
-      },
+      authorization: { kind: 'protected' },
       entrypointKey: 'party.registry.end-contact-point',
       moduleKey: 'party.registry',
       role: 'action',
@@ -140,7 +146,6 @@ export const endContactPointAction = defineAction(
     policies: [],
     resultSchema: EndContactPointResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_party_identity',
   },
   handleEndContactPoint,
   (transaction, scope) =>

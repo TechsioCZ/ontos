@@ -64,7 +64,7 @@ import {
 } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
-import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { CoreDatabase, makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import { applicationCompositionAuthority } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
@@ -74,6 +74,7 @@ import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../../../packages/core-runtime/src/operations/context.ts';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
   createSpiceDbPermissionClient,
@@ -117,6 +118,9 @@ import {
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
+import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
+import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
@@ -633,11 +637,21 @@ it.live(
     const spiceAdmin = newSpiceDbGrpcClient(testSpiceDb);
     const permissionClient = createSpiceDbPermissionClient(testSpiceDb, SPICEDB_CHECK_TIMEOUT_MS);
     const contextAccess = makeContextAccess(permissionClient);
+    // The generated owner's runtimes are decided by the one gate (O62): the suite scripts its answer
+    // and the legacy SpiceDB mirror stays only for the isolation assertions it still proves.
+    const accessGate = makeShellTestAccessGate({ defaultAnswer: 'allowed' });
     const moduleStates = makeTenantModuleStateService(runtimeDatabase);
     const moduleStateGate = makeModuleStateGate(moduleStates);
     const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
     const scopeResolver = withNamespaceRegistry(
-      yield* makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), contextAccess),
+      yield* makeOperationalScopeResolver(
+        makeOperationalScopeRepository(runtimeDatabase),
+        // Each principal may select exactly their own tenant's company: the forged principals below
+        // must be refused by the scope resolver before any read or write reaches the owner (O28).
+        makeTestOperationalScopeAccess({
+          legalEntityIds: (scope) => (scope.tenantId === tenantA ? [entityA1] : [entityB1]),
+        }),
+      ),
     );
     const generatedRegistrationModule: unknown = yield* Effect.tryPromise(
       () => import(pathToFileURL(`${fixture.verticalRoot}/vertical.registration.ts`).href),
@@ -652,7 +666,10 @@ it.live(
       expectedDeployment: contract.deployment,
       ownerRegistration,
     };
-    const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, ownerAdmission);
+    const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
+      ...ownerAdmission,
+      accessDecision: accessGate.bound,
+    });
     const keyPair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.privateKey));
     const publicJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.publicKey));
@@ -859,14 +876,12 @@ it.live(
           Effect.fnUntraced(function* runIntegration22() {
             return yield* admin.unsafe('delete from core.principals where tenant_id in ($1, $2)', [tenantA, tenantB]);
           }),
+          // Core retains access intent (D27): tenant A's scopes and fences, and so tenant A and its companies, stay.
           Effect.fnUntraced(function* runIntegration23() {
-            return yield* admin.unsafe('delete from core.legal_entities where tenant_id in ($1, $2)', [
-              tenantA,
-              tenantB,
-            ]);
+            return yield* admin.unsafe('delete from core.legal_entities where tenant_id = $1', [tenantB]);
           }),
           Effect.fnUntraced(function* runIntegration24() {
-            return yield* admin.unsafe('delete from core.tenants where tenant_id in ($1, $2)', [tenantA, tenantB]);
+            return yield* admin.unsafe('delete from core.tenants where tenant_id = $1', [tenantB]);
           }),
           Effect.fnUntraced(function* runIntegration25() {
             return yield* admin.unsafe(`drop schema if exists ${schemaName} cascade`);
@@ -902,6 +917,12 @@ it.live(
       `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $3, 'human', 'Generated principal A', 'active'), ($2, $4, 'human', 'Generated principal B', 'active')`,
       [principalA, principalB, tenantA, tenantB],
     );
+    // The governed Action runs under tenant A's real access fence, so it carries the scopes production bootstrap writes.
+    yield* writeTestTenantScopes(adminDatabase.executor, {
+      legalEntityIds: [entityA1, entityA2],
+      principalId: principalA,
+      tenantId: tenantA,
+    });
     yield* admin.unsafe(
       `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $7, 'active'), ($2, $4, $6, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $8, 'active')`,
       [bindingA, bindingB, tenantA, tenantB, principalA, principalB, `user-${principalA}`, `user-${principalB}`],
@@ -1090,8 +1111,8 @@ it.live(
     ]);
     const directShellSearch = makeShellSearch(
       {
+        access: accessGate,
         catalog: Effect.succeed(catalog),
-        contextAccess,
         issueAssertion: Effect.fnUntraced(
           function* integrationEffect29({
             compositionRevision,
@@ -1143,6 +1164,7 @@ it.live(
       Effect.gen(function* makeFixtureShellReads() {
         const definitions = yield* ShellGovernedReadDefinitions;
         const shellReadRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
+          accessDecision: accessGate.bound,
           applicationComposition: {
             load: capturedShellCatalog.pipe(
               Effect.mapError(
@@ -1170,6 +1192,8 @@ it.live(
       Layer.provide(shellDefinitionsLayer),
       Layer.provide(
         Layer.mergeAll(
+          Layer.succeed(CoreDatabase, runtimeDatabase),
+          Layer.succeed(AccessDecisionGate, accessGate),
           Layer.succeed(ContextAccess, contextAccess),
           Layer.succeed(TenantModuleStateService, moduleStates),
           Layer.succeed(ShellInstalledModuleCatalog, {
@@ -1273,8 +1297,10 @@ it.live(
       deniedAuthorization,
       randomUUID(),
     );
-    expect(deniedResponse.status).toBe(403);
+    expect(deniedResponse.status).toBe(404);
     expect(generated.counts.detail).toBe(deniedBefore);
+    // A v2 read is scope-wide (O67-Q2): a record the owner's own scope predicate filters out is
+    // simply not found, and a read that never returned a result records no access evidence.
     const deniedEvidence = yield* admin.unsafe<{
       outcome: string;
       outcome_code: string;
@@ -1284,24 +1310,20 @@ it.live(
       `select outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and target_resource_id = $2`,
       [tenantA, deniedResourceId],
     );
-    expect(deniedEvidence).toEqual([
-      {
-        outcome: 'denied',
-        outcome_code: 'spicedb_permission_denied',
-        query_hash: null,
-        result_count: 0,
-      },
-    ]);
+    expect(deniedEvidence).toEqual([]);
     const unavailableContextAccess = makeContextAccessDouble('unavailable');
     const unavailableResolver: OperationalScopeResolverService = withNamespaceRegistry(
-      yield* makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), unavailableContextAccess),
+      yield* makeOperationalScopeResolver(
+        makeOperationalScopeRepository(runtimeDatabase),
+        makeTestOperationalScopeAccess({ decision: 'unavailable' }),
+      ),
     );
     const unavailableRuntime = makeReadRuntime(
       runtimeDatabase,
       moduleGateway,
       unavailableResolver,
       unavailableContextAccess,
-      ownerAdmission,
+      { ...ownerAdmission, accessDecision: makeScriptedBoundAccessGate('unavailable').bound },
     );
     const unavailableOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1328,7 +1350,7 @@ it.live(
       moduleGateway,
       scopeResolver,
       contextAccess,
-      ownerAdmission,
+      { ...ownerAdmission, accessDecision: accessGate.bound },
     );
     const evidenceFailureOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1355,6 +1377,7 @@ it.live(
       scopeResolver,
       {
         ...ownerAdmission,
+        accessDecision: accessGate.bound,
         moduleEntrypointGateway: moduleGateway,
         moduleStateGate,
         resolveCompositionRevision: (verifiedPrincipal) => {

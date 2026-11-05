@@ -27,7 +27,7 @@ const lookupUnavailable = (cause: unknown): ReadHandlerUnavailable =>
 
 const currencySupportResultLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'pricing.currency_support.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.pricing.api.currency-support-result-lookup',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -62,6 +62,14 @@ export const readCurrencySupportResult = Effect.fn('CurrencySupportResultLookupR
 
 export const currencySupportResultLookupRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.pricing.currency-support.read-result',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'currency-support', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: currencySupportResultLookupEntrypoint,
     evidencePolicy: {
@@ -71,7 +79,6 @@ export const currencySupportResultLookupRead = defineRead(
     inputSchema: CurrencySupportResultLookupRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'commerce.pricing.api.currency-support-result-lookup',
     resultSchema: CurrencySupportResultLookupResponseSchema,
@@ -86,5 +93,4 @@ export const currencySupportResultLookupRead = defineRead(
     ),
   (transaction, scope, compositionRevision) =>
     currencySupportResultLookupPersistenceForScope(transaction, scope, compositionRevision),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

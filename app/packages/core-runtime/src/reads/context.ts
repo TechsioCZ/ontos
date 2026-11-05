@@ -1,5 +1,6 @@
 import { Effect, Predicate, Schema } from 'effect';
 
+import type { ListAccessPredicate } from '../access/decision/list-access.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
@@ -20,6 +21,22 @@ export interface ReadEvidenceMetadata {
 }
 
 export interface ReadHandlerContext<Services> {
+  /**
+   * The declared result paths this caller's field grants deny (O17, O25). It is present exactly when
+   * the access gate decided this read, and it is empty when every declared field group is granted,
+   * so an owner can tell a granted answer from a missing one. A row-scoped read applies it to what
+   * its own query matches, orders and reports as well as to the result it returns: a denied surface
+   * takes no part in selecting a candidate, and its rows are still projected out of the payload.
+   */
+  readonly deniedFieldPaths?: readonly (readonly string[])[];
+  /**
+   * The owner's row filter for a list, search or report read (D16, O25). It is present exactly when
+   * this read is row-scoped and answered by the access gate: the owner applies it inside its own
+   * query, so a row the caller may not read never reaches the result. Its absence means the read is
+   * not row-scoped (a detail read) or is not decided by v2 yet. An empty `groups` list means every
+   * row of the scope is visible; the gate never answers an allowed list without a predicate.
+   */
+  readonly listAccess?: ListAccessPredicate;
   readonly readKey: string;
   readonly scope: OperationalScope;
   readonly services: Services;

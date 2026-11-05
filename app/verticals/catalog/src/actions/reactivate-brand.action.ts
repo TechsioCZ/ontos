@@ -56,6 +56,14 @@ export const handleReactivateBrand = Effect.fn('ReactivateBrandAction.handle')(f
 
 export const reactivateBrandAction = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.brand.reactivate',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'brand', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.reactivate-brand.access.v1',
@@ -67,7 +75,7 @@ export const reactivateBrandAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

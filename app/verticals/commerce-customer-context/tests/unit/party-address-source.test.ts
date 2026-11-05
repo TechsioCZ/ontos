@@ -475,7 +475,7 @@ it.effect('rejects missing required postal fields without requiring optional fie
             ...currentPostalContactPoint.value,
             address: { ...completePostalAddress, [field]: null },
             purposes:
-              currentPostalContactPoint.value.type === 'ADDRESS' ? currentPostalContactPoint.value.purposes : [],
+              currentPostalContactPoint.value?.type === 'ADDRESS' ? currentPostalContactPoint.value.purposes : [],
             type: 'ADDRESS' as const,
           },
         };

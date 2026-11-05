@@ -107,7 +107,7 @@ const crypto = Crypto.make({
   },
 });
 const configuration = ConfigProvider.fromUnknown({
-  ONTOS_GATEWAY_RELAY_API_KEY: 'relay-key',
+  ONTOS_GATEWAY_MODULE_API_KEY: 'module-key',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
 const assessment = {
@@ -205,7 +205,7 @@ const scripted = (
       .json()
       .then((body) => {
         const path = new URL(request.url).pathname;
-        if (path.endsWith('/auth/relay/gateway-context')) {
+        if (path.endsWith('/auth/delegated/gateway-context')) {
           return Response.json({
             apiBaseUrl: '/module-api/commerce.customer-context',
             compositionRevision,
@@ -541,7 +541,7 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
       const issuer = yield* Effect.fromNullishOr(transport.requests[0]);
       expect(yield* Effect.promise(() => issuer.json())).toMatchObject({
         compositionRevision,
-        sourceAssertion: 'fresh-original-actor-assertion',
+        subject: { _tag: 'Assertion', sourceAssertion: 'fresh-original-actor-assertion' },
       });
       const recovery = yield* Effect.fromNullishOr(transport.requests[1]);
       expect(recovery.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);

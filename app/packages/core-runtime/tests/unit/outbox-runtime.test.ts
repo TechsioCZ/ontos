@@ -293,6 +293,41 @@ it.effect('decodes a published payload, supplies exact context, and completes su
   }),
 );
 
+it.effect('hands the originating action invocation of a claim to the worker as its originator (D7)', () =>
+  Effect.gen(function* originatorOfClaim() {
+    const originator = '20000000-0000-4000-8000-000000000021';
+    const controlled = repository({ claims: [{ ...claim(), originatorInvocationId: originator }] });
+    let observed: { readonly originatorInvocationId?: string } | undefined;
+    const registration = worker((_payload, context) =>
+      Effect.sync(() => {
+        observed = context;
+      }),
+    );
+
+    yield* run(controlled.service, registration);
+
+    expect(observed?.originatorInvocationId).toBe(originator);
+  }),
+);
+
+it.effect('leaves the originator absent when the claimed event names no action invocation (D7)', () =>
+  Effect.gen(function* noOriginatorForSystemEvent() {
+    const controlled = repository({ claims: [claim()] });
+    let observed: { readonly originatorInvocationId?: string } | undefined;
+    const registration = worker((_payload, context) =>
+      Effect.sync(() => {
+        observed = context;
+      }),
+    );
+
+    yield* run(controlled.service, registration);
+
+    expect(observed).toBeDefined();
+    expect(observed?.originatorInvocationId).toBeUndefined();
+    expect(Object.keys(observed ?? {})).not.toContain('originatorInvocationId');
+  }),
+);
+
 it.effect('runs a worker with Effect services provided by its owning MicroVertical host', () =>
   Effect.gen(function* ownerProvidedServices() {
     const selected = { ...claim(), workerKey: 'consumer.layered-logger' };

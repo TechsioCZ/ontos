@@ -2,11 +2,11 @@ import type { OperationalScope } from '@app/core-runtime';
 import { MarketSubjectRestrictionsCurrentRequestSchema } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import type { MarketSubjectRestrictionsCurrentResponse } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import { executeMarketSubjectRestrictionsCurrentWithAuthorization } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
-import { Effect, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import type { PurchasingSubjectRefSchema } from '../../shared/market-contracts.ts';
-import { acquireOwnerGatewayContext } from './server-owner-gateway.ts';
+import { acquireMarketOwnerDelegation } from './market-owner-delegation.ts';
 
 type PurchasingSubject = typeof PurchasingSubjectRefSchema.Type;
 type OwnerCurrentRestrictions = Extract<
@@ -81,6 +81,10 @@ const toSnapshot = (
   );
 };
 
+/**
+ * Reads the purchasing subject's restrictions from Customer Context for the requester this scope
+ * carries: the subject is the verified requester, this Market owner is the actor.
+ */
 export const makeServerMarketSubjectRestrictionsReader = ({
   compositionRevision,
   crypto,
@@ -94,11 +98,11 @@ export const makeServerMarketSubjectRestrictionsReader = ({
     subject: Parameters<MarketSubjectRestrictionsReader['current']>[0],
     requestCorrelation: string,
   ) {
-    if (compositionRevision === undefined) {
-      return yield* unavailable('Cross-owner subject restrictions require the original verified composition revision');
-    }
     if (scope.legalEntityId === undefined) {
       return yield* unavailable('Cross-owner subject restrictions require the original verified Legal Entity');
+    }
+    if (compositionRevision === undefined) {
+      return yield* unavailable('Cross-owner subject restrictions require the admitted composition revision');
     }
     if (subject.profileRef.tenantId !== scope.tenantId || requestCorrelation !== scope.correlationId) {
       return yield* unavailable('Subject restrictions require the original trusted Tenant and request correlation');
@@ -107,20 +111,20 @@ export const makeServerMarketSubjectRestrictionsReader = ({
       Effect.mapError(unavailable),
     );
     const response = yield* Effect.gen(function* executeCustomerOwnerRead() {
-      const admitted = yield* acquireOwnerGatewayContext(
+      const admitted = yield* acquireMarketOwnerDelegation(
         scope,
         crypto,
-        {
-          audience: 'commerce-customer-context',
-          operationKey: 'commerce.customer-context.api.market-subject-restrictions-current',
-        },
+        'commerce-customer-context',
         compositionRevision,
       );
       return yield* executeMarketSubjectRestrictionsCurrentWithAuthorization(
         payload,
-        Redacted.value(admitted.authorization),
-        scope.correlationId,
-        { baseUrl: admitted.apiUrl, compositionRevision },
+        admitted.authorization,
+        requestCorrelation,
+        {
+          baseUrl: new URL(admitted.apiBaseUrl),
+          compositionRevision: admitted.compositionRevision,
+        },
       );
     }).pipe(Effect.mapError(unavailable));
     return yield* toSnapshot(response);

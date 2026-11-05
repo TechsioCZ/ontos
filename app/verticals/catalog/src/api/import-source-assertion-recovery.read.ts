@@ -64,7 +64,7 @@ const recoverImportSourceAssertion = Effect.fn('ImportSourceAssertionRecoveryRea
 
 const importSourceAssertionRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.import-source-assertion-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.import-source-assertion-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -72,6 +72,14 @@ const importSourceAssertionRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const importSourceAssertionRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.import-source-assertion-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'catalog-source', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: importSourceAssertionRecoveryEntrypoint,
     evidencePolicy: {
@@ -81,7 +89,6 @@ export const importSourceAssertionRecoveryRead = defineRead(
     inputSchema: ImportSourceAssertionRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.import-source-assertion-recovery',
     resultSchema: ImportSourceAssertionRecoveryResponseSchema,
@@ -93,5 +100,4 @@ export const importSourceAssertionRecoveryRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

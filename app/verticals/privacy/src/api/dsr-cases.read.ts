@@ -49,7 +49,7 @@ const unavailable = (cause: unknown) => {
 
 const dsrCasesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'privacy.dsr.read' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'privacy.core.api.dsr-cases',
   moduleKey: MODULE_KEY,
   role: 'api',
@@ -57,6 +57,14 @@ const dsrCasesEntrypoint = defineTenantModuleEntrypoint({
 
 export const dsrCasesRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'privacy.core.dsr-case.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'dsr', level: 'basic' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: dsrCasesEntrypoint,
     evidencePolicy: {
@@ -66,7 +74,6 @@ export const dsrCasesRead = defineRead(
     inputSchema: DsrCasesRequestSchema,
     legalEntityScope: 'required',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
     policies: [],
     readKey: 'privacy.core.api.dsr-cases',
     resultSchema: DsrCasesResponseSchema,
@@ -93,5 +100,4 @@ export const dsrCasesRead = defineRead(
     }).pipe(Effect.mapError(unavailable));
   },
   (transaction, scope) => privacyOperationRepositoryForScope(transaction, scope),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

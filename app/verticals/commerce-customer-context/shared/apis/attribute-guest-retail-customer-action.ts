@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.customer-context
 // @ontos-action-http-slug attribute-guest-retail-customer
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,7 +11,6 @@ import {
 } from '../actions/attribute-guest-retail-customer.ts';
 
 export { AttributeGuestRetailCustomerPayloadSchema } from '../actions/attribute-guest-retail-customer.ts';
-
 export const AttributeGuestRetailCustomerActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AttributeGuestRetailCustomerActionInvalidProblem',
   400,
@@ -24,6 +24,7 @@ export const AttributeGuestRetailCustomerActionForbiddenProblemSchema = makeProb
   403,
   {
     code: Schema.Literals([
+      'action_approval_required',
       'action_permission_denied',
       'module_state_denied',
       'operation_context_denied',
@@ -147,7 +148,7 @@ export const attributeGuestRetailCustomerActionGroupDefinition = HttpApiGroup.ma
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/attribute-guest-retail-customer', {
       error: actionErrors,
       payload: Schema.toEncoded(AttributeGuestRetailCustomerPayloadSchema),
-      success: AttributeGuestRetailCustomerResultSchema,
+      success: [ActionProposalAcceptedSchema, AttributeGuestRetailCustomerResultSchema],
     }),
   )
   .middleware(AttributeGuestRetailCustomerActionSchemaErrorMiddleware);

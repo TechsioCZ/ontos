@@ -63,7 +63,7 @@ const recoverRenameBrand = Effect.fn('RenameBrandRecoveryRead.recover')(function
 
 const renameBrandRecoveryEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'commerce.catalog.read.rename-brand-recovery' },
+  authorization: { kind: 'protected' },
   entrypointKey: 'commerce.catalog.api.rename-brand-recovery',
   moduleKey: 'commerce.catalog',
   role: 'api',
@@ -71,6 +71,14 @@ const renameBrandRecoveryEntrypoint = defineTenantModuleEntrypoint({
 
 export const renameBrandRecoveryRead = defineRead(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.rename-brand-recovery.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'brand', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessKind: 'detail',
     entrypoint: renameBrandRecoveryEntrypoint,
     evidencePolicy: {
@@ -80,7 +88,6 @@ export const renameBrandRecoveryRead = defineRead(
     inputSchema: RenameBrandRecoveryRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: 'commerce.catalog',
-    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.catalog.api.rename-brand-recovery',
     resultSchema: RenameBrandRecoveryResponseSchema,
@@ -90,5 +97,4 @@ export const renameBrandRecoveryRead = defineRead(
     recoverRenameBrand(input, context).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     Effect.succeed({ recover: (invocationId: string) => recoverResult(transaction, scope, invocationId) }),
-  () => ({ kind: 'tenant', permission: 'access' }),
 );

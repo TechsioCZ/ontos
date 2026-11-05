@@ -55,6 +55,14 @@ export const retireGtinAction: ActionRegistration<
   RetireGtinServices
 > = defineAction(
   {
+    accessDeclaration: {
+      key: 'commerce.catalog.gtin.retire',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'variant', level: 'manage' },
+      risk: 'critical',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.catalog.retire-gtin.access.v1' },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
@@ -63,7 +71,7 @@ export const retireGtinAction: ActionRegistration<
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      authorization: { kind: 'protected' },
       entrypointKey: ACTION_KEY,
       moduleKey: 'commerce.catalog',
       role: 'action',

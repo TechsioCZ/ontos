@@ -7,13 +7,21 @@ import type { ActionRegistration } from '../actions/definition.ts';
 import { ActionAlreadyCommitted } from '../actions/errors.ts';
 import type { ActionCoreError } from '../actions/errors.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
+import type { ActionProposalSuccess, ActionSuccessContract } from '../actions/proposal-accepted.ts';
 import { transportIdentifier } from '../actions/string-schemas.ts';
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { ActionRuntime } from '../actions/runtime.ts';
 
+export { ActionProposalAcceptedSchema } from '../actions/proposal-accepted.ts';
+
 export interface ActionHttpEndpointHeaders {
   readonly idempotencyKey: string | undefined;
+  /**
+   * O80: the explicit proposal intent. It travels beside the payload like the other transport
+   * metadata, and an endpoint whose contract carries no 202 refuses it (O85).
+   */
+  readonly intent?: 'propose' | undefined;
   readonly traceId: string | undefined;
 }
 
@@ -21,27 +29,36 @@ const ActionIdempotencyKeySchema = Schema.String.check(Schema.isMinLength(1), Sc
   Schema.brand('ActionIdempotencyKey'),
 );
 const ActionCorrelationIdSchema = transportIdentifier.pipe(Schema.brand('ActionCorrelationId'));
+const ActionIntentSchema = Schema.Literal('propose');
 const ActionTraceIdSchema = transportIdentifier.pipe(Schema.brand('ActionTraceId'));
 
 /**
  * Reads the Action transport headers an HTTP handler owns. Endpoint contracts declare no header
  * codec: the composed API decodes closed, and a header codec would receive every browser header.
- * All three caller-supplied transport identifiers are bounded here, because each one is persisted
- * verbatim into the action invocation audit row: an unbounded value lets the caller choose the audit
+ * Every caller-supplied transport identifier is bounded here, because each one is persisted verbatim
+ * into the action invocation audit row: an unbounded value lets the caller choose the audit
  * correlation and inflate the row up to the ingress header limit. A supplied Idempotency-Key is decoded
  * alongside the trace identifier; absence of an Idempotency-Key still reaches the runtime's own 428
- * precondition.
+ * precondition. The proposal intent is a closed literal, so only `propose` is ever transported (O80).
  */
 export const decodeActionEndpointHeaders = Effect.fn('HttpInstrumentationSeam.decodeActionEndpointHeaders')(
   function* decodeActionEndpointHeadersEffect(
     headers: Headers.Headers,
   ): Effect.fn.Return<ActionHttpEndpointHeaders, Schema.SchemaError> {
     const idempotencyKey = headers['idempotency-key'];
+    const intent = headers['x-action-intent'];
     const traceId = headers['x-trace-id'];
     const decodedIdempotencyKey =
       idempotencyKey === undefined ? undefined : yield* Schema.decodeEffect(ActionIdempotencyKeySchema)(idempotencyKey);
+    // A proposal intent is the only intent a module endpoint transports; it is a closed literal, so an
+    // unrecognized value is a decode failure rather than a silently ignored request mode (O80).
+    const decodedIntent =
+      intent === undefined ? undefined : yield* Schema.decodeUnknownEffect(ActionIntentSchema)(intent);
     const decodedTraceId = traceId === undefined ? undefined : yield* Schema.decodeEffect(ActionTraceIdSchema)(traceId);
-    return { idempotencyKey: decodedIdempotencyKey, traceId: decodedTraceId };
+    if (decodedIntent === undefined) {
+      return { idempotencyKey: decodedIdempotencyKey, traceId: decodedTraceId };
+    }
+    return { idempotencyKey: decodedIdempotencyKey, intent: decodedIntent, traceId: decodedTraceId };
   },
 );
 
@@ -72,6 +89,7 @@ interface GovernedActionHttpRunnerBaseInput<
   InternalProblem,
   PrincipalProblem,
   PrincipalRequirements,
+  SuccessContract extends ActionSuccessContract = 'result',
 > {
   /** Trusted receiver configuration, never a request header or payload field. */
   readonly audience?: string;
@@ -90,6 +108,12 @@ interface GovernedActionHttpRunnerBaseInput<
     HandlerRequirements
   >;
   readonly requestHeaders: ActionHttpRequestHeaders;
+  /**
+   * O85: the endpoint's own declared success contract, mirrored from its `success` schema. An endpoint
+   * that declares `result-or-proposal` answers the parked-proposal 202; every other endpoint keeps the
+   * single result type, so its response contract is never widened on the runner's behalf.
+   */
+  readonly successContract?: SuccessContract | undefined;
 }
 
 type ActionHttpCommittedRecovery<RecoveryResult, DomainError, MappedProblem> =
@@ -117,6 +141,7 @@ export type GovernedActionHttpRunnerInput<
   PrincipalProblem,
   PrincipalRequirements,
   RecoveryResult = never,
+  SuccessContract extends ActionSuccessContract = 'result',
 > = GovernedActionHttpRunnerBaseInput<
   PayloadSchema,
   ResultSchema,
@@ -128,7 +153,8 @@ export type GovernedActionHttpRunnerInput<
   InvalidProblem,
   InternalProblem,
   PrincipalProblem,
-  PrincipalRequirements
+  PrincipalRequirements,
+  SuccessContract
 > &
   ActionHttpCommittedRecovery<RecoveryResult, DomainErrorSchema['Type'], MappedProblem>;
 
@@ -144,6 +170,7 @@ export type GovernedActionHttpEndpointInput<
   InvalidProblem,
   InternalProblem,
   RecoveryResult = never,
+  SuccessContract extends ActionSuccessContract = 'result',
 > = Omit<
   GovernedActionHttpRunnerBaseInput<
     PayloadSchema,
@@ -156,7 +183,8 @@ export type GovernedActionHttpEndpointInput<
     InvalidProblem,
     InternalProblem,
     never,
-    never
+    never,
+    SuccessContract
   >,
   'payload' | 'principal'
 > & {
@@ -202,6 +230,7 @@ export const runGovernedActionHttp = <
   PrincipalProblem,
   PrincipalRequirements,
   RecoveryResult = never,
+  SuccessContract extends ActionSuccessContract = 'result',
 >(
   input: GovernedActionHttpRunnerInput<
     PayloadSchema,
@@ -216,10 +245,11 @@ export const runGovernedActionHttp = <
     InternalProblem,
     PrincipalProblem,
     PrincipalRequirements,
-    RecoveryResult
+    RecoveryResult,
+    SuccessContract
   >,
 ): Effect.Effect<
-  ResultSchema['Type'] | RecoveryResult,
+  ResultSchema['Type'] | RecoveryResult | ActionProposalSuccess<SuccessContract>,
   InternalProblem | InvalidProblem | MappedProblem | PrincipalProblem,
   ActionRuntime | HandlerRequirements | PrincipalRequirements
 > => {
@@ -265,11 +295,17 @@ export const runGovernedActionHttp = <
               traceId: input.endpointHeaders.traceId,
             };
     }
+    // O80: an explicit proposal intent reaches the runner only from the endpoint's own transport
+    // metadata; a result-only endpoint answers it with a refusal inside the runtime (O85).
+    if (input.endpointHeaders.intent !== undefined) {
+      transport = { ...transport, intent: input.endpointHeaders.intent };
+    }
     const action = runtime.runAction({
       ...receivingAudience,
       payload: encodedPayload,
       principal,
       registration: input.registration,
+      successContract: input.successContract,
       transport,
     });
     if (input.recoverAlreadyCommitted === undefined) {
@@ -310,6 +346,7 @@ export const bindGovernedActionHttp =
     InvalidProblem,
     InternalProblem,
     RecoveryResult = never,
+    SuccessContract extends ActionSuccessContract = 'result',
   >(
     input: GovernedActionHttpEndpointInput<
       PayloadSchema,
@@ -322,7 +359,8 @@ export const bindGovernedActionHttp =
       MappedProblem,
       InvalidProblem,
       InternalProblem,
-      RecoveryResult
+      RecoveryResult,
+      SuccessContract
     >,
   ) =>
     runGovernedActionHttp({ ...input, principal });
