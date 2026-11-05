@@ -18,7 +18,7 @@ const partyRef = {
 } as const;
 const fact = Schema.decodeSync(PartyFactAssertionSchema)({
   assertionId,
-  factKind: 'DISPLAY_NAME',
+  factKind: 'BUSINESS_NAME',
   isCurrent: true,
   partyRef,
   recordedAt: '2026-09-03T10:00:00.000Z',
@@ -31,7 +31,7 @@ const fact = Schema.decodeSync(PartyFactAssertionSchema)({
 });
 const previousFact = Schema.decodeSync(PartyFactAssertionSchema)({
   assertionId: previousId,
-  factKind: 'DISPLAY_NAME',
+  factKind: 'BUSINESS_NAME',
   isCurrent: false,
   partyRef,
   recordedAt: '2026-09-01T10:00:00.000Z',
@@ -44,8 +44,11 @@ const previousFact = Schema.decodeSync(PartyFactAssertionSchema)({
 });
 const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
+  businessName: 'Corrected name',
   createdAt: '2026-09-01T10:00:00.000Z',
   displayName: 'Corrected name',
+  firstName: null,
+  lastName: null,
   partyRef,
   partyType: 'ORGANIZATION',
   revision: 2,
@@ -77,7 +80,9 @@ it.effect('a caller without identity read gets 200 with the identity fields abse
     const redacted = Option.getOrThrow(projectReadResultFields(result, identityFieldPaths, PartyDetailResponseSchema));
     // The HTTP endpoint encodes the success value against the response schema before it is sent.
     const wire = yield* Schema.encodeEffect(PartyDetailResponseSchema)(redacted);
-    expect(wire.party).not.toHaveProperty('displayName');
+    for (const name of ['businessName', 'displayName', 'firstName', 'lastName']) {
+      expect(wire.party).not.toHaveProperty(name);
+    }
     expect(wire.party.partyRef).toEqual(partyRef);
     expect(wire.currentFactAssertions[0]).not.toHaveProperty('value');
     expect(wire.currentFactAssertions[0]?.assertionId).toBe(assertionId);
@@ -93,6 +98,7 @@ it.effect('a caller holding every field group still gets the identity fields and
     const complete = Option.getOrThrow(projectReadResultFields(result, [], PartyDetailResponseSchema));
     const wire = yield* Schema.encodeEffect(PartyDetailResponseSchema)(complete);
     expect(wire.party.displayName).toBe('Corrected name');
+    expect(wire.party.businessName).toBe('Corrected name');
     expect(wire.currentFactAssertions[0]?.value).toBe('Corrected name');
     expect(wire.factHistory?.[0]?.value).toBe('Original name');
   }),

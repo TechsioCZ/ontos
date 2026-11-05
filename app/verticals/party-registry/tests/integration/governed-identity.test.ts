@@ -105,6 +105,21 @@ type EncodedFixturePrincipal = typeof TrustedPrincipalContextSchema.Encoded;
 const decodeFixturePrincipal = (principal: EncodedFixturePrincipal): TrustedPrincipalContext =>
   Schema.decodeSync(TrustedPrincipalContextSchema)(principal);
 
+/** One name a detail carries, or null when it has none or the identity field group withheld it. */
+const nameOf = (
+  detail: {
+    readonly party: Partial<Record<'businessName' | 'displayName' | 'firstName' | 'lastName', Option.Option<string>>>;
+  },
+  name: 'businessName' | 'displayName' | 'firstName' | 'lastName',
+) => Option.getOrNull(detail.party[name] ?? Option.none());
+const displayNameOf = (detail: Parameters<typeof nameOf>[0]) => nameOf(detail, 'displayName');
+/** The fact history a detail carries; absent when not requested or withheld. */
+const historyOf = <Fact>(detail: { readonly factHistory?: readonly Fact[] }): readonly Fact[] =>
+  detail.factHistory ?? [];
+/** The assertion a correction resulted in, or null when the response carries none. */
+const resultingOf = <Fact>(detail: { readonly resultingAssertion?: Option.Option<Fact> }) =>
+  Option.getOrNull(detail.resultingAssertion ?? Option.none());
+
 it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect(
     'governed Party identity uses real PostgreSQL and SpiceDB for atomic claims, recovery and temporal authorization',
@@ -323,10 +338,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           expect(second.outcome).toBe('CREATED');
           assert.isOk(second.outcome === 'CREATED');
           const createdNames = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
-          expect(Option.getOrNull(createdNames.party.firstName)).toBe('Source');
-          expect(Option.getOrNull(createdNames.party.lastName)).toBe('Person');
-          expect(Option.getOrNull(createdNames.party.businessName)).toBe('Source company');
-          expect(Option.getOrNull(createdNames.party.displayName)).toBe('Source company');
+          expect(nameOf(createdNames, 'firstName')).toBe('Source');
+          expect(nameOf(createdNames, 'lastName')).toBe('Person');
+          expect(nameOf(createdNames, 'businessName')).toBe('Source company');
+          expect(displayNameOf(createdNames)).toBe('Source company');
           const split = candidate('26168685', {
             firstName: 'Candidate',
             lastName: 'Person',
@@ -648,10 +663,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           assert.isOk(reviewedPerson.partyRef);
           const restoredNames = yield* run(readPartyDetail(reviewedPerson.partyRef, managerReadPrincipal));
-          expect(Option.getOrNull(restoredNames.party.firstName)).toBe('Live contact');
-          expect(Option.getOrNull(restoredNames.party.lastName)).toBe(null);
-          expect(Option.getOrNull(restoredNames.party.businessName)).toBe(null);
-          expect(Option.getOrNull(restoredNames.party.displayName)).toBe('Live contact');
+          expect(nameOf(restoredNames, 'firstName')).toBe('Live contact');
+          expect(nameOf(restoredNames, 'lastName')).toBe(null);
+          expect(nameOf(restoredNames, 'businessName')).toBe(null);
+          expect(displayNameOf(restoredNames)).toBe('Live contact');
 
           const relationship = yield* run(
             runAction({
@@ -837,10 +852,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           expect(surnameUpdated.revision).toBe(named.revision + 1);
           const afterNames = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
-          expect(Option.getOrNull(afterNames.party.firstName)).toBe('Ada');
-          expect(Option.getOrNull(afterNames.party.lastName)).toBe('Lovelace');
-          expect(Option.getOrNull(afterNames.party.businessName)).toBe('Analytical Engines');
-          expect(Option.getOrNull(afterNames.party.displayName)).toBe('Analytical Engines');
+          expect(nameOf(afterNames, 'firstName')).toBe('Ada');
+          expect(nameOf(afterNames, 'lastName')).toBe('Lovelace');
+          expect(nameOf(afterNames, 'businessName')).toBe('Analytical Engines');
+          expect(displayNameOf(afterNames)).toBe('Analytical Engines');
           expect(
             afterNames.currentFactAssertions.some((fact) => fact.factKind === 'LAST_NAME' && fact.value === 'Lovelace'),
           ).toBe(true);
@@ -872,10 +887,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           assert.isOk(oldSurname && equalSurname);
           expect(equalSurname.assertionId).not.toBe(oldSurname.assertionId);
           expect(equalSurname.value).toBe('Lovelace');
-          expect(Option.getOrNull(equalDetail.party.firstName)).toBe('Ada');
-          expect(Option.getOrNull(equalDetail.party.businessName)).toBe('Analytical Engines');
-          expect(Option.getOrNull(equalDetail.party.displayName)).toBe('Analytical Engines');
-          expect(Option.getOrElse(equalDetail.factHistory, () => [])).toContainEqual(
+          expect(nameOf(equalDetail, 'firstName')).toBe('Ada');
+          expect(nameOf(equalDetail, 'businessName')).toBe('Analytical Engines');
+          expect(displayNameOf(equalDetail)).toBe('Analytical Engines');
+          expect(historyOf(equalDetail)).toContainEqual(
             expect.objectContaining({ assertionId: oldSurname.assertionId, isCurrent: false, state: 'ENDED' }),
           );
           const afterEqualUpdate = yield* snapshot();
@@ -957,7 +972,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 value: target.value,
                 state: 'SUPERSEDED',
               });
-              expect(Option.getOrNull(decodedDetail.resultingAssertion)).toMatchObject({
+              expect(resultingOf(decodedDetail)).toMatchObject({
                 assertionId: replacementId,
                 factKind: change.factKind,
                 value: change.replacementValue,
@@ -974,11 +989,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               const replacement = after.currentFactAssertions.find((fact) => fact.factKind === change.factKind);
               expect(replacement?.assertionId).toBe(replacementId);
               expect(replacement?.value).toBe(change.replacementValue);
-              expect(
-                Option.getOrElse(after.factHistory, () => []).some(
-                  (fact) => fact.assertionId === target.assertionId && !fact.isCurrent,
-                ),
-              ).toBe(true);
+              expect(historyOf(after).some((fact) => fact.assertionId === target.assertionId && !fact.isCurrent)).toBe(
+                true,
+              );
               assert.isOk(
                 Predicate.isTagged(
                   yield* run(
@@ -1030,10 +1043,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           const afterTypeCorrection = yield* run(readPartyDetail(second.partyRef, managerReadPrincipal));
           expect(afterTypeCorrection.party.partyType).toBe('PERSON');
-          expect(Option.getOrNull(afterTypeCorrection.party.firstName)).toBe('Augusta');
-          expect(Option.getOrNull(afterTypeCorrection.party.lastName)).toBe('King');
-          expect(Option.getOrNull(afterTypeCorrection.party.businessName)).toBe('Corrected Engines');
-          expect(Option.getOrNull(afterTypeCorrection.party.displayName)).toBe('Augusta King');
+          expect(nameOf(afterTypeCorrection, 'firstName')).toBe('Augusta');
+          expect(nameOf(afterTypeCorrection, 'lastName')).toBe('King');
+          expect(nameOf(afterTypeCorrection, 'businessName')).toBe('Corrected Engines');
+          expect(displayNameOf(afterTypeCorrection)).toBe('Augusta King');
         }),
       ),
   );

@@ -560,11 +560,15 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         expect(afterCollision.claims.length).toBe(1);
         expect(afterCollision.contacts.length).toBe(1);
         const collisionDetail = yield* detail(collisionParty);
-        expect(Option.getOrUndefined(collisionDetail.party.businessName)).toBe(rawSubject.obchodniJmeno);
-        expect(Option.getOrUndefined(collisionDetail.party.firstName)).toBe('Personal source');
-        expect(Option.getOrUndefined(collisionDetail.party.lastName)).toBe('Retained surname');
+        expect(Option.getOrUndefined(collisionDetail.party.businessName ?? Option.none())).toBe(
+          rawSubject.obchodniJmeno,
+        );
+        expect(Option.getOrUndefined(collisionDetail.party.firstName ?? Option.none())).toBe('Personal source');
+        expect(Option.getOrUndefined(collisionDetail.party.lastName ?? Option.none())).toBe('Retained surname');
         expect(collisionDetail.party.partyType).toBe('ORGANIZATION');
-        expect(Option.getOrUndefined(collisionDetail.party.displayName)).toBe(rawSubject.obchodniJmeno);
+        expect(Option.getOrUndefined(collisionDetail.party.displayName ?? Option.none())).toBe(
+          rawSubject.obchodniJmeno,
+        );
 
         const erroneousParty = yield* create();
         const logical = deriveAresEvidenceApplication({
@@ -647,10 +651,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           correctPartyFactWithAuthorization(correctionPayload, yield* authorization(), yield* options),
         );
         const corrected = yield* detail(erroneousParty);
-        expect(Option.getOrUndefined(corrected.party.displayName)).toBe(rawSubject.obchodniJmeno);
-        expect(Option.getOrUndefined(corrected.party.businessName)).toBe(rawSubject.obchodniJmeno);
-        expect(Option.getOrUndefined(corrected.party.firstName)).toBe('Personal source');
-        expect(Option.getOrUndefined(corrected.party.lastName)).toBe('Retained surname');
+        expect(Option.getOrUndefined(corrected.party.displayName ?? Option.none())).toBe(rawSubject.obchodniJmeno);
+        expect(Option.getOrUndefined(corrected.party.businessName ?? Option.none())).toBe(rawSubject.obchodniJmeno);
+        expect(Option.getOrUndefined(corrected.party.firstName ?? Option.none())).toBe('Personal source');
+        expect(Option.getOrUndefined(corrected.party.lastName ?? Option.none())).toBe('Retained surname');
         expect(corrected.party.partyType).toBe('ORGANIZATION');
         const correctedState = yield* state();
         assert.isOk(

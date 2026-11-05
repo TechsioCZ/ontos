@@ -682,9 +682,14 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
         ? [structuredAddress(value.address)]
         : [],
     );
+    // A redacted identity carries no business name, so the evidence has nothing to compare it with.
+    const { businessName } = party;
+    if (businessName === undefined) {
+      return yield* invalidSelection('Reading the Party identity is required before applying ARES evidence');
+    }
     const canonical: AresCanonicalSnapshot = {
       archived: Option.isSome(party.archivedAt),
-      businessName: Option.getOrNull(party.businessName),
+      businessName: Option.getOrNull(businessName),
       factEvidence: [
         ...detail.currentFactAssertions.flatMap((assertion) =>
           assertion.value !== undefined &&

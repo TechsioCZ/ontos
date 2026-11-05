@@ -39,10 +39,13 @@ export const PartyDetailResolutionSchema = Schema.Struct({
   requestedPartyRef: PartyRefSchema,
 });
 export type PartyDetailResolution = typeof PartyDetailResolutionSchema.Type;
-/** `displayName` is absent when the caller lacks `party.registry.party-identity.read`. */
+/** The names are absent when the caller lacks `party.registry.party-identity.read`. */
 const PartyDetailPartySchema = Schema.Struct({
   ...PartySchema.fields,
+  businessName: Schema.optionalKey(PartySchema.fields.businessName),
   displayName: Schema.optionalKey(PartySchema.fields.displayName),
+  firstName: Schema.optionalKey(PartySchema.fields.firstName),
+  lastName: Schema.optionalKey(PartySchema.fields.lastName),
 });
 export const PartyDetailResponseSchema = Schema.Struct({
   currentFactAssertions: Schema.Array(PartyFactAssertionSchema),
