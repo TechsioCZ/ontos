@@ -111,12 +111,12 @@ zerops:
         NEXT_TELEMETRY_DISABLED: '1'
         NODE_ENV: production
         ONTOS_SHELL_URL: https://ontos-stage.web-revolution.cz
-        # The N1 demo tenant and its seller on stage (the ids n1-stage-grants.mts provisions). Product images are served
-        # from this storefront's own public/demo/n1, so its public host is the one allowed image host.
+        # The N1 demo tenant and its seller on stage (the ids n1-stage-grants.mts provisions).
+        # Allow this storefront's uploaded images and the exact public host of imported N1 catalog photos.
         ONTOS_STOREFRONT_LEGAL_ENTITY_ID: d7ad363a-ddb0-46c6-bb11-8d9362281297
         ONTOS_STOREFRONT_TENANT_ID: cfcd7ae8-90b9-4c49-927c-b5d66224a618
         PORT: '3071'
-        STOREFRONT_IMAGE_HOSTS: ontos-stage-n1.web-revolution.cz
+        STOREFRONT_IMAGE_HOSTS: ontos-stage-n1.web-revolution.cz,pub-adde8a563e2c43f7b6bc296d81c86358.r2.dev
       healthCheck:
         httpGet:
           port: 3071
