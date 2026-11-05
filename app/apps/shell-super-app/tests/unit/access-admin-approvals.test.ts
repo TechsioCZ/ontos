@@ -77,7 +77,6 @@ const record = (overrides: Partial<ApprovalRecord> = {}): ApprovalRecord => ({
   requester: { _tag: 'Principal', principalId: brand(PrincipalIdSchema, REQUESTER) },
   scopeId: SCOPE_ID,
   status: 'pending',
-  target: RECORD,
   tenantId: TENANT,
   ...overrides,
 });
@@ -505,6 +504,20 @@ it.effect('lets a scope administrator reject without holding approve authority',
   }),
 );
 
+it.effect('never offers approval of a proposal that changes one record, which no release can approve yet', () =>
+  Effect.gen(function* recordProposalIsNotApprovable() {
+    const targeted = record({ target: RECORD });
+    const service = scriptedCommands({ loaded: targeted, open: [targeted] });
+    const bff = bffOf({ commands: service, gate: cappedGate() });
+    // The inbox says why instead of offering a button Core always refuses (D30) ...
+    const inbox = yield* bff.list(headers(), listPayload());
+    expect(inbox.items[0]?.permitted.approval).toEqual({ allowed: false, reason: 'approval_record_read_unpublished' });
+    // ... and approving it anyway is refused before Core is asked.
+    const problem = yield* problemOf(bff.decide(headers(), decidePayload({ decision: 'approve' })));
+    expect(problem.status).toBe(422);
+  }),
+);
+
 it.effect('lets a scope administrator reject a proposal whose amount cannot be resolved', () =>
   Effect.gen(function* rejectsWithoutAmount() {
     const rejections: Parameters<AccessApprovalsCommandsService['reject']>[1][] = [];
@@ -665,7 +678,7 @@ const B_RECORD = 'invoice-b-9001';
 const companyRecords = [
   record(),
   record({ id: A_PROPOSAL, scopeId: A_SCOPE_ID }),
-  record({ id: B_PROPOSAL, scopeId: B_SCOPE_ID, target: B_RECORD }),
+  record({ id: B_PROPOSAL, scopeId: B_SCOPE_ID }),
 ];
 
 const scopedAuthority = authority({
