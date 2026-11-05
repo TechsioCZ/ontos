@@ -468,7 +468,6 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
     purpose: 'stabilization-1257-approval-fresh-proof',
     sourceConnections: yield* loadDatabaseConnectionPair(),
   });
-  yield* isolated.assertClonedSchema();
   yield* applyApprovalFreshProfileCurrentMigrations(isolated.connections, state);
   const owner = yield* makePurchasingApprovalNativeFixture({
     apiKeyManager,

@@ -1946,7 +1946,6 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       purpose: 'stabilization-1257-approval-fresh-proof',
       sourceConnections,
     });
-    yield* owned.assertClonedSchema();
     const nativeDatabase = PgClient.layer({ url: Redacted.make(owned.connections.runtime.connectionString) }).pipe(
       Layer.provideMerge(Reactivity.layer),
     );

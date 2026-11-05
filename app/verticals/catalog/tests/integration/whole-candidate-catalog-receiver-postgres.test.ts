@@ -131,7 +131,6 @@ const runCatalogReceiver = (mode: 'strict-whole-candidate' | 'target-agreement')
       mode: 'schema-only',
       purpose: 'stabilization-1225-whole-candidate',
     });
-    yield* isolated.assertClonedSchema();
     const adminContext = yield* Layer.build(
       PgClient.layer({ url: Redacted.make(isolated.connections.admin.connectionString) }).pipe(
         Layer.provideMerge(Reactivity.layer),

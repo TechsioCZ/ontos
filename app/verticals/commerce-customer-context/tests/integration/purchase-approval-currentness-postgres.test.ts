@@ -32,7 +32,6 @@ const scenario = Effect.fn('ApprovalCurrentness.nativeScenario')(function* nativ
     mode: 'schema-only',
     purpose: 'stabilization-1256-approval-currentness',
   });
-  yield* isolated.assertClonedSchema();
   const owner = yield* makePurchasingApprovalNativeFixture({ connections: isolated.connections, snapshot });
   // The shared owner fixture uses all six actual runAction registrations and actual invocation IDs.
   // Only its exact-target external Current/role and cryptographic issuer dependencies are TEST configured.

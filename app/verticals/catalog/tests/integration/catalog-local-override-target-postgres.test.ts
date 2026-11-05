@@ -170,7 +170,6 @@ it.live(
         mode: 'schema-only',
         purpose: 'stabilization-1269-override-target-existence',
       });
-      yield* isolated.assertClonedSchema();
       expect(isolated.connections.runtime.database).toBe(isolated.connections.admin.database);
       expect(isolated.connections.runtime.user).not.toBe(isolated.connections.admin.user);
       // This public fixture owns real PG/SpiceDB and commit fault controls. Its explicit

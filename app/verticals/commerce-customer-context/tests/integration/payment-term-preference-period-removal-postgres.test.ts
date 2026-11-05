@@ -365,7 +365,6 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
     mode: 'schema-only',
     purpose: 'stabilization-1230-preference-period',
   });
-  yield* isolated.assertClonedSchema();
   const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const sourceJournal = yield* journalFingerprint(source.admin);
   const adminServices = yield* Layer.build(

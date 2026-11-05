@@ -11,6 +11,7 @@ const database = rs.hoisted(() => ({ acquisitions: 0, statements: 0 }));
 
 // Replace only database I/O. The real fixture constructs both commands and the installed
 // Node spawner executes them. Stop after cloning, before any further fixture work.
+// Catalog audits must not be a precondition of acquiring a business-test database.
 rs.mock('../../src/db/client.ts', () => ({
   ...rs.requireActual('../../src/db/client.ts'),
   makeCoreDatabase: () => {
@@ -20,7 +21,7 @@ rs.mock('../../src/db/client.ts', () => ({
     }
     const execute = () => {
       database.statements += 1;
-      return Effect.succeed([{ fingerprint: 'TEST_CATALOG' }]);
+      return Effect.succeed([]);
     };
     return Effect.succeed({
       executor: {
@@ -121,8 +122,8 @@ if (program === 'pg_dump') {
           expect({ dumpExists, restoreExists }).toEqual({ dumpExists: true, restoreExists: true });
           // Source admin pool, then the clone pool whose scripted failure interrupts the concurrent runtime-role pool before it is acquired.
           expect(database.acquisitions).toBe(2);
-          // set_config, fingerprint, create and finalizer drop all remain scripted.
-          expect(database.statements).toBe(4);
+          // Only create and finalizer drop run before the clone pool is acquired.
+          expect(database.statements).toBe(2);
           const dump = yield* fs
             .readFileString(`${directory}/pg_dump.json`)
             .pipe(Effect.flatMap(Schema.decodeEffect(receiptSchema)));

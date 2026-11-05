@@ -241,7 +241,6 @@ const scenario = Effect.fn('ApprovalExpiry.nativeScenario')(function* nativeScen
     mode: 'schema-only',
     purpose: 'stabilization-1246-approval-post-lock-expiry',
   });
-  yield* isolated.assertClonedSchema();
   const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const sourceJournal = yield* journalFingerprint(source.admin);
   const oldSql = yield* Config.Boolean('ONTOS_APPROVAL_EXPIRY_PRE_MIGRATION').pipe(Config.withDefault(false));

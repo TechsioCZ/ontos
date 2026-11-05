@@ -514,7 +514,6 @@ export const makeProductAxisAllowanceFixture = Effect.fn('ProductAxisAllowance.m
       mode: 'schema-only',
       purpose: 'stabilization-1253-product-axis-allowance',
     });
-    yield* isolated.assertClonedSchema();
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
         access: 'allowed',

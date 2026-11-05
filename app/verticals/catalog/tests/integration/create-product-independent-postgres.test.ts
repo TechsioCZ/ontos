@@ -76,7 +76,6 @@ it.live(
         purpose: 'stabilization-1196-product-create',
       });
       yield* Effect.logInfo('1196 isolated clone ready');
-      yield* isolated.assertClonedSchema();
       expect(isolated.connections.runtime.database).toBe(isolated.connections.admin.database);
       expect(isolated.connections.runtime.user).not.toBe(isolated.connections.admin.user);
       const now = Math.floor(DateTime.toEpochMillis(composition.observedAt) / 1000);

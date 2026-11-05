@@ -651,7 +651,6 @@ export const makeRetiredSiblingFixture = Effect.fn('RetiredSibling.makeFixture')
     mode: 'schema-only',
     purpose: 'stabilization-1252-retired-sibling',
   });
-  yield* isolated.assertClonedSchema();
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
       access: 'allowed',

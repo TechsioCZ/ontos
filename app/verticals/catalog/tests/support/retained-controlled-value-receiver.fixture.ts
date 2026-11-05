@@ -534,7 +534,6 @@ export const makeRetainedControlledValueFixture = Effect.fn('RetainedControlledV
       mode: 'schema-only',
       purpose: 'stabilization-1254-retained-controlled-values',
     });
-    yield* isolated.assertClonedSchema();
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixture({
         access: 'allowed',

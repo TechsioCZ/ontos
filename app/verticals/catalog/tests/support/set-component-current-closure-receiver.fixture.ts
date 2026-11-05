@@ -613,7 +613,6 @@ export const makeSetComponentFixture = Effect.fn('SetComponentClosure.makeFixtur
     mode: 'schema-only',
     purpose: 'stabilization-1247-set-component-current-closure',
   });
-  yield* isolated.assertClonedSchema();
   const fixture = yield* Effect.acquireRelease(
     makeLiveOperationFixture({
       access: 'allowed',

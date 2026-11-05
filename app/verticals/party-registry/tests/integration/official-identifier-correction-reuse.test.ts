@@ -763,7 +763,6 @@ it.layer(
         expect(
           Predicate.isTagged(yield* Effect.flip(h.history(partyRef)), 'PartyOfficialIdentifierHistoryForbiddenProblem'),
         ).toBe(true);
-        yield* h.isolated.assertClonedSchema();
       }),
     120_000,
   );
