@@ -163,6 +163,15 @@ it('lapses on parent record read loss only when the command read a parent record
   expect(verdictOf(assessAuthorityLoss(mandateOf(), loss({ authorityLoss: 'parent_record_read_lost' })))).toBe(
     'retain',
   );
+  // Somebody else losing that read leaves the mandate alone: it is bound to its own approver's read.
+  expect(
+    verdictOf(
+      assessAuthorityLoss(
+        recordMandate,
+        loss({ authorityLoss: 'parent_record_read_lost', principalId: principalId(99) }),
+      ),
+    ),
+  ).toBe('retain');
 });
 
 it('lapses the mandate whose agent connection ended and keeps another connection', () => {
