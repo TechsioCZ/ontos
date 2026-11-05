@@ -33,6 +33,7 @@ import { sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
   Config,
+  ConfigProvider,
   Console,
   DateTime,
   Duration,
@@ -82,6 +83,7 @@ import type { HostedUnit } from './hosted-units.mts';
 import { STAGE_CIMD_FIXTURE_PATH, stageCimdFixtureResponse } from './stage-cimd-fixture.mts';
 import { listDeadOutboxDeliveries } from '../../packages/core-runtime/src/outbox/dead-delivery-resolution.ts';
 import { startupDeadOutboxInventory, withOutboxDeadStartupGate } from './outbox-dead-startup-gate.mts';
+import { provisionReleaseActionAuthorization } from './release-action-authorization.mts';
 
 const OUTBOX_HOST_ID = 'outbox-worker-host';
 const OUTBOX_HEALTH_PORT = 4100;
@@ -749,14 +751,41 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
   yield* Console.log(`[app-host] serving ${String(units.length)} units; migrating`);
 
-  const publish = Effect.gen(function* publishObservedComposition() {
-    const snapshot = yield* observeOwners(units, publicOrigin);
-    yield* publishApplicationCompositionAuthoritySnapshot(snapshot, pointer.publish(snapshot), Effect.void);
-    yield* Console.log(
-      `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
+  const publishSnapshot = (snapshot: ActiveApplicationCompositionSnapshot) =>
+    Effect.gen(function* publishObservedComposition() {
+      yield* publishApplicationCompositionAuthoritySnapshot(snapshot, pointer.publish(snapshot), Effect.void);
+      yield* Console.log(
+        `[app-host] composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) valid until ${DateTime.formatIso(snapshot.validUntil)}`,
+      );
+      return snapshot.composition.revision;
+    }).pipe(observeRuntimeJob('composition-publish'));
+  const publish = observeOwners(units, publicOrigin).pipe(Effect.flatMap(publishSnapshot));
+  // Every active Tenant and company gets the canonical provisioner's Action edges for this release before it takes the
+  // authority. The step only adds edges (see release-action-authorization.mts). A failure stops this release before
+  // publication, as a failed migration does: the old release stays admitted and the deploy fails visibly.
+  const provisionActionAuthorization = (snapshot: ActiveApplicationCompositionSnapshot) =>
+    Effect.gen(function* provisionReleaseSnapshot() {
+      // The settings the N1 release grants child receives: owner secrets over the container environment.
+      const inherited = yield* ConfigProvider.ConfigProvider;
+      const owned = Object.entries(processEnvironment([SHELL_ID, ...ownerIds], ownerSecrets, derived).environment);
+      const provider = ConfigProvider.fromUnknown(
+        Object.fromEntries(owned.filter((entry): entry is [string, string] => entry[1] !== undefined)),
+      ).pipe(ConfigProvider.orElse(inherited));
+      return yield* provisionReleaseActionAuthorization(snapshot, provider);
+    }).pipe(
+      Effect.tap((result) =>
+        Console.log(
+          `[app-host] release Action authorization: tenants=${String(result.tenants)} companies=${String(result.companies)} desired=${String(result.desired)} touched=${String(result.touched)} revoked=0`,
+        ),
+      ),
+      Effect.tapError((problem) =>
+        Console.error(
+          `[app-host] RELEASE ACTION AUTHORIZATION FAILED; composition ${snapshot.composition.revision} not published: ${problem.reason}`,
+        ),
+      ),
+      Effect.mapError((problem) => failure(`release Action authorization failed: ${problem.reason}`)),
+      observeRuntimeJob('release-action-authorization'),
     );
-    return snapshot.composition.revision;
-  }).pipe(observeRuntimeJob('composition-publish'));
 
   // ONTOS_APP_HOST_PUBLISH=false starts and observes every unit without migrating or taking the authority, so a new
   // environment can be checked beside the one that still holds it.
@@ -795,7 +824,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       ],
       { concurrency: 'unbounded' },
     );
-    const revision = yield* publish;
+    const releaseSnapshot = yield* observeOwners(units, publicOrigin);
+    yield* provisionActionAuthorization(releaseSnapshot);
+    const revision = yield* publishSnapshot(releaseSnapshot);
     // From this commit on the old release refuses every governed request and closes its public port, so this one
     // serves internal callers and reports ready to the Zerops balancer at once.
     yield* openPublicPort;
