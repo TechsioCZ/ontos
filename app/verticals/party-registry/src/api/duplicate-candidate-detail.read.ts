@@ -29,7 +29,7 @@ export const duplicateCandidateDetailRead = defineRead(
       modes: ['run'],
       placement: { group: 'identity-review', level: 'extended' },
       risk: 'sensitive',
-      selectors: ['all', 'assigned'],
+      selectors: ['all'],
     },
     accessTarget: (input) => ({ moduleKey: 'party.registry', recordKey: input.caseRef.resourceId }),
     accessFieldGroups: [

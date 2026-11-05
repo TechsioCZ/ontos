@@ -752,7 +752,7 @@ const counterAccessAmount = () => ({ currency: 'CZK', minor: 1200 });
 it('binds accessTarget and accessAmount to the record-scoped declaration they serve (O9, O18, Q2)', () => {
   const target = counterAccessTarget;
   const amount = counterAccessAmount;
-  const recordScoped = { ...declaredCounterNote(), selectors: ['assigned' as const] };
+  const recordScoped = { ...declaredCounterNote(), selectors: ['all' as const] };
   const derivedNote = { ...declaredCounterNote(), amountInput: 'derived.totalGross' };
 
   const withTarget = defineAction(
@@ -767,6 +767,18 @@ it('binds accessTarget and accessAmount to the record-scoped declaration they se
   expect(withTarget.descriptor.accessTarget).toBe(target);
   expect(getActionAccessTargetResolver(withTarget)).toBe(target);
   expect(getActionAccessAmountResolver(withTarget)).toBeUndefined();
+  // One record is never checked against a holder-relative selector until owners project it (R5a-7).
+  expect(() =>
+    defineAction(
+      {
+        ...counterActionDescriptor(),
+        accessDeclaration: { ...declaredCounterNote(), selectors: ['all', 'assigned'] },
+        accessTarget: target,
+        resultSchema: Schema.Struct({ total: Schema.Finite }),
+      },
+      (payload) => Effect.succeed({ total: payload.amount }),
+    ),
+  ).toThrow(/holder-relative selector/u);
 
   const withAmount = defineAction(
     {

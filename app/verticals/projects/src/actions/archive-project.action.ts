@@ -67,7 +67,7 @@ export const archiveProjectAction = defineAction(
       modes: ['run', 'propose', 'approve'],
       placement: { group: 'projects', level: 'manage' },
       risk: 'critical',
-      selectors: ['all', 'assigned'],
+      selectors: ['all'],
     },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',

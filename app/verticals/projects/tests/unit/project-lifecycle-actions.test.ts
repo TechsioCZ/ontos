@@ -32,7 +32,7 @@ it('declares separate idempotent protected lifecycle Actions whose gate names th
   expect(archiveProjectAction.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
   expect(archiveProjectAction.descriptor.idempotency).toBe('required');
   expect(archiveProjectAction.descriptor.accessDeclaration?.key).toBe('projects.core.project.archive');
-  expect(archiveProjectAction.descriptor.accessDeclaration?.selectors).toEqual(['all', 'assigned']);
+  expect(archiveProjectAction.descriptor.accessDeclaration?.selectors).toEqual(['all']);
   expect(archiveProjectAction.descriptor.accessTarget?.({ projectId }, scope)).toEqual({
     moduleKey: 'projects.core',
     recordKey: projectId,

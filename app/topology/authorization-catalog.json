@@ -8740,8 +8740,7 @@
             },
             "risk": "critical",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
@@ -13902,8 +13901,7 @@
             },
             "risk": "sensitive",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
@@ -13933,8 +13931,7 @@
             },
             "risk": "sensitive",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
@@ -13962,8 +13959,7 @@
             },
             "risk": "sensitive",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [
@@ -14015,8 +14011,7 @@
             },
             "risk": "sensitive",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
@@ -14046,8 +14041,7 @@
             },
             "risk": "sensitive",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
@@ -14077,8 +14071,7 @@
             },
             "risk": "sensitive",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
@@ -17083,8 +17076,7 @@
             },
             "risk": "critical",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
@@ -17142,8 +17134,7 @@
             },
             "risk": "sensitive",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
@@ -17262,8 +17253,7 @@
             },
             "risk": "sensitive",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
@@ -17293,8 +17283,7 @@
             },
             "risk": "sensitive",
             "selectors": [
-              "all",
-              "assigned"
+              "all"
             ]
           },
           "accessFieldGroups": [],
