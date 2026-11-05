@@ -22,10 +22,14 @@ import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './ag
 import { AgentProfileReadDatabase } from './agent-profile-setup.mts';
 import { demoTenantId } from './fixture-ids.mts';
 
-/** The e-shop market modules this operator may activate tenant-wide; nothing else. */
-export const stageMarketModuleKeys = ['commerce.market-catalog', 'commerce.storefront-registry'] as const;
+/** The e-shop market modules and Projekty, which this operator may activate tenant-wide; nothing else. */
+export const stageMarketModuleKeys = [
+  'commerce.market-catalog',
+  'commerce.storefront-registry',
+  'projects.core',
+] as const;
 export type StageMarketModuleKey = (typeof stageMarketModuleKeys)[number];
-const activationReason = 'Operator-approved tenant-wide e-shop market activation for the sales demo';
+const activationReason = 'Operator-approved tenant-wide module activation for the sales demo';
 const modes = ['dry-run', 'apply', 'verify'] as const;
 const sameContracts = Schema.toEquivalence(Schema.Array(OntosModuleDeploymentContractSchema));
 
