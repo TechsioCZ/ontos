@@ -73,6 +73,10 @@ const ingestService = uid(6);
 const pavel = uid(7);
 const expiredMember = uid(8);
 const futureMember = uid(9);
+/** Still a member of the tenant, but their Akros membership has ended. */
+const companyLeaver = uid(190);
+const membershipLeaverTenant = uid(191);
+const membershipLeaverAkros = uid(192);
 const legalEntityAkros = uid(8);
 const legalEntityNajempark = uid(9);
 const legalEntityB = uid(10);
@@ -199,9 +203,9 @@ const assertProjection = (projection: TenantProjectionIntent): void => {
   );
   // Tenant membership carries its deadline, and an agent is a member like a person (L43X).
   expect(projection.members.map(({ holder }) => holderKey(holder)).toSorted()).toEqual(
-    [holderKey(person(jana)), holderKey(agentHolder(janaAgent))].toSorted(),
+    [holderKey(person(jana)), holderKey(agentHolder(janaAgent)), holderKey(person(companyLeaver))].toSorted(),
   );
-  expect(projection.members.map(({ expiresAt }) => expiresAt !== undefined)).toEqual([true, true]);
+  expect(projection.members.map(({ expiresAt }) => expiresAt !== undefined)).toEqual([true, true, true]);
   expect(projection.owners).toEqual([PrincipalIdSchema.make(jana)]);
   expect(projection.suspended.map(holderKey)).toEqual([holderKey(person(eva))]);
   // A membership whose window does not contain this instant is not live intent, whatever its kind:
@@ -499,6 +503,7 @@ const seedIntent = (admin: PgClient.PgClient) =>
       ('${tenantA}', '${eva}', 'human'),
       ('${tenantA}', '${expiredMember}', 'human'),
       ('${tenantA}', '${futureMember}', 'human'),
+      ('${tenantA}', '${companyLeaver}', 'human'),
       ('${tenantA}', '${janaAgent}', 'agent'),
       ('${tenantA}', '${ingestService}', 'service'),
       ('${tenantB}', '${pavel}', 'human')`);
@@ -672,6 +677,20 @@ const seedMemberships = (schema: IntentLoaderSchema) =>
           validUntil: daysAfter(now, -1),
         }),
         membership({
+          holder: person(companyLeaver),
+          id: membershipLeaverTenant,
+          kind: 'member',
+          scopeId: scopeTenantA,
+          validUntil: daysAfter(now, 10),
+        }),
+        membership({
+          holder: person(companyLeaver),
+          id: membershipLeaverAkros,
+          kind: 'member',
+          scopeId: scopeAkros,
+          validUntil: daysAfter(now, -1),
+        }),
+        membership({
           holder: person(futureMember),
           id: membershipFutureMember,
           kind: 'member',
@@ -827,6 +846,17 @@ it.layer(NodeServices.layer)('the tenant intent loader', (suite) => {
         [holderKey(person(jana)), 2],
         [holderKey(agentHolder(janaAgent)), 1],
       ]);
+      // A live tenant membership never stands in for a company membership that has ended.
+      const leaverHolders = { holders: [person(companyLeaver)], tenantId: TenantIdSchema.make(tenantA) };
+      expect(Option.isSome(yield* loader.loadScope(schema.scopeTenant, leaverHolders))).toBe(true);
+      expect(
+        Option.isNone(
+          yield* loader.loadScope(schema.scopeAkros, {
+            ...leaverHolders,
+            legalEntityId: LegalEntityIdSchema.make(legalEntityAkros),
+          }),
+        ),
+      ).toBe(true);
       // A legal entity without a scope is a refusal of the actor, not a retryable read.
       expect(
         Option.isNone(

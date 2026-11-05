@@ -544,27 +544,37 @@ const principalHolders = (
   );
 
 /**
- * Whether one holder has live membership on this scope's path without a live suspension anywhere on
- * that path. A tenant membership cannot override a company suspension (or vice versa): the graph
+ * Whether one holder has a live membership in every scope on this scope's path, without a live
+ * suspension anywhere on it. A tenant membership cannot stand in for a company's, nor override a
+ * company suspension (or vice versa), except that a tenant owner needs no company membership: the graph
  * subtracts suspension, and structural decisions must enforce the same refusal before bypassing graph
  * checks. Revoked, future and ended rows provide neither membership nor a live suspension.
  */
 const isLiveMember = (
   memberships: readonly AccessMembership[],
-  scopeIds: readonly string[],
+  path: { readonly scopeId: string; readonly tenantScopeId: string | undefined },
   holder: Holder,
   at: Date,
 ): boolean => {
-  const scopes = new Set(scopeIds);
   const holderOfInterest = holderKey(holder);
-  const onPath = memberships.filter(
-    (membership) =>
-      scopes.has(membership.scopeId) && liveAt(membership, at) && holderKey(membership.holder) === holderOfInterest,
+  const rowsIn = (scopeId: string) =>
+    memberships.filter(
+      (membership) =>
+        membership.scopeId === scopeId && liveAt(membership, at) && holderKey(membership.holder) === holderOfInterest,
+    );
+  const clearIn = (scopeId: string) => !rowsIn(scopeId).some((membership) => membership.status === 'suspended');
+  const memberIn = (scopeId: string) =>
+    rowsIn(scopeId).some((membership) => membership.kind === 'member' && membership.status === 'active');
+  const { scopeId, tenantScopeId } = path;
+  if (tenantScopeId === undefined || scopeId === tenantScopeId) {
+    return clearIn(scopeId) && memberIn(scopeId);
+  }
+  // A tenant owner administers every company without joining it (`tenant->administer`), so the
+  // company's own membership is waived for them; its suspension is not, and neither is the tenant's.
+  const owner = rowsIn(tenantScopeId).some(
+    (membership) => membership.kind === 'owner' && membership.status === 'active',
   );
-  return (
-    !onPath.some((membership) => membership.status === 'suspended') &&
-    onPath.some((membership) => membership.kind === 'member' && membership.status === 'active')
-  );
+  return clearIn(tenantScopeId) && memberIn(tenantScopeId) && clearIn(scopeId) && (memberIn(scopeId) || owner);
 };
 
 const readScopeRows = (transaction: CoreTransaction, tenantId: string) =>
@@ -787,11 +797,11 @@ const makeIntentLoaderOver = (transactions: AccessTransactions): TenantIntentLoa
     const tenantScopeId = tenantScopeIdOf(scopeRows);
     // Membership is intent, not projection: a holder with no live membership on this scope's path is
     // refused here, so a graph that still carries a revoked member's tuple grants nothing (R5a-1). The
-    // path is the company's own scope together with the tenant context's, exactly the two memberships a
-    // legal-entity decision rests on (D6, M2), so an agent whose membership is the tenant's is not read
-    // as a member of a company it never joined.
-    const memberScopeIds = [row.scopeId, ...(tenantScopeId === undefined ? [] : [tenantScopeId])];
-    const nonMember = query.holders.find((holder) => !isLiveMember(memberships, memberScopeIds, holder, at));
+    // path is the tenant context's membership and, for a company, the company's too: both memberships a
+    // legal-entity decision rests on (D6, M2), so a member of the tenant is never read as a member of a
+    // company it never joined or has left.
+    const path = { scopeId: row.scopeId, tenantScopeId };
+    const nonMember = query.holders.find((holder) => !isLiveMember(memberships, path, holder, at));
     if (nonMember !== undefined) {
       return Option.none<ResolvedAccessScope>();
     }
