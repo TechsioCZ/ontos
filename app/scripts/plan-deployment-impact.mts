@@ -1327,6 +1327,8 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',
   'scripts/generate-outbox-worker-deployment.mjs',
+  'scripts/ops/database-identity-secrets.mts',
+  'scripts/topology-development-ports.mjs',
   'scripts/materialize-outbox-worker.mjs',
   'scripts/materialize-zerops-environment.mts',
   'scripts/materialize-ontos-zerops-runtime.mjs',
@@ -1521,8 +1523,13 @@ const expandHostedWorkerBuildImpact = (
   impacted: Set<string>,
   mode: OutboxWorkerMode,
   reconcileWorkers: boolean,
+  hasReviewedWorkers: boolean,
 ): void => {
-  if (mode === 'host' && (reconcileWorkers || workers.some((worker) => impacted.has(worker.ownerId)))) {
+  if (
+    hasReviewedWorkers &&
+    mode === 'host' &&
+    (reconcileWorkers || workers.some((worker) => impacted.has(worker.ownerId)))
+  ) {
     for (const worker of workers) {
       impacted.add(worker.ownerId);
     }
@@ -1574,18 +1581,25 @@ const planWorkerPhases = (
 };
 
 /**
- * The worker services of the other Outbox Worker mode. Switching `OUTBOX_WORKER_MODE` leaves them running,
- * so they are stopped in the same run that deploys this mode's workers; one set of workers always runs.
+ * Stop the other mode and excluded own-mode executables after the existing release drain fences.
+ * Reconciliation may require only stops when reviewed membership has no workers.
  */
 const planStoppedWorkers = (
   workers: readonly { readonly stageSetup: string }[],
+  releaseWorkers: readonly { readonly stageSetup: string }[],
   workerPhases: readonly DeploymentPhase[],
   mode: OutboxWorkerMode,
+  reconcileWorkers: boolean,
 ): readonly string[] => {
-  if (workerPhases.length === 0) {
+  if (workerPhases.length === 0 && !reconcileWorkers) {
     return [];
   }
-  return mode === 'dedicated' ? [OUTBOX_WORKER_HOST.stageSetup] : workers.map((worker) => worker.stageSetup);
+  const dedicated = workers.map(({ stageSetup }) => stageSetup);
+  if (mode === 'host') {
+    return releaseWorkers.length === 0 ? [...dedicated, OUTBOX_WORKER_HOST.stageSetup] : dedicated;
+  }
+  const approved = new Set(releaseWorkers.map(({ stageSetup }) => stageSetup));
+  return [OUTBOX_WORKER_HOST.stageSetup, ...dedicated.filter((setup) => !approved.has(setup))];
 };
 
 export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) =>
@@ -1673,7 +1687,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       changedPaths,
       release.intentPath,
     );
-    expandHostedWorkerBuildImpact(workers, impacted, outboxWorkerMode, reconcileWorkers);
+    expandHostedWorkerBuildImpact(workers, impacted, outboxWorkerMode, reconcileWorkers, releaseWorkers.length > 0);
     const selectedUnits = orderedUnits.filter((unit) => impacted.has(unit.id));
     const workerPhases = planWorkerPhases(releaseWorkers, impacted, outboxWorkerMode, reconcileWorkers);
     const phases: DeploymentPhase[] = [];
@@ -1689,8 +1703,15 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       ...selectedUnits.filter((unit) => unit.kind === 'shell').map(toPhase),
     );
 
+    const stoppedWorkers = planStoppedWorkers(
+      workers,
+      releaseWorkers,
+      workerPhases,
+      outboxWorkerMode,
+      reconcileWorkers,
+    );
     const plan: DeploymentImpactPlan = {
-      any: phases.length > 0,
+      any: phases.length + stoppedWorkers.length > 0,
       changedPaths,
       comparison: makeComparison(baseRevision, headRevision, fullDeploy),
       phases,
@@ -1715,7 +1736,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
           .map((phase) => phase.id),
         shell: impacted.has(shell.id),
         spicedb,
-        stoppedWorkers: planStoppedWorkers(workers, workerPhases, outboxWorkerMode),
+        stoppedWorkers,
         workers: phases.filter((phase) => phase.kind === 'worker').map((phase) => phase.id),
       },
     };

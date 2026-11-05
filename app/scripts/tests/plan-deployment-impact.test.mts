@@ -31,6 +31,7 @@ import type { StageDeploymentSource } from '../resolve-stage-deployment-base.mts
 const CONTACTS_SCHEMA_SOURCE = 'verticals/contacts/drizzle/0003_add_customer.sql';
 const CONTACTS_WORKER_SOURCE = 'verticals/contacts/src/workers/project-contact.worker.ts';
 const CONTACTS_WORKER_SETUP = 'contacts-worker';
+const INVENTORY_WORKER_SETUP = 'inventory-worker';
 const SHELL_FRAME_SOURCE = 'apps/shell-super-app/src/routes/shell-frame.tsx';
 const OUTBOX_WORKER_HOST_SETUP = 'outbox-worker-host';
 
@@ -533,12 +534,14 @@ for (const outboxWorkerMode of ['dedicated', 'host'] as const) {
           const full = yield* planDeploymentImpact({ outboxWorkerMode, rootDirectory: root }).pipe(
             Effect.provide(provider),
           );
-          const expectedWorkers = outboxWorkerMode === 'host' ? [OUTBOX_WORKER_HOST_SETUP] : ['inventory-worker'];
+          const expectedWorkers = outboxWorkerMode === 'host' ? [OUTBOX_WORKER_HOST_SETUP] : [INVENTORY_WORKER_SETUP];
           expect(full.units.workers).toEqual(expectedWorkers);
           expect(full.units.providers).not.toContain(CONTACTS_WORKER_SETUP);
           expect(full.units.providers).toContain('contacts');
           expect(full.units.stoppedWorkers).toEqual(
-            outboxWorkerMode === 'host' ? [CONTACTS_WORKER_SETUP, 'inventory-worker'] : [OUTBOX_WORKER_HOST_SETUP],
+            outboxWorkerMode === 'host'
+              ? [CONTACTS_WORKER_SETUP, INVENTORY_WORKER_SETUP]
+              : [OUTBOX_WORKER_HOST_SETUP, CONTACTS_WORKER_SETUP],
           );
           const reconciled = yield* planDeploymentImpact({
             changedPaths: [],
@@ -554,6 +557,18 @@ for (const outboxWorkerMode of ['dedicated', 'host'] as const) {
           );
           expect(empty.units.workers).toEqual([]);
           expect(empty.units.stoppedWorkers).toEqual([]);
+          const stopOnly = yield* planDeploymentImpact({
+            changedPaths: [],
+            outboxWorkerMode,
+            reconcileWorkers: true,
+            rootDirectory: root,
+          }).pipe(Effect.provide(provider));
+          expect(stopOnly.phases).toEqual([]);
+          expect(stopOnly.units.workers).toEqual([]);
+          expect(stopOnly.any).toBe(true);
+          expect(new Set(stopOnly.units.stoppedWorkers)).toEqual(
+            new Set([CONTACTS_WORKER_SETUP, INVENTORY_WORKER_SETUP, OUTBOX_WORKER_HOST_SETUP]),
+          );
           yield* writeJson(root, intentFile, { modules: [{ appId: 'unknown-owner' }] });
           const rejected = yield* planningFailure(
             planDeploymentImpact({ outboxWorkerMode, rootDirectory: root }).pipe(Effect.provide(provider)),

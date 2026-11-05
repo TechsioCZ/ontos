@@ -1401,9 +1401,11 @@ jobs:
       shell: ${{ steps.units.outputs.shell }}
       spicedb: ${{ steps.impact.outputs.spicedb }}
       stopped-workers: ${{ steps.impact.outputs.stopped_workers }}
+      worker-drift: ${{ steps.worker-drift.outputs.drift }}
       fresh-units: ${{ steps.selection.outputs.fresh }}
       plan: ${{ steps.impact.outputs.plan }}
     env:
+      COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
       DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
       DEPLOY_TARGET: ${{ needs.deploy-target.outputs.target }}
       # `host` runs every Outbox Worker in the one outbox-worker-host service instead of each owner's
@@ -2742,8 +2744,9 @@ jobs:
     name: Plan the edge units to deploy
     if: >-
       ${{ !cancelled() && needs.deploy-target.outputs.target == 'cloudflare'
-      && needs.edge-deploy-readiness.outputs.configured == 'true' && needs.capture-application-baseline.result == 'success' }}
-    needs: [deploy-target, edge-deploy-readiness, capture-application-baseline]
+      && needs.edge-deploy-readiness.outputs.configured == 'true' && needs.capture-application-baseline.result == 'success'
+      && needs.deploy-plan.result == 'success' }}
+    needs: [deploy-target, edge-deploy-readiness, capture-application-baseline, deploy-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -2815,6 +2818,7 @@ jobs:
           COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
           FULL_PLAN: ${{ inputs.full }}
           OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
+          WORKER_DRIFT: ${{ needs.deploy-plan.outputs.worker-drift }}
         run: |
           base_arguments=()
           if [[ -n "$BASE_SHA" ]]; then
@@ -2822,6 +2826,9 @@ jobs:
           fi
           if [[ "$FULL_PLAN" != 'true' ]]; then
             base_arguments+=(--base "$BASE_SHA")
+          fi
+          if [[ "$WORKER_DRIFT" == 'true' ]]; then
+            base_arguments+=(--reconcile-workers)
           fi
           mise exec -- pnpm deployment-impact:plan \
             --authorization-environment stage \

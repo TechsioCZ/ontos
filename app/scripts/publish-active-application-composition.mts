@@ -105,6 +105,7 @@ import type {
 } from './active-application-composition.mts';
 import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, dedicatedOutboxWorkerSetup } from './outbox-worker-delivery.mjs';
 import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
+import { readOutboxWorkerReleaseMembership } from './generate-outbox-worker-deployment.mjs';
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from './zerops-public-api.mts';
 
@@ -1483,25 +1484,37 @@ export const otherModeWorkerSetups = (
   mode: OutboxWorkerMode,
 ) => definedWorkerSetups(zeropsYamlText, otherModeWorkerSetupNames(topology, mode));
 
-/** The Outbox Worker mode's own setups this revision defines. */
+/** Only reviewed owners' defined workers are required to run in the selected mode. */
 export const modeWorkerSetups = (
   zeropsYamlText: string,
   topology: { readonly verticals: readonly { readonly id: string }[] },
   mode: OutboxWorkerMode,
-) => definedWorkerSetups(zeropsYamlText, otherModeWorkerSetupNames(topology, otherOutboxWorkerMode(mode)));
+  moduleAppIds: readonly string[],
+) =>
+  Effect.gen(function* reviewedModeWorkerSetups() {
+    const members = new Set(moduleAppIds);
+    const reviewedTopology = { verticals: topology.verticals.filter(({ id }) => members.has(id)) };
+    const dedicated = yield* definedWorkerSetups(zeropsYamlText, otherModeWorkerSetupNames(reviewedTopology, 'host'));
+    if (mode === 'dedicated' || dedicated.length === 0) {
+      return dedicated;
+    }
+    return yield* definedWorkerSetups(zeropsYamlText, new Set([OUTBOX_WORKER_HOST.stageSetup]));
+  });
 
 /**
  * Whether the Outbox Workers still reflect another Outbox Worker mode. An `OUTBOX_WORKER_MODE` switch changes
  * no source, so the plan cannot see it. The switch shows as the other mode's workers still running, or as
  * one of this mode's workers not running (never deployed, deleted, or stopped by an earlier switch). Either way the
- * plan reconciles the workers of both modes. The deploy target plays no part: both run the workers on Zerops.
+ * plan reconciles the workers of both modes. Running own-mode workers outside reviewed membership also
+ * require reconciliation and a fenced stop. The deploy target plays no part: both run the workers on Zerops.
  */
 const workerModeDriftCommand = Command.make('worker-mode-drift', {}, () =>
   Effect.gen(function* workerModeDrift() {
     const mode = yield* readOutboxWorkerMode;
-    const [zeropsYaml, topology] = yield* Effect.all([readZeropsYaml, readTopology], {
-      concurrency: 2,
-    });
+    const [zeropsYaml, topology, release] = yield* Effect.all(
+      [readZeropsYaml, readTopology, readOutboxWorkerReleaseMembership(yield* workspaceFile())],
+      { concurrency: 3 },
+    );
     const api = yield* ZeropsPublicApi;
     const isRunning = Effect.fnUntraced(function* isRunning(setup: string) {
       const serviceId = yield* provisionedStageServiceId(setup);
@@ -1510,10 +1523,19 @@ const workerModeDriftCommand = Command.make('worker-mode-drift', {}, () =>
       }
       return Option.exists(yield* api.findServiceStack(serviceId), ({ status }) => status === 'ACTIVE');
     });
-    const [otherMode, ownMode] = yield* Effect.all([
+    const [otherMode, ownMode, ownInventory] = yield* Effect.all([
       otherModeWorkerSetups(zeropsYaml, topology, mode),
-      modeWorkerSetups(zeropsYaml, topology, mode),
+      modeWorkerSetups(zeropsYaml, topology, mode, release.moduleAppIds),
+      otherModeWorkerSetups(zeropsYaml, topology, otherOutboxWorkerMode(mode)),
     ]);
+    const expected = new Set(ownMode);
+    const excludedRunning = yield* Effect.filter(
+      ownInventory.filter((setup) => !expected.has(setup)),
+      isRunning,
+      {
+        concurrency: 4,
+      },
+    );
     const running = yield* Effect.filter(otherMode, isRunning, { concurrency: 4 });
     const notRunning = yield* Effect.filter(ownMode, (setup) => Effect.map(isRunning(setup), (up) => !up), {
       concurrency: 4,
@@ -1524,7 +1546,10 @@ const workerModeDriftCommand = Command.make('worker-mode-drift', {}, () =>
     if (notRunning.length > 0) {
       yield* Effect.logInfo(`Outbox Workers of the ${mode} mode do not run: ${notRunning.join(', ')}`);
     }
-    const drift = running.length > 0 || notRunning.length > 0;
+    if (excludedRunning.length > 0) {
+      yield* Effect.logInfo(`Outbox Workers outside reviewed membership still run: ${excludedRunning.join(', ')}`);
+    }
+    const drift = running.length > 0 || notRunning.length > 0 || excludedRunning.length > 0;
     if (!drift) {
       yield* Effect.logInfo(`Only the ${mode} Outbox Worker mode's workers run`);
     }

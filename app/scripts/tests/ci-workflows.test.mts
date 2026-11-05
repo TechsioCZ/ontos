@@ -12,6 +12,7 @@ import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts
 import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 
 const BASELINE_CAPTURE_JOB = 'capture-application-baseline';
+const DEPLOY_PLAN_JOB = 'deploy-plan';
 const CF_TOKEN_SOURCE = 'secrets.CLOUDFLARE_API_TOKEN';
 const COMPOSITION_URL_SOURCE = 'vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL';
 const SHELL_APP_ID = 'shell-super-app';
@@ -74,6 +75,12 @@ it('reports the required Workspace gates check on every pull request and merge g
 
 /** A GitHub Actions `${{ … }}` expression, written without JavaScript template placeholders. */
 const expression = (body: string) => `\${{ ${body} }}`;
+const REVIEWED_RELEASE_INTENT_EXPRESSION = expression(
+  "vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json'",
+);
+const STAGE_REFRESH_ENVIRONMENT_EXPRESSION = expression(
+  "needs.stage-target.outputs.target == 'cloudflare' && 'stage-edge' || 'stage'",
+);
 
 const WorkflowStepSchema = Schema.Struct({
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -316,7 +323,7 @@ it('deploys retained edge releases after migrations under the shared environment
   const edge = jobs['deploy-cloudflare'];
   expect(jobs['deploy-zerops'].environment).toBe(DEPLOY_ENVIRONMENT_OUTPUT);
   expect(edge.environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
-  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB, EDGE_READINESS_JOB, BASELINE_CAPTURE_JOB]);
+  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB, EDGE_READINESS_JOB, BASELINE_CAPTURE_JOB, DEPLOY_PLAN_JOB]);
   expect(plan.if).toContain("needs.edge-deploy-readiness.outputs.configured == 'true'");
   expect(plan.if).toContain("needs.capture-application-baseline.result == 'success'");
   expect(plan.environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
@@ -414,7 +421,6 @@ it('bounds edge release publication and never automatically rolls back or delete
   expect(fetchBase?.run).toContain('fetch --no-tags --depth=1 origin "$BASE_SHA"');
 });
 
-const DEPLOY_PLAN_JOB = 'deploy-plan';
 const COMPOSITION_CANDIDATE_ARTIFACT = 'prepared-application-release';
 const INITIAL_CUTOVER_RECEIPT_ARTIFACT = 'initial-composition-cutover-receipt';
 const DATABASE_MIGRATION_STEP = 'Run the exact migration prerequisite closure and verifiers';
@@ -1079,6 +1085,7 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
     shell: expression('steps.units.outputs.shell'),
     spicedb: expression('steps.impact.outputs.spicedb'),
     'stopped-workers': expression('steps.impact.outputs.stopped_workers'),
+    'worker-drift': expression('steps.worker-drift.outputs.drift'),
   });
   const select = byName.get('Select the Zerops units of the deploy target');
   const impact = {
@@ -1449,8 +1456,11 @@ it('selects protected edge credentials while preserving the logical stage, produ
   }
   expect(jobs[EDGE_PUBLISH_JOB].environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
   expect(jobs[EDGE_PUBLISH_JOB].concurrency.group).toBe(EDGE_PUBLICATION_LOCK);
-  expect(refresh['refresh-stage'].environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
-  expect(refresh['refresh-stage'].env.DEPLOY_TARGET).toBe('cloudflare');
+  expect(refresh['refresh-stage'].environment).toEqual({
+    deployment: false,
+    name: STAGE_REFRESH_ENVIRONMENT_EXPRESSION,
+  });
+  expect(refresh['refresh-stage'].env.DEPLOY_TARGET).toBe(expression('needs.stage-target.outputs.target'));
   expect(refresh['refresh-stage'].env.OUTBOX_WORKER_MODE).toBe(expression('vars.OUTBOX_WORKER_MODE'));
   expect(refresh['refresh-stage'].concurrency.group).toBe(EDGE_PUBLICATION_LOCK);
   expect(refresh['refresh-production'].environment).toEqual({ deployment: false, name: 'production' });
@@ -1461,6 +1471,33 @@ it('selects protected edge credentials while preserving the logical stage, produ
     expect(job.env.CLOUDFLARE_API_TOKEN).toBe(CLOUDFLARE_TOKEN_EXPRESSION);
     expect(job.steps.map((step) => step.run ?? '').join('\n')).not.toContain('configure-source');
   }
+});
+
+it('refreshes stage with the same configured target as deployment and defaults to Zerops', () => {
+  const schema = Schema.Struct({
+    jobs: Schema.Struct({
+      'refresh-stage': Schema.Struct({ needs: Schema.Array(Schema.String) }),
+      'stage-target': Schema.Struct({
+        environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
+        steps: Schema.Array(WorkflowStepSchema),
+      }),
+    }),
+  });
+  const { jobs } = Schema.decodeUnknownSync(schema)(
+    parse(readFileSync(new URL(`../../../.github/workflows/${REFRESH_WORKFLOW}`, import.meta.url), 'utf-8')),
+  );
+  expect(jobs['stage-target'].environment).toEqual({ deployment: false, name: 'stage' });
+  expect(jobs['refresh-stage'].needs).toContain('stage-target');
+  const step = jobs['stage-target'].steps.find(({ id }) => id === 'target');
+  expect(step?.env?.DEPLOY_TARGET).toBe(expression('vars.DEPLOY_TARGET'));
+  for (const [configured, target] of [
+    ['', 'zerops'],
+    ['zerops', 'zerops'],
+    ['cloudflare', 'cloudflare'],
+  ]) {
+    expect(runStep(step?.run ?? 'exit 1', { DEPLOY_TARGET: configured ?? '' })).toEqual({ target });
+  }
+  expect(runStep(step?.run ?? 'exit 1', { DEPLOY_TARGET: 'invalid' })).toBe('failed');
 });
 
 it('archives successful native retirement before configuring the protected source once with environment-only credentials', () => {
@@ -1515,7 +1552,7 @@ it('renews the approved release through the same authority and publication lock 
     expect(refresh.concurrency).toEqual({ 'cancel-in-progress': false, group: `zerops-${environment}` });
     expect(refresh.environment).toEqual({
       deployment: false,
-      name: environment === 'stage' ? EDGE_ENVIRONMENT : environment,
+      name: environment === 'stage' ? STAGE_REFRESH_ENVIRONMENT_EXPRESSION : environment,
     });
     for (const binding of [
       'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
@@ -1999,9 +2036,7 @@ it('passes the reviewed release intent into the remote Zerops worker host build'
     }),
   });
   const job = Schema.decodeUnknownSync(schema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs['deploy-zerops'];
-  expect(job.env.COMPOSITION_INTENT_FILE).toBe(
-    expression("vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json'"),
-  );
+  expect(job.env.COMPOSITION_INTENT_FILE).toBe(REVIEWED_RELEASE_INTENT_EXPRESSION);
   const materialize = job.steps.find(({ run }) => run?.includes('materialize_arguments=') === true);
   expect(materialize?.run).toContain('export COMPOSITION_INTENT_FILE');
   expect(materialize?.run).toContain(
@@ -2013,11 +2048,44 @@ it('uses the selected release intent when either deployment planner detects host
   const job = Schema.Struct({ steps: Schema.Array(WorkflowStepSchema) });
   const schema = Schema.Struct({ jobs: Schema.Struct({ 'deploy-plan': job, 'edge-plan': job }) });
   const { jobs } = Schema.decodeUnknownSync(schema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-  for (const planner of [jobs['deploy-plan'], jobs['edge-plan']]) {
+  for (const planner of [jobs[DEPLOY_PLAN_JOB], jobs[EDGE_PLAN_JOB]]) {
     const step = planner.steps.find(({ id }) => id === 'impact');
-    expect(step?.env?.COMPOSITION_INTENT_FILE).toBe(
-      expression("vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json'"),
-    );
+    expect(step?.env?.COMPOSITION_INTENT_FILE).toBe(REVIEWED_RELEASE_INTENT_EXPRESSION);
+  }
+});
+
+it('reconciles the same worker-mode drift in both deployment planners before selecting releases', () => {
+  const schema = Schema.Struct({
+    jobs: Schema.Struct({
+      'deploy-plan': Schema.Struct({ outputs: Schema.Record(Schema.String, Schema.String) }),
+      'edge-plan': Schema.Struct({
+        if: Schema.String,
+        needs: Schema.Array(Schema.String),
+        steps: Schema.Array(WorkflowStepSchema),
+      }),
+    }),
+  });
+  const { jobs } = Schema.decodeUnknownSync(schema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  expect(jobs[DEPLOY_PLAN_JOB].outputs['worker-drift']).toBe(expression('steps.worker-drift.outputs.drift'));
+  const edge = jobs['edge-plan'];
+  expect(edge.needs).toContain(DEPLOY_PLAN_JOB);
+  expect(edge.if).toContain("needs.deploy-plan.result == 'success'");
+  const impact = edge.steps.find(({ id }) => id === 'impact');
+  expect(impact?.env?.WORKER_DRIFT).toBe(expression('needs.deploy-plan.outputs.worker-drift'));
+  expect(impact?.run).toContain('if [[ "$WORKER_DRIFT" == \'true\' ]]; then');
+  expect(impact?.run).toContain('base_arguments+=(--reconcile-workers)');
+});
+
+it('uses the reviewed membership for worker drift checks during deployment and refresh', () => {
+  const job = Schema.Struct({ env: Schema.Record(Schema.String, Schema.String) });
+  const deploy = Schema.decodeUnknownSync(Schema.Struct({ jobs: Schema.Struct({ 'deploy-plan': job }) }))(
+    parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
+  ).jobs[DEPLOY_PLAN_JOB];
+  const refresh = Schema.decodeUnknownSync(
+    Schema.Struct({ jobs: Schema.Struct({ 'refresh-production': job, 'refresh-stage': job }) }),
+  )(parse(readFileSync(new URL(`../../../.github/workflows/${REFRESH_WORKFLOW}`, import.meta.url), 'utf-8')));
+  for (const step of [deploy, refresh.jobs['refresh-production'], refresh.jobs['refresh-stage']]) {
+    expect(step.env.COMPOSITION_INTENT_FILE).toBe(REVIEWED_RELEASE_INTENT_EXPRESSION);
   }
 });
 

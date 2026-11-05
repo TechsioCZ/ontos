@@ -63,9 +63,36 @@ jobs:
           echo "stage=$stage" >>"$GITHUB_OUTPUT"
           echo "production=$production" >>"$GITHUB_OUTPUT"
 
+  stage-target:
+    name: Read the configured stage deployment target
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment:
+      name: stage
+      deployment: false
+    outputs:
+      target: ${{ steps.target.outputs.target }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Select the stage deployment target
+        id: target
+        env:
+          DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
+        run: |
+          target="${DEPLOY_TARGET:-zerops}"
+          case "$target" in
+            zerops|cloudflare) ;;
+            *) echo "::error::DEPLOY_TARGET must be zerops or cloudflare"; exit 1 ;;
+          esac
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+
   refresh-stage:
     name: Re-observe and re-publish the stage Application Composition
-    needs: [deploy-guard]
+    needs: [deploy-guard, stage-target]
     if: needs.deploy-guard.outputs.stage-deploy-active == 'false'
     runs-on: ubuntu-latest
     # A refresh takes about two minutes and holds the stage deploy lock, so a stuck one must not hold it long.
@@ -73,7 +100,7 @@ jobs:
     # Refreshing is not a deployment: without deployment: false the job would record a successful stage
     # deployment for the schedule's main SHA, which the stage deploy would then treat as its diff base.
     environment:
-      name: stage-edge
+      name: ${{ needs.stage-target.outputs.target == 'cloudflare' && 'stage-edge' || 'stage' }}
       deployment: false
     concurrency:
       group: zerops-stage
@@ -84,7 +111,8 @@ jobs:
     env:
       # The publisher observes Zerops subdomains or, on the Cloudflare target, the Worker URLs, and
       # renews the complete approved release without restarting any process.
-      DEPLOY_TARGET: cloudflare
+      DEPLOY_TARGET: ${{ needs.stage-target.outputs.target }}
+      COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
       OUTBOX_WORKER_MODE: ${{ vars.OUTBOX_WORKER_MODE }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
@@ -193,6 +221,7 @@ jobs:
       deployments: read
     env:
       DEPLOY_TARGET: zerops
+      COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
       # Production chooses its Outbox Worker mode like any environment; it runs `dedicated`.
       OUTBOX_WORKER_MODE: ${{ vars.OUTBOX_WORKER_MODE }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
