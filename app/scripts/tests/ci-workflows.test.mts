@@ -1989,6 +1989,21 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
 const shardFilters = (shard: { readonly 'package-filters'?: string | undefined }) =>
   [...(shard['package-filters'] ?? '').matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter ?? '');
 
+it('runs retained-release browser recovery separately with one worker and its publication flag enabled', () => {
+  const source: unknown = parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'));
+  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs['service-integration'];
+  const normal = steps.findIndex(({ run }) => run === 'mise exec -- pnpm --filter @app/shell-super-app test:e2e');
+  const recovery = steps.findIndex(({ env }) => env?.ONTOS_E2E_RETAINED_PARTY_R2 !== undefined);
+  expect(normal).toBeGreaterThan(-1);
+  expect(recovery).toBeGreaterThan(normal);
+  expect(steps[recovery]?.if).toBe("matrix.suite == 'browser'");
+  expect(steps[recovery]?.env).toEqual({ ONTOS_E2E_RETAINED_PARTY_R2: 'true' });
+  expect(steps[recovery]?.run).toContain(
+    "tests/e2e/login.spec.ts --grep 'reloads failed Contacts into a genuinely published R2'",
+  );
+  expect(steps[recovery]?.run).toContain('--workers 1');
+});
+
 it('supplies same-run built Composition to selected native owner integration shards before their tests', () => {
   const source: unknown = parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'));
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
