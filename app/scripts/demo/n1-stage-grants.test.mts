@@ -236,53 +236,55 @@ it.effect(
     }),
 );
 
-it.effect('the administrator has company administration and Core reach; the catalogue manager has neither', () =>
-  Effect.gen(function* humanGrants() {
-    const plan = yield* planFixture();
-    const grants = plan.relationships;
-    const administrator = principal('1');
-    const catalogue = principal('2');
-    const membership = (principalId: string, roleId: string) =>
-      grants.some(
-        (row) =>
-          row.resource?.objectType === 'scoped_role' &&
-          row.resource.objectId === roleId &&
-          row.relation === 'member' &&
-          row.subject?.object?.objectId === principalId,
-      );
-    const companyAdmin = toScopedRoleObjectId({
-      legalEntityId: N1_LEGAL_ENTITY_ID,
-      roleKey: 'admin',
-      tenantId: N1_TENANT_ID,
-    });
-    const tenantSuperadmin = toScopedRoleObjectId({ roleKey: 'superadmin', tenantId: N1_TENANT_ID });
-    expect(membership(administrator, companyAdmin)).toBe(true);
-    expect(membership(administrator, tenantSuperadmin)).toBe(false);
-    expect(membership(catalogue, companyAdmin)).toBe(false);
-    expect(membership(catalogue, tenantSuperadmin)).toBe(false);
-    expect(grants.some((row) => row.resource?.objectType === 'tenant' && row.relation === 'superadmin')).toBe(false);
-    // Core modules (people administration, roles) reach the company only through this edge.
-    const legal = toLegalEntityAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID);
-    for (const moduleId of new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey))) {
+it.effect(
+  'the administrator has company administration, tenant superadmin and Core reach; the catalogue manager has none of them',
+  () =>
+    Effect.gen(function* humanGrants() {
+      const plan = yield* planFixture();
+      const grants = plan.relationships;
+      const administrator = principal('1');
+      const catalogue = principal('2');
+      const membership = (principalId: string, roleId: string) =>
+        grants.some(
+          (row) =>
+            row.resource?.objectType === 'scoped_role' &&
+            row.resource.objectId === roleId &&
+            row.relation === 'member' &&
+            row.subject?.object?.objectId === principalId,
+        );
+      const companyAdmin = toScopedRoleObjectId({
+        legalEntityId: N1_LEGAL_ENTITY_ID,
+        roleKey: 'admin',
+        tenantId: N1_TENANT_ID,
+      });
+      const tenantSuperadmin = toScopedRoleObjectId({ roleKey: 'superadmin', tenantId: N1_TENANT_ID });
+      expect(membership(administrator, companyAdmin)).toBe(true);
+      expect(membership(administrator, tenantSuperadmin)).toBe(true);
+      expect(membership(catalogue, companyAdmin)).toBe(false);
+      expect(membership(catalogue, tenantSuperadmin)).toBe(false);
+      expect(grants.some((row) => row.resource?.objectType === 'tenant' && row.relation === 'superadmin')).toBe(true);
+      // Core modules (people administration, roles) reach the company only through this edge.
+      const legal = toLegalEntityAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID);
+      for (const moduleId of new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey))) {
+        expect(
+          grants.some(
+            (row) =>
+              row.resource?.objectType === 'module_access' &&
+              row.resource.objectId === toModuleAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, moduleId) &&
+              row.relation === 'legal_entity' &&
+              row.subject?.object?.objectId === legal,
+          ),
+        ).toBe(true);
+      }
       expect(
         grants.some(
           (row) =>
             row.resource?.objectType === 'module_access' &&
-            row.resource.objectId === toModuleAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, moduleId) &&
-            row.relation === 'legal_entity' &&
-            row.subject?.object?.objectId === legal,
+            row.resource.objectId === toModuleAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, 'core.identity') &&
+            row.subject?.object?.objectId === catalogue,
         ),
-      ).toBe(true);
-    }
-    expect(
-      grants.some(
-        (row) =>
-          row.resource?.objectType === 'module_access' &&
-          row.resource.objectId === toModuleAccessObjectId(N1_TENANT_ID, N1_LEGAL_ENTITY_ID, 'core.identity') &&
-          row.subject?.object?.objectId === catalogue,
-      ),
-    ).toBe(false);
-  }),
+      ).toBe(false);
+    }),
 );
 
 const serviceRole = (roleKey: string) =>

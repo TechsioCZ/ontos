@@ -331,6 +331,7 @@ const catalogueRole: DemoRole = {
   modules: { [markets]: 'write', [merchandise]: 'write' },
 };
 const administratorEmail = 'admin@n1.ontos.demo';
+const tenantSuperadminRoleObject = toScopedRoleObjectId({ roleKey: 'superadmin', tenantId: N1_TENANT_ID });
 const companyRoleObject = (roleKey: string) =>
   toScopedRoleObjectId({ legalEntityId: N1_LEGAL_ENTITY_ID, roleKey, tenantId: N1_TENANT_ID });
 const storefrontRole: DemoRole = {
@@ -423,6 +424,16 @@ export const n1GrantRelationships = (access: N1Access, actions: readonly DemoAct
               'admin',
             ),
             roleRelationship('legal_entity', companyObject().objectId, 'admin', companyRoleObject('admin')),
+            // Product rule: a company administrator gets everything in their own company, so the N1 administrator is
+            // tenant superadmin too. The catalogue manager never is.
+            {
+              relation: 'member',
+              resourceId: tenantSuperadminRoleObject,
+              resourceType: 'scoped_role',
+              subjectId: principalId,
+              subjectType: 'principal',
+            },
+            roleRelationship('tenant', N1_TENANT_ID, 'superadmin', tenantSuperadminRoleObject),
             // Core modules (people, roles) reach the company only through this edge; see companyCoreModuleStructure.
             ...companyCoreModuleStructure(N1_TENANT_ID, N1_LEGAL_ENTITY_ID),
             ...managed.flatMap((action) =>
@@ -570,7 +581,7 @@ export const n1PermissionChecks = (access: N1Access, actions: readonly DemoActio
     // Company administration and Core people/role reach: administrator only. Catalogue manager: no staff rights.
     add(principalId, true, tenant, 'access', 'N1 tenant access');
     for (const permission of ['manage_identity', 'select_context']) {
-      add(principalId, false, tenant, permission, `no tenant ${permission}`);
+      add(principalId, administrator, tenant, permission, `tenant ${permission} administrator=${administrator}`);
     }
     add(principalId, true, companyObject(), 'access', 'N1 company access');
     add(
@@ -792,15 +803,8 @@ export const revokeRetiredN1Relationships = (
       { concurrency: 4 },
     );
     const updates = [
-      // The tenant superadmin role is retired for N1: its tenant relation goes with the memberships revoked above.
-      asNative(
-        roleRelationship(
-          'tenant',
-          N1_TENANT_ID,
-          'superadmin',
-          toScopedRoleObjectId({ roleKey: 'superadmin', tenantId: N1_TENANT_ID }),
-        ),
-      ),
+      // Tenant superadmin is desired for the administrator only; any other tenant superadmin relation is stale.
+      asNative(roleRelationship('tenant', N1_TENANT_ID, 'superadmin', tenantSuperadminRoleObject)),
       ...live.flat().flatMap(({ relationship }) => (relationship === undefined ? [] : [relationship])),
     ]
       .filter((relationship) => !desired.has(relationshipIdentity(relationship)))
