@@ -4,7 +4,7 @@ import { AccessChangeItemIdSchema } from '../ids.ts';
 import type { CapabilityKey, PrincipalId, RoleId } from '../ids.ts';
 import type { AccessChangeItem, AccessRisk, Assignment, CatalogSnapshotEntry, Cell, Holder, Role } from '../model.ts';
 import { ACCESS_MODEL_PARSE_OPTIONS, AccessChangeDecisionSchema, AccessChangeItemSchema } from '../model.ts';
-import type { AccessConfigureBasis, GrantedCell } from './authority.ts';
+import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
 import { configureAuthorityIssue, deciderIssue, liveDelegation } from './authority.ts';
 import { compareText, higherRisk } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
@@ -55,6 +55,8 @@ export interface AdoptionRequest {
   readonly entries: readonly CatalogSnapshotEntry[];
   /** The tenant's change items as currently recorded; a selection must resolve to one of them. */
   readonly items: readonly AccessChangeItem[];
+  /** The tenant's live members and suspensions, so a grantor whose membership ended counts for nothing. */
+  readonly membership: GrantorMembership;
   /** The effect label a person confirmed, per sensitive or critical item. */
   readonly namedEffects: ReadonlyMap<string, string>;
   /** Successor revision identity per role that changes; Core mints these ids. */
@@ -458,7 +460,11 @@ export const planAdoption = (request: AdoptionRequest): Result.Result<AdoptionPl
     authority: request.authority,
     capabilityKeys: resolved.map(({ item }) => item.capabilityKey),
     grantedCells: grantedCells(resolved),
-    grantorIntent: { assignments: request.assignments, revisions: request.roles.map(({ revision }) => revision) },
+    grantorIntent: {
+      assignments: request.assignments,
+      membership: request.membership,
+      revisions: request.roles.map(({ revision }) => revision),
+    },
     roles: targetedRoles(request, resolved),
     tenantId: request.tenantId,
   });

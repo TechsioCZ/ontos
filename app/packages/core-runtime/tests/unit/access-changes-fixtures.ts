@@ -244,6 +244,13 @@ export const assignment = (
  * every given capability in every mode, on every record and uncapped, so a test that is not about the
  * grantor's bound never trips it.
  */
+/** The tenant's live members as the projection reads them: by default only `PERSON`, the grantor. */
+export const tenantMembership = (members: readonly string[] = [PERSON]) => ({
+  legalEntities: [],
+  members: members.map((principalId) => ({ holder: principalHolder(principalId) })),
+  suspended: [],
+});
+
 export const grantorHolding = (capabilityKeys: readonly string[], cells?: readonly Cell[]) => {
   const held = roleState({
     cells:

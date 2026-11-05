@@ -38,6 +38,7 @@ import {
   selection,
   succeeded,
   TENANT,
+  tenantMembership,
 } from './access-changes-fixtures.ts';
 
 const NOTE = 'test.party.add-note';
@@ -70,6 +71,7 @@ interface RequestInput {
   /** The cells the delegation's grantor holds; by default every entry in every mode, uncapped. */
   readonly grantorCells?: readonly Cell[];
   readonly items?: readonly AccessChangeItem[];
+  readonly membership?: ReturnType<typeof tenantMembership>;
   readonly namedEffects?: ReadonlyMap<string, string>;
   readonly newRevisionIds?: ReadonlyMap<string, string>;
   readonly preview?: AdoptionPreview;
@@ -98,6 +100,7 @@ const adoptionRequest = (input: RequestInput): AdoptionRequest => {
     decisionIds: decisionIds ?? new Map(selections.map(({ itemId }, index) => [itemId, fixedId(80 + index)] as const)),
     entries: input.entries ?? entries,
     items: input.items ?? [note, noteTwo, voidItem, payItem],
+    membership: input.membership ?? tenantMembership(),
     namedEffects: input.namedEffects ?? new Map<string, string>(),
     newRevisionIds: input.newRevisionIds ?? new Map([[ROLE, fixedId(41)]]),
     preview: input.preview ?? fresh,
@@ -321,6 +324,18 @@ it('bounds a delegated adoption by what the grantor holds now, mode by mode', ()
   // ... one who only proposes them, or reaches only their own assigned records, does not.
   expect(failureOf(adoptWith([cell(NOTE, 'propose')])).code).toBe('access_changes_delegation_out_of_envelope');
   expect(failureOf(adoptWith([cell(NOTE, 'run', 'assigned')])).code).toBe('access_changes_delegation_out_of_envelope');
+  // A grantor whose membership ended holds nothing a delegate may hand on, whatever their roles say.
+  const formerMember = planAdoption(
+    adoptionRequest({
+      actor: principalHolder(MANAGER),
+      assignments: [activePerson()],
+      authority: delegatedBasis(envelope),
+      grantorCells: [cell(NOTE)],
+      membership: tenantMembership([MANAGER]),
+      selections: [selection(note.id, [adoptionTarget({})])],
+    }),
+  );
+  expect(failureOf(formerMember).code).toBe('access_changes_delegation_out_of_envelope');
 });
 
 it('bounds scope administration to the context it administers', () => {
