@@ -234,11 +234,12 @@ it.effect('preserves typed gate and remote-load failures for exhaustive UI mappi
   }),
 );
 
-it.live('settles browser entrypoint success, rejection, incompatibility, and timeout independently', () =>
+it.effect('settles browser entrypoint success, rejection, incompatibility, and timeout independently', () =>
   Effect.gen(function* verifySettledLoads() {
     const scheduler = makeModuleEntrypointLoadScheduler();
     const pending = Promise.withResolvers<RemoteModule>();
-    const results = yield* scheduler
+    const loadStarted = Promise.withResolvers<null>();
+    const resultsFiber = yield* scheduler
       .settle([
         {
           contract: RemoteModuleSchema,
@@ -274,21 +275,25 @@ it.live('settles browser entrypoint success, rejection, incompatibility, and tim
           contract: RemoteModuleSchema,
           identity: 'timed-out',
           load: () =>
-            Effect.tryPromise(() => pending.promise).pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(ModuleEntrypointNamespaceSchema)),
-            ),
+            Effect.tryPromise(() => {
+              loadStarted.resolve(null);
+              return pending.promise;
+            }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(ModuleEntrypointNamespaceSchema))),
           loadIdentity: loadIdentity('standalone-timeout'),
           timeoutMs: 1,
         },
       ])
-      .pipe(Effect.ensuring(Effect.sync(() => pending.resolve({ default: remoteDefault }))));
+      .pipe(Effect.ensuring(Effect.sync(() => pending.resolve({ default: remoteDefault }))), Effect.forkChild);
+    yield* Effect.promise(() => loadStarted.promise);
+    yield* TestClock.adjust('1 millis');
+    const results = yield* Fiber.join(resultsFiber);
     expect(results).toEqual([
       { identity: 'ready', state: 'ready', value: { default: remoteDefault } },
       { identity: 'rejected', reason: 'unavailable', state: 'unavailable' },
       { identity: 'incompatible', reason: 'incompatible', state: 'unavailable' },
       { identity: 'timed-out', reason: 'timeout', state: 'unavailable' },
     ]);
-  }),
+  }).pipe(Effect.provide(TestClock.layer())),
 );
 
 it.effect('settles several browser entrypoints without one failure hiding healthy loads', () =>
