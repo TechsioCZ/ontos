@@ -1,3 +1,5 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { asc, eq, sql } from 'drizzle-orm';
 import {
   Config,
@@ -8,11 +10,13 @@ import {
   Option,
   Redacted,
   Ref,
+  Result,
   Schema,
   Scope,
   Semaphore,
   Stream,
 } from 'effect';
+import { Hex } from 'effect/encoding';
 import { ChildProcess } from 'effect/process';
 import type { PlatformError } from 'effect';
 
@@ -106,6 +110,76 @@ select json_build_object(
     where n.nspname not in ('pg_catalog','information_schema') and p.prokind in ('f','p')
   ) f)
 )::text as fingerprint`;
+
+const catalogObjectKeys = {
+  constraints: ['schema', 'table_name', 'name'],
+  functions: ['schema', 'name', 'arguments'],
+  policies: ['schemaname', 'tablename', 'policyname'],
+  relations: ['schema', 'name'],
+} as const;
+const catalogSections = ['relations', 'policies', 'constraints', 'functions'] as const;
+const catalogRow = Schema.StructWithRest(
+  Schema.Struct({
+    name: Schema.optionalKey(Schema.String),
+    policyname: Schema.optionalKey(Schema.String),
+    schema: Schema.optionalKey(Schema.String),
+    schemaname: Schema.optionalKey(Schema.String),
+  }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
+const catalogRows = Schema.OptionFromNullOr(Schema.Array(catalogRow));
+const decodeCatalogFingerprint = Schema.decodeUnknownResult(
+  Schema.fromJsonString(
+    Schema.Struct({ constraints: catalogRows, functions: catalogRows, policies: catalogRows, relations: catalogRows }),
+  ),
+);
+const encodeCatalogJson = Schema.encodeResult(Schema.fromJsonString(Schema.Json));
+const encodeCatalogValue = (value: typeof Schema.Json.Type) =>
+  Result.getOrElse(encodeCatalogJson(value), () => '<invalid catalog value>');
+const catalogHash = (value: typeof Schema.Json.Type) => Hex.encode(sha256(utf8ToBytes(encodeCatalogValue(value))));
+const indexCatalogRows = (rows: typeof catalogRows.Type, section: keyof typeof catalogObjectKeys) =>
+  new Map(
+    Option.getOrElse(rows, () => []).map((row) => [
+      encodeCatalogValue(catalogObjectKeys[section].map((key) => row[key] ?? null)),
+      row,
+    ]),
+  );
+
+const describeCatalogMismatch = (source: string, clone: string) => {
+  const original = Result.getOrElse(decodeCatalogFingerprint(source), () => null);
+  const copied = Result.getOrElse(decodeCatalogFingerprint(clone), () => null);
+  if (original === null || copied === null) {
+    return { cloneHash: catalogHash(clone), sourceHash: catalogHash(source) };
+  }
+  const sections = catalogSections.flatMap((section) => {
+    const sourceHash = catalogHash(Option.getOrNull(original[section]));
+    const cloneHash = catalogHash(Option.getOrNull(copied[section]));
+    return sourceHash === cloneHash ? [] : [{ cloneHash, section, sourceHash }];
+  });
+  const objects = sections.flatMap(({ section }) => {
+    const sourceRows = indexCatalogRows(original[section], section);
+    const cloneRows = indexCatalogRows(copied[section], section);
+    return [...new Set([...sourceRows.keys(), ...cloneRows.keys()])].flatMap((objectKey) => {
+      const before = sourceRows.get(objectKey);
+      const after = cloneRows.get(objectKey);
+      const sourceHash = before === undefined ? null : catalogHash(before);
+      const cloneHash = after === undefined ? null : catalogHash(after);
+      if (sourceHash === cloneHash) {
+        return [];
+      }
+      const fields = [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])];
+      const changedFields = fields.filter((key) => {
+        const sourceValue = before?.[key];
+        const cloneValue = after?.[key];
+        return sourceValue === undefined || cloneValue === undefined
+          ? sourceValue !== cloneValue
+          : catalogHash(sourceValue) !== catalogHash(cloneValue);
+      });
+      return [{ changedFields, cloneHash, objectKey, section, sourceHash }];
+    });
+  });
+  return { objects: objects.slice(0, 20), omittedObjectCount: Math.max(0, objects.length - 20), sections };
+};
 
 // PostgreSQL deparse is visibility-sensitive. Both catalogs are rendered by PostgreSQL itself
 // in the same transaction-local context; pretty CHECK rendering is stable across pg_dump reparse.
@@ -387,18 +461,24 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       },
       { concurrency: 2 },
     );
-    const assertClonedSchema = Effect.fn('IsolatedNativeDatabase.assertClonedSchema')(function* assertClonedSchema() {
+    const assertClonedSchema = Effect.fn('IsolatedNativeDatabase.assertClonedSchema')(function* assertClonedSchema(
+      phase: 'initial' | 'postTrustInit' | 'recheck' = 'recheck',
+    ) {
       if (input.mode !== schemaOnly || original === undefined) {
         return yield* unavailable('Schema clone validation requires this scope’s schema-only database');
       }
       const copied = yield* readFingerprint(clone.executor);
       if (copied !== original) {
+        yield* Effect.logWarning('Isolated database catalog fingerprint mismatch', {
+          phase,
+          ...describeCatalogMismatch(original, copied),
+        });
         return yield* unavailable('Schema-only clone changed schema, RLS or grants');
       }
       return yield* Effect.void;
     });
     if (input.mode === schemaOnly) {
-      yield* assertClonedSchema();
+      yield* assertClonedSchema('initial');
     }
     const [role] = runtimeRole;
     if (!Schema.is(Schema.Struct({ rolbypassrls: Schema.Literal(false), rolsuper: Schema.Literal(false) }))(role)) {
@@ -476,7 +556,7 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
           }),
         )
         .pipe(Effect.mapError((cause) => unavailable('Unable to initialize isolated trust configuration', cause)));
-      yield* assertClonedSchema();
+      yield* assertClonedSchema('postTrustInit');
     }
     const retainedOriginalEnabled = input.mode === 'empty' && input.purpose === retainedPrivacyPurpose;
     const assortmentRuntimeEnabled = input.mode === schemaOnly && input.purpose === assortmentAuthorizationPurpose;
