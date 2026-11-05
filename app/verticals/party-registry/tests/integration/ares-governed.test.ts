@@ -176,11 +176,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           principal: typeof fixture.manager & { readonly legalEntityId?: string },
         ) {
           const assertionId = yield* Effect.orDie(crypto.randomUUIDv4());
-          // Grants expire against PostgreSQL's clock, so the expiry is derived from the database time.
+          // Grants use PostgreSQL time; derive both claims from it to preserve the exact 300-second JWT lifetime.
           const [databaseNow] = yield* adminClient<{ readonly nowSeconds: number }>`
             select floor(extract(epoch from now()))::int as "nowSeconds"
           `.pipe(Effect.orDie);
-          const expiresAtEpochSeconds = (databaseNow?.nowSeconds ?? 0) + 300;
+          assert.isOk(databaseNow);
+          const issuedAtEpochSeconds = databaseNow.nowSeconds;
+          const expiresAtEpochSeconds = issuedAtEpochSeconds + 300;
           const token = yield* Effect.promise(() =>
             new SignJWT({
               compositionRevision: compositionSnapshot.composition.revision,
@@ -192,7 +194,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               .setIssuer(issuer)
               .setAudience('party-registry')
               .setSubject(principal.principalId)
-              .setIssuedAt()
+              .setIssuedAt(issuedAtEpochSeconds)
               .setExpirationTime(expiresAtEpochSeconds)
               .setJti(assertionId)
               .sign(privateKey),
@@ -305,6 +307,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               {
                 candidate: {
                   partyType: 'ORGANIZATION',
+                  firstName: 'Personal source',
+                  lastName: 'Retained surname',
                   officialIdentifiers: [],
                   evidenceRefs: ['live-review/ares'],
                   subjectEvidence: yield* Effect.all(subjectEvidence.map((item) => withFreshSubjectKey(item))),
@@ -413,7 +417,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   idempotencyKey: yield* nextUuid,
                   payload: {
                     partyRef: target,
-                    displayName: rawSubject.obchodniJmeno,
+                    businessName: rawSubject.obchodniJmeno,
                     expectedRevision: 1,
                     validFrom: observation.observedAt,
                     provenanceMethod: 'ARES_USER_CONFIRMED',
@@ -505,9 +509,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         expect(contactEvidence.observedAt).toBe(encodedObservation.observedAt);
         expect(contactEvidence.providerChangedOn).toBe(encodedObservation.providerChangedOn);
         expect(contactEvidence.providerRecordRef).toBe(encodedObservation.providerRecordRef);
-        expect(persisted.assertions.find((item) => item.factKind === 'DISPLAY_NAME')?.externalEvidence?.decidedAt).toBe(
-          encodedObservation.servedAt,
-        );
+        expect(
+          persisted.assertions.find((item) => item.factKind === 'BUSINESS_NAME')?.externalEvidence?.decidedAt,
+        ).toBe(encodedObservation.servedAt);
         expect(persisted.core.events.length).toBe(4);
         expect(persisted.core.outbox.length).toBe(4);
         assert.isOk(persisted.core.invocations.every((item) => item.status === 'succeeded'));
@@ -548,13 +552,17 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         expect(afterCollision.claims.length).toBe(1);
         expect(afterCollision.contacts.length).toBe(1);
         const collisionDetail = yield* detail(collisionParty);
+        expect(Option.getOrUndefined(collisionDetail.party.businessName)).toBe(rawSubject.obchodniJmeno);
+        expect(Option.getOrUndefined(collisionDetail.party.firstName)).toBe('Personal source');
+        expect(Option.getOrUndefined(collisionDetail.party.lastName)).toBe('Retained surname');
+        expect(collisionDetail.party.partyType).toBe('ORGANIZATION');
         expect(Option.getOrUndefined(collisionDetail.party.displayName)).toBe(rawSubject.obchodniJmeno);
 
         const erroneousParty = yield* create();
         const logical = deriveAresEvidenceApplication({
           canonical: {
             archived: false,
-            displayName: null,
+            businessName: null,
             icoValues: [],
             identityAmbiguous: false,
             partyType: 'ORGANIZATION',
@@ -572,7 +580,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           updatePartyWithAuthorization(
             {
               partyRef: erroneousParty,
-              displayName: 'Clerical wrong name',
+              businessName: 'Clerical wrong name',
               expectedRevision: 1,
               validFrom: observation.observedAt,
               provenanceMethod: 'ARES_USER_CONFIRMED',
@@ -584,12 +592,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ),
         );
         const erroneous = yield* detail(erroneousParty);
-        const assertion = erroneous.currentFactAssertions.find((item) => item.factKind === 'DISPLAY_NAME');
+        const assertion = erroneous.currentFactAssertions.find((item) => item.factKind === 'BUSINESS_NAME');
         assert.isOk(assertion);
 
         const correctionPayload = yield* Schema.decodeEffect(IdentityCorrectionCommandSchema)({
           partyId: erroneousParty.resourceId,
-          factKind: 'DISPLAY_NAME' as const,
+          factKind: 'BUSINESS_NAME' as const,
           targetAssertionId: assertion.assertionId,
           replacementValue: rawSubject.obchodniJmeno,
           evidenceRefs: ['live-review/ares'],
@@ -632,6 +640,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         );
         const corrected = yield* detail(erroneousParty);
         expect(Option.getOrUndefined(corrected.party.displayName)).toBe(rawSubject.obchodniJmeno);
+        expect(Option.getOrUndefined(corrected.party.businessName)).toBe(rawSubject.obchodniJmeno);
+        expect(Option.getOrUndefined(corrected.party.firstName)).toBe('Personal source');
+        expect(Option.getOrUndefined(corrected.party.lastName)).toBe('Retained surname');
+        expect(corrected.party.partyType).toBe('ORGANIZATION');
         const correctedState = yield* state();
         assert.isOk(
           correctedState.assertions.some(

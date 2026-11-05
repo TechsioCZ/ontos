@@ -182,7 +182,9 @@ const decision = {
 const review = {
   candidateFingerprint: decision.candidateFingerprint,
   candidateSnapshot: {
-    names: [],
+    firstName: null,
+    lastName: null,
+    businessName: null,
     partyType: 'PERSON' as const,
     provenance: { method: 'DIRECT_INTERACTION', source: 'authorized-reviewer' },
     subjectEvidence: evaluation.evidence,

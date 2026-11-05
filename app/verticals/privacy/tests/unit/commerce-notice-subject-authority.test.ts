@@ -167,8 +167,11 @@ const party = {
   factHistory: null,
   party: {
     archivedAt: null,
+    businessName: null,
     createdAt: '1960-01-01T00:00:00Z',
     displayName: null,
+    firstName: null,
+    lastName: null,
     partyRef,
     partyType: 'PERSON',
     revision: 4,

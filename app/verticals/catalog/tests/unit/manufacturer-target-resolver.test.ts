@@ -36,8 +36,11 @@ const detail = (kind: 'ALIAS' | 'DIRECT' = 'ALIAS', archivedAt: string | null = 
     factHistory: null,
     party: {
       archivedAt,
+      businessName: 'Maker',
       createdAt: '2026-09-01T00:00:00.000Z',
       displayName: 'Maker',
+      firstName: null,
+      lastName: null,
       partyRef: partyRef(kind === 'ALIAS' ? 'maker-canonical' : 'maker-alias'),
       partyType: 'ORGANIZATION',
       revision: 4,

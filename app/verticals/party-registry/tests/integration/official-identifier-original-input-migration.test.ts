@@ -21,7 +21,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { addPartyOfficialIdentifierAction } from '../../src/actions/add-party-official-identifier.action.ts';
 import { partyOfficialIdentifierHistoryRead } from '../../src/api/party-official-identifier-history.read.ts';
 import { makePartyDatabase } from '../../src/db/client.ts';
-import { parties, partyOfficialIdentifiers, PARTY_TABLES } from '../../src/db/schema.ts';
+import { partyOfficialIdentifiers, PARTY_TABLES } from '../../src/db/schema.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -104,9 +104,11 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       yield* database.transaction((transaction) =>
         Effect.gen(function* oldRuntimeAcceptance() {
           yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${fixture.tenantId}, true)`, 'objects');
-          yield* transaction
-            .insert(parties)
-            .values({ partyId, tenantId: fixture.tenantId, currentType: 'ORGANIZATION' });
+          // Current Party metadata includes structured names absent from this historical schema.
+          yield* transaction.execute(
+            sql`insert into party.parties (party_id,tenant_id,current_type) values (${partyId},${fixture.tenantId},${'ORGANIZATION'})`,
+            'objects',
+          );
           // Current Drizzle metadata emits every current column (including DEFAULT for
           // the not-yet-existing source column), so this compatibility-only producer names
           // the actual old columns explicitly and keeps every value parameterized.
@@ -189,6 +191,20 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       assert.isOk(upgraded);
       expect(upgraded.originalInputDigits).toBe(null);
       expect(upgraded.normalizedValue).toBe('01000004');
+      // The populated canonical-only upgrade is proved above. Current owner operations also
+      // select structured Party names, so install only that later schema change before reuse.
+      const currentNamesFolder = '20261105082358_flashy_gravity';
+      yield* fs.makeDirectory(`${baselineDirectory}/${currentNamesFolder}`);
+      yield* fs.copyFile(
+        `${ownerDirectory}/${currentNamesFolder}/migration.sql`,
+        `${baselineDirectory}/${currentNamesFolder}/migration.sql`,
+      );
+      yield* fs.copyFile(
+        `${ownerDirectory}/${currentNamesFolder}/snapshot.json`,
+        `${baselineDirectory}/${currentNamesFolder}/snapshot.json`,
+      );
+      yield* migrate(admin, { ...migrationOptions, migrationsFolder: baselineDirectory });
+      expect((yield* journalCount())[0]?.count).toBe(5);
       const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
         ...fixture.manager,
         legalEntityId: fixture.legalEntityId,
@@ -234,6 +250,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       expect(retained).toHaveLength(1);
       expect(retained[0]).toEqual(upgraded);
       expect((yield* history()).items[0]?.originalInputDigits).toBe(null);
+      expect((yield* journalCount())[0]?.count).toBe(5);
     }),
   );
 });

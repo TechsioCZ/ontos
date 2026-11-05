@@ -128,7 +128,9 @@ export const updatePartyAction = defineAction(
       update: (payload: UpdatePartyPayload, actionInvocationId: string) =>
         updatePartyRecord(transaction, scope.tenantId, {
           actionInvocationId,
-          displayName: payload.displayName,
+          firstName: payload.firstName,
+          lastName: payload.lastName,
+          businessName: payload.businessName,
           expectedRevision: payload.expectedRevision,
           externalEvidence: payload.externalEvidence,
           partyId: payload.partyRef.resourceId,

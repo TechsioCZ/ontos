@@ -566,10 +566,10 @@ it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner
         const result = yield* createPartyWithAuthorization(
           yield* Schema.decodeUnknownEffect(CreatePartyPayloadSchema)({
             candidate: {
-              displayName: `Privacy ${partyType}`,
               evidenceRefs: ['review/privacy-owner'],
               officialIdentifiers: [],
               partyType,
+              [partyType === 'PERSON' ? 'firstName' : 'businessName']: `Privacy ${partyType}`,
               provenance: { method: 'DOCUMENT', source: 'privacy-owner-native' },
               subjectEvidence: [
                 {

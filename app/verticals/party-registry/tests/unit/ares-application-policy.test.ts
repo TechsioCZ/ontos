@@ -42,7 +42,7 @@ const evidence: typeof AresSubjectEvidenceSchema.Encoded = {
 };
 const canonical: AresCanonicalSnapshot = {
   archived: false,
-  displayName: null,
+  businessName: null,
   icoValues: [],
   identityAmbiguous: false,
   partyType: 'ORGANIZATION',
@@ -75,10 +75,15 @@ it('#246 fixed owner policy enriches only selected missing facts after explicit 
   expect(selected.factDecisions[0]?.authorityPolicyKey).toBe('party_registry.ares_enrichment');
 });
 
+it('business-name equality is independent of the Party type and its personal presentation', () => {
+  const snapshot = { ...canonical, businessName: 'Example', displayName: 'Ada Lovelace', partyType: 'PERSON' as const };
+  expect(derive(snapshot).factDecisions[0]?.outcome).toBe('NO_CHANGE');
+});
+
 it('#246 canonical equality is no-change and conflicting facts never authorize overwrite', () => {
   const result = derive({
     ...canonical,
-    displayName: 'Example',
+    businessName: 'Example',
     icoValues: ['01234567'],
     registeredAddresses: [
       {
@@ -93,7 +98,7 @@ it('#246 canonical equality is no-change and conflicting facts never authorize o
   expect(result.factDecisions.every((decision) => decision.route === null)).toBe(true);
   const conflict = derive({
     ...canonical,
-    displayName: 'Different',
+    businessName: 'Different',
     registeredAddresses: [
       {
         addressLine1: 'Main 100',
@@ -208,7 +213,7 @@ const acceptedEvidence = (fact: 'BUSINESS_NAME' | 'ICO') => {
 };
 const conflictingName: AresCanonicalSnapshot = {
   ...canonical,
-  displayName: 'Erroneous accepted name',
+  businessName: 'Erroneous accepted name',
   factEvidence: [
     {
       assertionId: '30000000-0000-4000-8000-000000000001',
@@ -334,7 +339,10 @@ it('candidate prefill supplies a proposal without declaring subject type or acto
     },
   ]);
   expect(candidate.provenance.externalEvidence).toBe(undefined);
-  expect(candidate.displayName).toBe(evidence.subject.businessName);
+  expect(candidate.businessName).toBe(evidence.subject.businessName);
+  expect(Object.hasOwn(candidate, 'displayName')).toBe(false);
+  expect(candidate.firstName).toBe(undefined);
+  expect(candidate.lastName).toBe(undefined);
 });
 
 it('six amended outcomes remain reachable and unsupported name or address never applies', () => {
@@ -342,7 +350,7 @@ it('six amended outcomes remain reachable and unsupported name or address never 
     new Set([
       derive(null).outcome,
       derive().outcome,
-      decideName({ ...canonical, displayName: 'Example' }).outcome,
+      decideName({ ...canonical, businessName: 'Example' }).outcome,
       derive(canonical, false).outcome,
       decideName().outcome,
       derive({ ...canonical, identityAmbiguous: true }).outcome,

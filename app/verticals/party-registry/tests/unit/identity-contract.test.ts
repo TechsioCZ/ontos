@@ -26,7 +26,7 @@ it('Party V1 admits only PERSON, ORGANIZATION, and evidenced UNRESOLVED identity
   expect(() => decode(PartyTypeSchema)('OTHER')).toThrow();
   expect(() =>
     Schema.decodeSync(PartyCandidateSchema)({
-      displayName: '   ',
+      firstName: '   ',
       evidenceRefs: [],
       officialIdentifiers: [],
       partyType: 'UNRESOLVED',
@@ -54,7 +54,10 @@ it.effect('Party JSON round-trips timestamps as strings and absent values as nul
     const encoded = {
       archivedAt: null,
       createdAt: '2025-01-01T00:00:00.000Z',
+      businessName: null,
       displayName: null,
+      firstName: null,
+      lastName: null,
       partyRef: makePartyRef('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'),
       partyType: 'UNRESOLVED' as const,
       revision: 1,
@@ -72,7 +75,10 @@ it.effect('Party JSON round-trips timestamps as strings and absent values as nul
     const presentEncoded = {
       ...encoded,
       archivedAt: '2026-02-01T00:00:00.000Z',
+      businessName: 'Example organization',
       displayName: 'Example organization',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
     };
     expect(yield* Schema.encodeEffect(PartySchema)(yield* Schema.decodeEffect(PartySchema)(presentEncoded))).toEqual(
       presentEncoded,
@@ -96,7 +102,9 @@ it.effect('Party Candidate accepts an evidenced identifier without inventing a d
       validFrom: '2026-01-01T00:00:00.000Z',
     };
     const candidate = yield* Schema.decodeUnknownEffect(PartyCandidateSchema)(encoded);
-    expect(candidate.displayName).toBe(undefined);
+    expect(candidate.firstName).toBe(undefined);
+    expect(candidate.lastName).toBe(undefined);
+    expect(candidate.businessName).toBe(undefined);
     expect(candidate.officialIdentifiers.length).toBe(1);
     expect(yield* Schema.encodeEffect(PartyCandidateSchema)(candidate)).toEqual(encoded);
   }),
@@ -156,7 +164,10 @@ it('Party unarchive declares durable blocked outcomes with case and decision ref
       party: {
         archivedAt: '2026-01-01T00:00:00.000Z',
         createdAt: '2025-01-01T00:00:00.000Z',
+        businessName: null,
         displayName: null,
+        firstName: null,
+        lastName: null,
         partyRef: makePartyRef(tenantId, firstPartyId),
         partyType: 'UNRESOLVED',
         revision: 4,

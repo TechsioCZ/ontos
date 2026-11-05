@@ -78,7 +78,7 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
     });
     const sourceSubject = yield* nextId;
     const candidate = {
-      displayName: 'Observed Guest person',
+      firstName: 'Observed Guest person',
       evidenceRefs: ['person-observation'],
       officialIdentifiers: [],
       partyType: 'PERSON',

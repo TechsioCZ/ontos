@@ -173,7 +173,7 @@ it.layer(
           };
         });
         const candidate = {
-          displayName: 'Reviewed external organization',
+          businessName: 'Reviewed external organization',
           evidenceRefs: ['reviewed-match/document'],
           officialIdentifiers: [
             { identifierType: 'ICO' as const, value: '27074358', verification: 'VERIFIED' as const },
@@ -553,7 +553,7 @@ it.layer(
             {
               candidate: {
                 ...candidate,
-                displayName: 'Independent competing organization',
+                businessName: 'Independent competing organization',
                 officialIdentifiers: [{ identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' }],
                 subjectEvidence: candidate.subjectEvidence.map((evidence) => ({
                   ...evidence,

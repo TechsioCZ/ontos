@@ -17,6 +17,7 @@ import type {
 import {
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
+  derivePartyDisplayName,
   makePartyRef,
 } from '../../shared/domain/identity-contracts.ts';
 import type { DuplicateCaseResolutionResult } from '../../shared/domain/matching-contracts.ts';
@@ -113,8 +114,10 @@ interface ResolvedClaim {
   readonly partyId?: string;
 }
 
-interface CandidateDisplayNameFields {
-  displayName?: string;
+interface CandidateNameFields {
+  firstName?: string;
+  lastName?: string;
+  businessName?: string;
 }
 
 interface OfficialIdentifierReferenceFields {
@@ -127,17 +130,22 @@ interface DecisionReferenceFields {
   partyId?: string;
 }
 
-const candidateDisplayName = (names: readonly string[]) => {
-  const [displayName] = names;
-  const value: CandidateDisplayNameFields = {};
-  if (displayName !== undefined) {
-    value.displayName = displayName;
+const candidateNameFields = (snapshot: PartyCandidateSnapshot) => {
+  const fields: CandidateNameFields = {};
+  if (snapshot.firstName !== null) {
+    fields.firstName = snapshot.firstName;
   }
-  return value;
+  if (snapshot.lastName !== null) {
+    fields.lastName = snapshot.lastName;
+  }
+  if (snapshot.businessName !== null) {
+    fields.businessName = snapshot.businessName;
+  }
+  return fields;
 };
 
 const restoreCandidate = (snapshot: PartyCandidateSnapshot): PartyCandidate => ({
-  ...candidateDisplayName(snapshot.names),
+  ...candidateNameFields(snapshot),
   evidenceRefs: snapshot.evidenceArtifactRefs ?? [],
   officialIdentifiers: (snapshot.officialIdentifiers ?? []).map((identifier) => ({
     identifierType: identifier.identifierTypeKey,
@@ -216,9 +224,9 @@ const findWeakCandidatePartyIds = Effect.fn('PartyMatchingPersistenceService.fin
     candidate: PartyCandidate,
     now: Date,
   ) {
-    const { displayName } = candidate;
+    const displayName = derivePartyDisplayName(candidate);
     const displayNamePartyIds =
-      displayName === undefined
+      displayName === null
         ? []
         : yield* transaction
             .select({ partyId: parties.partyId })
@@ -282,7 +290,9 @@ export const candidateFingerprint = (candidate: PartyCandidate): string =>
     sha256(
       utf8ToBytes(
         encodeJson({
-          displayName: candidate.displayName ?? null,
+          firstName: candidate.firstName ?? null,
+          lastName: candidate.lastName ?? null,
+          businessName: candidate.businessName ?? null,
           evidenceEvaluation: {
             ...evaluatePartySubjectEvidence(candidate),
             evidence: (candidate.subjectEvidence ?? [])
@@ -441,7 +451,9 @@ const findReusableResolvedMatchCase = Effect.fn('PartyMatchingPersistenceService
 
 const snapshotCandidate = (candidate: PartyCandidate): PartyCandidateSnapshot => ({
   evidenceArtifactRefs: candidate.evidenceRefs,
-  names: candidate.displayName === undefined ? [] : [candidate.displayName],
+  firstName: candidate.firstName ?? null,
+  lastName: candidate.lastName ?? null,
+  businessName: candidate.businessName ?? null,
   officialIdentifiers: candidate.officialIdentifiers.map((identifier) => {
     const normalized = normalizeOfficialIdentifier(identifier);
     return {
@@ -1698,7 +1710,7 @@ export const findDuplicateCandidateCase = Effect.fn('PartyMatchingPersistenceSer
       _tag: 'found',
       value: {
         candidate: {
-          ...candidateDisplayName(record.candidateSnapshot.names),
+          ...candidateNameFields(record.candidateSnapshot),
           evidenceRefs: record.candidateSnapshot.evidenceArtifactRefs ?? [],
           officialIdentifiers: (record.candidateSnapshot.officialIdentifiers ?? []).map((identifier) => ({
             identifierType: identifier.identifierTypeKey,

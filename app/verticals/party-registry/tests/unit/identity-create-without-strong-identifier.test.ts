@@ -33,13 +33,13 @@ const candidate = (overrides: Partial<PartyCandidate> = {}): PartyCandidate => (
 const decide = (value: PartyCandidate) => decideCreateWithoutStrongIdentifier(value, { requireIdentityReview: false });
 it('concrete subject evidence needs neither a name nor an official ID', () => {
   expect(decide(candidate()).decision).toBe('ALLOW');
-  expect(decide(candidate({ displayName: 'A' })).decision).toBe('ALLOW');
-  expect(decide(candidate({ displayName: 'Unknown' })).decision).toBe('ALLOW');
+  expect(decide(candidate({ firstName: 'A' })).decision).toBe('ALLOW');
+  expect(decide(candidate({ businessName: 'Unknown' })).decision).toBe('ALLOW');
 });
 
 it('names, reference prefixes and identifiers never substitute for subject evidence', () => {
   for (const input of [
-    candidate({ displayName: 'Jane Smith', subjectEvidence: [] }),
+    candidate({ firstName: 'Jane', lastName: 'Smith', subjectEvidence: [] }),
     candidate({
       evidenceRefs: ['business-record:42', 'evidence-artifact:42'],
       subjectEvidence: [],

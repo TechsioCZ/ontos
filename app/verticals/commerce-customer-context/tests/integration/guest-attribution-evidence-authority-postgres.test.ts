@@ -611,7 +611,7 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       const created = yield* createPartyWithAuthorization(
         {
           candidate: {
-            displayName: `Guest organization ${ico}`,
+            businessName: `Guest organization ${ico}`,
             evidenceRefs: [evidence],
             officialIdentifiers: [{ identifierType: 'ICO', value: ico, verification: 'VERIFIED' }],
             partyType: 'ORGANIZATION',
@@ -715,7 +715,7 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
       >[number]['subjectKey']
     >()(yield* nextId);
     const candidate = {
-      displayName: 'Evidence-bound external organization',
+      businessName: 'Evidence-bound external organization',
       evidenceRefs: ['original-owner-proof'],
       officialIdentifiers: [{ identifierType: 'ICO' as const, value: '27074358', verification: 'VERIFIED' as const }],
       partyType: 'ORGANIZATION' as const,
@@ -821,7 +821,7 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
       {
         candidate: {
           ...candidate,
-          displayName: 'Different external organization',
+          businessName: 'Different external organization',
           officialIdentifiers: [{ identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' }],
           subjectEvidence: candidate.subjectEvidence.map((item) => ({ ...item, subjectKey: secondKey })),
         },
@@ -950,8 +950,8 @@ const publicReviewedGuest = Effect.fn('GuestEvidenceTest.publicReviewedGuest')(f
   >()(yield* nextId);
   const originalEvidence = `original-person-${yield* nextId}`;
   const candidate = {
-    displayName: 'Reviewed concrete Guest person',
     evidenceRefs: [originalEvidence],
+    firstName: 'Reviewed concrete Guest person',
     officialIdentifiers: [],
     partyType: 'PERSON' as const,
     provenance: { method: 'DIRECT_INTERACTION', source: 'guest-review-native' },
@@ -1103,8 +1103,8 @@ const publicScopeAndArchive = Effect.fn('GuestEvidenceTest.publicScopeAndArchive
   const foreignCase = yield* createPartyWithAuthorization(
     {
       candidate: {
-        displayName: 'Foreign retained Guest candidate',
         evidenceRefs: [caseEvidence],
+        firstName: 'Foreign retained Guest candidate',
         officialIdentifiers: [],
         partyType: 'PERSON',
         provenance: { method: 'DIRECT_INTERACTION', source: 'guest-scope-native' },

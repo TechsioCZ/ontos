@@ -20,7 +20,7 @@ const replacementAssertionId = '30000000-0000-4000-8000-000000000002';
 const timestamp = '2026-09-03T10:00:00.000Z';
 const originalAssertion = {
   assertionId: originalAssertionId,
-  factKind: 'DISPLAY_NAME' as const,
+  factKind: 'BUSINESS_NAME' as const,
   isCurrent: true,
   partyRef,
   recordedAt: timestamp,
@@ -54,7 +54,7 @@ it.effect('public clients discover the first assertion and submit a governed cor
         if (payload.factKind === 'RELATIONSHIP') {
           throw new Error('Expected identity correction');
         }
-        expect(payload.factKind).toBe('DISPLAY_NAME');
+        expect(payload.factKind).toBe('BUSINESS_NAME');
         expect(payload.targetAssertionId).toBe(originalAssertionId);
         expect(payload.partyId).toBe(partyRef.resourceId);
         corrected = true;
@@ -63,7 +63,7 @@ it.effect('public clients discover the first assertion and submit a governed cor
             ...partyRef,
             resourceType: 'party.registry.party-correction',
           },
-          factKind: 'DISPLAY_NAME',
+          factKind: 'BUSINESS_NAME',
           followUp: 'ENRICHMENT_REVIEW',
           partyRef,
           relationshipRef: null,
@@ -90,6 +90,9 @@ it.effect('public clients discover the first assertion and submit a governed cor
           archivedAt: null,
           createdAt: timestamp,
           displayName: currentAssertion.value,
+          businessName: currentAssertion.value,
+          firstName: null,
+          lastName: null,
           partyRef,
           partyType: 'ORGANIZATION',
           revision: corrected ? 2 : 1,
@@ -125,7 +128,7 @@ it.effect('public clients discover the first assertion and submit a governed cor
       const created = yield* createPartyWithAuthorization(
         {
           candidate: {
-            displayName: originalAssertion.value,
+            businessName: originalAssertion.value,
             evidenceRefs: ['document:original'],
             officialIdentifiers: [],
             partyType: 'ORGANIZATION',
@@ -146,7 +149,7 @@ it.effect('public clients discover the first assertion and submit a governed cor
         options.correlationId,
         options,
       );
-      const target = before.currentFactAssertions.find(({ factKind }) => factKind === 'DISPLAY_NAME');
+      const target = before.currentFactAssertions.find(({ factKind }) => factKind === 'BUSINESS_NAME');
       expect(target).toBeDefined();
       if (target === undefined) {
         throw new Error('Expected target to be defined');
@@ -154,7 +157,7 @@ it.effect('public clients discover the first assertion and submit a governed cor
       const correctionPayload = yield* Schema.decodeEffect(CorrectPartyFactPayloadSchema)({
         evidenceRefs: ['document:reviewed-error'],
         evidenceSource: 'DOCUMENT',
-        factKind: 'DISPLAY_NAME',
+        factKind: 'BUSINESS_NAME',
         partyId: partyRef.resourceId,
         policyVersion: 'party-correction.v1',
         provenance: {
@@ -192,7 +195,7 @@ it.effect('public clients discover the first assertion and submit a governed cor
     }
     expect(yield* Effect.promise(() => createRequest.json())).toEqual({
       candidate: {
-        displayName: originalAssertion.value,
+        businessName: originalAssertion.value,
         evidenceRefs: ['document:original'],
         officialIdentifiers: [],
         partyType: 'ORGANIZATION',

@@ -22,6 +22,21 @@ export type PartySubjectKey = typeof PartySubjectKeySchema.Type;
 export const partyIdFromString = Brand.nominal<PartyId>();
 export const partySubjectKeyFromString = Brand.nominal<PartySubjectKey>();
 export const PartyDisplayNameSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+
+export const derivePartyDisplayName = (input: {
+  readonly partyType: PartyType;
+  readonly firstName?: string | null;
+  readonly lastName?: string | null;
+  readonly businessName?: string | null;
+}): string | null => {
+  if (input.partyType === 'ORGANIZATION') {
+    return input.businessName ?? null;
+  }
+  if (input.partyType === 'UNRESOLVED' && input.businessName !== undefined && input.businessName !== null) {
+    return input.businessName;
+  }
+  return [input.firstName, input.lastName].filter((part) => part !== undefined && part !== null).join(' ') || null;
+};
 const ProvenanceSchema = Schema.Struct({
   externalEvidence: Schema.optionalKey(AresAppliedEvidenceSchema),
   method: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
@@ -68,7 +83,9 @@ export const PartyEvidenceEvaluationSchema = Schema.Struct({
 export type PartyEvidenceEvaluation = typeof PartyEvidenceEvaluationSchema.Type;
 
 export const PartyCandidateSchema = Schema.Struct({
-  displayName: Schema.optionalKey(PartyDisplayNameSchema),
+  businessName: Schema.optionalKey(PartyDisplayNameSchema),
+  firstName: Schema.optionalKey(PartyDisplayNameSchema),
+  lastName: Schema.optionalKey(PartyDisplayNameSchema),
   evidenceRefs: Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(
     Schema.isMaxLength(100),
   ),
@@ -83,7 +100,10 @@ export type PartyCandidate = typeof PartyCandidateSchema.Type;
 export const PartySchema = Schema.Struct({
   archivedAt: Schema.OptionFromNullOr(IsoTimestampSchema),
   createdAt: IsoTimestampSchema,
+  businessName: Schema.OptionFromNullOr(PartyDisplayNameSchema),
   displayName: Schema.OptionFromNullOr(PartyDisplayNameSchema),
+  firstName: Schema.OptionFromNullOr(PartyDisplayNameSchema),
+  lastName: Schema.OptionFromNullOr(PartyDisplayNameSchema),
   partyRef: PartyRefSchema,
   partyType: PartyTypeSchema,
   revision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),

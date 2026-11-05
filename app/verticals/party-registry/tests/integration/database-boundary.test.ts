@@ -815,7 +815,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         candidateCaseId: caseA,
         candidateFingerprint: 'a'.repeat(64),
         candidateSnapshot: {
-          names: ['Ambiguous'],
+          firstName: null,
+          lastName: null,
+          businessName: 'Ambiguous',
           provenance: { method: 'DOCUMENT_REVIEW', source: 'USER_ASSERTION' },
           validFrom: '2026-01-01T00:00:00.000Z',
         },
@@ -877,7 +879,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   .values({
                     acceptedByActionInvocationId: actionA,
                     acceptedByPrincipalId: principalA,
-                    factKind: 'DISPLAY_NAME',
+                    factKind: 'BUSINESS_NAME',
                     normalizedValue: 'Wrong name',
                     partyId: partyOrganizationA,
                     policyVersion: 'party.fact.v1',

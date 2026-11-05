@@ -206,10 +206,15 @@ it('gives every tenant-owned record a tenant-qualified identity and forced-RLS p
 
 it('models Party identity and assertion history without conflating effective and recorded time', () => {
   const partyConfig = configOf(parties);
-  expect(partyConfig.columns.some((column) => column.name === 'current_display_name' && !column.notNull)).toBeTruthy();
+  for (const name of ['current_display_name', 'first_name', 'last_name', 'business_name']) {
+    expect(partyConfig.columns.some((column) => column.name === name && !column.notNull)).toBeTruthy();
+  }
   expect(uniqueColumns(parties, 'party_parties_tenant_id_uk')).toEqual(['tenant_id', 'party_id']);
   expect(partyConfig.checks.map((candidate) => candidate.name).toSorted()).toEqual([
+    'party_parties_business_name_ck',
     'party_parties_display_name_ck',
+    'party_parties_first_name_ck',
+    'party_parties_last_name_ck',
     'party_parties_revision_ck',
     'party_parties_type_ck',
   ]);
@@ -531,7 +536,9 @@ it('persists one recoverable match decision per Action and bounded duplicate rev
   if (snapshotCheck === undefined) {
     throw new Error('Expected value to be present');
   }
-  expect(dialect.sqlToQuery(snapshotCheck.value).sql).toMatch(/provenance.*source.*method.*validFrom/u);
+  const snapshotSql = dialect.sqlToQuery(snapshotCheck.value).sql;
+  expect(snapshotSql).toMatch(/firstName.*lastName.*businessName.*provenance.*source.*method.*validFrom/u);
+  expect(snapshotSql).not.toContain("->'names'");
   expect(
     getTableName(
       foreignKey(duplicateCandidateCaseParties, 'party_duplicate_candidate_case_parties_tenant_party_fk').reference()

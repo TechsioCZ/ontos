@@ -583,7 +583,7 @@ const postalFutureEnd = Effect.fn('PostalFutureEnd.native')(function* postalFutu
   const created = yield* createPartyWithAuthorization(
     {
       candidate: {
-        displayName: 'Postal future End owner',
+        businessName: 'Postal future End owner',
         evidenceRefs: ['native-postal-owner-proof'],
         officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
         partyType: 'ORGANIZATION',

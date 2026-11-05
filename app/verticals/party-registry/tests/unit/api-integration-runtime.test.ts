@@ -342,7 +342,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           source: 'runtime-assembly-proof',
         };
         const candidate = {
-          displayName: 'Runtime assembly proof',
+          businessName: 'Runtime assembly proof',
           evidenceRefs: ['document:verified'],
           officialIdentifiers: [],
           partyType: 'ORGANIZATION',
@@ -482,7 +482,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           },
           '/party-registry/actions/match-party': { candidate },
           '/party-registry/actions/update-party': {
-            displayName: 'Updated runtime assembly proof',
+            businessName: 'Updated runtime assembly proof',
             expectedRevision: 1,
             partyRef,
             provenanceMethod: 'DOCUMENT',
