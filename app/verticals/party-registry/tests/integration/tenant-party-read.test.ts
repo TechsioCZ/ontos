@@ -206,11 +206,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         // governed fact values are projected out, and every ungoverned part of the same payload is
         // still there (O17, O58). A read that returned the name would leak what the class governs.
         expect(detail.party.partyRef).toEqual(partyRef);
-        expect(detail.party.displayName).toBeUndefined();
+        for (const name of ['businessName', 'displayName', 'firstName', 'lastName'] as const) {
+          expect(detail.party[name]).toBeUndefined();
+        }
         // The field group governs `currentFactAssertions.value` for every fact kind, so the PARTY_TYPE
-        // and DISPLAY_NAME assertions both stay while neither carries its value.
+        // and BUSINESS_NAME assertions both stay while neither carries its value.
         expect(detail.currentFactAssertions.map(({ factKind }) => factKind).toSorted()).toEqual([
-          'DISPLAY_NAME',
+          'BUSINESS_NAME',
           'PARTY_TYPE',
         ]);
         expect(
