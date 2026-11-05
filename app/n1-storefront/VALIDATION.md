@@ -1,5 +1,25 @@
 # Kontrola převodu N1 storefrontu
 
+## C36: vlastní nativní balení přes detail a košík — 2026-11-05
+
+- Full public owner variantRecords již packageQuantity poskytuje; N1 reader je
+  zahazoval. Nyní zachová vlastní optional pole a native minimum default1.
+  Selection odstraní parent balení, nepřebírá je pro variantu bez pravidla.
+- Sdílená validCartQuantity ověřuje minimum a násobek balení od0/tolerance1e-6
+  v PDP, card shortcut, cart persistence/add/merge/update a obou editorech/gate.
+  Min3/pkg2 nepřepočítává:3/5 odmítá,4/6 přijímá. Desetinná balení zůstávají.
+- Cart snapshot rozlišuje legacy missing, fresh native absence null a skutečné
+  finite balení. Čerstvé null zruší zastaralé pravidlo; legacy re-add ho nezahodí.
+  Quote/order payload a native validace cen/skladu/pravidel zůstávají beze změn.
+- TDD skutečné RED→GREEN,540/540 testů bez skipped/todo, lint/TSRS, formát
+  a produkční build PASS. Nezávislé source review GO po opravě stale-rule nálezu.
+- Živý browser1440/390: Fox M1968, min1,0→invalid/disabled,1→toast bez extra
+  Cart linku; košík1→2, reload zachová2, native quote950/DPH164.88/net785.12,
+  checkout dostupný a bez overflow. Screenshot n1-c36-cart-mobile.png soukromě.
+  Balení2/6.21 je regresní test fixture, nikoli vytvořený Stage produkt.
+- Žádný nový vzhled, komponenta, BE změna, fixture produkt nebo další objednávka.
+  Funkční browser proof neznačí plnou vizuální shodu celého košíku.
+
 ## C35: skutečný loading READ detailu produktu — 2026-11-05
 
 - Fresh Figma57:3009: existující CatalogState skládá pending PriceBlock,
@@ -11,10 +31,12 @@
   paletové hodnoty, radius override nebo změna fontu. Canonical N1 tokeny platí.
 - TDD skutečně RED→GREEN;529/529 N1 testů, lint/TSRS, formát a produkční build
   PASS. Samostatné source/contract review GO. Build běžel s naším FE vypnutým.
-- Browser390 se skutečným katalogem a Slow3G ověřil přechod na reálný detail,
-  ale přechodný pending frame se nepodařilo zachytit. Screenshot začátku
-  navigace není důkazem tohoto stavu; vizuální browser PASS se proto netvrdí.
-  Nezávislé porovnání API/Figma je v soukromém loading contract review.
+- Browser390 se skutečným katalogem a Slow3G zachytil pending DOM: section390,
+  p16/gap24, H1 24/600/36, Button358×44/disabled/#eee/radius2, bez overflow;
+  následně skutečný detail. Price/availability wrappery oba38px, oproti Figma
+  34/36px jde o skutečný výstup kitu. Pending screenshot nebyl zachycen;
+  screenshot začátku ani konce navigace za tento stav nevydáváme. Plný vizuální
+  browser PASS se netvrdí. DOM důkaz zůstává soukromě v n1-c35-actual-pending-mobile-dom.txt.
 - Známý rozdíl importované Figma / canonical tématu zůstává: Button radius8
   versus N1 radius2, Skeleton4 versus0; neobchází se lokálním CSS. Čeká také
   společné rozhodnutí o fontu. Celý storefront není prohlášen za1:1 hotový.

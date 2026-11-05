@@ -2,6 +2,22 @@ import { Effect, Schema } from "effect";
 import { CartQuoteLineSchema, CartScopeSchema } from "@/ontos/cart-quote";
 import type { CartScope } from "@/ontos/cart-quote";
 
+/** Match the native minimum/package checks; never round a customer's draft. */
+export const validCartQuantity = (
+  quantity: number,
+  minimum = 0.001,
+  packageQuantity?: number | null,
+) =>
+  Number.isFinite(quantity) &&
+  quantity >= Math.max(0.001, minimum) &&
+  quantity <= 1_000_000 &&
+  (packageQuantity === undefined ||
+    packageQuantity === null ||
+    (Number.isFinite(packageQuantity) &&
+      (packageQuantity <= 0 ||
+        Math.abs(quantity / packageQuantity - Math.round(quantity / packageQuantity)) <=
+          0.000001)));
+
 /** Display values are an unverified draft, never monetary or inventory authority. */
 const CartEntrySchema = Schema.Struct({
   ...CartQuoteLineSchema.fields,
@@ -10,12 +26,18 @@ const CartEntrySchema = Schema.Struct({
     Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1_000_000)),
   ),
   name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  // Missing means legacy unknown; null is a fresh owner read with no package rule.
+  packageQuantity: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
   quantity: Schema.Finite.check(Schema.isBetween({ maximum: 1_000_000, minimum: 0.001 })),
   sku: Schema.String.check(Schema.isMaxLength(300)),
   slug: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   unit: Schema.String.check(Schema.isMaxLength(100)),
   variantName: Schema.String.check(Schema.isMaxLength(300)),
-}).check(Schema.makeFilter((entry) => entry.quantity >= (entry.minimumQuantity ?? 0.001)));
+}).check(
+  Schema.makeFilter((entry) =>
+    validCartQuantity(entry.quantity, entry.minimumQuantity, entry.packageQuantity),
+  ),
+);
 export type CartEntry = typeof CartEntrySchema.Type;
 export const cartLineKey = (line: { productId: string; variantId?: string }) =>
   JSON.stringify([line.productId, line.variantId ?? null]);
@@ -48,8 +70,7 @@ export const addCartEntry = (entries: readonly CartEntry[], entry: CartEntry) =>
     Effect.flatMap((incoming) => {
       const key = cartLineKey(incoming);
       const existing = entries.find((line) => cartLineKey(line) === key);
-      const minimumQuantity = incoming.minimumQuantity ?? existing?.minimumQuantity;
-      const latest = minimumQuantity === undefined ? incoming : { ...incoming, minimumQuantity };
+      const latest = { ...existing, ...incoming };
       const updated =
         existing === undefined
           ? [...entries, latest]

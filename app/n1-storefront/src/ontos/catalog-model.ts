@@ -80,6 +80,7 @@ export const CatalogResponseSchema = Schema.Struct({
             imageSrc: optionalString,
             minimumQuantity: optionalNumber,
             name: Schema.String,
+            packageQuantity: optionalNumber,
             parameters: Schema.optionalKey(ParametersSchema),
             priceMinor: optionalNumber,
             priceTiers: Schema.optionalKey(PriceTiersSchema),
@@ -130,6 +131,7 @@ interface ProductVariantModel {
   readonly image: string | null;
   readonly minimumQuantity: number;
   readonly name: string;
+  readonly packageQuantity?: number;
   readonly parameters: typeof ParametersSchema.Type;
   readonly priceExcludingVatMinor: number | null;
   readonly priceMinor: number | null;
@@ -286,8 +288,9 @@ const variantDetailsOf = (
       attributes: variant.attributes,
       id: variant.id,
       image: imageOf(product.id, variant.imageSrc, hosts),
-      minimumQuantity: variant.minimumQuantity ?? product.minimumQuantity ?? 1,
+      minimumQuantity: variant.minimumQuantity ?? 1,
       name: variant.name,
+      ...Struct.pick(variant, ["packageQuantity"]),
       parameters: variant.parameters ?? [],
       priceExcludingVatMinor: netPriceOf(
         variant.priceMinor,

@@ -9,9 +9,7 @@ import type { Dictionary } from "@/i18n";
 import type { ProductDetailModel } from "@/ontos/catalog-model";
 import type { selectProductDetail } from "./product-selection";
 import { useCart } from "./cart-provider";
-
-const validPurchaseQuantity = (quantity: number, minimum: number) =>
-  Number.isFinite(quantity) && quantity >= Math.max(0.001, minimum) && quantity <= 1_000_000;
+import { validCartQuantity } from "./cart-state";
 
 const purchaseGuidance = (d: Dictionary, purchasable: boolean) =>
   purchasable ? null : d.commerceUnavailable;
@@ -45,7 +43,11 @@ export const ProductPurchase = ({
   const [draft, setDraft] = useState({ key: selectionKey, value: String(current.minimumQuantity) });
   const quantity = draft.key === selectionKey ? draft.value : String(current.minimumQuantity);
   const parsedQuantity = Number(quantity);
-  const invalidQuantity = !validPurchaseQuantity(parsedQuantity, current.minimumQuantity);
+  const invalidQuantity = !validCartQuantity(
+    parsedQuantity,
+    current.minimumQuantity,
+    current.packageQuantity,
+  );
   const purchasable = canPurchaseSelection(selection, cart);
   const showQuantityError = purchasable && invalidQuantity;
   const purchaseDisabled = !purchasable || invalidQuantity;
@@ -60,6 +62,7 @@ export const ProductPurchase = ({
       image: images[0] ?? null,
       minimumQuantity: current.minimumQuantity,
       name: product.name,
+      packageQuantity: current.packageQuantity ?? null,
       productId: product.id,
       quantity: parsedQuantity,
       sku: current.sku,

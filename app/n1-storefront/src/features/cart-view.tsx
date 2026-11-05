@@ -84,7 +84,7 @@ const CartRow = ({
   const [saveError, setSaveError] = useState(false);
   const value = draft?.value ?? String(entry.quantity);
   const quantity = Number(value);
-  const invalid = !validCartQuantity(quantity, entry.minimumQuantity);
+  const invalid = !validCartQuantity(quantity, entry.minimumQuantity, entry.packageQuantity);
   const image = publicImage(entry.image ?? undefined, cart?.imageHosts ?? []);
   const changedPrice = issues.find(
     (issue) => issue.code === "PRICE_CHANGED",
@@ -140,7 +140,11 @@ const CartRow = ({
               min={entry.minimumQuantity ?? 0.001}
               onValueChange={({ value: next }) => {
                 const parsed = Number(next);
-                const valid = validCartQuantity(parsed, entry.minimumQuantity);
+                const valid = validCartQuantity(
+                  parsed,
+                  entry.minimumQuantity,
+                  entry.packageQuantity,
+                );
                 const saved = valid && (cart?.update(entry, parsed) ?? false);
                 onDraft({
                   quantity: saved ? parsed : entry.quantity,

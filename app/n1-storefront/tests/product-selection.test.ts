@@ -48,6 +48,13 @@ const {
 );
 
 describe("real product variant presentation", () => {
+  it("uses only the selected variant's own package rule", () => {
+    const parent = { ...product, packageQuantity: 10 };
+    const own = { ...parent, variants: [{ ...product.variants[0], packageQuantity: 2 }] };
+    expect(selectProductDetail(own, "variant").current.packageQuantity).toBe(2);
+    expect(selectProductDetail(parent, "variant").current).not.toHaveProperty("packageQuantity");
+    expect(selectProductDetail(parent, "unknown").current.packageQuantity).toBe(10);
+  });
   it("switches to a non-minimum leaf price and restores the group amount when selection is cleared", () => {
     const grouped = {
       ...product,

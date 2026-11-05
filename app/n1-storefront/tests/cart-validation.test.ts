@@ -29,6 +29,18 @@ const blankDraft = (): QuantityDrafts => ({
 });
 
 describe("cart quantity draft lifecycle", () => {
+  it("checks native zero-based package multiples separately from the minimum", () => {
+    expect(validCartQuantity(3, 3, 2)).toBe(false);
+    expect(validCartQuantity(4, 3, 2)).toBe(true);
+    expect(validCartQuantity(5, 3, 2)).toBe(false);
+    expect(validCartQuantity(6, 3, 2)).toBe(true);
+    expect(validCartQuantity(0.3, 0.1, 0.1)).toBe(true);
+    expect(validCartQuantity(0.35, 0.1, 0.1)).toBe(false);
+    expect(validCartQuantity(0.375, 0.25, 0)).toBe(true);
+    const selected = { ...entry, minimumQuantity: 3, packageQuantity: 2, quantity: 4 };
+    const drafts = { [cartLineKey(selected)]: { quantity: 4, saveError: false, value: "5" } };
+    expect(hasInvalidCartDraft(drafts, [selected])).toBe(true);
+  });
   it("gates quantities below the selected minimum without forcing whole units", () => {
     expect(validCartQuantity(0.001, 1)).toBe(false);
     expect(validCartQuantity(1, 1)).toBe(true);

@@ -1,3 +1,4 @@
+import { Struct } from "effect";
 import type { ProductDetailModel } from "@/ontos/catalog-model";
 
 /** Presentation of a genuine owner variant; unknown selections never choose an unrelated variant. */
@@ -5,7 +6,8 @@ export const selectProductDetail = (product: ProductDetailModel, variantId: stri
   const variant = product.variants.find((item) => item.id === variantId);
   const current = variant
     ? {
-        ...product,
+        ...Struct.omit(product, ["packageQuantity"]),
+        ...Struct.pick(variant, ["packageQuantity"]),
         image: variant.image ?? product.image,
         minimumQuantity: variant.minimumQuantity,
         priceExcludingVatMinor: variant.priceExcludingVatMinor,

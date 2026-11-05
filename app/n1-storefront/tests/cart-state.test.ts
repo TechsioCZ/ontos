@@ -27,6 +27,74 @@ const entry = {
   variantName: "Large",
 };
 describe("N1 scoped local cart", () => {
+  it.effect("clears a stale package only after a fresh owner absence snapshot", () =>
+    Effect.gen(function* removedPackageRule() {
+      const previous = { ...entry, packageQuantity: 2 };
+      const fresh = { ...entry, minimumQuantity: 1, packageQuantity: null, quantity: 1 };
+      const entries = yield* addCartEntry([previous], fresh);
+      expect(entries[0]).toMatchObject({ packageQuantity: null, quantity: 3 });
+      const restored = yield* decodeStoredCart(
+        JSON.stringify({ entries, scope, version: 1 }),
+        scope,
+      );
+      expect(restored.entries[0]?.packageQuantity).toBeNull();
+      const updated = yield* replaceCartQuantity(restored.entries, fresh, 5);
+      expect(updated[0]?.quantity).toBe(5);
+    }),
+  );
+  it.effect("preserves package rules through persistence, updates and legacy additions", () =>
+    Effect.gen(function* packageSnapshot() {
+      const selected = { ...entry, minimumQuantity: 3, packageQuantity: 2, quantity: 4 };
+      const entries = yield* addCartEntry([], selected);
+      expect(entries[0]).toEqual(selected);
+      const restored = yield* decodeStoredCart(
+        JSON.stringify({ entries, scope, version: 1 }),
+        scope,
+      );
+      expect(restored.entries[0]).toEqual(selected);
+      const failure = yield* Effect.flip(replaceCartQuantity(restored.entries, selected, 5));
+      expect(failure).toBeInstanceOf(CartDraftInvalid);
+      const updated = yield* replaceCartQuantity(restored.entries, selected, 6);
+      expect(updated[0]?.quantity).toBe(6);
+      const legacyAddition = yield* addCartEntry(updated, entry);
+      expect(legacyAddition[0]).toMatchObject({ packageQuantity: 2, quantity: 8 });
+      expect(updated[0]?.quantity).toBe(6);
+    }),
+  );
+  it.effect("rejects an aggregate that violates the latest package without rounding", () =>
+    Effect.gen(function* changedPackage() {
+      const previous = { ...entry, quantity: 3 };
+      const failure = yield* Effect.flip(
+        addCartEntry([previous], { ...entry, packageQuantity: 2 }),
+      );
+      expect(failure).toBeInstanceOf(CartDraftInvalid);
+      expect(previous.quantity).toBe(3);
+    }),
+  );
+  it.effect(
+    "rejects malformed or invalid stored package snapshots without guessing a replacement",
+    () =>
+      Effect.gen(function* invalidPackageSnapshot() {
+        for (const packageQuantity of ["2", 3]) {
+          const failure = yield* Effect.flip(
+            decodeStoredCart(
+              JSON.stringify({ entries: [{ ...entry, packageQuantity }], scope, version: 1 }),
+              scope,
+            ),
+          );
+          expect(failure).toBeInstanceOf(CartDraftInvalid);
+        }
+        for (const packageQuantity of [Number.NaN, Number.POSITIVE_INFINITY]) {
+          const failure = yield* Effect.flip(addCartEntry([], { ...entry, packageQuantity }));
+          expect(failure).toBeInstanceOf(CartDraftInvalid);
+        }
+        const legacy = yield* decodeStoredCart(
+          JSON.stringify({ entries: [entry], scope, version: 1 }),
+          scope,
+        );
+        expect(legacy.entries[0]).not.toHaveProperty("packageQuantity");
+      }),
+  );
   it.effect("retains the selected minimum through persistence and rejects smaller quantities", () =>
     Effect.gen(function* minimumSnapshot() {
       const selected = { ...entry, minimumQuantity: 1, quantity: 1 };

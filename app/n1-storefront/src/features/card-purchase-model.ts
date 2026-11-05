@@ -4,6 +4,7 @@ import type { ProductCardModel } from "@/ontos/catalog-model";
 import { CartScopeSchema } from "@/ontos/cart-quote";
 import type { useCart } from "./cart-provider";
 import type { CartEntry } from "./cart-state";
+import { validCartQuantity } from "./cart-state";
 
 const SimpleCardProductSchema = Schema.Struct({
   ...ProductCardModelSchema.fields,
@@ -37,12 +38,7 @@ export const simpleCardEntry = (
   }
   // Match the native order contract; never round the owner's minimum for a shortcut.
   if (
-    product.packageQuantity !== undefined &&
-    product.packageQuantity > 0 &&
-    Math.abs(
-      product.minimumQuantity / product.packageQuantity -
-        Math.round(product.minimumQuantity / product.packageQuantity),
-    ) > 0.000001
+    !validCartQuantity(product.minimumQuantity, product.minimumQuantity, product.packageQuantity)
   ) {
     return null;
   }
@@ -51,6 +47,7 @@ export const simpleCardEntry = (
     image: product.image,
     minimumQuantity: product.minimumQuantity,
     name: product.name,
+    packageQuantity: product.packageQuantity ?? null,
     productId: product.id,
     quantity: product.minimumQuantity,
     sku: product.sku,

@@ -1,6 +1,8 @@
 import type { CartQuote } from "@/ontos/cart-quote";
-import { cartLineKey } from "./cart-state";
+import { cartLineKey, validCartQuantity } from "./cart-state";
 import type { CartEntry } from "./cart-state";
+
+export { validCartQuantity } from "./cart-state";
 
 export interface QuantityDraft {
   quantity: number;
@@ -8,8 +10,6 @@ export interface QuantityDraft {
   value: string;
 }
 export type QuantityDrafts = Readonly<Record<string, QuantityDraft>>;
-export const validCartQuantity = (quantity: number, minimum = 0.001) =>
-  Number.isFinite(quantity) && quantity >= Math.max(0.001, minimum) && quantity <= 1_000_000;
 export const quantityDraftForEntry = (drafts: QuantityDrafts, entry: CartEntry) => {
   const draft = drafts[cartLineKey(entry)];
   return draft?.quantity === entry.quantity ? draft : undefined;
@@ -19,7 +19,8 @@ export const hasInvalidCartDraft = (drafts: QuantityDrafts, entries: readonly Ca
     const draft = quantityDraftForEntry(drafts, entry);
     return (
       draft !== undefined &&
-      (draft.saveError || !validCartQuantity(Number(draft.value), entry.minimumQuantity))
+      (draft.saveError ||
+        !validCartQuantity(Number(draft.value), entry.minimumQuantity, entry.packageQuantity))
     );
   });
 export const removeQuantityDraft = (drafts: QuantityDrafts, entry: CartEntry): QuantityDrafts => {

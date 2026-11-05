@@ -20,6 +20,36 @@ const response: typeof CatalogResponseSchema.Type = {
 };
 
 describe("owner catalogue presentation", () => {
+  it("retains each variant's own package and native default minimum without parent inheritance", () => {
+    const variant = {
+      active: true,
+      attributes: "M",
+      availability: "IN_STOCK",
+      grossPriceMinor: 119_900,
+      id: "v1",
+      name: "M",
+      sku: "SKU-M",
+      stockOnHand: 20,
+    };
+    const owner = Schema.decodeUnknownSync(CatalogResponseSchema)({
+      ...response,
+      products: [
+        {
+          ...response.products[0],
+          minimumQuantity: 10,
+          packageQuantity: 10,
+          variantRecords: [
+            { ...variant, minimumQuantity: 3, packageQuantity: 2 },
+            { ...variant, id: "v2" },
+          ],
+        },
+      ],
+    });
+    const [detail] = projectCatalog(owner, []).details;
+    expect(detail.variants[0]).toMatchObject({ minimumQuantity: 3, packageQuantity: 2 });
+    expect(detail.variants[1]?.minimumQuantity).toBe(1);
+    expect(detail.variants[1]).not.toHaveProperty("packageQuantity");
+  });
   it("retains exact owner category membership and resolves its real ancestors despite duplicate names", () => {
     const categories = [
       { id: "other", name: "Clothing", parentId: null, slug: "other-clothing" },

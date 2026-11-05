@@ -51,6 +51,48 @@ beforeEach(() => {
 });
 
 describe("product purchase feedback", () => {
+  for (const [minimumQuantity, packageQuantity, allowed] of [
+    [3, 2, false],
+    [4, 2, true],
+    [12.42, 6.21, true],
+    [12.4, 6.21, false],
+  ] as const) {
+    it(`keeps the native package ${packageQuantity} at minimum ${minimumQuantity}`, () => {
+      const add = rs.fn(() => true);
+      rs.mocked(useCart).mockReturnValue({
+        acceptPrice: () => false,
+        add,
+        clear: () => {},
+        clearSubmitted: () => false,
+        entries: [],
+        error: false,
+        imageHosts: [],
+        loaded: true,
+        remove: () => false,
+        scope: { currency: "CZK", legalEntityId: "legal", marketId: "market", tenantId: "tenant" },
+        update: () => false,
+      });
+      const selected = { ...product, minimumQuantity, packageQuantity };
+      renderToStaticMarkup(
+        <ProductPurchase
+          dictionary={getDictionary("cs")}
+          locale="cs"
+          product={selected}
+          selection={selectProductDetail(selected, selected.variants[0]?.id)}
+        />,
+      );
+      feedback.actions[0]?.();
+      if (allowed) {
+        expect(add).toHaveBeenCalledWith(
+          expect.objectContaining({ packageQuantity, quantity: minimumQuantity }),
+        );
+        expect(feedback.create).toHaveBeenCalledTimes(1);
+      } else {
+        expect(add).not.toHaveBeenCalled();
+        expect(feedback.create).not.toHaveBeenCalled();
+      }
+    });
+  }
   for (const saved of [true, false]) {
     it(`announces ${saved ? "saved" : "failed"} cart changes through a toast`, () => {
       const add = rs.fn(() => saved);
