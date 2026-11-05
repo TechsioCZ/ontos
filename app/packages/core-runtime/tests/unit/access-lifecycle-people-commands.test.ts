@@ -951,7 +951,14 @@ it.effect('ending the last owner’s member row needs a transfer, and giving up 
     const departed = yield* planMembershipEnd(
       membershipEndRequest({ ...fixture, administration: shared, membershipId: member.id }),
     );
-    expect(writeTags(departed)).toEqual(['EndMembership', 'EndAssignment']);
+    // The owner row that stood on it is revoked too, so a later rejoin restores no administration.
+    expect(writeTags(departed)).toEqual(['EndMembership', 'EndMembership', 'EndAssignment']);
+    expect(departed.writes.flatMap((write) => Option.toArray(endedMembershipIn(write)))).toEqual([member.id, owner.id]);
+    // A suspension is temporary: it closes the business access but keeps the owner row for its return.
+    const suspended = yield* planMembershipEnd(
+      membershipEndRequest({ ...fixture, administration: shared, membershipId: member.id, nextStatus: 'suspended' }),
+    );
+    expect(writeTags(suspended)).toEqual(['EndMembership', 'EndAssignment']);
     // ... while giving up only the owner row keeps it: that assignment rests on the member row.
     const resigned = yield* planMembershipEnd(
       membershipEndRequest({ ...fixture, administration: shared, membershipId: owner.id }),

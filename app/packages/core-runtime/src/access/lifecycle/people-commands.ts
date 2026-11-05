@@ -619,6 +619,21 @@ export const planMembershipEnd = (
       const places = endsPath
         ? teamPlacesOf({ holder: leaver, members: request.teamMembers, scopeId: ending.scopeId, teams: request.teams })
         : [];
+      // Revoking the path also revokes the management rows that stood on it, so a later rejoin starts
+      // clean instead of silently restoring an administration nobody granted again. A suspension is
+      // temporary and leaves them, because the suspended path already blocks them.
+      const tenantPath = ending.scopeId === request.administration.tenantScopeId;
+      const dependentManagement =
+        endsPath && request.nextStatus === 'revoked'
+          ? request.memberships.filter(
+              (membership) =>
+                membership.id !== ending.id &&
+                (membership.kind === 'owner' || membership.kind === 'access_admin') &&
+                personOf(membership.holder) === leaver &&
+                (tenantPath || membership.scopeId === ending.scopeId) &&
+                membershipIsLive(membership, request.at),
+            )
+          : [];
       // The successor gains the management membership of the scope this row ends, in this plan, so
       // one committed transaction always leaves the scope administered (O53).
       const transfer: readonly PeopleIntentWrite[] =
@@ -643,6 +658,11 @@ export const planMembershipEnd = (
       const writes: readonly PeopleIntentWrite[] = [
         ...transfer,
         { _tag: 'EndMembership', membershipId: ending.id, status: request.nextStatus },
+        ...dependentManagement.map((membership): PeopleIntentWrite => ({
+          _tag: 'EndMembership',
+          membershipId: membership.id,
+          status: 'revoked',
+        })),
         ...assignments.map((assignment): PeopleIntentWrite => ({
           _tag: 'EndAssignment',
           incarnationId: assignment.incarnationId,
