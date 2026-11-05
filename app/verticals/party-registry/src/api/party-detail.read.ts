@@ -133,7 +133,14 @@ export const partyDetailRead = defineRead(
     accessFieldGroups: [
       {
         fieldClass: 'personal_data',
-        fields: ['party.displayName', 'currentFactAssertions.value', 'factHistory.value'],
+        fields: [
+          'party.businessName',
+          'party.displayName',
+          'party.firstName',
+          'party.lastName',
+          'currentFactAssertions.value',
+          'factHistory.value',
+        ],
         key: 'party.registry.party-identity.read',
         kind: 'field_read',
         modes: ['run'],
