@@ -51,7 +51,9 @@ export const ListingCards = ({
             </ProductCard.Name>
           </div>
           <div>
-            <PriceBlock {...priceProps(product, d, locale)} />
+            <PriceBlock
+              {...priceProps(product, d, locale, product.priceExcludingVatMinor ?? null)}
+            />
           </div>
           <div>
             <AvailabilityStatus label={d.stock[product.stock]} status={product.stock} />

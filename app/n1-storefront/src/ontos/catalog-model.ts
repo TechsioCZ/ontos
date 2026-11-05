@@ -53,6 +53,7 @@ export const CatalogResponseSchema = Schema.Struct({
       imageSrc: optionalString,
       minimumQuantity: optionalNumber,
       name: Schema.String,
+      packageQuantity: optionalNumber,
       parameters: Schema.optionalKey(ParametersSchema),
       priceTiers: Schema.optionalKey(PriceTiersSchema),
       published: Schema.optionalKey(Schema.Boolean),
@@ -105,12 +106,18 @@ export const ProductCardModelSchema = Schema.Struct({
   description: Schema.String,
   id: Schema.String,
   image: Schema.NullOr(Schema.String),
+  minimumQuantity: optionalNumber,
   name: Schema.String,
+  packageQuantity: optionalNumber,
+  priceExcludingVatMinor: Schema.optionalKey(
+    Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  ),
   priceFrom: Schema.Boolean,
   priceMinor: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   sku: Schema.String,
   slug: Schema.String,
   stock: Schema.Literals(["available", "limited", "unavailable", "unknown"]),
+  unit: optionalString,
   variantCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   variantPreview: Schema.optionalKey(VariantPreviewItemsSchema),
 });
@@ -357,6 +364,30 @@ const detailOf = (
   return manufacturer === undefined ? detail : { ...detail, manufacturer };
 };
 
+/** Preserve explicit count evidence; absence or contradictory owner counts stays unknown. */
+const variantCountOf = (product: OwnerProduct): number | undefined => {
+  const previewCount = product.storefrontVariantPreview?.total;
+  const summaryCount = product.variantSummary?.count;
+  if (previewCount !== undefined && summaryCount !== undefined && previewCount !== summaryCount) {
+    return undefined;
+  }
+  const count = previewCount ?? summaryCount;
+  return count !== undefined && Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+};
+
+/** A group minimum or an inactive-variant parent cannot prove the displayed card's net price. */
+const cardNetPriceOf = (product: OwnerProduct, card: ProductCardModel): number | null => {
+  if (
+    card.variantCount !== 0 ||
+    (card.variantPreview?.length ?? 0) > 0 ||
+    (card.stock !== "available" && card.stock !== "limited") ||
+    (product.variantSummary?.minGrossPriceMinor ?? null) !== null
+  ) {
+    return null;
+  }
+  return netPriceOf(product.currentPriceMinor, product.priceTiers, card.priceMinor);
+};
+
 export const projectCatalog = (
   body: typeof CatalogResponseSchema.Type,
   hosts: readonly string[],
@@ -368,6 +399,7 @@ export const projectCatalog = (
       continue;
     }
     const card: ProductCardModel = {
+      ...Struct.pick(product, ["minimumQuantity", "packageQuantity", "unit"]),
       currency: body.market.currency,
       description: product.description ?? "",
       id: product.id,
@@ -382,9 +414,16 @@ export const projectCatalog = (
       sku: product.sku ?? "",
       slug: product.slug,
       stock: stockStatus(product),
-      variantCount: product.storefrontVariantPreview?.total ?? product.variantSummary?.count ?? 0,
       variantPreview: product.storefrontVariantPreview?.variants ?? [],
     };
+    const variantCount = variantCountOf(product);
+    if (variantCount !== undefined) {
+      Object.assign(card, { variantCount });
+    }
+    const priceExcludingVatMinor = cardNetPriceOf(product, card);
+    if (priceExcludingVatMinor !== null) {
+      Object.assign(card, { priceExcludingVatMinor });
+    }
     products.push(card);
     details.push(detailOf(product, card, hosts));
   }

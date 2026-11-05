@@ -6,6 +6,8 @@ import { getFulfillment } from "@/ontos/fulfillment";
 import { AuthView } from "@/features/auth-view";
 import { Schema } from "effect";
 import { PortalVerificationNoticeSchema } from "@/ontos/portal";
+import { legalArticles } from "@/content/legal-content";
+import { LegalView } from "@/features/legal-view";
 
 const ContentPage = async ({
   params,
@@ -56,6 +58,9 @@ const ContentPage = async ({
   }
   if (content === "kontakty") {
     return <ContactView dictionary={d} />;
+  }
+  if (content === "obchodni-podminky" || content === "ochrana-osobnich-udaju") {
+    return <LegalView article={legalArticles[content]} />;
   }
   return (
     <article className="mx-auto max-w-n1-content px-4 py-12">

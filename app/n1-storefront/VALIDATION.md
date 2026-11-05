@@ -1,5 +1,56 @@
 # Kontrola převodu N1 storefrontu
 
+## C27–C29: karty a skutečné právní články — 2026-11-05
+
+Čerstvá Figma home31:636/637 a featured33:877/34:1027 potvrzuje jednu mobilní
+kartu na řádek, desktop čtyři288px sloupce, padding112 a mezeru24 pod nadpisem
+20/28. Mobilní název má přirozenou výšku; prázdná řádka velikostí se na mobilu
+nemontuje. Desktopovou rezervu ani vzhled komponent kitu tato oprava nemění.
+Skutečný browser1440 potvrdil112/24/28 a4×288; mobil390 nepřetéká.
+
+Jednoduchá karta může nově použít skutečný košík: výslovný konzistentní počet
+aktivních variant0, žádné variantní štítky, skutečné minimum/jednotka/cena/sklad,
+načtený bezchybný cart a odpovídající scope/měna. Minimum odporující nativnímu
+násobku balení nákup zkratkou zablokuje; množství se nevymýšlí ani nezaokrouhluje.
+Regrese pokrývají3/2,3/1.5 i0.3/0.1, skutečnou projekci packageQuantity,
+reentrantní přidání a pravdivý storage success/error. Native quote zůstává
+autoritou pozdější ceny/skladu a ručních změn množství.
+
+Browser desktop i dotykový mobil skutečně přidal Fox22Purist product16609,
+1ks, do uloženého cart draftu. Zůstal na stránce, zobrazil success toast a
+neotevřel mini košík. Následná route košíku držela skutečný produkt/množství.
+Jde o draft, nikoli objednávku či rezervaci. Důkaz n1-c27-card-toast-mobile
+je v.local; minimum3/jednotka m a package kontrakt byly ověřeny automaticky.
+
+Obchodní podmínky50:867/1032 a ochrana údajů50:1126/1288 obsahují přesné
+poskytnuté statické N1 články, které jsou také v historické referenci. Nejde
+o simulaci CMS. Checksum regrese pokrývají všech21/18 textových prvků,
+sémantiku a zachování ostatních rout/404. EN rozhraní ponechává český článek
+s article lang=cs, bez vymyšleného překladu. V browseru1440/390 je article
+max1200/padding40, mobilní vnitřek310, body16/24; privacy má dalších48 nahoře
+a na mobilu H1 přes dva řádky64px. Nezávislé vizuální review přijalo viditelné
+regiony; celé znění dokládají testy. Důkazy n1-c28-terms/ privacy-desktop/mobile
+jsou v.local. Žádné změny souhlasu, právních verzí, kitu ani globálního CSS.
+
+C29 promítá owner net cenu pouze při prokázané jednoduché dostupné kartě,
+bez skupinového cenového minima. Používá existující přesné gross/net párování;
+žádný výpočet DPH či další dotazy. Tax caption konzumuje pouze ListingCards.
+Skupiny, rozporné/neznámé počty a všechny neaktivní varianty zůstávají bez
+neprokázané caption. Umístění a redakce caption jsou ověřené renderer testy;
+pozitivní browser kontrola caption ve skutečné kategorii čeká na její skutečné
+produktové vazby. Není tvrzená úplná vizuální shoda tohoto regionu.
+
+Po začlenění upstream6f83:488/488 N1 testů, lint/TSRS, formát a produkční build PASS.
+Nejde o celostránkový1:1 PASS ani důkaz pozitivního Portal přihlášení.
+
+Sdílený Stage přes lokální3072 již prokázal celý guest průchod: cart quote200,
+checkout quote200 a právě jedno potvrzení200 vytvořilo OBJ-2026-0002,
+1×Fox22Purist/SKU31190-001-OS, zboží549+PPL129=678Kč, net560,33/DPH117,67.
+Tlačítko načtení detailů i reload→read-only status200 obnovily stejnou objednávku,
+adresu a fotografii po vyprázdnění draftu. Mobil390 nepřetéká. Žádná online
+platba nebyla dostupná ani provedená; skladové ověření běží odděleně. Dřívější
+403 není současný univerzální blokátor. Nejde o pozitivní test všech produktů.
+
 ## C26: skutečný výrobce a rozbalení velikostí — 2026-11-05
 
 Veřejný owner již posílá `sourceProductId`. Audit všech12672 zdrojových řádků

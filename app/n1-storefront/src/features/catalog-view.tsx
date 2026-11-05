@@ -6,12 +6,12 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
 import { Link } from "@techsio/ui-kit/atoms/link";
-import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import type { Dictionary } from "@/i18n";
 import type { CatalogModel } from "@/ontos/catalog-model";
 import { priceProps } from "./price-props";
 import { CardVariants } from "./card-variants";
+import { CardPurchase } from "./card-purchase";
 
 const stockStatus = {
   available: "in-stock",
@@ -61,14 +61,12 @@ export const CatalogView = ({
   return (
     <section
       aria-label={title}
-      className={
-        presentation === "featured" ? "mx-auto max-w-n1-content py-12 md:py-n1-section" : ""
-      }
+      className={presentation === "featured" ? "mx-auto max-w-n1-content py-n1-section" : ""}
     >
       {presentation === "featured" && (
-        <div className="mb-8 flex items-center gap-4">
+        <div className="mb-6 flex items-center gap-4">
           <div className="h-px flex-1 bg-border-primary" />
-          <h1 className="text-center text-lg font-bold" id="catalog-title">
+          <h1 className="text-center text-lg leading-n1-copy font-bold" id="catalog-title">
             {title}
           </h1>
           <div className="h-px flex-1 bg-border-primary" />
@@ -83,7 +81,7 @@ export const CatalogView = ({
       >
         {catalog.products.map((product) => (
           <ProductCard key={product.id} layout="column" presentation="featured" shadow={false}>
-            <div className="h-n1-card-name text-center">
+            <div className="text-center md:h-n1-card-name">
               <ProductCard.Name>
                 <Link as={NextLink} href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}>
                   {product.name}
@@ -114,11 +112,15 @@ export const CatalogView = ({
                 )}
               </Link>
             </div>
-            <CardVariants
-              key={`${locale}:${product.id}:${product.slug}`}
-              locale={locale}
-              product={product}
-            />
+            <div
+              className={(product.variantPreview?.length ?? 0) > 0 ? undefined : "hidden md:block"}
+            >
+              <CardVariants
+                key={`${locale}:${product.id}:${product.slug}`}
+                locale={locale}
+                product={product}
+              />
+            </div>
             <div className="flex justify-center">
               {product.stock === "unknown" ? (
                 <AvailabilityStatus
@@ -147,18 +149,7 @@ export const CatalogView = ({
                   {d.detail}
                 </LinkButton>
               ) : (
-                <Button
-                  aria-label={`${d.addToCart}: ${d.commerceUnavailable}`}
-                  density="compact"
-                  disabled
-                  icon="token-icon-cart"
-                  iconPosition="left"
-                  size="sm"
-                  theme="solid"
-                  variant="secondary"
-                >
-                  {d.addToCart}
-                </Button>
+                <CardPurchase dictionary={d} product={product} />
               )}
             </div>
           </ProductCard>
