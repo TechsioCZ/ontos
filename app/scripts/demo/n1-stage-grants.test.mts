@@ -503,3 +503,30 @@ it.effect('permission verification requires fully consistent definite allow/deny
     expect(requests).toBe(4);
   }),
 );
+
+it.effect(
+  'every account manages its own credentials, while the catalogue manager still holds no managed keys or people administration',
+  () =>
+    Effect.gen(function* selfCredentials() {
+      const plan = yield* planFixture();
+      const catalogue = principal('2');
+      const expectation = (principalId: string, fragment: string) =>
+        plan.checks
+          .filter(({ label, principalId: subject }) => subject === principalId && label.includes(fragment))
+          .map(({ expected }) => expected);
+      for (const actionKey of ['core.identity.bind-self-api-key', 'core.identity.set-self-api-key-binding-status']) {
+        expect(expectation(catalogue, `Action ${actionKey} `)).toEqual([true]);
+        expect(expectation(principal('1'), `Action ${actionKey} `)).toEqual([true]);
+        // Services have no own credentials to manage.
+        expect(expectation(principal('3'), `Action ${actionKey}`).every((expected) => !expected)).toBe(true);
+      }
+      expect(expectation(catalogue, `Action ${bindManagedKey} `)).toEqual([false]);
+      expect(expectation(catalogue, 'tenant manage_identity')).toEqual([false]);
+      expect(expectation(catalogue, 'N1 company people')).toEqual([false]);
+      expect(
+        plan.relationships.some(
+          (row) => row.relation === 'self_credentials' && row.subject?.object?.objectId === N1_TENANT_ID,
+        ),
+      ).toBe(true);
+    }),
+);

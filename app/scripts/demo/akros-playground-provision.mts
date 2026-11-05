@@ -27,6 +27,7 @@ import { discoverCurrentActions } from '../provision-current-action-authorizatio
 import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 import {
   akrosPlaygroundAccessTargets,
+  akrosPlaygroundSelfCredentialTargets,
   akrosPlaygroundAccounts,
   akrosPlaygroundDefinition,
   akrosPlaygroundLegalEntityId,
@@ -200,9 +201,10 @@ const main = (mode: (typeof modes)[number], path: string, reviewed: Option.Optio
       ),
     ];
     let checks = 0;
+    const targets = [...akrosPlaygroundAccessTargets, ...akrosPlaygroundSelfCredentialTargets(actions)];
     for (const principalId of [...akrosPlaygroundAccounts.map((row) => row.principalId), ...denied]) {
       const expected = !denied.includes(principalId);
-      for (const target of akrosPlaygroundAccessTargets) {
+      for (const target of targets) {
         const { permission, ...resource } = target;
         const result = yield* rpc.checkPermission(
           v1.CheckPermissionRequest.create({

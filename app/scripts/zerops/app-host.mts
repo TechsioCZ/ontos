@@ -83,7 +83,11 @@ import type { HostedUnit } from './hosted-units.mts';
 import { STAGE_CIMD_FIXTURE_PATH, stageCimdFixtureResponse } from './stage-cimd-fixture.mts';
 import { listDeadOutboxDeliveries } from '../../packages/core-runtime/src/outbox/dead-delivery-resolution.ts';
 import { startupDeadOutboxInventory, withOutboxDeadStartupGate } from './outbox-dead-startup-gate.mts';
-import { provisionReleaseActionAuthorization } from './release-action-authorization.mts';
+import {
+  provisionReleaseActionAuthorization,
+  recordReleaseActionAuthorization,
+} from './release-action-authorization.mts';
+import type { ReleaseActionAuthorizationStatus } from './release-action-authorization.mts';
 
 const OUTBOX_HOST_ID = 'outbox-worker-host';
 const OUTBOX_HEALTH_PORT = 4100;
@@ -668,6 +672,22 @@ const observeOwners = Effect.fn('AppHost.observeOwners')(function* observeOwners
   });
 });
 
+/** The release step's result, kept on the container for after-the-fact proof. */
+const recordActionAuthorizationStatus = (
+  snapshot: ActiveApplicationCompositionSnapshot,
+  result: Omit<ReleaseActionAuthorizationStatus, 'finishedAt' | 'revision' | 'revoked'>,
+) =>
+  DateTime.now.pipe(
+    Effect.flatMap((finishedAt) =>
+      recordReleaseActionAuthorization(workspaceRoot, {
+        ...result,
+        finishedAt,
+        revision: snapshot.composition.revision,
+        revoked: 0,
+      }),
+    ),
+  );
+
 // ---------------------------------------------------------------------------------------------------------------
 // Host
 
@@ -774,13 +794,19 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       return yield* provisionReleaseActionAuthorization(snapshot, provider);
     }).pipe(
       Effect.tap((result) =>
-        Console.log(
-          `[app-host] release Action authorization: tenants=${String(result.tenants)} companies=${String(result.companies)} desired=${String(result.desired)} touched=${String(result.touched)} revoked=0`,
+        Effect.andThen(
+          Console.log(
+            `[app-host] release Action authorization: tenants=${String(result.tenants)} companies=${String(result.companies)} desired=${String(result.desired)} touched=${String(result.touched)} revoked=0`,
+          ),
+          recordActionAuthorizationStatus(snapshot, { ...result, outcome: 'applied' }),
         ),
       ),
       Effect.tapError((problem) =>
-        Console.error(
-          `[app-host] RELEASE ACTION AUTHORIZATION FAILED; composition ${snapshot.composition.revision} not published: ${problem.reason}`,
+        Effect.andThen(
+          Console.error(
+            `[app-host] RELEASE ACTION AUTHORIZATION FAILED; composition ${snapshot.composition.revision} not published: ${problem.reason}`,
+          ),
+          recordActionAuthorizationStatus(snapshot, { outcome: 'failed', reason: problem.reason }),
         ),
       ),
       Effect.mapError((problem) => failure(`release Action authorization failed: ${problem.reason}`)),

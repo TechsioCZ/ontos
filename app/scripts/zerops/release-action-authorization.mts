@@ -7,21 +7,35 @@
  * not only the operator file's Tenants. That covers companies created outside the demo builders too. Administrators
  * hold Actions through `company_scope->write_all`, so a missing scope edge locks out everyone, administrators included.
  *
- * It writes only `tenant_scope`/`company_scope` and the `grant` link to each Action's `action_grant`, and only the
- * missing ones, as TOUCH. It never deletes. It writes no role policy (`action_grant` role edges): that stays with the
- * operator accounts file and the per-tenant scripts. It writes no intrinsic `self_credentials` either: that would let
- * every human of a Tenant run the self-key Actions, which the reviewed N1 plan asserts its catalogue manager cannot.
- * Revoking stays with the event-driven runtime reconciler, which uses the same derivation. The provisioner's apply
- * is not used: it needs the operator accounts file and a reviewed fingerprint, and it deletes edges in its scopes.
+ * It writes `tenant_scope`/`company_scope`, the `grant` link to each Action's `action_grant`, and the intrinsic
+ * `self_credentials` edge of the two own-key Actions (every signed-in person manages their own credentials, which act
+ * only with that person's rights). Only the missing ones, as TOUCH. It never deletes. It writes no role policy
+ * (`action_grant` role edges): that stays with the operator accounts file and the per-tenant scripts. Revoking stays
+ * with the event-driven runtime reconciler, which uses the same derivation. The provisioner's apply is not used: it
+ * needs the operator accounts file and a reviewed fingerprint, and it deletes edges in its scopes.
  */
+import path from 'node:path';
+
 import { v1 } from '@authzed/authzed-node';
-import { Array as EffectArray, Config, Duration, Effect, Order, Redacted, Schedule, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Config,
+  Console,
+  Duration,
+  Effect,
+  FileSystem,
+  Order,
+  Redacted,
+  Schedule,
+  Schema,
+} from 'effect';
 import type { ConfigProvider } from 'effect';
 
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { legalEntities, tenantModuleStates, tenants } from '../../packages/core-runtime/src/db/schema.ts';
 import {
   buildActionAuthorizationRelationships,
+  buildIntrinsicSelfCredentialRelationships,
   deriveScopedActionAuthorization,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type { ActionAuthorizationProvisioningAction } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
@@ -73,7 +87,7 @@ const relationshipKey = (relationship: v1.Relationship) =>
     .join(':');
 
 /**
- * The canonical provisioner's scopes and scope/grant edges, for active Tenants only. A suspended or archived Tenant gets nothing
+ * The canonical provisioner's scopes and edges, for active Tenants only. A suspended or archived Tenant gets nothing
  * here because the runtime reconciler wants it empty. Inactive companies get no module keys, as in the provisioner.
  */
 export const deriveReleaseActionAuthorization = (
@@ -97,7 +111,10 @@ export const deriveReleaseActionAuthorization = (
       const scoped = deriveScopedActionAuthorization(actions, scopes);
       return {
         companies: scopes.filter(({ legalEntityId }) => legalEntityId !== undefined).length,
-        relationships: buildActionAuthorizationRelationships(scoped),
+        relationships: [
+          ...buildActionAuthorizationRelationships(scoped),
+          ...buildIntrinsicSelfCredentialRelationships(actions, scoped),
+        ],
         tenants: tenantIds.length,
       };
     },
@@ -228,4 +245,37 @@ export const provisionReleaseActionAuthorization = (
       duration: STEP_BUDGET,
       orElse: () => Effect.fail(fail('Release Action provisioning exceeded its time budget')),
     }),
+  );
+
+/** Under the deployed workspace, readable for the container's whole life, so the result never races the log window. */
+export const RELEASE_ACTION_AUTHORIZATION_STATUS_FILE = '.zerops/runtime/release-action-authorization.json';
+
+const ReleaseActionAuthorizationStatusSchema = Schema.Struct({
+  companies: Schema.optional(Schema.Number),
+  desired: Schema.optional(Schema.Number),
+  finishedAt: Schema.DateTimeUtcFromString,
+  outcome: Schema.Literals(['applied', 'failed']),
+  reason: Schema.optional(Schema.String),
+  revision: Schema.String,
+  revoked: Schema.Number,
+  tenants: Schema.optional(Schema.Number),
+  touched: Schema.optional(Schema.Number),
+});
+export type ReleaseActionAuthorizationStatus = typeof ReleaseActionAuthorizationStatusSchema.Type;
+
+/** Counts, revision and sanitized reason only. A write failure is logged and never changes the release outcome. */
+export const recordReleaseActionAuthorization = (workspace: string, status: ReleaseActionAuthorizationStatus) =>
+  Effect.gen(function* recordStatus() {
+    const fs = yield* FileSystem.FileSystem;
+    const file = path.join(workspace, RELEASE_ACTION_AUTHORIZATION_STATUS_FILE);
+    const text = yield* Schema.encodeEffect(Schema.fromJsonString(ReleaseActionAuthorizationStatusSchema))(status);
+    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+    yield* fs.writeFileString(file, `${text}\n`);
+  }).pipe(
+    Effect.tapError(() =>
+      Console.error(
+        `[app-host] release Action authorization status ${RELEASE_ACTION_AUTHORIZATION_STATUS_FILE} not written`,
+      ),
+    ),
+    Effect.ignore,
   );

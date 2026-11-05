@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 
 import { v1 } from '@authzed/authzed-node';
-import { ConfigProvider, Effect, Exit, Option } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { ConfigProvider, DateTime, Effect, Exit, FileSystem, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { ActionAuthorizationProvisioningAction } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
@@ -11,6 +12,8 @@ import type { SpiceDbRpc } from '../../packages/core-runtime/src/permissions/spi
 import {
   deriveReleaseActionAuthorization,
   loadReleaseActionAuthorizationConfiguration,
+  recordReleaseActionAuthorization,
+  RELEASE_ACTION_AUTHORIZATION_STATUS_FILE,
   touchMissingActionAuthorization,
 } from './release-action-authorization.mts';
 
@@ -67,11 +70,19 @@ it.effect('derives Core and installed-module edges for active Tenants and active
     // Two company Actions (Core people and installed CRM) in the active company, scope plus grant link each.
     expect(derived.relationships.filter(({ relation }) => relation === 'company_scope')).toHaveLength(2);
     expect(derived.relationships.filter(({ relation }) => relation === 'grant')).toHaveLength(3);
-    // The uninstalled module and the archived company get nothing; intrinsic self-credentials are not written.
+    // The uninstalled module and the archived company get nothing; the own-key Action gets its intrinsic edge.
     const companyScope = 'company_scope->legal_entity';
     const grantLink = 'grant->action_grant';
     expect(derived.relationships.map(describe).toSorted()).toEqual(
-      [companyScope, companyScope, grantLink, grantLink, grantLink, 'tenant_scope->tenant'].toSorted(),
+      [
+        companyScope,
+        companyScope,
+        grantLink,
+        grantLink,
+        grantLink,
+        'self_credentials->tenant',
+        'tenant_scope->tenant',
+      ].toSorted(),
     );
   }),
 );
@@ -188,3 +199,31 @@ it('app-host provisions the release before publishing it and does not ignore a f
   const source = readFileSync(new URL('release-action-authorization.mts', import.meta.url), 'utf-8');
   expect(source).not.toContain('RelationshipUpdate_Operation.DELETE');
 });
+
+it.effect('records the result as a readable status file under the workspace', () =>
+  Effect.gen(function* recordsStatus() {
+    const fs = yield* FileSystem.FileSystem;
+    const workspace = yield* fs.makeTempDirectoryScoped();
+    yield* recordReleaseActionAuthorization(workspace, {
+      companies: 9,
+      desired: 2660,
+      finishedAt: DateTime.makeUnsafe('2026-11-05T12:00:00Z'),
+      outcome: 'applied',
+      revision: 'r1',
+      revoked: 0,
+      tenants: 5,
+      touched: 8,
+    });
+    const text = yield* fs.readFileString(`${workspace}/${RELEASE_ACTION_AUTHORIZATION_STATUS_FILE}`);
+    expect(JSON.parse(text)).toEqual({
+      companies: 9,
+      desired: 2660,
+      finishedAt: '2026-11-05T12:00:00.000Z',
+      outcome: 'applied',
+      revision: 'r1',
+      revoked: 0,
+      tenants: 5,
+      touched: 8,
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

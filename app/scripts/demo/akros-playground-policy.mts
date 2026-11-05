@@ -8,9 +8,11 @@ import {
 } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import {
   buildActionAuthorizationRelationships,
+  buildIntrinsicSelfCredentialRelationships,
   deriveScopedActionAuthorization,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
+import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import { demoId } from './fixture-ids.mts';
 import type { CommercePortalWorkload, DemoAction, DemoRelationship, DemoRole } from './permissions.mts';
 import {
@@ -148,9 +150,12 @@ export const akrosPlaygroundRelationships = (actions: readonly DemoAction[]): re
     { moduleKeys, tenantId: akrosPlaygroundTenantId },
     { legalEntityId: akrosPlaygroundLegalEntityId, moduleKeys, tenantId: akrosPlaygroundTenantId },
   ];
-  const topology = bootstrapRelationshipsFromNative(
-    buildActionAuthorizationRelationships(deriveScopedActionAuthorization(actions, scopes)),
-  );
+  const scoped = deriveScopedActionAuthorization(actions, scopes);
+  // The same scope, grant-link and intrinsic self-credential edges the release step and the provisioner write.
+  const topology = bootstrapRelationshipsFromNative([
+    ...buildActionAuthorizationRelationships(scoped),
+    ...buildIntrinsicSelfCredentialRelationships(actions, scoped),
+  ]);
   const subjects = [...akrosPlaygroundAccounts, ...akrosPlaygroundServices];
   const policy = [
     ...subjects.flatMap(({ principalId, role, roleKey }) =>
@@ -240,3 +245,16 @@ export const akrosPlaygroundAccessTargets = [
     permission: 'access',
   })),
 ];
+
+/**
+ * Every AKROS account manages its own credentials (the self-credential Actions act only with that person's own rights),
+ * at Tenant and company scope; nobody outside AKROS reaches them.
+ */
+export const akrosPlaygroundSelfCredentialTargets = (actions: readonly DemoAction[]) =>
+  actions
+    .filter(({ provisioning }) => provisioning === 'principal_self_credentials')
+    .flatMap(({ actionKey }) => [
+      { actionKey, tenantId: akrosPlaygroundTenantId },
+      { actionKey, legalEntityId: akrosPlaygroundLegalEntityId, tenantId: akrosPlaygroundTenantId },
+    ])
+    .map((scope) => ({ objectId: toSpiceDbActionObjectId(scope), objectType: 'action', permission: 'execute' }));

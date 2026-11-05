@@ -34,6 +34,7 @@ import { FetchHttpClient, HttpClient } from 'effect/http';
 
 import {
   buildActionAuthorizationRelationships,
+  buildIntrinsicSelfCredentialRelationships,
   deriveScopedActionAuthorization,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { bootstrapRelationshipsFromNative } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
@@ -384,11 +385,14 @@ export const n1GrantRelationships = (access: N1Access, actions: readonly DemoAct
           { moduleKeys, tenantId: N1_TENANT_ID },
           { legalEntityId: N1_LEGAL_ENTITY_ID, moduleKeys, tenantId: N1_TENANT_ID },
         ];
+        const scoped = deriveScopedActionAuthorization(actions, scopes);
         const rows: DemoRelationship[] = [
           ...containment,
-          ...bootstrapRelationshipsFromNative(
-            buildActionAuthorizationRelationships(deriveScopedActionAuthorization(actions, scopes)),
-          ),
+          // The same scope, grant-link and intrinsic self-credential edges the release step and the provisioner write.
+          ...bootstrapRelationshipsFromNative([
+            ...buildActionAuthorizationRelationships(scoped),
+            ...buildIntrinsicSelfCredentialRelationships(actions, scoped),
+          ]),
         ];
         const managed = actions.filter(({ actionKey }) => actionKey === managedKeyAction);
         for (const { email, principalId } of access.accounts) {
@@ -492,10 +496,11 @@ export interface N1PermissionCheck {
 
 /**
  * Actions an account may execute. The administrator is company administrator and tenant superadmin, so every Action of
- * the N1 tenant. Catalogue managers execute only their module Actions, never the managed-key Action.
+ * the N1 tenant. Catalogue managers execute only their module Actions, never the managed-key Action. Every signed-in
+ * person also manages their own credentials: the self-credential Actions act only with that person's own rights.
  */
 const actionGrantedTo = (action: DemoAction, administrator: boolean) => {
-  if (administrator) {
+  if (administrator || action.provisioning === 'principal_self_credentials') {
     return true;
   }
   return (

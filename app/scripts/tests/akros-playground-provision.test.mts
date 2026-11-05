@@ -13,6 +13,7 @@ import {
   akrosPlaygroundDefinition,
   akrosPlaygroundLegalEntityId,
   akrosPlaygroundRelationships,
+  akrosPlaygroundSelfCredentialTargets,
   akrosPlaygroundServices,
   akrosPlaygroundTenantId,
 } from '../demo/akros-playground-policy.mts';
@@ -126,4 +127,23 @@ it('keeps company membership admission explicit and never stores account passwor
   }
   expect(JSON.stringify(akrosPlaygroundDefinition)).not.toContain('password');
   expect(akrosProvisionFingerprint('reviewed')).not.toBe(akrosProvisionFingerprint('changed'));
+});
+
+it('AKROS desires the intrinsic self-credential edges and verifies them at Tenant and company scope', () => {
+  const selfKey = {
+    actionKey: 'core.identity.bind-self-api-key',
+    legalEntityScope: 'optional',
+    owningModuleKey: 'core.identity',
+    provisioning: 'principal_self_credentials',
+  } as const;
+  const rows = akrosPlaygroundRelationships([...actions, selfKey]);
+  expect(rows.filter((row) => row.relation === 'self_credentials')).toHaveLength(2);
+  expect(
+    rows
+      .filter((row) => row.relation === 'self_credentials')
+      .every((row) => row.subject?.object?.objectId === akrosPlaygroundTenantId),
+  ).toBe(true);
+  const targets = akrosPlaygroundSelfCredentialTargets([...actions, selfKey]);
+  expect(targets).toHaveLength(2);
+  expect(targets.every(({ objectType, permission }) => objectType === 'action' && permission === 'execute')).toBe(true);
 });
