@@ -611,17 +611,20 @@ const removeTeamMember = (
 const requireGrantorAssignments = (
   transaction: CoreTransaction,
   scope: OperationalScope,
-  incarnationIds: readonly string[],
+  cover: readonly { readonly incarnationId: string; readonly roleRevisionId: string }[],
 ): Effect.Effect<void, AccessIntentError> =>
-  incarnationIds.length === 0
+  cover.length === 0
     ? Effect.void
     : transaction
-        .select({ incarnationId: accessAssignments.incarnationId })
+        .select({ incarnationId: accessAssignments.incarnationId, roleRevisionId: accessAssignments.roleRevisionId })
         .from(accessAssignments)
         .where(
           and(
             eq(accessAssignments.tenantId, scope.tenantId),
-            inArray(accessAssignments.incarnationId, [...incarnationIds]),
+            inArray(
+              accessAssignments.incarnationId,
+              cover.map(({ incarnationId }) => incarnationId),
+            ),
             eq(accessAssignments.status, 'active'),
           ),
         )
@@ -629,7 +632,11 @@ const requireGrantorAssignments = (
         .pipe(
           durable(PEOPLE_UNIQUE_CONSTRAINTS),
           Effect.flatMap((rows) =>
-            rows.length === new Set(incarnationIds).size
+            // Each covering assignment must still be active and still cover through the same revision:
+            // an edit that removed the covering cell moves the assignment to another revision.
+            cover.every(({ incarnationId, roleRevisionId }) =>
+              rows.some((row) => row.incarnationId === incarnationId && row.roleRevisionId === roleRevisionId),
+            )
               ? Effect.void
               : Effect.fail(
                   intentConflict(
@@ -649,8 +656,8 @@ const applyWrite = (
     Match.tag('EndAssignment', (ending) => endAssignment(transaction, scope, ending)),
     Match.tag('EndDelegation', (ending) => endDelegation(transaction, scope, ending)),
     Match.tag('EndMembership', (ending) => endMembership(transaction, scope, ending)),
-    Match.tag('RecordAssignment', ({ assignment, grantorIncarnationIds }) =>
-      requireGrantorAssignments(transaction, scope, grantorIncarnationIds ?? []).pipe(
+    Match.tag('RecordAssignment', ({ assignment, grantorCover }) =>
+      requireGrantorAssignments(transaction, scope, grantorCover ?? []).pipe(
         Effect.andThen(writeAssignment(transaction, assignment)),
       ),
     ),

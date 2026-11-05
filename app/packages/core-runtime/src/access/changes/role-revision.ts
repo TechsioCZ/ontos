@@ -759,7 +759,7 @@ export const writeRoleRevision = Effect.fn('RoleRevision.writeRoleRevision')(fun
     membership: intent,
     revisions: changes.roles.map(({ revision }) => revision),
   };
-  const grantorIncarnationIds = bases.flatMap((basis) =>
+  const grantorCover = bases.flatMap((basis) =>
     Predicate.isTagged(basis, 'DelegatedManager')
       ? coveringGrantorAssignments(grantorIntent, added, basis.delegation, basis.scope.scope, request.decidedAt)
       : [],
@@ -773,7 +773,7 @@ export const writeRoleRevision = Effect.fn('RoleRevision.writeRoleRevision')(fun
               ? [assignment.incarnationId]
               : [],
           ),
-          grantorIncarnationIds,
+          grantorCover,
         }
       : recordInput,
   );

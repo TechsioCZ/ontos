@@ -519,7 +519,7 @@ interface RoleRevisionWrite {
   readonly decidedBy: string;
   readonly edit: RoleCellEdit;
   readonly expectedHolders?: readonly string[];
-  readonly grantorIncarnationIds?: readonly string[];
+  readonly grantorCover?: readonly { readonly incarnationId: string; readonly roleRevisionId: string }[];
   readonly tenantId: string;
 }
 
@@ -538,23 +538,30 @@ interface RoleRevisionWrite {
 const requireGrantorAssignments = Effect.fn('AccessChangesStore.requireGrantorAssignments')(function* requireGrantor(
   transaction: CoreTransaction,
   tenantId: string,
-  incarnationIds: readonly string[],
+  cover: readonly { readonly incarnationId: string; readonly roleRevisionId: string }[],
 ) {
-  if (incarnationIds.length === 0) {
+  if (cover.length === 0) {
     return yield* Effect.void;
   }
   const held = yield* transaction
-    .select({ incarnationId: accessAssignments.incarnationId })
+    .select({ incarnationId: accessAssignments.incarnationId, roleRevisionId: accessAssignments.roleRevisionId })
     .from(accessAssignments)
     .where(
       and(
         eq(accessAssignments.tenantId, tenantId),
-        inArray(accessAssignments.incarnationId, [...incarnationIds]),
+        inArray(
+          accessAssignments.incarnationId,
+          cover.map(({ incarnationId }) => incarnationId),
+        ),
         eq(accessAssignments.status, 'active'),
       ),
     )
     .for('share');
-  if (held.length !== new Set(incarnationIds).size) {
+  // Each covering assignment must still be active and still cover through the same revision.
+  const intact = cover.every(({ incarnationId, roleRevisionId }) =>
+    held.some((row) => row.incarnationId === incarnationId && row.roleRevisionId === roleRevisionId),
+  );
+  if (!intact) {
     return yield* storeConflict(
       'access_changes_revision_stale',
       'the grantor no longer holds the authority this delegated edit was checked against',
@@ -582,7 +589,7 @@ const recordRevision = Effect.fn('AccessChangesStore.recordRevision')(function* 
       `role ${edit.roleId} moved from revision ${edit.sourceRevisionId} to ${current.roleRevisionId}`,
     );
   }
-  yield* requireGrantorAssignments(transaction, tenantId, write.grantorIncarnationIds ?? []);
+  yield* requireGrantorAssignments(transaction, tenantId, write.grantorCover ?? []);
   // Under the lock no assignment can join: a holder the delegated envelope never checked refuses the
   // edit, which the caller re-reads and checks again with that holder in it.
   const { expectedHolders } = write;
@@ -670,7 +677,7 @@ interface DecisionBatch {
   readonly expected: AccessChangeDecisionKind;
   readonly expectedStatus: AccessChangeItemStatus;
   /** The grantor assignments covering a delegated batch's cells, locked and re-checked as it commits. */
-  readonly grantorIncarnationIds?: readonly string[];
+  readonly grantorCover?: readonly { readonly incarnationId: string; readonly roleRevisionId: string }[];
   readonly items: readonly AccessChangeItem[];
   readonly roleEdits: readonly RoleCellEdit[];
 }
@@ -759,7 +766,7 @@ const writeDecisionBatchTransaction = Effect.fn('AccessChangesStore.writeDecisio
       (item) => transitionItem(transaction, scope.tenantId, item.id, from, batch.expectedStatus),
       { concurrency: 1, discard: true },
     );
-    yield* requireGrantorAssignments(transaction, scope.tenantId, batch.grantorIncarnationIds ?? []);
+    yield* requireGrantorAssignments(transaction, scope.tenantId, batch.grantorCover ?? []);
     const { catalogSnapshotId } = batch;
     if (catalogSnapshotId !== undefined) {
       yield* Effect.forEach(
@@ -1153,11 +1160,7 @@ export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): 
     return yield* runScoped(scope, (transaction) =>
       recordRevision(
         transaction,
-        withOptional(
-          withOptional(write, 'expectedHolders', input.expectedHolders),
-          'grantorIncarnationIds',
-          input.grantorIncarnationIds,
-        ),
+        withOptional(withOptional(write, 'expectedHolders', input.expectedHolders), 'grantorCover', input.grantorCover),
       ),
     );
   });
@@ -1213,8 +1216,8 @@ export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): 
             'checkedHolders',
             plan.checkedHolders,
           ),
-          'grantorIncarnationIds',
-          plan.grantorIncarnationIds,
+          'grantorCover',
+          plan.grantorCover,
         ),
       );
     },
@@ -1249,8 +1252,8 @@ export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): 
             'checkedHolders',
             plan.checkedHolders,
           ),
-          'grantorIncarnationIds',
-          plan.grantorIncarnationIds,
+          'grantorCover',
+          plan.grantorCover,
         ),
       );
     },

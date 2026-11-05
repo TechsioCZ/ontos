@@ -705,9 +705,6 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
             scopeId: companyScope,
           })
           .pipe(Effect.orDie);
-        yield* tenant.peopleStore
-          .applyPeopleChange(tenant.owner, { writes: [{ _tag: 'EndAssignment', incarnationId: cover }] })
-          .pipe(Effect.orDie);
         const now = yield* DateTime.nowAsDate;
         const assignment = AssignmentSchema.make({
           assignedAt: now,
@@ -721,13 +718,25 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
           tenantId: tenant.tenantId,
           validFrom: now,
         });
-        // The grantor's cover ended before this commit, so the delegated assignment never lands.
-        const refused = yield* Effect.flip(
+        const assignCovered = (roleRevisionId: string) =>
           tenant.peopleStore.applyPeopleChange(tenant.owner, {
-            writes: [{ _tag: 'RecordAssignment', assignment, grantorIncarnationIds: [cover] }],
-          }),
-        );
-        expect(refused.code).toBe('access_intent_record_conflict');
+            writes: [
+              {
+                _tag: 'RecordAssignment',
+                assignment,
+                grantorCover: [{ incarnationId: cover, roleRevisionId: RoleRevisionIdSchema.make(roleRevisionId) }],
+              },
+            ],
+          });
+        // An edit of the covering role moves the cover to another revision, whose cells were never checked.
+        const moved = yield* Effect.flip(assignCovered(uid(600)));
+        expect(moved.code).toBe('access_intent_record_conflict');
+        // And once the grantor's cover has ended, the delegated assignment never lands at all.
+        yield* tenant.peopleStore
+          .applyPeopleChange(tenant.owner, { writes: [{ _tag: 'EndAssignment', incarnationId: cover }] })
+          .pipe(Effect.orDie);
+        const ended = yield* Effect.flip(assignCovered(role.roleRevisionId));
+        expect(ended.code).toBe('access_intent_record_conflict');
       }),
     ),
   );

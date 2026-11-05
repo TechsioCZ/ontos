@@ -1,17 +1,10 @@
 import { Match, Option, Predicate, Schema } from 'effect';
 
-import { LegalEntityIdSchema } from '../ids.ts';
+import { AssignmentIncarnationIdSchema, LegalEntityIdSchema, RoleRevisionIdSchema } from '../ids.ts';
 import { earliestDeadline } from '../decision/contract.ts';
 import type { TenantProjectionIntent } from '../compiler/intent.ts';
 import type { AccessMembership } from '../intent/memberships.ts';
-import type {
-  AccessScopeId,
-  AssignmentIncarnationId,
-  CapabilityKey,
-  LegalEntityId,
-  PrincipalId,
-  RoleId,
-} from '../ids.ts';
+import type { AccessScopeId, CapabilityKey, LegalEntityId, PrincipalId, RoleId } from '../ids.ts';
 import { ceilingCovers, delegationCellIssue, selectorCovers } from '../lifecycle/delegation.ts';
 import type { DelegatedCellRequest } from '../lifecycle/delegation.ts';
 import type {
@@ -453,7 +446,13 @@ const grantorGrantsOf = (intent: GrantorIntent, delegation: Delegation, scope: A
     (assignment.validUntil === undefined || at < assignment.validUntil) &&
     Predicate.isTagged(assignment.holder, 'Principal') &&
     assignment.holder.principalId === delegation.grantedBy
-      ? [{ cells: revisions.get(assignment.roleRevisionId)?.cells ?? [], incarnationId: assignment.incarnationId }]
+      ? [
+          {
+            cells: revisions.get(assignment.roleRevisionId)?.cells ?? [],
+            incarnationId: assignment.incarnationId,
+            roleRevisionId: assignment.roleRevisionId,
+          },
+        ]
       : [],
   );
 };
@@ -477,20 +476,25 @@ export const beyondGrantorCell = (
 };
 
 /**
- * The grantor assignments that cover at least one granted cell. A writer locks them while it commits a
- * delegated change, so the grantor cannot lose the authority the change was checked against before it
- * lands (a removal either waits for the commit or makes it refuse).
+ * The grantor assignments that cover at least one granted cell, each with the role revision it covers
+ * through. A writer locks them while it commits a delegated change and requires both unchanged, so the
+ * grantor can lose neither the assignment nor the covering cells before the change lands.
  */
+export const GrantorCoverSchema = Schema.Array(
+  Schema.Struct({ incarnationId: AssignmentIncarnationIdSchema, roleRevisionId: RoleRevisionIdSchema }),
+);
+export type GrantorCover = typeof GrantorCoverSchema.Type;
+
 export const coveringGrantorAssignments = (
   intent: GrantorIntent,
   grantedCells: readonly GrantedCell[],
   delegation: Delegation,
   scope: AccessScope,
   at: Date,
-): readonly AssignmentIncarnationId[] =>
-  grantorGrantsOf(intent, delegation, scope, at).flatMap(({ cells, incarnationId }) =>
+): GrantorCover =>
+  grantorGrantsOf(intent, delegation, scope, at).flatMap(({ cells, incarnationId, roleRevisionId }) =>
     grantedCells.some((granted) => cells.some((grant) => grantCovers(grant, granted, delegation)))
-      ? [incarnationId]
+      ? [{ incarnationId, roleRevisionId }]
       : [],
   );
 

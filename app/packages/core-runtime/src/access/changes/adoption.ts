@@ -1,11 +1,17 @@
 import { Match, Predicate, Result, Schema } from 'effect';
 
-import { AccessChangeItemIdSchema, AssignmentIncarnationIdSchema } from '../ids.ts';
+import { AccessChangeItemIdSchema } from '../ids.ts';
 import type { CapabilityKey, PrincipalId, RoleId } from '../ids.ts';
 import type { AccessChangeItem, AccessRisk, Assignment, CatalogSnapshotEntry, Cell, Holder, Role } from '../model.ts';
 import { ACCESS_MODEL_PARSE_OPTIONS, AccessChangeDecisionSchema, AccessChangeItemSchema } from '../model.ts';
 import type { AccessConfigureBasis, GrantedCell, GrantorMembership } from './authority.ts';
-import { configureAuthorityIssue, coveringGrantorAssignments, deciderIssue, liveDelegation } from './authority.ts';
+import {
+  configureAuthorityIssue,
+  coveringGrantorAssignments,
+  deciderIssue,
+  GrantorCoverSchema,
+  liveDelegation,
+} from './authority.ts';
 import { withOptional } from '../decision/optional.ts';
 import { compareText, higherRisk } from './compare.ts';
 import type { AccessChangesError } from './errors.ts';
@@ -40,7 +46,7 @@ export type AdoptionSelection = typeof AdoptionSelectionSchema.Type;
 
 export const AdoptionPlanSchema = Schema.Struct({
   /** Present when a delegation authorized the plan: the grantor assignments covering its cells. */
-  grantorIncarnationIds: Schema.optionalKey(Schema.Array(AssignmentIncarnationIdSchema)),
+  grantorCover: Schema.optionalKey(GrantorCoverSchema),
   /** Present when a delegation authorized the plan: the holders its envelope checked, per edited role. */
   checkedHolders: Schema.optionalKey(CheckedHoldersSchema),
   decisions: Schema.Array(AccessChangeDecisionSchema),
@@ -511,7 +517,7 @@ export const planAdoption = (request: AdoptionRequest): Result.Result<AdoptionPl
               )
             : undefined,
         ),
-        'grantorIncarnationIds',
+        'grantorCover',
         Predicate.isTagged(request.authority, 'DelegatedManager')
           ? coveringGrantorAssignments(
               {
