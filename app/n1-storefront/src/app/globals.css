@@ -6,6 +6,9 @@
 
 /* App composition only. Component appearance comes from canonical N1 and kit aliases. */
 @theme static {
+  /* Kit 0.57 registers an obsolete font-family alias that shadows its canonical
+   * --font-weight-label role. Remove this bridge when the kit drops that alias. */
+  --font-label: initial;
   --breakpoint-n1-compact: 24rem;
   --container-n1-content: 75rem;
   --container-n1-auth: 28rem;

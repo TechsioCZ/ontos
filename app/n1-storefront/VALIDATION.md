@@ -1,5 +1,33 @@
 # Kontrola převodu N1 storefrontu
 
+## C31: správná registrace kanonické tučnosti Label — 2026-11-05
+
+V kitu0.57 zastaralý --font-label:var(--font-bold) vytvořil font-family utility
+a zastínil již exportovaný --font-weight-label. Soukromá skutečná Tailwind
+kompilace prokázala původní family pravidlo i opravené weight pravidlo. N1
+odregistruje pouze tento neplatný family alias pomocí @theme static/initial;
+stejná knihovní třída pak používá původní kanonickou váhu. Nevzniká nový
+font/weight/style role ani per-instance appearance CSS. Most má explicitní
+odstranění po opravě příslušného exportu kitu a nezávislé source review GO.
+
+Produkční browser1440/390: všechny čtyři kontaktní Label mají700; body zůstává
+system-ui400 a Button system-ui500. Mobilní pole147×44, Label147×24, bez
+overflow. Login popup používá Label700; checkbox vlastní400 zachovaný.
+Theme:check potvrzuje nezměněných447 kanonických tokenů.490/490testů,
+lint/TSRS, formát a produkční build PASS.
+
+Další skutečné proklikání3071: katalog233stran/16produktů na poslední; hledání
+Northwave vrací8nativních suggestions200, ArrowDown zvýrazní první, Escape
+zavře a drží focus, ArrowDown/Enter přejde na správný owner PDP bez mini košíku.
+Neplatný kontaktní e-mail drží focus a vytvoří0inquiry požadavků. Login i prázdný
+mini košík mají na390 panel372px/x8 bez overflow; Escape zavře a vrátí focus
+na příslušnou ikonu. Pozitivní contact write/Portal login nejsou tímto tvrzené.
+
+Zbývající rozdíly jsou doložené v.local/N1-FIGMA-TOKEN-CONTRACT-AUDIT.md:
+stale imported radius8 proti aktuálnímu N1radius2, explicitní kontaktní label
+14 vs deklarované md16 a desktopové chip overrides. Inter/system-ui rozdíl
+je známý v handoffu123–124; rozhodnutí o sjednocení písma čeká na uživatele.
+
 ## C30: responzivní výběr velikostí bez duplicit — 2026-11-05
 
 Čerstvá Figma219:2778 má desktop sm/secondary/outlined pro všechny velikosti;
