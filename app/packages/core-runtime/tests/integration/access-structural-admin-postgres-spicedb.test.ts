@@ -178,7 +178,8 @@ const seed = (admin: PgClient.PgClient) =>
          ('${uid(34)}', '${TENANT}', '${SCOPE_A}', '${ADMIN}', 'access_admin', 'active', now() - interval '2 days', ${MANAGEMENT_WINDOW}, '${OWNER}'),
          ('${uid(35)}', '${TENANT}', '${SCOPE_TENANT}', '${DELEGATE}', 'member', 'active', now() - interval '2 days', null, '${OWNER}'),
          ('${uid(36)}', '${TENANT}', '${SCOPE_TENANT}', '${MEMBER}', 'member', 'active', now() - interval '2 days', null, '${OWNER}'),
-         ('${uid(37)}', '${TENANT}', '${SCOPE_A}', '${DELEGATE}', 'member', 'active', now() - interval '2 days', null, '${OWNER}')`,
+         ('${uid(37)}', '${TENANT}', '${SCOPE_A}', '${DELEGATE}', 'member', 'active', now() - interval '2 days', null, '${OWNER}'),
+         ('${uid(38)}', '${TENANT}', '${SCOPE_A}', '${MEMBER}', 'member', 'active', now() - interval '2 days', null, '${OWNER}')`,
       `insert into core.access_delegations
          (delegation_id, tenant_id, scope_id, granted_by, manager_id, people, role_ids, capability_keys, status,
           valid_from, until)
@@ -323,7 +324,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
         expect((yield* decide(ADMIN, COMPANY_A, afterExpiry)).outcome).toBe('DENIED');
         expect((yield* decide(DELEGATE, COMPANY_A, afterExpiry)).outcome).toBe('DENIED');
 
-        // An ordinary member holds no management power at all.
+        // An ordinary member of the company holds no management power at all.
         const member = yield* decide(MEMBER, COMPANY_A);
         expect(member.outcome).toBe('DENIED');
         expect(member.reasons.map(({ code }) => code)).toContain('deny.insufficient_grant');
