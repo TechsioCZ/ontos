@@ -798,6 +798,20 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       Effect.tapError((problem) => Console.error(`[app-host] service grant reconciliation failed: ${problem.reason}`)),
       Effect.ignore,
     );
+    // The N1 storefront grants ride the same release path as the demo grants: an additive TOUCH of the reviewed N1
+    // desired set, never a revoke. A failure is logged loudly and does not stop a release whose data is already served.
+    yield* runChild(
+      'n1-service-grants',
+      node,
+      ['scripts/demo/n1-release-grants.mts'],
+      workspaceRoot,
+      Struct.omit(processEnvironment([SHELL_ID, ...ownerIds], ownerSecrets, derived).environment, [
+        'DATABASE_ADMIN_URL',
+      ]),
+    ).pipe(
+      Effect.tapError((problem) => Console.error(`[app-host] N1 grant reconciliation failed: ${problem.reason}`)),
+      Effect.ignore,
+    );
     const outbox = yield* startChild(OUTBOX_HOST_ID, node, [OUTBOX_HOST_BUNDLE], workspaceRoot, {
       ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
       // The host's email trigger authenticates to the Shell's dispatch endpoint with the Shell's own secret.
