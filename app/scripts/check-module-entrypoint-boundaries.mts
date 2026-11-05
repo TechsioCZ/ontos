@@ -3695,10 +3695,12 @@ const validateGatewayContract = (state: BoundaryCheckState) =>
     yield* validateGatewayRuntime(shellApiContract, shellApiRuntime);
   });
 
-const checkModuleEntrypointBoundariesEffect = (root: string) =>
+const checkModuleEntrypointBoundariesEffect = (workspaceRoot: string) =>
   Effect.gen(function* checkModuleEntrypointBoundariesProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    // The native module graph resolves real paths, so ownership must use the same workspace root.
+    const root = yield* fileSystem.realPath(workspaceRoot);
     const owners = yield* readTopologyOwners(root);
     const files = [
       ...(yield* walk(path.join(root, 'apps'))),

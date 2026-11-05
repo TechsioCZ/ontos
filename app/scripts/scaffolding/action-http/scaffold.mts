@@ -1044,28 +1044,19 @@ const withNodeCryptoImport = (content: string, vertical: OntosVerticalMetadata):
 };
 
 const addCanonicalActionRuntime = (content: string, vertical: OntosVerticalMetadata): string => {
+  const registrationName = `${toCamelCase(vertical.slug)}Registration`;
+  const readBinding =
+    /^const governedReadRuntimeLive\s*=\s*GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*(?<registration>[A-Za-z_$][A-Za-z0-9_$]*),?\s*\)\.pipe\(/mu.exec(
+      content,
+    )?.groups?.['registration'];
+  if (readBinding !== 'governedOwnerRegistration' && readBinding !== registrationName) {
+    return raiseScaffoldFailure(`vertical ${vertical.slug} API root requires the canonical owner-bound Read runtime`);
+  }
   let nextContent = content;
   if (!nextContent.includes('const governedActionRuntimeLive =')) {
-    let boundReadRuntime =
-      /GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)\.pipe\(/u.test(
-        nextContent,
-      );
-    if (!boundReadRuntime && nextContent.includes('const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(')) {
-      nextContent = nextContent
-        .replace(
-          '  ReadRuntimeLive as GovernedReadRuntimeLive,',
-          '  makeReadRuntimeLive as GovernedMakeReadRuntimeLive,',
-        )
-        .replace(
-          'const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(',
-          'const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(',
-        );
-      nextContent = `import { ${toCamelCase(vertical.slug)}Registration as governedOwnerRegistration } from '../vertical.registration.ts';\nimport { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';\n${nextContent}`;
-      boundReadRuntime = true;
-    }
-    if (boundReadRuntime && !nextContent.includes('const governedActiveApplicationCompositionLive =')) {
+    if (!nextContent.includes('const governedActiveApplicationCompositionLive =')) {
       const canonicalRead =
-        /^const governedReadRuntimeLive\s*=\s*GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*governedOwnerRegistration,?\s*\)\.pipe\(\s*GovernedReadLayer\.provide\(governedReadRuntimeDependenciesLive\),?\s*\);/mu;
+        /^const governedReadRuntimeLive\s*=\s*GovernedMakeReadRuntimeLive\(\s*governedActionDeliveryUnit,\s*[A-Za-z_$][A-Za-z0-9_$]*,?\s*\)\.pipe\(\s*GovernedReadLayer\.provide\(governedReadRuntimeDependenciesLive\),?\s*\);/mu;
       const existingRead = canonicalRead.exec(nextContent);
       const handlersAnchor = 'export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(';
       if (existingRead === null || nextContent.split(handlersAnchor).length !== 2) {
@@ -1076,7 +1067,7 @@ const addCanonicalActionRuntime = (content: string, vertical: OntosVerticalMetad
         `const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
-const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(
+const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, ${readBinding}).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
 );
@@ -1084,9 +1075,7 @@ const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDelive
 ${handlersAnchor}`,
       );
     }
-    const readRuntimeImport = boundReadRuntime
-      ? '  makeReadRuntimeLive as GovernedMakeReadRuntimeLive,'
-      : '  ReadRuntimeLive as GovernedReadRuntimeLive,';
+    const readRuntimeImport = '  makeReadRuntimeLive as GovernedMakeReadRuntimeLive,';
     const gatewayImport = '  ModuleEntrypointGatewayLive as GovernedModuleEntrypointGatewayLive,';
     const compositionSourceImport =
       "import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';";
@@ -1097,21 +1086,6 @@ ${handlersAnchor}`,
           `vertical ${vertical.slug} API root lacks the canonical Action runtime composition anchor`,
         );
       }
-    }
-    const markerImport = "import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';";
-    const deliveryImport =
-      "import { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';";
-    if (boundReadRuntime) {
-      // The canonical owner-bound Read root already imports both deployment and registration.
-    } else if (nextContent.includes(markerImport)) {
-      nextContent = nextContent.replace(
-        markerImport,
-        "import { ultramodernApiMarker, ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';",
-      );
-    } else if (nextContent.includes("from '../shared/ultramodern-build.ts'")) {
-      return raiseScaffoldFailure(`vertical ${vertical.slug} API root lacks the canonical deployment identity import`);
-    } else {
-      nextContent = `${deliveryImport}\n${nextContent}`;
     }
     nextContent = nextContent
       .replace(readRuntimeImport, `${readRuntimeImport}\n  makeActionRuntimeLive as GovernedMakeActionRuntimeLive,`)
@@ -1127,14 +1101,14 @@ ${handlersAnchor}`,
       )
       .replace(
         handlersDefinition,
-        `const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(governedActionDeliveryUnit${boundReadRuntime ? ', governedOwnerRegistration' : ''}).pipe(
+        `const governedActionRuntimeLive = GovernedMakeActionRuntimeLive(governedActionDeliveryUnit, ${readBinding}).pipe(
     GovernedReadLayer.provide(
       GovernedReadLayer.mergeAll(
         governedReadRuntimeDependenciesLive,
         governedModuleStateGateLive,
         GovernedActionRepositoryLive,
         GovernedActionPermissionLive,
-        ${boundReadRuntime ? 'governedActiveApplicationCompositionLive' : 'GovernedApplicationCompositionConfigLive'},
+        governedActiveApplicationCompositionLive,
       ),
     ),
   );
