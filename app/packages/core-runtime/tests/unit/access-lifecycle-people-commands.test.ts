@@ -880,6 +880,7 @@ interface MembershipEndFixture {
   readonly actor?: PrincipalId;
   readonly administration: ReturnType<typeof makeAdministration>;
   readonly assignments?: readonly Assignment[];
+  readonly delegations?: readonly Delegation[];
   readonly membershipId: ReturnType<typeof membershipId>;
   readonly memberships: readonly AccessMembership[];
   readonly nextStatus: 'revoked' | 'suspended';
@@ -894,6 +895,7 @@ const membershipEndRequest = (fixture: MembershipEndFixture, scopeId: AccessScop
     actor: fixture.actor ?? MANAGER,
     administration: fixture.administration,
     assignments: fixture.assignments ?? [],
+    delegations: fixture.delegations ?? [],
     membershipId: fixture.membershipId,
     memberships: fixture.memberships,
     nextStatus: fixture.nextStatus,
@@ -1029,6 +1031,17 @@ it.effect('ending the last owner’s member row needs a transfer, and giving up 
       companyMember.id,
     ]);
     expect(writeTags(leftTenant).filter((tag) => tag === 'EndAssignment')).toHaveLength(2);
+    // A delegation the leaver manages ends with their path, so a rejoin restores no envelope.
+    const managed = makeDelegation({ grantedBy: OTHER, managerId: MANAGER, people: [MEMBER] });
+    const managerLeft = yield* planMembershipEnd(
+      membershipEndRequest({
+        ...fixture,
+        administration: shared,
+        delegations: [managed],
+        membershipId: member.id,
+      }),
+    );
+    expect(writeTags(managerLeft)).toContain('EndDelegation');
 
     // A suspended membership is still revoked for good, without first restoring it.
     const suspendedMember = membership({ holder: MANAGER, id: 2, status: 'suspended' });

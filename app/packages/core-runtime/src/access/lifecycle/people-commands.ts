@@ -452,6 +452,8 @@ export const planMembershipGrant = (
 export interface MembershipEndRequest extends PeopleCommandFacts {
   readonly administration: ScopeAdministration;
   readonly assignments: readonly Assignment[];
+  /** The tenant's delegations, so a departing manager's envelopes end with the path they stand on. */
+  readonly delegations: readonly Delegation[];
   readonly membershipId: AccessMembershipId;
   readonly memberships: readonly AccessMembership[];
   readonly nextStatus: Extract<MembershipStatus, 'revoked' | 'suspended'>;
@@ -735,9 +737,24 @@ export const planMembershipEnd = (
                 },
               },
             ];
+      // A delegation is management authority standing on the manager's membership path, so revoking that
+      // path ends it too: a later rejoin derives no delegated authority from an envelope left behind.
+      const managedDelegations =
+        endsPath && request.nextStatus === 'revoked'
+          ? request.delegations.filter(
+              (delegation) =>
+                delegation.managerId === leaver &&
+                delegation.status === 'active' &&
+                (tenantPath || delegation.scopeId === ending.scopeId),
+            )
+          : [];
       const writes: readonly PeopleIntentWrite[] = [
         ...transfer,
         { _tag: 'EndMembership', membershipId: ending.id, status: request.nextStatus },
+        ...managedDelegations.map((delegation): PeopleIntentWrite => ({
+          _tag: 'EndDelegation',
+          delegationId: delegation.id,
+        })),
         ...dependentRows.map((membership): PeopleIntentWrite => ({
           _tag: 'EndMembership',
           membershipId: membership.id,
