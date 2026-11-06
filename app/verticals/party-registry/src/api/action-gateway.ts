@@ -674,14 +674,18 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
         'Reading the official identifier values is required before applying ARES evidence',
       );
     }
-    // A redacted contact point carries no value, so it names no registered address.
-    const registeredAddresses = contactPoints.items.flatMap(({ current, value }) =>
-      current &&
-      value?.type === 'ADDRESS' &&
-      value.purposes.some((purpose) => purpose.current && purpose.purpose === 'REGISTERED')
-        ? [structuredAddress(value.address)]
-        : [],
-    );
+    const registeredAddresses = contactPoints.items.flatMap((point) => {
+      if (!point.current || point.value?.type !== 'ADDRESS') {
+        return [];
+      }
+      const address = structuredAddress(point.value.address);
+      return point.value.purposes
+        .filter((purpose) => purpose.current && purpose.purpose === 'REGISTERED')
+        .map(({ provenance, registryContext }) => {
+          const current = { address, provenance };
+          return registryContext === undefined ? current : { ...current, registryContext };
+        });
+    });
     // A redacted identity carries no business name, so the evidence has nothing to compare it with.
     const { businessName } = party;
     if (businessName === undefined) {
@@ -727,14 +731,9 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
       icoValues: activeIdentifiers
         .filter(({ identifierType }) => identifierType === 'ICO')
         .map(({ normalizedValue }) => normalizedValue),
-      identityAmbiguous: activeIdentifiers.some(({ identifierType, normalizedValue, verification }) => {
+      identityAmbiguous: activeIdentifiers.some(({ identifierType, normalizedValue }) => {
         const observedDic = Option.getOrNull(observation.subject.dic);
-        return (
-          identifierType === 'CZ_DIC' &&
-          verification === 'VERIFIED' &&
-          observedDic !== null &&
-          normalizedValue !== observedDic
-        );
+        return identifierType === 'CZ_DIC' && observedDic !== null && normalizedValue !== observedDic;
       }),
       partyType: party.partyType,
       registeredAddresses,

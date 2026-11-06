@@ -21,13 +21,11 @@ import {
   OfficialIdentifierClaimConflict,
   OfficialIdentifierInvalid,
   normalizeOfficialIdentifier,
-  qualifiesForExclusiveClaim,
 } from '../../shared/domain/identifier-contracts.ts';
 import {
   partyIdFromString,
   PartyNotFound,
   PartyPersistenceUnavailable,
-  PartyTypeSchema,
 } from '../../shared/domain/identity-contracts.ts';
 import type { PartyNotFoundError, PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import {
@@ -40,9 +38,7 @@ import {
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
 import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
-import { lockAndResolveClaims } from '../services/party-identifier-claim.service.ts';
 import {
-  PARTY_EXACT_CLAIM_RULE_VERSION,
   addOfficialIdentifierRecord,
   lockOfficialIdentifierPartyRecord,
 } from '../services/party-official-identifier-persistence.service.ts';
@@ -77,16 +73,6 @@ interface Services {
     | PartyAliasWriteRejected
   >;
 }
-const persistenceUnavailable = (cause: unknown) =>
-  Object.defineProperty(
-    new PartyPersistenceUnavailable({
-      code: 'party_persistence_unavailable',
-      reason: 'The stored Party type could not be resolved',
-    }),
-    'cause',
-    { configurable: true, value: cause },
-  );
-
 const handle = Effect.fn('AddPartyOfficialIdentifierAction.handle')(function* addIdentifier(
   payload: AddPartyOfficialIdentifierPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
@@ -168,7 +154,7 @@ export const addPartyOfficialIdentifierAction = defineAction(
           scope.tenantId,
           payload.partyRef.resourceId,
         );
-        const party = yield* Match.value(partyResult).pipe(
+        yield* Match.value(partyResult).pipe(
           Match.tag('not_found', () =>
             Effect.fail(
               new PartyNotFound({
@@ -193,18 +179,6 @@ export const addPartyOfficialIdentifierAction = defineAction(
         // acceptance provenance, not a new identifier identity or future ownership boundary.
         const originalInputDigits = payload.identifier.identifierType === 'ICO' ? payload.identifier.value : undefined;
         const identifier = normalizeOfficialIdentifier(payload.identifier);
-        const partyType = yield* Schema.decodeUnknownEffect(PartyTypeSchema)(party.currentType).pipe(
-          Effect.mapError(persistenceUnavailable),
-        );
-        if (qualifiesForExclusiveClaim(identifier, partyType, PARTY_EXACT_CLAIM_RULE_VERSION)) {
-          const [claim] = yield* lockAndResolveClaims(transaction, scope.tenantId, [identifier]);
-          if (claim?.partyId !== undefined && claim.partyId !== payload.partyRef.resourceId) {
-            return yield* new OfficialIdentifierClaimConflict({
-              code: 'party_identifier_claim_conflict',
-              reason: 'This strong identifier is already claimed by a Party',
-            });
-          }
-        }
         const record = yield* addOfficialIdentifierRecord(
           transaction,
           scope.tenantId,
@@ -213,9 +187,7 @@ export const addPartyOfficialIdentifierAction = defineAction(
           {
             actionInvocationId,
             externalEvidence: payload.externalEvidence,
-            matchRuleVersion: PARTY_EXACT_CLAIM_RULE_VERSION,
             originalInputDigits,
-            partyType,
             principalId: scope.principalId,
             provenanceMethod: payload.provenanceMethod,
             provenanceSource: payload.provenanceSource,

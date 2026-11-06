@@ -184,7 +184,6 @@ export const PartyCorrectionAssertionValueSchema = Schema.Union([
     state: AssertionStateSchema,
     validFrom: RelationshipIsoTimestampSchema,
     value: Schema.String,
-    verification: Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']),
   }),
   Schema.Struct({
     ...assertionHistoryFields,

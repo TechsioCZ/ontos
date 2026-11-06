@@ -45,17 +45,15 @@ import { addPartyOfficialIdentifierAction } from '../../src/actions/add-party-of
 import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { endPartyOfficialIdentifierAction } from '../../src/actions/end-party-official-identifier.action.ts';
-import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import {
   addPartyOfficialIdentifierWithAuthorization,
   correctPartyFactWithAuthorization,
   createPartyWithAuthorization,
   endPartyOfficialIdentifierWithAuthorization,
-  resolveDuplicateCandidateCreateWithAuthorization,
 } from '../../src/api/party-command-client.ts';
 import { executePartyOfficialIdentifierHistoryWithAuthorization } from '../../src/api/party-official-identifier-history-client.ts';
 import { makePartyDatabase } from '../../src/db/client.ts';
-import { partyIdentifierClaims, partyOfficialIdentifiers } from '../../src/db/schema.ts';
+import { partyOfficialIdentifiers } from '../../src/db/schema.ts';
 import {
   makePartyReconciliationGateway,
   preparePartyReconciliationNative,
@@ -93,7 +91,6 @@ it.layer(
               correctPartyFactAction,
               createPartyAction,
               endPartyOfficialIdentifierAction,
-              resolveDuplicateCandidateCreateAction,
             ].map((action) => action.descriptor.actionKey),
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
             compositionRevision: composition.composition.revision,
@@ -189,20 +186,8 @@ it.layer(
               yield* options,
             ),
           );
-          assert.isOk(created.outcome === 'AMBIGUOUS');
-          const reviewed = yield* runHttp(
-            resolveDuplicateCandidateCreateWithAuthorization(
-              {
-                caseRef: created.caseRef,
-                expectedRevision: 1,
-                reason: 'Reviewed distinct concrete organization without strong identifiers',
-              },
-              yield* authorization(),
-              yield* options,
-            ),
-          );
-          assert.isOk(reviewed.partyRef);
-          return reviewed.partyRef;
+          assert.isOk(created.outcome === 'CREATED');
+          return created.partyRef;
         });
         const add = Effect.fn('OriginalIdentifierInputTest.add')(function* add(
           partyRef: PartyRef,
@@ -216,7 +201,7 @@ it.layer(
           return yield* runHttp(
             addPartyOfficialIdentifierWithAuthorization(
               {
-                identifier: { identifierType, value, verification: 'UNVERIFIED' },
+                identifier: { identifierType, value },
                 partyRef,
                 provenanceMethod: 'MANUAL',
                 provenanceSource: 'original-input-test',
@@ -345,11 +330,6 @@ it.layer(
         expect(
           (yield* rows()).filter((row) => row.partyId === firstParty.resourceId && row.normalizedValue === '27074358'),
         ).toHaveLength(1);
-        const claims = yield* admin
-          .select()
-          .from(partyIdentifierClaims)
-          .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId));
-        expect(claims).toEqual([]);
         const legacyId = yield* nextId;
         // Old writers omitted this nullable additive column. Preserve that absence as unknown.
         yield* admin.insert(partyOfficialIdentifiers).values({
@@ -365,7 +345,6 @@ it.layer(
           provenanceSource: original.provenanceSource,
           tenantId: fixture.tenantId,
           validFrom: original.validFrom,
-          verificationState: 'UNVERIFIED',
         });
         const legacyReuse = yield* add(secondParty, '26168685', yield* options);
         expect(legacyReuse.officialIdentifierRef.resourceId).toBe(legacyId);
@@ -453,5 +432,6 @@ it.layer(
           );
         expect(preserved[0]?.acceptedByActionInvocationId).toBe(original.acceptedByActionInvocationId);
       }),
+    120_000,
   );
 });

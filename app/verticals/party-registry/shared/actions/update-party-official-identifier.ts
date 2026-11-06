@@ -1,26 +1,16 @@
 // Canonical schema-only contract extracted from the generated update-party-official-identifier Action.
 import { Schema } from 'effect';
 
-import {
-  IdentifierVerificationSchema,
-  OfficialIdentifierAssertionStateSchema,
-} from '../domain/identifier-contracts.ts';
+import { OfficialIdentifierAssertionStateSchema } from '../domain/identifier-contracts.ts';
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const UpdatePartyOfficialIdentifierPayloadSchema = Schema.Struct({
-  change: Schema.Union([
-    Schema.Struct({
-      expectedVerification: IdentifierVerificationSchema,
-      type: Schema.Literal('SET_VERIFICATION'),
-      verification: IdentifierVerificationSchema,
-    }),
-    Schema.Struct({
-      type: Schema.Literal('END_VALIDITY'),
-      validTo: IsoTimestampSchema,
-    }),
-  ]),
+  change: Schema.Struct({
+    type: Schema.Literal('END_VALIDITY'),
+    validTo: IsoTimestampSchema,
+  }),
   evidenceRefs: Schema.Array(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(20),
@@ -40,6 +30,5 @@ export const UpdatePartyOfficialIdentifierResultSchema = Schema.Struct({
   partyRef: PartyRefSchema,
   state: OfficialIdentifierAssertionStateSchema,
   validTo: Schema.OptionFromNullOr(IsoTimestampSchema),
-  verification: IdentifierVerificationSchema,
 });
 export type UpdatePartyOfficialIdentifierResult = typeof UpdatePartyOfficialIdentifierResultSchema.Type;

@@ -9,8 +9,6 @@ import { Hex } from 'effect/encoding';
 import type { UnarchivePartyBlocked } from '../../shared/actions/unarchive-party.ts';
 import type { AresAppliedEvidence } from '../../shared/domain/ares-application.ts';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
-import type { NormalizedOfficialIdentifier } from '../../shared/domain/identifier-contracts.ts';
-import { qualifiesForExclusiveClaim } from '../../shared/domain/identifier-contracts.ts';
 import type { Party, PartyCandidate, PartySubjectEvidence, PartyType } from '../../shared/domain/identity-contracts.ts';
 import {
   PartyPersistenceUnavailable,
@@ -27,14 +25,13 @@ import {
   duplicateCandidateCases,
   parties,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyOfficialIdentifiers,
 } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget } from '../merge/party-alias-resolution.service.ts';
 import { requirePartySubjectEvidence } from '../policies/create-party-without-strong-identifier.policy.ts';
-import { lockAndResolveClaims, lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
+import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
 
 const PartyFoundSchema = Schema.TaggedStruct('found', { value: PartySchema });
 const PartyNotFoundSchema = Schema.TaggedStruct('not_found', {});
@@ -43,29 +40,11 @@ const PartyConflictSchema = Schema.TaggedStruct('conflict', {
   value: PartySchema,
 });
 const PartyLifecycleSchema = Schema.Union([PartyLookupSchema, PartyConflictSchema]);
-const PartyUnarchiveIdentityConflictSchema = Schema.TaggedStruct('identity_conflict', {
-  conflictingPartyId: PartyRefSchema.fields.resourceId,
-});
-const PartyUnarchiveIdentityAmbiguousSchema = Schema.TaggedStruct('identity_ambiguous', {
-  candidatePartyIds: Schema.Array(PartyRefSchema.fields.resourceId),
-});
 const PartyUnarchiveReviewRequiredSchema = Schema.TaggedStruct('review_required', {
   caseIds: Schema.Array(DuplicateCandidateCaseRefSchema.fields.resourceId),
   reasonCode: Schema.Literals(['OPEN_DUPLICATE_CASE', 'UNRESOLVED_IDENTITY']),
 });
-const PartyUnarchiveLifecycleSchema = Schema.Union([
-  PartyLifecycleSchema,
-  PartyUnarchiveIdentityConflictSchema,
-  PartyUnarchiveIdentityAmbiguousSchema,
-  PartyUnarchiveReviewRequiredSchema,
-]);
-const ClaimAvailableSchema = Schema.TaggedStruct('available', {});
-const ClaimOwnershipSchema = Schema.Union([
-  ClaimAvailableSchema,
-  PartyUnarchiveIdentityConflictSchema,
-  PartyUnarchiveIdentityAmbiguousSchema,
-]);
-
+const PartyUnarchiveLifecycleSchema = Schema.Union([PartyLifecycleSchema, PartyUnarchiveReviewRequiredSchema]);
 export type PartyLookup = typeof PartyLookupSchema.Type;
 export type PartyLifecycle = typeof PartyLifecycleSchema.Type;
 type PartyUnarchiveLifecycle = typeof PartyUnarchiveLifecycleSchema.Type;
@@ -95,36 +74,12 @@ export const findOpenDuplicateCandidateCase = (
     .limit(1);
 
 const instantAsDate = (instant: string | DateTime.Utc): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
-const ClaimKeyJsonCodec = Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String]));
 const JsonCodec = Schema.fromJsonString(Schema.Any);
-const encodeClaimKey = (claimKey: readonly [string, string, string]): string =>
-  Result.getOrThrow(Schema.encodeResult(ClaimKeyJsonCodec)(claimKey));
 const encodeJson = <Value>(value: Value): string => Result.getOrThrow(Schema.encodeResult(JsonCodec)(value));
 
 export const endedPartyFactTransition = {
   isCurrent: false,
   state: 'ENDED' as const,
-};
-
-export const classifyUnarchiveClaimOwners = (
-  partyId: string,
-  resolvedClaims: readonly { readonly partyId?: string }[],
-): typeof ClaimOwnershipSchema.Type => {
-  const foreignOwners = [
-    ...new Set(
-      resolvedClaims.flatMap((claim) =>
-        claim.partyId === undefined || claim.partyId === partyId ? [] : [claim.partyId],
-      ),
-    ),
-  ].toSorted();
-  const [firstOwner] = foreignOwners;
-  if (firstOwner === undefined) {
-    return { _tag: 'available' };
-  }
-  if (foreignOwners.length === 1) {
-    return { _tag: 'identity_conflict', conflictingPartyId: firstOwner };
-  }
-  return { _tag: 'identity_ambiguous', candidatePartyIds: foreignOwners };
 };
 
 const unavailable = (cause?: unknown) => {
@@ -241,121 +196,6 @@ export const insertPartyRecord = Effect.fn('PartyIdentityPersistenceService.inse
     ])
     .pipe(Effect.mapError(unavailable));
   return partyDto(party);
-});
-
-/** Reconciles exclusive claims before a Party type or active-state transition commits. */
-export const reconcilePartyIdentifierClaims = Effect.fn(
-  'PartyIdentityPersistenceService.reconcilePartyIdentifierClaims',
-)(function* reconcileClaims(
-  transaction: Pick<PartyTransaction, 'select' | 'insert' | 'delete'>,
-  tenantId: string,
-  partyId: string,
-  nextPartyType: PartyType,
-) {
-  yield* lockTenantIdentityWrites(transaction, tenantId);
-  const now = yield* DateTime.nowAsDate;
-  const identifierRows = yield* transaction
-    .select()
-    .from(partyOfficialIdentifiers)
-    .where(
-      and(
-        eq(partyOfficialIdentifiers.tenantId, tenantId),
-        eq(partyOfficialIdentifiers.partyId, partyId),
-        eq(partyOfficialIdentifiers.state, 'ACTIVE'),
-        eq(partyOfficialIdentifiers.isCurrent, true),
-        lte(partyOfficialIdentifiers.validFrom, now),
-        or(isNull(partyOfficialIdentifiers.validTo), gt(partyOfficialIdentifiers.validTo, now)),
-      ),
-    )
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
-  const eligibleIdentifiers = identifierRows
-    .filter((row) => row.namespace === (row.identifierTypeKey === 'ICO' ? 'CZ:ICO' : 'CZ:DIC'))
-    .map((row) => ({
-      // SAFETY: The owner-local identifier type CHECK admits only the supported identifier codes.
-      identifierType: row.identifierTypeKey as NormalizedOfficialIdentifier['identifierType'],
-      // SAFETY: The preceding filter admits only the canonical namespace for the stored type.
-      namespace: row.namespace as NormalizedOfficialIdentifier['namespace'],
-      normalizedValue: row.normalizedValue,
-      // SAFETY: The owner-local verification CHECK admits only the declared verification states.
-      verification: row.verificationState as NormalizedOfficialIdentifier['verification'],
-    }))
-    .filter((identifier) => qualifiesForExclusiveClaim(identifier, nextPartyType, MATCH_RULE_VERSION));
-  const uniqueIdentifiers = [
-    ...new Map(
-      eligibleIdentifiers.map((identifier) => [
-        [identifier.identifierType, identifier.namespace, identifier.normalizedValue].join('\u0000'),
-        identifier,
-      ]),
-    ).values(),
-  ];
-  const resolvedClaims = yield* lockAndResolveClaims(transaction, tenantId, uniqueIdentifiers);
-  const claimOwnership = classifyUnarchiveClaimOwners(partyId, resolvedClaims);
-  if (!Schema.is(ClaimAvailableSchema)(claimOwnership)) {
-    return claimOwnership;
-  }
-
-  const ownedClaims = yield* transaction
-    .select()
-    .from(partyIdentifierClaims)
-    .where(and(eq(partyIdentifierClaims.tenantId, tenantId), eq(partyIdentifierClaims.partyId, partyId)))
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
-  const eligibleKeys = new Set(
-    uniqueIdentifiers.map((identifier) =>
-      encodeClaimKey([identifier.identifierType, identifier.namespace, identifier.normalizedValue]),
-    ),
-  );
-  const releasedClaimIds = ownedClaims
-    .filter(
-      (claim) => !eligibleKeys.has(encodeClaimKey([claim.identifierTypeKey, claim.namespace, claim.normalizedValue])),
-    )
-    .map((claim) => claim.identifierClaimId);
-  if (releasedClaimIds.length > 0) {
-    yield* transaction
-      .delete(partyIdentifierClaims)
-      .where(
-        and(
-          eq(partyIdentifierClaims.tenantId, tenantId),
-          eq(partyIdentifierClaims.partyId, partyId),
-          inArray(partyIdentifierClaims.identifierClaimId, releasedClaimIds),
-        ),
-      )
-      .pipe(Effect.mapError(unavailable));
-  }
-
-  const identifiersByClaimKey = new Map(
-    identifierRows.map((row) => [[row.identifierTypeKey, row.namespace, row.normalizedValue].join('\u0000'), row]),
-  );
-  const unclaimedIdentifiers = resolvedClaims.flatMap(({ claim, partyId: ownerPartyId }) => {
-    if (ownerPartyId !== undefined) {
-      return [];
-    }
-    const record = identifiersByClaimKey.get(
-      [claim.identifierType, claim.namespace, claim.normalizedValue].join('\u0000'),
-    );
-    return record === undefined ? [] : [{ claim, record }];
-  });
-  if (unclaimedIdentifiers.length > 0) {
-    yield* transaction
-      .insert(partyIdentifierClaims)
-      .values(
-        unclaimedIdentifiers.map(({ claim, record }) => ({
-          identifierTypeKey: claim.identifierType,
-          namespace: claim.namespace,
-          normalizedValue: claim.normalizedValue,
-          officialIdentifierId: record.officialIdentifierId,
-          partyId,
-          tenantId,
-        })),
-      )
-      .pipe(Effect.mapError(unavailable));
-  }
-
-  return {
-    _tag: 'available',
-    eligibleClaimCount: uniqueIdentifiers.length,
-  } as const;
 });
 
 interface UpdatePartyIdentityInput {
@@ -515,12 +355,6 @@ export const updatePartyIdentityRecord = Effect.fn('PartyIdentityPersistenceServ
     if (invalidIdentityFactInterval(currentAssertions, input.validFrom)) {
       return { _tag: 'conflict', value: partyDto(current) } as const;
     }
-    if (input.partyType !== undefined && input.partyType !== current.currentType) {
-      const claims = yield* reconcilePartyIdentifierClaims(transaction, tenantId, input.partyId, input.partyType);
-      if (!Schema.is(ClaimAvailableSchema)(claims)) {
-        return { _tag: 'conflict', value: partyDto(current) } as const;
-      }
-    }
     const externalEvidence =
       input.externalEvidence === undefined
         ? null
@@ -678,16 +512,6 @@ export const unarchivePartyRecord = Effect.fn('PartyIdentityPersistenceService.u
         } as const;
       }
     }
-    const claims = yield* reconcilePartyIdentifierClaims(
-      transaction,
-      tenantId,
-      partyId,
-      // SAFETY: The owner-local parties type CHECK admits exactly the PartyType values.
-      current.currentType as PartyType,
-    );
-    if (!Schema.is(ClaimAvailableSchema)(claims)) {
-      return claims;
-    }
     const now = yield* DateTime.nowAsDate;
     const [updated] = yield* transaction
       .update(parties)
@@ -702,28 +526,10 @@ export const unarchivePartyRecord = Effect.fn('PartyIdentityPersistenceService.u
 type BlockedUnarchiveCheck = Exclude<PartyUnarchiveLifecycle, PartyLifecycle>;
 type UnarchiveTransaction = Parameters<typeof unarchivePartyRecord>[0];
 
-const unarchiveReviewReason = (check: BlockedUnarchiveCheck): UnarchivePartyBlocked['reasonCode'] => {
-  if (Schema.is(PartyUnarchiveIdentityConflictSchema)(check)) {
-    return 'EXACT_CLAIM_CONFLICT';
-  }
-  if (Schema.is(PartyUnarchiveIdentityAmbiguousSchema)(check)) {
-    return 'EXACT_CLAIM_AMBIGUOUS';
-  }
-  return check.reasonCode;
-};
-
-const unarchiveReviewParties = (partyId: string, check: BlockedUnarchiveCheck) =>
-  [
-    ...new Set([
-      partyId,
-      ...(Schema.is(PartyUnarchiveIdentityConflictSchema)(check) ? [check.conflictingPartyId] : []),
-      ...(Schema.is(PartyUnarchiveIdentityAmbiguousSchema)(check) ? check.candidatePartyIds : []),
-    ]),
-  ].toSorted();
+const unarchiveReviewReason = (check: BlockedUnarchiveCheck): UnarchivePartyBlocked['reasonCode'] => check.reasonCode;
+const unarchiveReviewParties = (partyId: string) => [partyId];
 
 const unarchiveReviewExplanations = {
-  EXACT_CLAIM_AMBIGUOUS: 'Current exact identifier claims resolve to multiple other Parties.',
-  EXACT_CLAIM_CONFLICT: 'A current exact identifier claim belongs to another Party.',
   OPEN_DUPLICATE_CASE: 'Open duplicate identity evidence requires review before reactivation.',
   UNRESOLVED_IDENTITY: 'No retained reviewed acceptance establishes this unresolved identity.',
 } as const;
@@ -796,12 +602,10 @@ const createUnarchiveReviewCase = Effect.fn('PartyIdentityPersistenceService.cre
       lastName: Option.getOrNull(party.lastName),
       businessName: Option.getOrNull(party.businessName),
       officialIdentifiers: identifiers.map((identifier) => ({
-        // SAFETY: Owner-local CHECK constraints restrict identifier and verification types.
+        // SAFETY: Owner-local CHECK constraints restrict identifier types.
         identifierTypeKey: identifier.identifierTypeKey as 'ICO' | 'CZ_DIC',
         namespace: identifier.namespace,
         normalizedValue: identifier.normalizedValue,
-        // SAFETY: Owner-local CHECK constraints restrict verification types.
-        verificationState: identifier.verificationState as 'VERIFIED' | 'UNVERIFIED' | 'REJECTED',
       })),
       partyType: party.partyType,
       policyVersion: MATCH_RULE_VERSION,
@@ -813,7 +617,7 @@ const createUnarchiveReviewCase = Effect.fn('PartyIdentityPersistenceService.cre
       validFrom: DateTime.formatIso(party.updatedAt),
     };
     const reasonCode = unarchiveReviewReason(check);
-    const partyIds = unarchiveReviewParties(party.partyRef.resourceId, check);
+    const partyIds = unarchiveReviewParties(party.partyRef.resourceId);
     const explanation: PartyEvidenceExplanation = {
       evidenceRefs: partyIds.map((id) => partyReviewSourceRef(tenantId, id)),
       outcome: 'AMBIGUOUS',

@@ -86,11 +86,6 @@ const contactRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
   tenantId,
   validFrom: instantAsDate('2026-01-01T00:00:00.000Z'),
   validTo: null,
-  verificationMethod: null,
-  verificationState: 'UNVERIFIED',
-  verifiedAt: null,
-  verifiedByPrincipalId: null,
-  verifierReference: null,
   ...overrides,
 });
 const purposeRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
@@ -123,11 +118,6 @@ const purposeRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
   tenantId,
   validFrom: instantAsDate('2026-01-01T00:00:00.000Z'),
   validTo: null,
-  verificationMethod: null,
-  verificationState: 'UNVERIFIED',
-  verifiedAt: null,
-  verifiedByPrincipalId: null,
-  verifierReference: null,
   ...overrides,
 });
 interface Harness {
@@ -519,7 +509,6 @@ it.effect('rejects a REGISTERED context collision as a typed domain conflict bef
           source: 'EXTERNAL_EVIDENCE',
         },
         validFrom: '2026-01-01T00:00:00.000Z',
-        verification: { state: 'UNVERIFIED' },
       }),
     );
     expect(Predicate.isTagged(addError, 'PartyContactPointAlreadyExists')).toBe(true);
@@ -628,7 +617,6 @@ it.effect('rejects invalid E.164 and oversized extensions through the service ty
               source: 'USER_ASSERTION',
             },
             validFrom: '2026-01-01T00:00:00.000Z',
-            verification: { state: 'UNVERIFIED' },
           }),
         );
         expect(Predicate.isTagged(error, 'PartyContactPointInvalid')).toBe(true);
@@ -690,7 +678,6 @@ it.effect(
               source: 'USER_ASSERTION',
             },
             validFrom: '2026-01-01T00:00:00.000Z',
-            verification: { state: 'UNVERIFIED' },
           },
           aliases,
         ),
@@ -828,7 +815,6 @@ it.effect(
           source: 'EXTERNAL_EVIDENCE',
         },
         validFrom: '2026-08-01T00:00:00.000Z',
-        verification: { state: 'UNVERIFIED' },
       });
       expect(harness.insertValues[0]?.['externalEvidence']).toEqual(encodedExternalEvidence);
       expect(harness.insertValues[1]?.['externalEvidence']).toEqual(encodedExternalEvidence);
@@ -882,7 +868,6 @@ it.effect('treats PHONE extensions as distinct endpoints while rejecting an exac
         source: 'USER_ASSERTION',
       },
       validFrom: '2026-01-01T00:00:00.000Z',
-      verification: { state: 'UNVERIFIED' },
     });
     const newHarness = transactionHarness([[{ partyId }], [existing], []], [[created]]);
     const result = yield* addContactPointRecord(newHarness.transaction, scope, command('102'));
@@ -1036,6 +1021,80 @@ it.effect('projects an open-ended ADDRESS as non-Current at the exact End of its
       }
       expect(harness.updateSets).toEqual([]);
       expect(harness.insertValues).toEqual([]);
+    }
+  }),
+);
+
+it.effect('stores a declared REGISTERED address without invented registry context or verification', () =>
+  Effect.gen(function* declaredRegisteredAddress() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')));
+    const address = addressRow();
+    const purpose = purposeRow({ purposeKey: 'REGISTERED' });
+    const harness = transactionHarness([[{ partyId }], [], [], [purpose]], [[address]]);
+    const result = yield* addContactPointRecord(harness.transaction, scope, {
+      acceptedByActionInvocationId: actionInvocationId,
+      acceptedByPrincipalId: principalId,
+      contactPoint: {
+        address: { addressLine1: 'Na Prikope 1', city: 'Praha', countryCode: 'CZ' },
+        purposes: [{ preferred: true, purpose: 'REGISTERED' }],
+        type: 'ADDRESS',
+      },
+      partyRef: { moduleId: 'party.registry', resourceId: partyId, resourceType: 'party.registry.party', tenantId },
+      privacyClassification: 'PUBLIC',
+      provenance: { authoritative: false, method: 'DECLARED_BY_PARTY', source: 'PARTY_DECLARATION' },
+      validFrom: '2026-01-01T00:00:00.000Z',
+    });
+    expect(harness.insertValues[0]?.['acceptedByPrincipalId']).toBe(principalId);
+    expect(harness.insertValues[0]?.['verificationState']).toBe(undefined);
+    expect(harness.insertValues[1]?.['registryContext']).toBe('GENERAL');
+    expect(harness.insertValues[1]?.['jurisdiction']).toBe('ZZ');
+    expect(harness.insertValues[1]?.['evidenceReference']).toBe(null);
+    expect(harness.insertValues[1]?.['provenanceAuthoritative']).toBe(false);
+    expect(result).not.toHaveProperty('verification');
+    expect(result.value.type).toBe('ADDRESS');
+    if (result.value.type === 'ADDRESS') {
+      expect(result.value.purposes[0]?.purpose).toBe('REGISTERED');
+      expect(result.value.purposes[0]).not.toHaveProperty('registryContext');
+      expect(result.value.purposes[0]).not.toHaveProperty('verification');
+    }
+  }),
+);
+
+it.effect('ends a declared REGISTERED purpose without inventing a registry context', () =>
+  Effect.gen(function* endDeclaredRegisteredPurpose() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')));
+    const effectiveEnd = '2099-01-01T00:00:00.000Z';
+    const address = addressRow();
+    const purpose = purposeRow({ purposeKey: 'REGISTERED' });
+    const endEvidence = {
+      endEvidenceRefs: ['evidence:contact-end:1'],
+      endProvenanceMethod: 'MANUAL_CONFIRMATION',
+      endProvenanceSource: 'USER_ASSERTION',
+      endReason: 'Party retired this mailbox',
+      endedByActionInvocationId: actionInvocationId,
+      endedByPrincipalId: principalId,
+      endedRecordedAt: instantAsDate('2026-09-03T12:00:00.000Z'),
+      revision: 2,
+      validTo: instantAsDate(effectiveEnd),
+    };
+    const harness = transactionHarness([
+      [address],
+      [{ partyId }],
+      [address],
+      [purpose],
+      [{ ...address, ...endEvidence }],
+      [{ ...purpose, ...endEvidence }],
+    ]);
+    const result = yield* endContactPointRecord(harness.transaction, scope, {
+      ...wholeEndCommand(effectiveEnd),
+      target: { target: { purpose: 'REGISTERED' }, type: 'ADDRESS_PURPOSE' },
+    });
+    expect(result.changed).toBe(true);
+    expect(result.contactPoint.current).toBe(true);
+    expect(result.contactPoint.value.type).toBe('ADDRESS');
+    if (result.contactPoint.value.type === 'ADDRESS') {
+      expect(result.contactPoint.value.purposes[0]?.end?.reason).toBe('Party retired this mailbox');
+      expect(result.contactPoint.value.purposes[0]).not.toHaveProperty('registryContext');
     }
   }),
 );

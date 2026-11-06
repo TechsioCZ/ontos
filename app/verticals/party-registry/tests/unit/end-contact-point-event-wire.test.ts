@@ -82,12 +82,10 @@ const contactPoint: PartyContactPoint = Schema.decodeUnknownSync(PartyContactPoi
         state: 'ACTIVE',
         validFrom: '2020-01-01T00:00:00.000Z',
         validTo: effectiveEnd,
-        verification: { state: 'UNVERIFIED' },
       },
     ],
     type: 'ADDRESS',
   },
-  verification: { state: 'UNVERIFIED' },
 });
 const targets = [{ type: 'WHOLE_CONTACT_POINT' }, { target: { purpose: 'BILLING' }, type: 'ADDRESS_PURPOSE' }] as const;
 

@@ -16,14 +16,12 @@ import {
 import {
   PartyContactPointSchema,
   assertAddressPurposeRules,
-  assertVerificationRules,
   normalizeContactPointInput,
 } from '../../shared/domain/contact-point.ts';
 import type {
   ContactPointInput,
   ContactPointPrivacyClassification,
   ContactPointProvenance,
-  ContactPointVerification,
   PartyContactPoint,
 } from '../../shared/domain/contact-point.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
@@ -55,7 +53,6 @@ export interface AddContactPointCommand {
   readonly privacyClassification: ContactPointPrivacyClassification;
   readonly provenance: ContactPointProvenance;
   readonly validFrom: string;
-  readonly verification: ContactPointVerification;
 }
 
 interface Services {
@@ -82,7 +79,6 @@ const validateAndNormalize = (payload: AddContactPointPayload) =>
         { cause },
       ),
     try: () => {
-      assertVerificationRules(payload.verification);
       if (payload.contactPoint.type === 'ADDRESS') {
         assertAddressPurposeRules(payload.contactPoint.purposes, payload.provenance);
       }

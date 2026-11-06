@@ -17,12 +17,7 @@ const UnarchivePartyBlockedSchema = Schema.Struct({
   decisionRef: PartyMatchDecisionRefSchema,
   outcome: Schema.Literal('BLOCKED'),
   party: PartySchema,
-  reasonCode: Schema.Literals([
-    'EXACT_CLAIM_CONFLICT',
-    'EXACT_CLAIM_AMBIGUOUS',
-    'OPEN_DUPLICATE_CASE',
-    'UNRESOLVED_IDENTITY',
-  ]),
+  reasonCode: Schema.Literals(['OPEN_DUPLICATE_CASE', 'UNRESOLVED_IDENTITY']),
 });
 export type UnarchivePartyBlocked = typeof UnarchivePartyBlockedSchema.Type;
 export const UnarchivePartyResultSchema = Schema.Union([

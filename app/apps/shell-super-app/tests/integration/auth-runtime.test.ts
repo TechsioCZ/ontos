@@ -2752,6 +2752,7 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
         bindSelfApiKeyAction.descriptor.actionKey,
         changeTenantModuleStateAction.descriptor.actionKey,
         'party.registry.create-party',
+        'party.registry.resolve-duplicate-candidate-create',
       ],
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -3156,7 +3157,7 @@ const tenantPartyPublicGateway = Effect.fn('TenantPartyGatewayTest.publicGateway
         candidate: {
           businessName: 'Public tenant gateway proof',
           evidenceRefs: ['review/public-party-gateway'],
-          officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+          officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
           partyType: 'ORGANIZATION',
           provenance: { method: 'DOCUMENT', source: 'public-party-gateway' },
           subjectEvidence: [

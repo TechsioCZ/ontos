@@ -1,17 +1,16 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- Focused harness implements only the owner service's Drizzle seam. expires: 2026-12-31. */
 import type { SQL } from 'drizzle-orm';
-import { DateTime, Effect, Match, Schema, Predicate } from 'effect';
+import { DateTime, Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import type { partyAliases } from '../../src/db/schema.ts';
-import { parties, partyIdentifierClaims, partyOfficialIdentifiers } from '../../src/db/schema.ts';
+import { parties, partyOfficialIdentifiers } from '../../src/db/schema.ts';
 import {
   acceptMatchingOfficialIdentifierRecord,
   addOfficialIdentifierRecord,
   endOfficialIdentifierRecord,
-  updateOfficialIdentifierVerificationRecord,
 } from '../../src/services/party-official-identifier-persistence.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -23,7 +22,6 @@ const identifier = {
   identifierType: 'ICO',
   namespace: 'CZ:ICO',
   normalizedValue: '27074358',
-  verification: 'VERIFIED',
 } as const;
 const row = (overrides: Readonly<Record<string, unknown>> = {}) => ({
   acceptedByActionInvocationId: '50000000-0000-4000-8000-000000000001',
@@ -45,17 +43,9 @@ const row = (overrides: Readonly<Record<string, unknown>> = {}) => ({
   tenantId,
   validFrom: date('2026-01-01T00:00:00.000Z'),
   validTo: null,
-  verificationState: 'UNVERIFIED',
-  verifiedAt: null,
-  verifiedByPrincipalId: null,
   ...overrides,
 });
-type HarnessTable =
-  | typeof parties
-  | typeof partyAliases
-  | typeof partyIdentifierClaims
-  | typeof partyOfficialIdentifiers
-  | SQL;
+type HarnessTable = typeof parties | typeof partyAliases | typeof partyOfficialIdentifiers | SQL;
 
 const harness = (
   options: {
@@ -88,9 +78,6 @@ const harness = (
             partyId,
           },
         ];
-      }
-      if (table === partyIdentifierClaims) {
-        return options.claimOwner === undefined ? [] : [{ partyId: options.claimOwner }];
       }
       return [];
     };
@@ -143,7 +130,7 @@ const harness = (
     insert,
     select,
     update,
-  } as unknown as Parameters<typeof updateOfficialIdentifierVerificationRecord>[0];
+  } as unknown as Parameters<typeof endOfficialIdentifierRecord>[0] & Parameters<typeof addOfficialIdentifierRecord>[0];
   return {
     deleted: () => deletes,
     inserts,
@@ -158,8 +145,6 @@ it.effect('Add reuses a current same-Party identifier instead of duplicating an 
     const db = harness();
     const result = yield* addOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
       actionInvocationId: 'invocation',
-      matchRuleVersion: 'party-exact-claims.v1',
-      partyType: 'ORGANIZATION',
       principalId,
       provenanceMethod: 'MANUAL',
       provenanceSource: 'USER',
@@ -170,53 +155,23 @@ it.effect('Add reuses a current same-Party identifier instead of duplicating an 
   }),
 );
 
-it.effect('matching acceptance upgrades a same-Party UNVERIFIED identifier and attaches its claim', () =>
-  Effect.gen(function* matchingAcceptanceUpgrade() {
+it.effect('matching acceptance reuses the assertion without changing original acceptance', () =>
+  Effect.gen(function* matchingAcceptanceReuse() {
     const db = harness();
     const result = yield* acceptMatchingOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
-      actionInvocationId: 'matching-upgrade-invocation',
-      matchRuleVersion: 'party-exact-claims.v1',
-      partyType: 'ORGANIZATION',
+      actionInvocationId: 'matching-reuse-invocation',
       principalId,
       provenanceMethod: 'REGISTRY',
       provenanceSource: 'matching-test',
       validFrom: '2026-01-01T00:00:00.000Z',
     });
-    expect(
-      Match.value(result).pipe(
-        Match.tag('updated', () => true),
-        Match.orElse(() => false),
-      ),
-    ).toBe(true);
-    expect(db.updates[0]?.['verificationState']).toBe('VERIFIED');
-    expect(db.inserts.some((entry) => entry.table === partyIdentifierClaims)).toBe(true);
-  }),
-);
-
-it.effect('matching acceptance rejects a late foreign claim without mutating the assertion', () =>
-  Effect.gen(function* matchingAcceptanceForeignClaim() {
-    const db = harness({ claimOwner: 'another-party' });
-    const result = yield* acceptMatchingOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
-      actionInvocationId: 'matching-conflict-invocation',
-      matchRuleVersion: 'party-exact-claims.v1',
-      partyType: 'ORGANIZATION',
-      principalId,
-      provenanceMethod: 'REGISTRY',
-      provenanceSource: 'matching-test',
-      validFrom: '2026-01-01T00:00:00.000Z',
-    });
-    expect(
-      Match.value(result).pipe(
-        Match.tag('claim_conflict', () => true),
-        Match.orElse(() => false),
-      ),
-    ).toBe(true);
+    expect(Predicate.isTagged(result, 'reused')).toBe(true);
     expect(db.updates).toEqual([]);
     expect(db.inserts).toEqual([]);
   }),
 );
 
-it.effect('Add retains ARES evidence separately from the accepting actor and only claims eligible Party types', () =>
+it.effect('Add retains ARES evidence separately from the accepting actor without creating identity claims', () =>
   Effect.gen(function* verifyCase2() {
     const externalEvidenceWire = {
       authorityPolicyKey: 'party_registry.ares_enrichment',
@@ -235,44 +190,29 @@ it.effect('Add retains ARES evidence separately from the accepting actor and onl
       servedAt: '2026-01-01T00:00:00.000Z',
     } as const;
     const externalEvidence = yield* Schema.decodeEffect(AresAppliedEvidenceSchema)(externalEvidenceWire);
-    yield* Effect.all(
-      (['ORGANIZATION', 'PERSON'] as const).map((partyType) =>
-        Effect.gen(function* verifyCase3() {
-          const db = harness({ absent: true });
-          yield* addOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
-            actionInvocationId: 'invocation',
-            externalEvidence,
-            matchRuleVersion: 'party-exact-claims.v1',
-            partyType,
-            principalId,
-            provenanceMethod: 'REGISTRY_CONFIRMATION',
-            provenanceSource: 'ARES',
-            validFrom: '2026-01-01T00:00:00.000Z',
-          });
-          const storedEvidence = db.inserts[0]?.values['externalEvidence'];
-          expect(storedEvidence).toEqual(externalEvidenceWire);
-          expect(yield* Schema.decodeUnknownEffect(AresAppliedEvidenceSchema)(storedEvidence)).toEqual(
-            externalEvidence,
-          );
-          expect(db.inserts[0]?.values['acceptedByPrincipalId']).toBe(principalId);
-          expect(db.inserts.filter((entry) => entry.table === partyIdentifierClaims).length).toBe(
-            partyType === 'ORGANIZATION' ? 1 : 0,
-          );
-        }),
-      ),
-    );
+    const db = harness({ absent: true });
+    yield* addOfficialIdentifierRecord(db.transaction, tenantId, partyId, identifier, {
+      actionInvocationId: 'invocation',
+      externalEvidence,
+      principalId,
+      provenanceMethod: 'REGISTRY_CONFIRMATION',
+      provenanceSource: 'ARES',
+      validFrom: '2026-01-01T00:00:00.000Z',
+    });
+    const storedEvidence = db.inserts[0]?.values['externalEvidence'];
+    expect(storedEvidence).toEqual(externalEvidenceWire);
+    expect(yield* Schema.decodeUnknownEffect(AresAppliedEvidenceSchema)(storedEvidence)).toEqual(externalEvidence);
+    expect(db.inserts[0]?.values['acceptedByPrincipalId']).toBe(principalId);
+    expect(db.inserts.length).toBe(1);
   }),
 );
 
-it.effect('ending an identifier preserves its fact and releases its current claim', () =>
+it.effect('ending an identifier preserves its fact and acceptance', () =>
   Effect.gen(function* verifyCase4() {
     yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-07T00:00:00.000Z')));
     const db = harness({
       claimOwner: partyId,
-      current: row({
-        verificationState: 'VERIFIED',
-        verifiedAt: date('2026-01-01T00:00:00.000Z'),
-      }),
+      current: row({}),
     });
     const result = yield* endOfficialIdentifierRecord(
       db.transaction,
@@ -283,12 +223,12 @@ it.effect('ending an identifier preserves its fact and releases its current clai
     expect(Predicate.isTagged(result, 'found')).toBe(true);
     expect(db.updates[0]?.['state']).toBe('ENDED');
     expect(db.updates[0]?.['isCurrent']).toBe(false);
-    expect(db.deleted()).toBe(1);
+    expect(db.deleted()).toBe(0);
     expect(db.lockedTables).toEqual([parties, partyOfficialIdentifiers]);
   }),
 );
 
-it.effect('a future end does not release a presently valid claim', () =>
+it.effect('a future end does not end a presently valid identifier', () =>
   Effect.gen(function* verifyCase5() {
     yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-07T00:00:00.000Z')));
     const db = harness();
@@ -304,121 +244,6 @@ it.effect('a future end does not release a presently valid claim', () =>
   }),
 );
 
-const verificationCommand = {
-  expectedVerification: 'UNVERIFIED',
-  matchRuleVersion: 'party-exact-claims.v1',
-  principalId,
-  verification: 'VERIFIED',
-} as const;
-
-it.effect('verification collision changes neither metadata nor claim ownership', () =>
-  Effect.gen(function* verifyCase6() {
-    const db = harness({ claimOwner: 'another-party' });
-    const result = yield* updateOfficialIdentifierVerificationRecord(
-      db.transaction,
-      tenantId,
-      officialIdentifierId,
-      verificationCommand,
-    );
-    expect(Predicate.isTagged(result, 'claim_conflict')).toBe(true);
-    expect(db.updates.length).toBe(0);
-    expect(db.inserts.length).toBe(0);
-  }),
-);
-
-it.effect(
-  'verification preserves before-state and immutable identity/provenance while acquiring an eligible claim',
-  () =>
-    Effect.gen(function* verifyCase7() {
-      const db = harness();
-      const result = yield* updateOfficialIdentifierVerificationRecord(
-        db.transaction,
-        tenantId,
-        officialIdentifierId,
-        verificationCommand,
-      );
-      expect(Predicate.isTagged(result, 'found')).toBe(true);
-      const found = Match.value(result).pipe(
-        Match.tag('found', (value) => value),
-        Match.orElse(() =>
-          (() => {
-            throw new Error('Expected the identifier verification update to succeed');
-          })(),
-        ),
-      );
-      expect(found.previous.verificationState).toBe('UNVERIFIED');
-      expect(found.value.verificationState).toBe('VERIFIED');
-      expect(found.value.provenanceSource).toBe('USER_ASSERTION');
-      expect(Object.keys(db.updates[0] ?? {}).toSorted()).toEqual([
-        'verificationState',
-        'verifiedAt',
-        'verifiedByPrincipalId',
-      ]);
-      expect(db.inserts[0]?.table).toBe(partyIdentifierClaims);
-    }),
-);
-
-it.effect('PERSON verification cannot acquire an implicit strong identifier claim', () =>
-  Effect.gen(function* verifyCase8() {
-    const db = harness({ partyType: 'PERSON' });
-    const result = yield* updateOfficialIdentifierVerificationRecord(
-      db.transaction,
-      tenantId,
-      officialIdentifierId,
-      verificationCommand,
-    );
-    expect(Predicate.isTagged(result, 'found')).toBe(true);
-    expect(db.inserts.length).toBe(0);
-  }),
-);
-
-it.effect('verification downgrade releases its claim without erasing the previous verification evidence', () =>
-  Effect.gen(function* verifyCase9() {
-    const verifiedAt = date('2026-01-01T00:00:00.000Z');
-    const db = harness({
-      claimOwner: partyId,
-      current: row({
-        verificationState: 'VERIFIED',
-        verifiedAt,
-        verifiedByPrincipalId: principalId,
-      }),
-    });
-    const result = yield* updateOfficialIdentifierVerificationRecord(db.transaction, tenantId, officialIdentifierId, {
-      ...verificationCommand,
-      expectedVerification: 'VERIFIED',
-      verification: 'REJECTED',
-    });
-    expect(Predicate.isTagged(result, 'found')).toBe(true);
-    const found = Match.value(result).pipe(
-      Match.tag('found', (value) => value),
-      Match.orElse(() =>
-        (() => {
-          throw new Error('Expected the identifier verification downgrade to succeed');
-        })(),
-      ),
-    );
-    expect(found.previous.verifiedAt).toBe(verifiedAt);
-    expect(found.previous.verifiedByPrincipalId).toBe(principalId);
-    expect(found.value.verifiedAt).toBe(null);
-    expect(db.deleted()).toBe(1);
-  }),
-);
-
-it.effect('archived Party and stale verification updates are rejected before mutation', () =>
-  Effect.forEach([harness({ archived: true }), harness({ current: row({ verificationState: 'REJECTED' }) })], (db) =>
-    Effect.gen(function* verifyCase11() {
-      const result = yield* updateOfficialIdentifierVerificationRecord(
-        db.transaction,
-        tenantId,
-        officialIdentifierId,
-        verificationCommand,
-      );
-      expect(Predicate.isTagged(result, 'conflict')).toBe(true);
-      expect(db.updates.length).toBe(0);
-    }),
-  ),
-);
-
 it.effect('standalone Add stores source ICO digits independently of the normalized claim identity', () =>
   Effect.gen(function* originalInputAcceptance() {
     const db = harness({ absent: true });
@@ -429,13 +254,10 @@ it.effect('standalone Add stores source ICO digits independently of the normaliz
       {
         ...identifier,
         normalizedValue: '01000004',
-        verification: 'UNVERIFIED',
       },
       {
         actionInvocationId: 'original-input-invocation',
-        matchRuleVersion: 'party-exact-claims.v1',
         originalInputDigits: '1000004',
-        partyType: 'ORGANIZATION',
         principalId,
         provenanceMethod: 'MANUAL',
         provenanceSource: 'USER',
@@ -463,9 +285,7 @@ it.effect('a new Add invocation never overwrites the original source or fills un
         },
         {
           actionInvocationId: 'different-invocation',
-          matchRuleVersion: 'party-exact-claims.v1',
           originalInputDigits: '01000004',
-          partyType: 'ORGANIZATION',
           principalId,
           provenanceMethod: 'MANUAL',
           provenanceSource: 'USER',

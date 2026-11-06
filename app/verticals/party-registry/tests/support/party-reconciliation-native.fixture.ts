@@ -30,7 +30,10 @@ const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
 /** Empty owner schemata and physical clone identity are proved by the existing fixed gateways. */
 export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.prepareNative')(
-  function* preparePartyReconciliationNative(connections: DatabaseConnectionPair) {
+  function* preparePartyReconciliationNative(
+    connections: DatabaseConnectionPair,
+    schema: 'rebuild' | 'already-migrated' = 'rebuild',
+  ) {
     const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
     const path = yield* Config.String('PATH');
     assert.isOk(/^ontos_test_party_gateway_[a-f0-9]{32}$/u.test(connections.admin.database));
@@ -74,7 +77,9 @@ export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.p
         );
         expect(code, `Party owner schema ${phase}`).toBe(0);
       });
-    yield* ownerSchema('rebuild', {});
+    if (schema === 'rebuild') {
+      yield* ownerSchema('rebuild', {});
+    }
     const adminContext = yield* Layer.build(
       PgClient.layer({ maxConnections: 1, url: Redacted.make(connections.admin.connectionString) }).pipe(
         Layer.provideMerge(Reactivity.layer),
@@ -276,3 +281,5 @@ export const makePartyReconciliationGateway = Effect.fn('PartyReconciliation.mak
     return { authorization, verifyPrincipal, issuer, jwks };
   },
 );
+
+export type PartyReconciliationGateway = Effect.Success<ReturnType<typeof makePartyReconciliationGateway>>;

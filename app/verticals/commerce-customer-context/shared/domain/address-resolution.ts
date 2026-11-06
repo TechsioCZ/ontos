@@ -126,7 +126,6 @@ const InvoiceRecipientOfficialIdentifierSchema = Schema.Union([
     officialIdentifierRef: PartyOfficialIdentifierRefSchema,
     source: Schema.Literal('PARTY_REGISTRY'),
     sourceRevision: PositiveRevisionSchema,
-    verification: Schema.Literal('VERIFIED'),
   }),
   Schema.Struct({
     evidenceRef: StableTextSchema,
@@ -134,7 +133,6 @@ const InvoiceRecipientOfficialIdentifierSchema = Schema.Union([
     normalizedValue: StableTextSchema,
     source: Schema.Literal('PURCHASE_EVIDENCE'),
     sourceRevision: PositiveRevisionSchema,
-    verification: Schema.Literal('VERIFIED'),
   }),
 ]);
 
