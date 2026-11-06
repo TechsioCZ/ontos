@@ -451,13 +451,7 @@ const actualCurrentReplayFrame = (
     )
     .pipe(Effect.provideContext(context));
 
-/** These exact final identities/state are TEST facts only, never a real Order owner producer. */
-const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenario(
-  state: ClockMigrationState = 'CURRENT',
-  requestTtlMilliseconds = 60_000,
-  apiKeyManager = false,
-  hierarchyTtlMilliseconds?: number,
-) {
+const makeApprovalFreshDatabase = Effect.fn('ApprovalFreshProofTests.database')(function* database() {
   // The Order module is a released app of this composition: it is the only caller that may consume an approval.
   const snapshot = yield* makeEnrollmentApplicationCompositionSnapshot(ultramodernApiMarker.buildMarker, [
     'commerce-order',
@@ -468,7 +462,22 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
     purpose: 'stabilization-1257-approval-fresh-proof',
     sourceConnections: yield* loadDatabaseConnectionPair(),
   });
-  yield* applyApprovalFreshProfileCurrentMigrations(isolated.connections, state);
+  return { isolated, snapshot };
+});
+
+/** These exact final identities/state are TEST facts only, never a real Order owner producer. */
+const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenario(
+  state: ClockMigrationState = 'CURRENT',
+  requestTtlMilliseconds = 60_000,
+  apiKeyManager = false,
+  hierarchyTtlMilliseconds?: number,
+) {
+  const { isolated, snapshot } = yield* makeApprovalFreshDatabase();
+  // Ordinary scenarios use the already-migrated source schema. Only the OLD_CLOCK control
+  // replaces the checksum-pinned routine bodies; the migration replay has its own test below.
+  if (state === 'OLD_CLOCK') {
+    yield* applyApprovalFreshProfileCurrentMigrations(isolated.connections, state);
+  }
   const owner = yield* makePurchasingApprovalNativeFixture({
     apiKeyManager,
     connections: isolated.connections,
@@ -753,7 +762,19 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   };
 });
 
-// These native clone/migration scenarios measured 31–32s with 20–31 assertions completed under shard load.
+it.live(
+  'preserves source journals and verifies idempotent Core and approval migrations on an isolated clone',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* migrationReplay() {
+        const { isolated } = yield* makeApprovalFreshDatabase();
+        yield* applyApprovalFreshProfileCurrentMigrations(isolated.connections, 'CURRENT');
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
+);
+
+// Native expiry scenarios keep scheduling headroom while still crossing the stored boundary.
 it.live(
   'commits distinct immutable same-Attempt proofs after expiry and refuses expired intent replay',
   () =>
