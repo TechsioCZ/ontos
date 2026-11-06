@@ -210,6 +210,28 @@ const CheckoutActions = ({
   locale: string;
 }) => {
   const pending = checkout.progress !== "idle";
+  const submit = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  const wasPending = useRef(pending);
+  useEffect(() => {
+    const completed = wasPending.current && !pending;
+    wasPending.current = pending;
+    if (!completed) {
+      return;
+    }
+    const requested = restoreFocus.current;
+    restoreFocus.current = false;
+    const button = submit.current;
+    if (
+      requested &&
+      button !== null &&
+      button.isConnected &&
+      !button.disabled &&
+      document.activeElement === document.body
+    ) {
+      button.focus();
+    }
+  }, [pending]);
   return (
     <div className="grid grid-cols-2 gap-2">
       <LinkButton
@@ -228,6 +250,10 @@ const CheckoutActions = ({
         disabled={disabled || pending}
         isLoading={pending}
         loadingText={checkout.progress === "place" ? d.checkout.sending : d.checkout.checking}
+        onClick={() => {
+          restoreFocus.current = submit.current?.form?.contains(document.activeElement) ?? false;
+        }}
+        ref={submit}
         size="md"
         theme="solid"
         type="submit"

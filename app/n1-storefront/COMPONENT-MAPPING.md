@@ -80,6 +80,12 @@ Doprava checkoutu `319:1756/1977` používá
 existující RadioCard sm role: control padding12, content gap8 a popis text-sm14.
 Žádné appearance className na knihovních komponentách nebo nové velikostní props.
 
+Mobilní submit checkoutu `319:2032` zachovává Button md/primary/solid a dvě
+stejně široké akce. Uživatel schválil kratší copy „Objednat“ místo dlouhého
+„Potvrdit objednávku“, které se s kanonickou typografií a paddingem nevešlo.
+Přechod ověření zpět do idle vrací focus na povolený submit pouze z body,
+pokud odeslání začalo ve stejné form; jiný aktivní prvek se nepřepisuje.
+
 Celý košík ověřuje aktuální platný výběr automaticky stejnou nativní dry-run cestou
 jako mini košík. Storage error, chybějící scope a neplatné množství request blokují.
 Změnu ceny nadále výslovně přijímá zákazník; unavailable stav zachovává ruční retry.
