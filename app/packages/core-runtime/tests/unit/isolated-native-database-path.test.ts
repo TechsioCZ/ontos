@@ -84,11 +84,19 @@ const record = () => fs.writeFileSync(${directoryLiteral} + '/' + program + '.js
 }));
 if (program === 'pg_dump') {
   record();
-  process.stdout.end('TEST_DUMP');
+  process.stdout.write('TEST_');
+  setTimeout(() => process.stdout.end('DUMP', () => {
+    fs.writeFileSync(${directoryLiteral} + '/dump-finished', '');
+    if (fs.existsSync(${directoryLiteral} + '/refuse-dump')) process.exitCode = 1;
+  }), 25);
 } else {
+  const dumpFinished = fs.existsSync(${directoryLiteral} + '/dump-finished');
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', chunk => { input += chunk; });
-  process.stdin.on('end', record);
+  process.stdin.on('end', () => {
+    record();
+    if (!dumpFinished || fs.existsSync(${directoryLiteral} + '/refuse-restore')) process.exitCode = 1;
+  });
 }
 `,
           );
@@ -102,7 +110,7 @@ if (program === 'pg_dump') {
             DATABASE_URL: 'postgresql://test_runtime:TEST_runtime_dummy@localhost/test_source',
           });
           const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(['privacy'], 'TEST-PATH');
-          const result = yield* makeIsolatedNativeDatabaseFixture({
+          const attempt = makeIsolatedNativeDatabaseFixture({
             compositionSnapshot,
             mode: 'schema-only',
             purpose: 'stabilization-1257-approval-fresh-proof',
@@ -111,11 +119,11 @@ if (program === 'pg_dump') {
             Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({ PATH: directory })),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, guardedSpawner),
             Effect.scoped,
-            Effect.exit,
           );
+          const result = yield* Effect.exit(attempt);
           expect(Exit.isFailure(result)).toBe(true);
           const dumpExists = yield* fs.exists(`${directory}/pg_dump.json`);
-          const restoreExists = yield* fs.exists(`${directory}/psql.json`);
+          const restoreExists = yield* fs.exists(`${directory}/pg_restore.json`);
           if (!dumpExists && Exit.isFailure(result)) {
             expect(String(result.cause)).toBe('private pg_dump executed');
           }
@@ -128,7 +136,7 @@ if (program === 'pg_dump') {
             .readFileString(`${directory}/pg_dump.json`)
             .pipe(Effect.flatMap(Schema.decodeEffect(receiptSchema)));
           const restore = yield* fs
-            .readFileString(`${directory}/psql.json`)
+            .readFileString(`${directory}/pg_restore.json`)
             .pipe(Effect.flatMap(Schema.decodeEffect(receiptSchema)));
           for (const receipt of [dump, restore]) {
             // macOS may inject this system key even when spawn receives only our two keys.
@@ -155,6 +163,7 @@ if (program === 'pg_dump') {
             'test_source',
             '--schema-only',
             '--no-comments',
+            '--format=custom',
           ]);
           expect(restore.args).toEqual([
             'exec',
@@ -162,18 +171,41 @@ if (program === 'pg_dump') {
             '-e',
             'PGPASSWORD',
             'ontos-db',
-            'psql',
+            'pg_restore',
             '--host',
             'localhost',
             '--username',
             'test_admin',
             '--dbname',
             expect.stringMatching(/^ontos_test_party_gateway_[a-f0-9]{32}$/u),
-            '--set',
-            'ON_ERROR_STOP=1',
-            '--quiet',
+            '--schema-only',
+            '--exit-on-error',
+            '--single-transaction',
           ]);
           expect(restore.input).toBe('TEST_DUMP');
+          // A producer that wrote bytes but failed must never start the restore.
+          yield* fs.remove(`${directory}/pg_restore.json`);
+          yield* fs.remove(`${directory}/dump-finished`);
+          yield* fs.writeFileString(`${directory}/refuse-dump`, '');
+          database.acquisitions = 0;
+          database.statements = 0;
+          const dumpFailure = yield* Effect.flip(attempt);
+          expect(dumpFailure).toMatchObject({ reason: 'Schema-only dump failed' });
+          expect(yield* fs.exists(`${directory}/pg_restore.json`)).toBe(false);
+          expect(database.acquisitions).toBe(1);
+          expect(database.statements).toBe(2);
+
+          // A rejected archive is a failed clone; no clone client or trust initialization runs.
+          yield* fs.remove(`${directory}/refuse-dump`);
+          yield* fs.remove(`${directory}/dump-finished`);
+          yield* fs.writeFileString(`${directory}/refuse-restore`, '');
+          database.acquisitions = 0;
+          database.statements = 0;
+          const restoreFailure = yield* Effect.flip(attempt);
+          expect(restoreFailure).toMatchObject({ reason: 'Schema-only restore failed' });
+          expect(yield* fs.exists(`${directory}/pg_restore.json`)).toBe(true);
+          expect(database.acquisitions).toBe(1);
+          expect(database.statements).toBe(2);
         }).pipe(Effect.provide(services)),
       ),
       Effect.scoped,
