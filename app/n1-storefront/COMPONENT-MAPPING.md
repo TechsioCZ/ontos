@@ -578,3 +578,14 @@ The same component-state configuration pass removes the menu's redundant
 color-scope div: its token-only utility configures the existing NavItem
 directly. Header still owns all visual CSS; no appearance declarations,
 descendant selectors, new primitive or basic theme overrides are introduced.
+
+### Product loading and failure — 57:3009 / 57:3028
+
+The current loading composition already uses the connected PriceBlock pending,
+AvailabilityStatus pending and native md/primary/solid loading Button. Its
+extra loading announcement is screen-reader-only. The unknown product title
+stays generic rather than copying fixture data or deriving a title from a slug.
+The product failure body now uses the exact Figma57:3030 Czech message and
+its English translation; category failure copy stays independent. The native
+retry still refreshes the route. No toast replaces this persistent failure.
+Two failing-then-passing localized regression cases cover this distinction.
