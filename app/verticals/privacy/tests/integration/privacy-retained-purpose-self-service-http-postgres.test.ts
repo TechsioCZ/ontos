@@ -1086,8 +1086,8 @@ const retainedAccountDescriptionSchema = Schema.Struct({
   marker: markerSchema,
   subscriptions: OntosModuleDeploymentContractSchema.fields.runtime.fields.outboxSubscriptions,
 });
-// Only immutable process artifacts/descriptions are prepared here. All isolated database,
-// identity, account and business effects retain the test's independent 60-second budget.
+// Only immutable process artifacts/descriptions are prepared here. Database, identity, account
+// and business effects remain inside each test's independently bounded lifecycle.
 const defaultNativeClock = Clock.Clock.defaultValue();
 const retainedPublicArtifacts = Layer.effect(
   RetainedPublicArtifacts,
@@ -3280,6 +3280,11 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   return yield* Effect.void;
 });
 
+// These are full multi-owner journeys, not request-latency tests. Budget for owner startup,
+// hundreds of lifecycle assertions and scoped shutdown; private operations still time out after
+// 20 seconds and resistant children are still force-killed after 2 seconds.
+const publicJourneyTimeoutMillis = 120_000;
+
 it.layer(retainedNativeInfrastructure, { excludeTestServices: true, timeout: '60 seconds' })(
   'retained Purpose public owner processes',
   (suite) => {
@@ -3347,12 +3352,12 @@ process.stdout.write(JSON.stringify(rows[0].pid) + '\\n');
     suite.effect(
       'serves and acknowledges the exact Notice, grants V1, appends V2 and withdraws retained V1 through a real Commerce account',
       () => retainedPublicJourney('revoked').pipe(Effect.scoped, Effect.provide(nativeServices)),
-      60_000,
+      publicJourneyTimeoutMillis,
     );
     suite.effect(
       'preserves the genuine retained V1 lifecycle then refuses acknowledgement when the real Commerce owner process stops',
       () => retainedPublicJourney('owner-outage').pipe(Effect.scoped, Effect.provide(nativeServices)),
-      60_000,
+      publicJourneyTimeoutMillis,
     );
   },
 );
