@@ -44,6 +44,14 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+Kontaktní formulář369:2827 skládá FormInput md, FormTextarea md a Button
+md/secondary/solid. FormTextarea používá nativní Label a Textarea podle
+371:3088/3089/3092, bez ručního duplikování. Scope na existujícím fieldsetu
+váže text-label-md na text-sm: labely43:1645 a371:3089 jsou výslovně
+Theme/N1 14px. Vstupy zůstávají44px a jejich mobilní text16px. Figma radius8
+je z Light kolekce; kanonický N1 radius se nemění. Native řádek labelu21px
+proti Figma20px nemá samostatnou spotřebovávanou roli a zůstává přiznaný.
+
 Strom kategorií214:3169/3175 používá nativní TreeView: šedéfill-hover pozadí,
 16px text a32px vnější řádky, pravé plus/minus přes existující ikonové role.
 Desktopový tokenový scope přímo na TreeView váže spotřebovávaný

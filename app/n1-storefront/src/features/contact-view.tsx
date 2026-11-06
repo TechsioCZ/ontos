@@ -203,7 +203,7 @@ export const ContactView = ({
             aria-describedby={
               state === "idle" && !unavailableProduct ? undefined : "contact-form-status"
             }
-            className="mt-6 grid min-w-0 grid-cols-2 gap-4"
+            className="n1-contact-form mt-6 grid min-w-0 grid-cols-2 gap-4"
             disabled={locked}
           >
             <legend className="sr-only">{d.contact.formHeading}</legend>

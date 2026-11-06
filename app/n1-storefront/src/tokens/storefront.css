@@ -102,6 +102,12 @@
   --text-icon-control-md: var(--dimension-14);
 }
 
+/* Contact43:1645/371:3089: labels explicitly use Theme/N1 text/sm.
+ * Keep the native md inputs and mobile 16px control text unchanged. */
+@utility n1-contact-form {
+  --text-label-md: var(--text-sm);
+}
+
 /* PDP39:2543/223:2174 uses a dark active underline on both viewports.
  * Scope the existing indicator role to product information; account Tabs
  * retain their canonical primary indicator. No primitive N1 token changes. */
