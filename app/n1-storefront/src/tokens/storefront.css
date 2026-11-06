@@ -96,6 +96,12 @@
   @apply token-icon-minus;
 }
 
+/* Desktop category214:3175: the shipped indicator uses the shared icon size role.
+ * Scope it to this tree; mobile and other controls keep their native sizes. */
+@utility n1-category-tree {
+  --text-icon-control-md: var(--dimension-14);
+}
+
 /* PDP39:2543/223:2174 uses a dark active underline on both viewports.
  * Scope the existing indicator role to product information; account Tabs
  * retain their canonical primary indicator. No primitive N1 token changes. */

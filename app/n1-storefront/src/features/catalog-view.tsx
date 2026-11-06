@@ -51,7 +51,7 @@ export const CatalogView = ({
               theme="outlined"
               variant="secondary"
             >
-              {d.home}
+              {d.backHome}
             </LinkButton>
           </div>
         )}

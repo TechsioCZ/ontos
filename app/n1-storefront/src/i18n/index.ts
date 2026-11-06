@@ -115,6 +115,7 @@ const cs = {
     unconfirmed: "Výsledek se nepodařilo potvrdit. Než odešlete údaje znovu, ověřte stav účtu.",
     verificationRequired: "Před přihlášením ověřte e-mail podle zprávy ve své schránce.",
   },
+  backHome: "Zpět na hlavní stránku",
   benefits: {
     delivery: { description: "Pro objednávky nad 2.000 Kč.", title: "DOPRAVA ZDARMA" },
     payment: { description: "Zabezpečení online platba.", title: "BEZPEČNÁ PLATBA" },
@@ -221,7 +222,7 @@ const cs = {
   credit: "Tvorba e-shopu: Web Revolution",
   description: "Popis produktu",
   detail: "Detail",
-  empty: "Žádné produkty k zobrazení.",
+  empty: "Žádné produkty nenalezeny.",
   favorites: "Oblíbené",
   featured: "Vybíráme pro vás",
   featureUnavailable: "Tato funkce zatím není dostupná.",
@@ -506,6 +507,7 @@ const en: typeof cs = {
       "We could not confirm the result. Check your account status before submitting again.",
     verificationRequired: "Verify your email using the message in your inbox before signing in.",
   },
+  backHome: "Back to the home page",
   benefits: {
     delivery: { description: "For orders over CZK 2,000.", title: "FREE SHIPPING" },
     payment: { description: "Secure online payment.", title: "SECURE PAYMENT" },
@@ -610,7 +612,7 @@ const en: typeof cs = {
   credit: "E-shop by Web Revolution",
   description: "Product description",
   detail: "Details",
-  empty: "No products to display.",
+  empty: "No products found.",
   favorites: "Favourites",
   featured: "Selected for you",
   featureUnavailable: "This feature is not available yet.",

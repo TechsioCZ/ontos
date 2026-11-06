@@ -86,6 +86,7 @@ export const CategoryView = ({
           >
             <div className="border-t-2 border-border-primary bg-fill-hover p-2">
               <TreeView
+                className="md:n1-category-tree"
                 data={browseNodes}
                 defaultExpandedValue={trail.map((item) => item.id)}
                 expandOnClick={false}

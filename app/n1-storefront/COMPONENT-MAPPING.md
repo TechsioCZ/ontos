@@ -44,6 +44,15 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+Strom kategorií214:3169/3175 používá nativní TreeView: šedéfill-hover pozadí,
+16px text a32px vnější řádky, pravé plus/minus přes existující ikonové role.
+Desktopový tokenový scope přímo na TreeView váže spotřebovávaný
+text-icon-control-md na dimension-14. Nepoužitý tree-view-indicator-md token
+se nenastavuje; mobil a ostatní ovladače zůstávají nativní. Klávesnice a
+rozbalování zůstávají v Zag. Prázdný katalog57:897/900 používá stávající
+LinkButton md/secondary/outlined se skutečným návratem na lokalizovanou homepage
+a textem „Zpět na hlavní stránku“; dostupnost owneru se dál odlišuje od prázdna.
+
 Podkategorie214:3208/3214: veřejný LinkButton md/secondary/outlined v existujícím
 čtyřsloupcovém desktop gridu s gap4. Desktopový scope váže skutečné Button
 role na fill-hover, border-secondary/1px, radius-none a text-sm/bold. Výška44
