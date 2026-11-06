@@ -136,6 +136,16 @@
   --text-table-sm: var(--text-md);
 }
 
+/* Card preview214:3276/3283/3290: native tertiary/outlined/compact/sm,
+ * 12/18 regular labels and neutral surface/stroke. Both existing layout
+ * groups carry this scope because expanded content is portalled. */
+@utility n1-card-variants {
+  --text-button-sm: var(--text-xs);
+  --font-weight-button: var(--font-weight-normal);
+  --color-button-bg-outlined: var(--color-fill-hover);
+  --color-button-border-tertiary: var(--color-border-primary);
+}
+
 /* Desktop variant chips219:2780/2790/2800: native secondary/outlined/sm,
  * regular16/24 labels and neutral unselected surfaces. Mobile keeps its
  * native selected primary/solid/md through the responsive composition scope. */

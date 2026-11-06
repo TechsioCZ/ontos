@@ -22,6 +22,7 @@ export const CardVariants = ({
 }) => {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [restoreFocus, setRestoreFocus] = useState(false);
   const [expanded, setExpanded] = useState<Extract<CardVariantsResult, { state: "ready" }> | null>(
     null,
   );
@@ -51,8 +52,8 @@ export const CardVariants = ({
     intent.current = initialIntent;
     return initialIntent;
   };
-  const close = (restoreFocus = true) => {
-    expansionIntent().dismiss(restoreFocus);
+  const close = (restoreTriggerFocus = true) => {
+    expansionIntent().dismiss(restoreTriggerFocus);
     setOpen(false);
   };
   const requestExpansion = (source: "activation" | "focus" | "pointer") => {
@@ -60,6 +61,7 @@ export const CardVariants = ({
     if (!expansionIntent().request(source)) {
       return;
     }
+    setRestoreFocus(source !== "pointer");
     if (
       loading.current ||
       remaining === 0 ||
@@ -157,6 +159,7 @@ export const CardVariants = ({
       }}
       open={open}
       placement="top"
+      restoreFocus={restoreFocus}
       size="sm"
     >
       <Popover.Anchor
@@ -168,7 +171,7 @@ export const CardVariants = ({
       >
         <div
           aria-busy={pending}
-          className="flex min-h-7 flex-wrap items-center justify-center gap-1"
+          className="n1-card-variants flex min-h-7 flex-wrap items-center justify-center gap-1"
         >
           {links(preview)}
           {preview.length > 0 && remaining > 0 && (
@@ -200,7 +203,7 @@ export const CardVariants = ({
           onPointerLeave={leave}
           ref={content}
         >
-          <div className="flex max-w-n1-product-image flex-wrap items-center justify-center gap-1">
+          <div className="n1-card-variants flex max-w-n1-product-image flex-wrap items-center justify-center gap-1">
             {expanded !== null && links(expanded.variants)}
           </div>
         </Popover.Content>

@@ -14,6 +14,11 @@ reálný detail produktu jako historická card navigace. Žádné appearance cla
 nebo inline styly na komponentách. BE projekce schválená uživatelem; hover/focus
 expansion používá veřejný Popover a živý market-scoped reader. Dne6.11. ověřeno
 rozbalení `+N` se skutečnými velikostmi i přechod na správné vlastní variant ID.
+Aktuální leaf instance214:3276/3283/3290 mají28px a12/18 regular text,
+fill-hover a border-primary. Existující `n1-card-variants` role scope na obou
+layout skupinách váže skutečné Button tokeny; portalled popup neztrácí kaskádu.
+Compact výška a padding zůstávají nativní. Fixní šířky textů Figma fixture
+nejsou podklad pro změnu paddingu ani pro pevné šířky reálných velikostí.
 
 Autorita vzhledových tokenů: [New Design System / Theme / N1](https://www.figma.com/design/gi5GUSWwAeXknaKEeLqK5w/New-Design-System?node-id=2667-2),
 447 proměnných, mode `4082:0`, čtecí session `0397b40e-b436-4ebb-bf27-114466df5aa0`.
