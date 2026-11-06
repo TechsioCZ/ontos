@@ -8,7 +8,6 @@ import { DataTable } from "@techsio/ui-kit/organisms/data-table";
 import type { ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Tabs } from "@techsio/ui-kit/molecules/tabs";
-import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
@@ -18,6 +17,7 @@ import type { CatalogModel, ProductDetailModel } from "@/ontos/catalog-model";
 import { categoryTrail } from "@/ontos/catalog-navigation";
 import { priceProps } from "./price-props";
 import { ProductPurchase } from "./product-purchase";
+import { ProductVariants } from "./product-variants";
 import { selectProductDetail } from "./product-selection";
 import { useDesktopProduct } from "./product-viewport";
 import { productShareHref, productShareOrigin } from "./product-share";
@@ -190,34 +190,13 @@ export const ProductView = ({
             </dl>
           )}
           {product.variants.length > 0 && !genericVariantSelected && (
-            <fieldset className="order-1 md:mb-5">
-              <legend className="mb-6 font-semibold md:mb-2 md:font-bold">{d.selectVariant}</legend>
-              <div className="flex flex-wrap gap-2">
-                {product.variants.map((item) => {
-                  const selected = item.id === variant?.id;
-                  return (
-                    <div key={item.id}>
-                      <LinkButton
-                        aria-current={selected ? "true" : undefined}
-                        as={NextLink}
-                        href={`${pathname}?${new URLSearchParams({ variantId: item.id })}`}
-                        prefetch={false}
-                        size={desktop ? "sm" : "md"}
-                        theme={!desktop && selected ? "solid" : "outlined"}
-                        variant={!desktop && selected ? "primary" : "secondary"}
-                      >
-                        <span>
-                          {item.name}
-                          {selected && (
-                            <span className="md:hidden">{` · ${d.selectedOption}`}</span>
-                          )}
-                        </span>
-                      </LinkButton>
-                    </div>
-                  );
-                })}
-              </div>
-            </fieldset>
+            <ProductVariants
+              desktop={desktop}
+              dictionary={d}
+              pathname={pathname}
+              selectedVariant={variant}
+              variants={product.variants}
+            />
           )}
           <div className="order-3 md:order-2 md:mb-6">
             <div className="n1-product-stock-desktop hidden md:block">

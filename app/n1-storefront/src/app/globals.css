@@ -22,6 +22,7 @@
   --container-n1-product-content: 80rem;
   /* Figma219:2819: layout between PriceBlock and the quantity/action group. */
   --spacing-n1-product-price-quantity: calc(var(--dimension-8) - var(--dimension-1));
+  --spacing-n1-variant-stock-corner: var(--dimension-8);
   --spacing-n1-category-sidebar: 16rem;
   /* Figma418:2369: the one-row menu grid is136px, centering124px tiles.
    * A minimum preserves this composition while larger native trees grow. */

@@ -434,8 +434,8 @@ roles to canonical white/border-secondary/dimension18, leaving login/cart
 and mobile navigation unchanged.
 
 Active state419:3253 uses the existing Header background/hover-background and
-active/hover foreground roles in a conditional parent composition scope,
-`n1-category-menu-active`. They reference canonical primary Button surface
+active/hover foreground roles through the token-only
+`n1-category-menu-active` configuration on the existing NavItem. They reference canonical primary Button surface
 and foreground aliases. The native `active` prop remains responsible for
 state, with no appearance class on the kit component. The earlier conclusion
 that this required a shared kit change was incorrect: its existing base
@@ -445,3 +445,26 @@ item height without changing header actions or mobile navigation.
 NextImage `fill` inside relative96×96 wrappers preserves proportions for all
 source dimensions, including19×100 artwork. All root/child destinations and
 their ordering remain owner data, including13 original demo text-only items.
+
+### Desktop PDP variant states — 219:2778–2807
+
+Native LinkButton remains secondary/outlined/sm with actual NextLink href and
+aria-current. The existing group/per-variant wrappers bind consumed Button
+roles only at md: unselected fill-hover/neutral300/1px; selected base and
+bg-secondary-base/2px. Both use canonical text-md/normal16/24. Mobile retains
+its existing selected primary/solid/md and selected-option label. No arbitrary
+chip widths or appearance classes on the kit components.
+
+Stock corners219:2787/2797/2807 are separate decorative Image/NextImage
+siblings in the existing relative wrapper, not Button icons or CSS shapes.
+The original Figma SVG is local at public/brand/stock-corner.svg,8×8; the
+overlay is hidden on mobile and pointer-events-none/aria-hidden with empty alt.
+It renders only for the individual owner's available/limited variant stock,
+never inferred from selection, group count or parent stock. Historical N1
+showed its green corner and tooltip even at zero stock; that misleading
+behavior is deliberately not copied. No unsupported tooltip copy is added.
+
+The same component-state configuration pass removes the menu's redundant
+color-scope div: its token-only utility configures the existing NavItem
+directly. Header still owns all visual CSS; no appearance declarations,
+descendant selectors, new primitive or basic theme overrides are introduced.

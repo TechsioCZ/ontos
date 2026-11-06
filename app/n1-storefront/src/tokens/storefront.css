@@ -136,6 +136,24 @@
   --text-table-sm: var(--text-md);
 }
 
+/* Desktop variant chips219:2780/2790/2800: native secondary/outlined/sm,
+ * regular16/24 labels and neutral unselected surfaces. Mobile keeps its
+ * native selected primary/solid/md through the responsive composition scope. */
+@utility n1-product-variants {
+  --color-button-bg-outlined: var(--color-fill-hover);
+  --color-button-border-secondary: var(--color-neutral-300);
+  --border-width-button-sm: var(--dimension-1);
+  --font-weight-button: var(--font-weight-normal);
+  --text-button-sm: var(--text-md);
+}
+
+/* Selected chip219:2780 consumes existing Button width/bg/stroke roles. */
+@utility n1-product-variant-selected {
+  --color-button-bg-outlined: var(--color-base);
+  --color-button-border-secondary: var(--color-bg-secondary-base);
+  --border-width-button-sm: var(--dimension-2);
+}
+
 /* Desktop menu418:2368. Existing Popover roles, scoped away from the compact
  * cart/login popups and the mobile Dialog. All values are canonical aliases. */
 @utility n1-category-menu {
@@ -148,7 +166,7 @@
 }
 
 /* Active desktop branch419:3253: the installed Header already exposes base
- * and hover surface roles. Scope them on the composition wrapper, preserving
+ * and hover surface roles. Scope them on the native NavItem, preserving
  * native active semantics and every other Header instance. */
 @utility n1-category-menu-active {
   --color-header-nav-item-bg: var(--color-button-bg-primary-base);

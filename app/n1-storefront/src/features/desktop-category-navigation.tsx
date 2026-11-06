@@ -97,57 +97,54 @@ export const DesktopCategoryNavigation = ({
                       );
                       const active = api.open && api.triggerValue === category.id;
                       return (
-                        <div
+                        <Header.NavItem
+                          active={active}
                           className={active ? "n1-category-menu-active" : undefined}
                           key={category.id}
+                          onPointerEnter={() => {
+                            setKeyboardFocus(false);
+                            api.setTriggerValue(category.id);
+                            api.setOpen(hasChildren);
+                          }}
+                          size="md"
                         >
-                          <Header.NavItem
-                            active={active}
-                            onPointerEnter={() => {
-                              setKeyboardFocus(false);
+                          <Link
+                            aria-controls={
+                              hasChildren ? Option.getOrUndefined(contentId) : undefined
+                            }
+                            aria-expanded={hasChildren ? active : undefined}
+                            aria-haspopup={hasChildren ? "dialog" : undefined}
+                            as={NextLink}
+                            data-ownedby="n1-desktop-categories"
+                            data-part="trigger"
+                            data-scope="popover"
+                            data-value={category.id}
+                            href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
+                            id={Option.getOrUndefined(triggerId)}
+                            onClick={() => api.setOpen(false)}
+                            onFocus={() => {
                               api.setTriggerValue(category.id);
-                              api.setOpen(hasChildren);
-                            }}
-                            size="md"
-                          >
-                            <Link
-                              aria-controls={
-                                hasChildren ? Option.getOrUndefined(contentId) : undefined
+                              if (api.open) {
+                                api.setOpen(hasChildren);
                               }
-                              aria-expanded={hasChildren ? active : undefined}
-                              aria-haspopup={hasChildren ? "dialog" : undefined}
-                              as={NextLink}
-                              data-ownedby="n1-desktop-categories"
-                              data-part="trigger"
-                              data-scope="popover"
-                              data-value={category.id}
-                              href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
-                              id={Option.getOrUndefined(triggerId)}
-                              onClick={() => api.setOpen(false)}
-                              onFocus={() => {
+                            }}
+                            onKeyDown={(event) => {
+                              if (hasChildren && event.key === "ArrowDown") {
+                                event.preventDefault();
+                                setKeyboardFocus(true);
                                 api.setTriggerValue(category.id);
                                 if (api.open) {
-                                  api.setOpen(hasChildren);
+                                  content.current
+                                    ?.querySelector<HTMLAnchorElement>("a[href]")
+                                    ?.focus();
                                 }
-                              }}
-                              onKeyDown={(event) => {
-                                if (hasChildren && event.key === "ArrowDown") {
-                                  event.preventDefault();
-                                  setKeyboardFocus(true);
-                                  api.setTriggerValue(category.id);
-                                  if (api.open) {
-                                    content.current
-                                      ?.querySelector<HTMLAnchorElement>("a[href]")
-                                      ?.focus();
-                                  }
-                                  api.setOpen(true);
-                                }
-                              }}
-                            >
-                              {category.name}
-                            </Link>
-                          </Header.NavItem>
-                        </div>
+                                api.setOpen(true);
+                              }
+                            }}
+                          >
+                            {category.name}
+                          </Link>
+                        </Header.NavItem>
                       );
                     })}
                   </Header.Nav>

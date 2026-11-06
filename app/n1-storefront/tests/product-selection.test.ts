@@ -227,6 +227,44 @@ describe("real product variant presentation", () => {
     expect(html.match(/role="spinbutton"/gu)).toHaveLength(1);
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Vyprodáno<\/button>/u);
   });
+  const stockCases: readonly {
+    showsCorner: boolean;
+    stock: typeof product.stock;
+    stockQuantity: typeof product.stockQuantity;
+  }[] = [
+    { showsCorner: true, stock: "available", stockQuantity: 2 },
+    { showsCorner: true, stock: "limited", stockQuantity: 1 },
+    { showsCorner: false, stock: "unavailable", stockQuantity: 0 },
+    { showsCorner: false, stock: "unknown", stockQuantity: null },
+  ];
+  it.each(stockCases)(
+    "shows a stock corner only from the individual variant's confirmed stock: %j",
+    ({ showsCorner, stock, stockQuantity }) => {
+      const owner: typeof product = {
+        ...product,
+        stock: "available",
+        variants: [
+          {
+            ...product.variants[0],
+            stock,
+            stockQuantity,
+          },
+        ],
+      };
+      for (const variantId of [undefined, "variant"]) {
+        const props: Parameters<typeof ProductView>[0] = {
+          dictionary: getDictionary("cs"),
+          locale: "cs",
+          product: owner,
+        };
+        if (variantId !== undefined) {
+          props.variantId = variantId;
+        }
+        const html = renderToStaticMarkup(createElement(ProductView, props));
+        expect(html.includes('src="/brand/stock-corner.svg"')).toBe(showsCorner);
+      }
+    },
+  );
   it("server renders the selected variant and parameter table with purchase disabled", () => {
     const html = renderToStaticMarkup(
       createElement(ProductView, {
