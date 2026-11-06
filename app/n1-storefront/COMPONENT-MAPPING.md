@@ -50,6 +50,11 @@ vnější panel si zachovává gap16. Před souhrnem je samostatný1px oddělova
 pending/success stavy ani uložené jednotkové ceny nedostávají technické popisky.
 Skutečné chyby, neplatné množství a změny cen zůstávají akčními stavy. Checkout
 je stále podmíněný aktuálním platným owner quote.
+
+Desktopová dostupnost PDP `39:2022` zachovává `AvailabilityStatus` bez ikony.
+Její label používá kanonické18px/bold tokeny jen v desktopovém wrapperu;
+mobilní dostupnost se nemění. Podtržení návrhu nemá v aktuálním kitu prop/token.
+
 Doprava checkoutu `319:1756/1977` používá
 existující RadioCard sm role: control padding12, content gap8 a popis text-sm14.
 Žádné appearance className na knihovních komponentách nebo nové velikostní props.

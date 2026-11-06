@@ -207,7 +207,7 @@ export const ProductView = ({
             </fieldset>
           )}
           <div className="order-3 md:order-2 md:mb-6">
-            <div className="hidden md:block">
+            <div className="n1-product-stock-desktop hidden md:block">
               <AvailabilityStatus
                 label={productStockLabel(selection, d, locale)}
                 showIcon={false}
