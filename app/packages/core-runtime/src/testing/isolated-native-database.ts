@@ -39,6 +39,8 @@ export class IsolatedNativeDatabaseError extends Schema.TaggedError<IsolatedNati
 
 const unavailable = (reason = 'The isolated native test database is unavailable', cause?: unknown) =>
   new IsolatedNativeDatabaseError({ cause: Redacted.make(cause), reason });
+const dumpFailed = (cause?: unknown) => unavailable('Schema-only dump failed', cause);
+const restoreFailed = (cause?: unknown) => unavailable('Schema-only restore failed', cause);
 const prefix = 'ontos_test_party_gateway_';
 
 /**
@@ -62,7 +64,7 @@ const replaceDatabase = (configuration: DatabaseConfigValue, database: string) =
 
 const postgresTool = Effect.fn('IsolatedNativeDatabase.postgresTool')(function* postgresToolCommand(
   configuration: DatabaseConfigValue,
-  program: 'pg_dump' | 'psql',
+  program: 'pg_dump' | 'pg_restore',
   args: readonly string[],
   input?: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
 ) {
@@ -312,32 +314,42 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
       },
     );
     if (input.mode === schemaOnly) {
-      const sourceDump = yield* postgresTool(source.admin, 'pg_dump', ['--schema-only', '--no-comments']);
-      const restore = yield* postgresTool(
-        connections.admin,
-        'psql',
-        ['--set', 'ON_ERROR_STOP=1', '--quiet'],
-        sourceDump.stdout,
-      );
-      const [dumpExit, restoreExit] = yield* Effect.all(
-        [
-          sourceDump.exitCode,
-          restore.exitCode,
-          Stream.runDrain(sourceDump.stderr),
-          Stream.runDrain(restore.stderr),
-          Stream.runDrain(restore.stdout),
-        ],
-        { concurrency: 5 },
-      ).pipe(
-        Effect.mapError((cause) => unavailable('Schema-only clone failed', cause)),
+      // Finish the schema-only archive before restoring it. Plain SQL can end cleanly
+      // before its trailing grants; pg_restore validates the archive and commits schema,
+      // policies and grants together. No source data or keys enter this archive.
+      yield* Effect.gen(function* cloneSchemaArchive() {
+        const sourceDump = yield* postgresTool(source.admin, 'pg_dump', [
+          '--schema-only',
+          '--no-comments',
+          '--format=custom',
+        ]).pipe(Effect.mapError(dumpFailed));
+        const [dumpExit, archive] = yield* Effect.all(
+          [sourceDump.exitCode, Stream.runCollect(sourceDump.stdout), Stream.runDrain(sourceDump.stderr)],
+          { concurrency: 3 },
+        ).pipe(Effect.mapError(dumpFailed));
+        if (dumpExit !== 0) {
+          return yield* dumpFailed();
+        }
+        const restore = yield* postgresTool(
+          connections.admin,
+          'pg_restore',
+          ['--schema-only', '--exit-on-error', '--single-transaction'],
+          Stream.fromIterable(archive),
+        ).pipe(Effect.mapError(restoreFailed));
+        const [restoreExit] = yield* Effect.all(
+          [restore.exitCode, Stream.runDrain(restore.stderr), Stream.runDrain(restore.stdout)],
+          { concurrency: 3 },
+        ).pipe(Effect.mapError(restoreFailed));
+        if (restoreExit !== 0) {
+          return yield* restoreFailed();
+        }
+        return yield* Effect.void;
+      }).pipe(
         Effect.timeoutOrElse({
           duration: '30 seconds',
           orElse: () => Effect.fail(unavailable('Schema-only clone timed out')),
         }),
       );
-      if (dumpExit !== 0 || restoreExit !== 0) {
-        return yield* unavailable('Schema-only clone failed');
-      }
     }
     const isolatedScope = yield* Scope.make();
     yield* Effect.addFinalizer((exit) => Scope.close(isolatedScope, exit));
