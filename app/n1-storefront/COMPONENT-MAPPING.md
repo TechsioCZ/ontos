@@ -589,3 +589,17 @@ The product failure body now uses the exact Figma57:3030 Czech message and
 its English translation; category failure copy stays independent. The native
 retry still refreshes the route. No toast replaces this persistent failure.
 Two failing-then-passing localized regression cases cover this distinction.
+
+### Confirmation banner — 372:3126 / 372:3357
+
+The existing application status surface keeps its canonical N1 success color
+at the exact15% paint opacity recorded in the Figma instance. The design
+context omits that paint opacity; the direct paint/binding inspection confirms
+it. No palette override or new alert component is required. The existing
+wrapper now uses a column with4px gap, and the20px semibold title uses28px
+line height. Payment status copy remains truthful; a fixture claim of email
+delivery is not evidence that an email was sent.
+
+An isolated test-only SSR render of the actual CheckoutView with shipped CSS
+was inspected at320/390/1440. It uses explicit visual fixture data outside
+the application; no order, backend call or runtime mock was introduced.

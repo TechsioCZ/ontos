@@ -128,9 +128,9 @@ const ConfirmedCheckout = ({
     <article className="mx-auto flex w-full max-w-n1-product-content flex-col items-center gap-5 p-5">
       <div
         aria-live="polite"
-        className="w-full rounded-xs border border-border-success bg-bg-success/15 p-4"
+        className="flex w-full flex-col gap-1 rounded-xs border border-border-success bg-bg-success/15 p-4"
       >
-        <h1 className="text-lg font-semibold" ref={heading} tabIndex={-1}>
+        <h1 className="text-lg font-semibold leading-7" ref={heading} tabIndex={-1}>
           {d.checkout.confirmed}
         </h1>
         <p className="text-sm text-fg-secondary">{d.checkout.paymentNote}</p>
