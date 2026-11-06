@@ -412,3 +412,27 @@ váže skutečný Table token `--text-table-sm` na canonical `--text-md`.
 DataTable předává velikost do Table; mobilní tabulka je mimo tento wrapper.
 Pozorovaná výška řádku je nyní36 vs cílových37; přesnou geometrickou shodu
 nepotvrzujeme a nedoplňujeme ji nahodilou pevnou výškou.
+
+### Desktop category panel — 59:1743 / 418:2368
+
+`DesktopCategoryNavigation` composes installed Header, Link/NextLink, Image/NextImage
+and the public multi-trigger Popover.Context API. The Figma layer name
+`Dialog.Content` is not a Code Connect binding to the installed non-compound
+Dialog. A full-width native Anchor/Positioner/Content provides modeless
+dismissal. ArrowDown opens and focuses the first child; Escape restores the
+root link, while pointer-only closure and switching to login/cart preserve
+the destination's focus. Normal click/Enter still navigate to the real href.
+
+The owner supplies all root/direct-child categories and their ordering. The
+current Pánské branch contains ten children, so it has two rows rather than
+the five-item fixture's single row; no demo categories are hidden to match
+the fixture. Five exact static navigation illustrations are documented under
+`public/navigation/README.md`; no product photo is used as a substitute.
+The six-column wrapper and 96px image slots are composition. The scoped
+`n1-category-menu` utility aliases existing Popover surface/border/padding
+roles to canonical white/border-secondary/dimension18, leaving login/cart
+and mobile navigation unchanged.
+
+Known difference: installed Header.NavItem.active exposes active text/font,
+but no active background role. Yellow active background remains a kit gap;
+no appearance classes or invented primitive compensate for it.

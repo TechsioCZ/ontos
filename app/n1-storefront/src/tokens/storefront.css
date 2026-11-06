@@ -135,3 +135,11 @@
 @utility n1-product-parameters {
   --text-table-sm: var(--text-md);
 }
+
+/* Desktop menu418:2368. Existing Popover roles, scoped away from the compact
+ * cart/login popups and the mobile Dialog. All values are canonical aliases. */
+@utility n1-category-menu {
+  --color-popover-bg: var(--color-white);
+  --color-popover-border: var(--color-border-secondary);
+  --padding-popover-md: var(--dimension-18);
+}

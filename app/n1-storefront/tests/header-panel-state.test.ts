@@ -26,4 +26,14 @@ describe("N1 header popovers", () => {
     expect(miniCartState({ entries: [], error: false, loaded: false, scope })).toBe("loading");
     expect(miniCartState({ entries: [], error: false, loaded: true, scope })).toBe("empty");
   });
+  it("coordinates desktop categories with cart, login and mobile navigation", () => {
+    const categories = changeHeaderPanel("cart", "categories", true);
+    expect(categories).toBe("categories");
+    expect(changeHeaderPanel(categories, "cart", false)).toBe("categories");
+    const login = changeHeaderPanel(categories, "login", true);
+    expect(changeHeaderPanel(login, "categories", false)).toBe("login");
+    const mobile = changeHeaderPanel(categories, "navigation", true);
+    expect(changeHeaderPanel(mobile, "categories", false)).toBe("navigation");
+    expect(changeHeaderPanel(categories, "categories", false)).toBeNull();
+  });
 });

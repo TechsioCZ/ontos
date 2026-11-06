@@ -17,6 +17,7 @@ import { MiniLogin } from "./mini-login";
 import { MobileNavigation } from "./mobile-navigation";
 import { changeHeaderPanel } from "./header-panel-state";
 import type { HeaderPanel } from "./header-panel-state";
+import { DesktopCategoryNavigation } from "./desktop-category-navigation";
 import type { Dictionary } from "@/i18n";
 
 interface ShellProps {
@@ -45,7 +46,6 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
     desktop.addEventListener("change", closeOnDesktop);
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, [mobileMenuOpen]);
-  const roots = categories.filter((category) => category.parentId === null);
   const links = [
     ["obchodni-podminky", d.terms],
     ["novinky", d.news],
@@ -168,25 +168,15 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
             <StorefrontSearch dictionary={d} locale={locale} />
           </div>
         </div>
-        <div className="hidden overflow-x-auto overflow-y-hidden border-t border-highlight px-n1-nav-padding md:flex md:h-n1-nav-height md:items-center">
-          <Header.Nav aria-label={d.menu}>
-            <Header.NavItem size="md">
-              <Link as={NextLink} href={`/${locale}/novinky`}>
-                {d.news}
-              </Link>
-            </Header.NavItem>
-            {roots.map((category) => (
-              <Header.NavItem key={category.id} size="md">
-                <Link
-                  as={NextLink}
-                  href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
-                >
-                  {category.name}
-                </Link>
-              </Header.NavItem>
-            ))}
-          </Header.Nav>
-        </div>
+        <DesktopCategoryNavigation
+          categories={categories}
+          dictionary={d}
+          locale={locale}
+          onOpenChange={(open) =>
+            setHeaderPanel((current) => changeHeaderPanel(current, "categories", open))
+          }
+          open={headerPanel === "categories"}
+        />
       </Header>
       <MobileNavigation
         categories={categories}

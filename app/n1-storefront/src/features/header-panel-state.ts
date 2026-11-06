@@ -1,7 +1,7 @@
 import type { CartScope } from "@/ontos/cart-quote";
 import type { CartEntry } from "./cart-state";
 
-export type HeaderPanel = "cart" | "login" | "navigation" | null;
+export type HeaderPanel = "cart" | "categories" | "login" | "navigation" | null;
 export const changeHeaderPanel = (
   current: HeaderPanel,
   panel: Exclude<HeaderPanel, null>,
