@@ -3,7 +3,7 @@
 import NextLink from "next/link";
 import { useLayoutEffect, useState } from "react";
 import type { RefObject } from "react";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Accordion } from "@techsio/ui-kit/molecules/accordion";
 import { Dialog } from "@techsio/ui-kit/molecules/dialog";
 import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigation";
@@ -74,14 +74,17 @@ export const MobileCategoryLinks = ({
         return null;
       }
       return node.children.length === 0 ? (
-        <div className="px-4 py-2" key={node.id}>
-          <Link
+        <div className="n1-mobile-category-heading px-4 py-2" key={node.id}>
+          <LinkButton
             as={NextLink}
             href={`/${locale}/kategorie/${encodeURIComponent(slug)}`}
             onClick={onNavigate}
+            size="current"
+            theme="unstyled"
+            variant="secondary"
           >
             {node.name}
-          </Link>
+          </LinkButton>
         </div>
       ) : (
         <Accordion.Item key={node.id} value={node.id}>
@@ -90,23 +93,14 @@ export const MobileCategoryLinks = ({
             <Accordion.Indicator />
           </Accordion.Header>
           <Accordion.Content>
-            <div className="flex flex-col gap-2">
-              <Link
-                as={NextLink}
-                href={`/${locale}/kategorie/${encodeURIComponent(slug)}`}
-                onClick={onNavigate}
-              >
-                {node.name}
-              </Link>
-              <VerticalNavigation aria-label={node.name} size="md">
-                <CategoryDescendants
-                  destinations={destinations}
-                  locale={locale}
-                  nodes={node.children}
-                  onNavigate={onNavigate}
-                />
-              </VerticalNavigation>
-            </div>
+            <VerticalNavigation aria-label={node.name} size="md">
+              <CategoryDescendants
+                destinations={destinations}
+                locale={locale}
+                nodes={node.children}
+                onNavigate={onNavigate}
+              />
+            </VerticalNavigation>
           </Accordion.Content>
         </Accordion.Item>
       );
@@ -164,10 +158,17 @@ export const MobileNavigation = ({
         title={<span className="sr-only">{d.menu}</span>}
       >
         <nav aria-label={d.menu}>
-          <div className="px-4 py-2">
-            <Link as={NextLink} href={`/${locale}/novinky`} onClick={() => onOpenChange(false)}>
+          <div className="n1-mobile-category-heading px-4 py-2">
+            <LinkButton
+              as={NextLink}
+              href={`/${locale}/novinky`}
+              onClick={() => onOpenChange(false)}
+              size="current"
+              theme="unstyled"
+              variant="secondary"
+            >
               {d.news}
-            </Link>
+            </LinkButton>
           </div>
           {categories.length === 0 ? (
             <output>{d.unavailableDescription}</output>

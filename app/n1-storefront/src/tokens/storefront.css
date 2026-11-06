@@ -116,8 +116,10 @@
   --color-accordion-content-bg: var(--color-transparent);
   --color-dialog-content-border: var(--color-border-secondary);
   --padding-accordion-title-md: var(--dimension-8) var(--dimension-16);
+  --padding-accordion-content-md: var(--dimension-0);
   --padding-accordion-icon-right: var(--dimension-8);
-  --padding-vertical-navigation-item-x-md: var(--dimension-8);
+  --padding-vertical-navigation-item-x-md: var(--dimension-24);
+  --spacing-vertical-navigation-list: var(--dimension-0);
   --font-weight-button: var(--font-weight-normal);
 }
 

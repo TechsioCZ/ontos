@@ -53,7 +53,11 @@ Dynamický top je pouze geometrie existujícího aplikačního wrapperu, nikoli
 inline vzhled knihovní komponenty. Statický součet nezahrnoval demo lištu
 ani zalomení utility odkazu a překrýval logo. Vzhled používá doložené role:
 průhledné plochy Accordionu nad šedým Dialogem, N1 border-secondary,
-8/16 padding titulu, icon-right8 a child-x8 + nativní Content16.
+8/16 padding titulu, icon-right8 a child-x24 v Content0 s list gap0.
+Obsah418:2506 má pouze skutečné childlinks; opakovaný parent Link navíc byl
+odstraněn podle Figmy i historického mobile-menu71–86. Historický parent Link
+v titulku se nevkládá do nativního buttonu. News/root leaf jsou nativní
+LinkButton current/unstyled/secondary se stejnou heading rolí600.
 Native Button font role je skutečně spotřebovaná i u Accordion.Header:
 root nav scope400, existující heading scope600; původní accordion weight
 v shipped cascade přebíjí font-button, proto se neuvádí neúčinný override.
@@ -62,7 +66,7 @@ Nativní Dialog close zůstává dostupný uvnitř focus trapu. Figma close v he
 nelze jen vizuálně nahradit za vnější inertní tlačítko. Root řádek zůstává40px
 proti Figma38, child36 proti34 kvůli kanonické24px lince. Separátory borderless
 Accordionu nemají přímou slot roli; nový CSS border se nevyrábí. Skutečný strom,
-parent destination a další původní demo větve zůstávají, počet není Figma fixture.
+child destinations a další původní demo větve zůstávají, počet není Figma fixture.
 
 Hledání63:1548/438:1947: nativní SearchSuggestions uvnitř existujícího formu,
 48px datové obrázky a resultSlot s PriceBlock. Výsledkový scope váže skutečné
