@@ -5707,12 +5707,8 @@ it.live(
             const providerReads = partyReads.filter(
               (row) => row.evidencePolicyKey === 'party.registry.api.party-detail.evidence.v1',
             );
-            const seedReads = partyReads.filter(
-              (row) => row.evidencePolicyKey === 'party.registry.api.duplicate-candidate-detail.evidence.v1',
-            );
-            expect(partyReads).toHaveLength(3);
+            expect(partyReads).toHaveLength(2);
             expect(providerReads).toHaveLength(2);
-            expect(seedReads).toHaveLength(1);
             for (const read of partyReads) {
               expect(read.principalId).toBe(fixture.core.manager.principalId);
               expect(read.principalId === serviceId).toBe(false);

@@ -43,7 +43,6 @@ import {
 } from '@app/price-group-catalog-contracts/price-group';
 import {
   createPartyWithAuthorization,
-  resolveDuplicateCandidateCreateWithAuthorization,
   counterpartyCustomerOnboardWithAuthorization,
   executePartyDetailWithAuthorization,
   executeCounterpartyReadWithAuthorization,
@@ -1165,25 +1164,10 @@ const createParty = Effect.fn('PriceGroupTemporal.createParty')(function* create
     yield* prepared.confirmRegistered;
   }
   const result = yield* createPartyWithAuthorization(payload, prepared.authorization, options);
-  yield* requireCondition(result.outcome === 'AMBIGUOUS', 'party-create-review-required');
-  if (result.outcome !== 'AMBIGUOUS') {
+  if (result.outcome !== 'CREATED') {
     return yield* failure('party-create-outcome');
   }
-  const reviewAuthority = yield* authority.prepare(partyAppId, party.buildMarker);
-  yield* reviewAuthority.register;
-  const reviewed = yield* resolveDuplicateCandidateCreateWithAuthorization(
-    {
-      caseRef: result.caseRef,
-      expectedRevision: 1,
-      reason: 'Reviewed distinct temporal customer independently of declared ICO',
-    },
-    reviewAuthority.authorization,
-    { ...options, idempotencyKey: `${requestId}-review` },
-  );
-  if (reviewed.partyRef === null) {
-    return yield* failure('party-reviewed-create-outcome');
-  }
-  return reviewed.partyRef;
+  return result.partyRef;
 });
 const createCounterparty = Effect.fn('PriceGroupTemporal.createCounterparty')(function* createCounterparty(
   bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
@@ -1455,7 +1439,6 @@ export const describeReceiver = Schema.encodeEffect(Schema.fromJsonString(Descri
     'commerce.customer-context.remove-customer-price-group',
     'commerce.customer-context.remove-counterparty-price-group',
     'party.registry.create-party',
-    'party.registry.resolve-duplicate-candidate-create',
     'party.registry.counterparty-customer-onboard',
     'pricing.price-group-catalog.create-price-group',
     'pricing.price-group-catalog.create-price-group-definition-revision',
