@@ -31,7 +31,13 @@ export class AccessProjectionWriteError extends Schema.TaggedError<AccessProject
     /** The compiler's own refusals, in its order; absent when the failure is not a plan violation. */
     violations: Schema.optionalKey(Schema.Array(Schema.String)),
   },
-) {}
+) {
+  // Promise/test-runner boundaries print Error.message, not Schema's structured fields.
+  override get message(): string {
+    const reasons = this.violations !== undefined && this.violations.length > 0 ? this.violations : [this.reason];
+    return `${this.code}: ${reasons.join('; ')}`;
+  }
+}
 
 export const projectionWriteRefusal = (
   code: AccessProjectionWriteErrorCode,
