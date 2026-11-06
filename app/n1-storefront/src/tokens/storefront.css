@@ -108,6 +108,20 @@
   --text-label-md: var(--text-sm);
 }
 
+/* Search438:1943: the footer separator uses the canonical foreground role. */
+@utility n1-search-suggestions {
+  --color-popup-border: var(--color-fg-primary);
+  --color-combobox-footer-border: var(--color-fg-primary);
+}
+
+/* Search438:1920: 48px media plus native 6px row padding. Navigation has no
+ * checked indicator; preserve native status spacing outside result rows. */
+@utility n1-search-results {
+  --padding-popup-viewport: var(--dimension-0);
+  --padding-popup-item-y-sm: var(--dimension-6);
+  --size-popup-indicator: var(--dimension-0);
+}
+
 /* PDP39:2543/223:2174 uses a dark active underline on both viewports.
  * Scope the existing indicator role to product information; account Tabs
  * retain their canonical primary indicator. No primitive N1 token changes. */

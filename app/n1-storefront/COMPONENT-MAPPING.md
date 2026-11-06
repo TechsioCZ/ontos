@@ -44,6 +44,23 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+Hledání63:1548/438:1947: nativní SearchSuggestions uvnitř existujícího formu,
+48px datové obrázky a resultSlot s PriceBlock. Výsledkový scope váže skutečné
+popup role na viewport0, item-y-sm6 a indicator0; native x8 už odpovídá.
+Navigační položky nepotřebují prostor pro checked indikátor. Loading/empty
+zachovávají nativní rozestupy: stejné role zároveň řídí status, GroupLabel
+i Footer a neexistuje samostatný footer padding. Popup border438:1917 vede
+přes alias search-suggestions/fg na Theme/N1 fg-primary; stejně tak footer.
+Obě existující spotřebovávané role jsou navázané pouze v search scope.
+Dotaz se v prázdném textu63:1583 interpoluje jako text,
+nikoli HTML nebo náhradní vyhledávací pravidlo. Skutečný owner počet zůstává.
+
+Dedikované search-suggestions/light vazby13px/modré nadpisy a15px ceny nemají
+v aktuálním N1 exportu protějšek; neřeší se nejbližší barvou či novým primitivem.
+React key warning je uvnitř knihovního Combobox group renderu, nikoli resultSlotu.
+Značky vyžadují vlastní veřejný kontrakt a skutečný filtr; nejsou odvozené z prvních
+osmi produktů ani z textového parametru Značka v detailu.
+
 Kontaktní formulář369:2827 skládá FormInput md, FormTextarea md a Button
 md/secondary/solid. FormTextarea používá nativní Label a Textarea podle
 371:3088/3089/3092, bez ručního duplikování. Scope na existujícím fieldsetu

@@ -49,6 +49,11 @@ export const StorefrontSearch = ({
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const result = useSearchSuggestions(locale, query);
+  const hasResults = result.state === "ready" && result.products.length > 0;
+  const noResultsMessage =
+    result.state === "unavailable"
+      ? d.suggestionsUnavailable
+      : d.suggestionsEmpty.replace("{query}", () => query.trim());
   const renderResult = (item: ComboboxItem<ProductCardModel>) =>
     renderProductResult(item, d, locale);
   const href = `/${locale}/vyhledavani?${new URLSearchParams({ q: query.trim() })}`;
@@ -71,6 +76,7 @@ export const StorefrontSearch = ({
   return (
     <form
       action={`/${locale}/vyhledavani`}
+      className={hasResults ? "n1-search-suggestions n1-search-results" : "n1-search-suggestions"}
       method="get"
       onSubmit={(event) => {
         event.preventDefault();
@@ -110,9 +116,7 @@ export const StorefrontSearch = ({
           setOpen(false);
           router.push(target);
         }}
-        noResultsMessage={
-          result.state === "unavailable" ? d.suggestionsUnavailable : d.suggestionsEmpty
-        }
+        noResultsMessage={noResultsMessage}
         onInputValueChange={(value) => {
           setQuery(value);
           setOpen(value.trim().length > 0);
@@ -123,7 +127,7 @@ export const StorefrontSearch = ({
         resultSlot={renderResult}
         size="sm"
         translations={{
-          noResults: result.state === "unavailable" ? d.suggestionsUnavailable : d.suggestionsEmpty,
+          noResults: noResultsMessage,
           resultsCount: () => d.suggestionsReady,
           triggerLabel: d.search,
         }}
