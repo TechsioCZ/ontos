@@ -136,6 +136,18 @@
   --text-table-sm: var(--text-md);
 }
 
+/* Mini total311:2200/2487 is14px/semibold; its native weight already matches. */
+@utility n1-mini-cart-totals {
+  --text-totals-summary-total-size: var(--text-sm);
+}
+
+/* Ready checkout319:1800 is16px/bold. Only its existing summary section
+ * owns this scope; the shared receipt component keeps its own presentation. */
+@utility n1-checkout-totals {
+  --text-totals-summary-total-size: var(--text-md);
+  --font-weight-totals-summary-total: var(--font-weight-bold);
+}
+
 /* Header panels311:2331/2164 and333:7435 explicitly bind Theme/N1
  * white/base, rather than the generic Popover fill-overlay default. */
 @utility n1-header-popover {

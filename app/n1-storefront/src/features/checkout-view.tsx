@@ -350,7 +350,7 @@ const ReadyCheckout = ({
             </section>
             {options.countryCodes.length === 0 && <p role="alert">{d.checkout.noCountries}</p>}
           </div>
-          <section className="flex min-w-0 flex-col gap-4 rounded-xs border border-border-secondary bg-fill-surface p-4">
+          <section className="n1-checkout-totals flex min-w-0 flex-col gap-4 rounded-xs border border-border-secondary bg-fill-surface p-4">
             <h2 className="text-lg font-semibold">{d.checkout.summary}</h2>
             <CheckoutItems
               currency={options.scope.currency}

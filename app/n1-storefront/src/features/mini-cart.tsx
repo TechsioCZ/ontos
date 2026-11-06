@@ -244,6 +244,7 @@ const MiniCartTotals = ({
   }
   return (
     <TotalsSummary
+      className="n1-mini-cart-totals"
       footer={d.shopping.feesNote}
       rows={[
         { id: "net", label: d.shopping.net, value: net },

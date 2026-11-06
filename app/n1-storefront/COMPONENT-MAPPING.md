@@ -71,6 +71,14 @@ arrow-background se musí ve stejném scope znovu vyhodnotit; zděděná root ho
 už je vypočtená na fill-overlay. Žádná změna globálního Popover theme, popupu
 velikostí ani menu. Rozměry, focus a autentizační/quote chování se nemění.
 
+Souhrnné ceny311:2200/2487 a319:1800 nevyžadují rozšíření API kitu.
+Nativní TotalsSummary už spotřebovává text-totals-summary-total-size a
+font-weight-totals-summary-total. MiniCartTotals váže pouze velikost na text-sm;
+jeho výchozí semibold600 odpovídá. Existující souhrnná sekce ReadyCheckout
+váže text-md a bold700. Sdílený CheckoutTotals, potvrzení objednávky, hlavní
+košík a detail objednávky tento scope nedostávají. Mini řádek dědí20px namísto
+Figma19.6px; neexistující line-height token ani vzhledový wrapper se nepřidává.
+
 Desktopová dostupnost PDP `39:2022` zachovává `AvailabilityStatus` bez ikony.
 Její label používá kanonické18px/bold tokeny jen v desktopovém wrapperu;
 mobilní dostupnost se nemění. Podtržení návrhu nemá v aktuálním kitu prop/token.
