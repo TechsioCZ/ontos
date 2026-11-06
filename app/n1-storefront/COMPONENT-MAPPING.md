@@ -426,13 +426,22 @@ the destination's focus. Normal click/Enter still navigate to the real href.
 The owner supplies all root/direct-child categories and their ordering. The
 current Pánské branch contains ten children, so it has two rows rather than
 the five-item fixture's single row; no demo categories are hidden to match
-the fixture. Five exact static navigation illustrations are documented under
+the fixture. Fifty exact static navigation illustrations across all eight roots are documented under
 `public/navigation/README.md`; no product photo is used as a substitute.
 The six-column wrapper and 96px image slots are composition. The scoped
 `n1-category-menu` utility aliases existing Popover surface/border/padding
 roles to canonical white/border-secondary/dimension18, leaving login/cart
 and mobile navigation unchanged.
 
-Known difference: installed Header.NavItem.active exposes active text/font,
-but no active background role. Yellow active background remains a kit gap;
-no appearance classes or invented primitive compensate for it.
+Active state419:3253 uses the existing Header background/hover-background and
+active/hover foreground roles in a conditional parent composition scope,
+`n1-category-menu-active`. They reference canonical primary Button surface
+and foreground aliases. The native `active` prop remains responsible for
+state, with no appearance class on the kit component. The earlier conclusion
+that this required a shared kit change was incorrect: its existing base
+surface role is sufficient. Scoped native padding18/10 gives the60px desktop
+item height without changing header actions or mobile navigation.
+
+NextImage `fill` inside relative96×96 wrappers preserves proportions for all
+source dimensions, including19×100 artwork. All root/child destinations and
+their ordering remain owner data, including13 original demo text-only items.

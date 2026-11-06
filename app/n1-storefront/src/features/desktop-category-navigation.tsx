@@ -95,56 +95,59 @@ export const DesktopCategoryNavigation = ({
                       const contentId = Schema.decodeUnknownOption(Schema.String)(
                         api.getContentProps().id,
                       );
+                      const active = api.open && api.triggerValue === category.id;
                       return (
-                        <Header.NavItem
-                          active={api.open && api.triggerValue === category.id}
+                        <div
+                          className={active ? "n1-category-menu-active" : undefined}
                           key={category.id}
-                          onPointerEnter={() => {
-                            setKeyboardFocus(false);
-                            api.setTriggerValue(category.id);
-                            api.setOpen(hasChildren);
-                          }}
-                          size="md"
                         >
-                          <Link
-                            aria-controls={
-                              hasChildren ? Option.getOrUndefined(contentId) : undefined
-                            }
-                            aria-expanded={
-                              hasChildren ? api.open && api.triggerValue === category.id : undefined
-                            }
-                            aria-haspopup={hasChildren ? "dialog" : undefined}
-                            as={NextLink}
-                            data-ownedby="n1-desktop-categories"
-                            data-part="trigger"
-                            data-scope="popover"
-                            data-value={category.id}
-                            href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
-                            id={Option.getOrUndefined(triggerId)}
-                            onClick={() => api.setOpen(false)}
-                            onFocus={() => {
+                          <Header.NavItem
+                            active={active}
+                            onPointerEnter={() => {
+                              setKeyboardFocus(false);
                               api.setTriggerValue(category.id);
-                              if (api.open) {
-                                api.setOpen(hasChildren);
-                              }
+                              api.setOpen(hasChildren);
                             }}
-                            onKeyDown={(event) => {
-                              if (hasChildren && event.key === "ArrowDown") {
-                                event.preventDefault();
-                                setKeyboardFocus(true);
+                            size="md"
+                          >
+                            <Link
+                              aria-controls={
+                                hasChildren ? Option.getOrUndefined(contentId) : undefined
+                              }
+                              aria-expanded={hasChildren ? active : undefined}
+                              aria-haspopup={hasChildren ? "dialog" : undefined}
+                              as={NextLink}
+                              data-ownedby="n1-desktop-categories"
+                              data-part="trigger"
+                              data-scope="popover"
+                              data-value={category.id}
+                              href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
+                              id={Option.getOrUndefined(triggerId)}
+                              onClick={() => api.setOpen(false)}
+                              onFocus={() => {
                                 api.setTriggerValue(category.id);
                                 if (api.open) {
-                                  content.current
-                                    ?.querySelector<HTMLAnchorElement>("a[href]")
-                                    ?.focus();
+                                  api.setOpen(hasChildren);
                                 }
-                                api.setOpen(true);
-                              }
-                            }}
-                          >
-                            {category.name}
-                          </Link>
-                        </Header.NavItem>
+                              }}
+                              onKeyDown={(event) => {
+                                if (hasChildren && event.key === "ArrowDown") {
+                                  event.preventDefault();
+                                  setKeyboardFocus(true);
+                                  api.setTriggerValue(category.id);
+                                  if (api.open) {
+                                    content.current
+                                      ?.querySelector<HTMLAnchorElement>("a[href]")
+                                      ?.focus();
+                                  }
+                                  api.setOpen(true);
+                                }
+                              }}
+                            >
+                              {category.name}
+                            </Link>
+                          </Header.NavItem>
+                        </div>
                       );
                     })}
                   </Header.Nav>
@@ -156,7 +159,7 @@ export const DesktopCategoryNavigation = ({
                   onFocusCapture={() => setKeyboardFocus(true)}
                   ref={content}
                 >
-                  <div className="grid grid-cols-6 items-end gap-2">
+                  <div className="grid min-h-n1-category-menu-grid grid-cols-6 content-center items-end gap-2">
                     {categoryLinks.map((category) => {
                       const artwork = navigationArtwork.get(category.id);
                       return (
@@ -168,19 +171,19 @@ export const DesktopCategoryNavigation = ({
                           >
                             <div className="flex flex-col items-center gap-2 text-center">
                               {artwork !== undefined && (
-                                <div className="flex size-24 items-center justify-center">
+                                <div className="relative size-24">
                                   <Image
                                     alt=""
                                     as={NextImage}
-                                    height={artwork.height}
+                                    fill
                                     objectFit="contain"
                                     size="full"
-                                    src={artwork.src}
-                                    width={artwork.width}
+                                    sizes="96px"
+                                    src={artwork}
                                   />
                                 </div>
                               )}
-                              <span className="text-xs font-bold">{category.name}</span>
+                              <span className="text-sm font-bold">{category.name}</span>
                             </div>
                           </Link>
                         </div>

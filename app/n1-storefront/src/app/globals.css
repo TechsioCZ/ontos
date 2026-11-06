@@ -23,6 +23,9 @@
   /* Figma219:2819: layout between PriceBlock and the quantity/action group. */
   --spacing-n1-product-price-quantity: calc(var(--dimension-8) - var(--dimension-1));
   --spacing-n1-category-sidebar: 16rem;
+  /* Figma418:2369: the one-row menu grid is136px, centering124px tiles.
+   * A minimum preserves this composition while larger native trees grow. */
+  --spacing-n1-category-menu-grid: calc(var(--dimension-124) + var(--dimension-12));
   --spacing-n1-loading-image: 13.75rem;
   --spacing-n1-breadcrumb-icon: var(--dimension-14);
   --container-n1-promo-content: 72rem;

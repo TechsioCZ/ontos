@@ -142,4 +142,17 @@
   --color-popover-bg: var(--color-white);
   --color-popover-border: var(--color-border-secondary);
   --padding-popover-md: var(--dimension-18);
+  /* Figma419:3253 fills the60px navigation row; native text line is24px.
+   * Keep horizontal padding10 and apply the same height before activation. */
+  --padding-header-item-md: var(--dimension-18) var(--dimension-10);
+}
+
+/* Active desktop branch419:3253: the installed Header already exposes base
+ * and hover surface roles. Scope them on the composition wrapper, preserving
+ * native active semantics and every other Header instance. */
+@utility n1-category-menu-active {
+  --color-header-nav-item-bg: var(--color-button-bg-primary-base);
+  --color-header-nav-item-bg-hover: var(--color-button-bg-primary-base);
+  --color-header-nav-fg-active: var(--color-button-fg-primary);
+  --color-header-nav-fg-hover: var(--color-button-fg-primary);
 }
