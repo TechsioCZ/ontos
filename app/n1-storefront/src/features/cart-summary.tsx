@@ -40,18 +40,19 @@ export const CartSummary = ({
       <TotalsSummary
         actions={
           <div className="flex flex-col gap-3">
-            {verified === null && (
+            {verified === null && quote.state === "unavailable" && (
               <Button
-                disabled={invalid || quote.state === "pending" || quote.state === "scope-mismatch"}
+                disabled={invalid}
                 onClick={() => quote.verify()}
                 size="md"
                 theme="solid"
                 variant="secondary"
               >
-                {d.shopping.verify}
+                {d.retry}
               </Button>
             )}
             <LinkButton
+              aria-busy={quote.state === "pending"}
               as={NextLink}
               disabled={verified === null || invalid || quote.state !== "ready"}
               href={`/${locale}/pokladna`}

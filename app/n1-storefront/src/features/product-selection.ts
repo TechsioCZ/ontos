@@ -3,7 +3,22 @@ import type { ProductDetailModel } from "@/ontos/catalog-model";
 
 /** Presentation of a genuine owner variant; unknown selections never choose an unrelated variant. */
 export const selectProductDetail = (product: ProductDetailModel, variantId: string | undefined) => {
-  const variant = product.variants.find((item) => item.id === variantId);
+  const [soleVariant] = product.variants;
+  // The full model contains active owner records. Only a consistent generic leaf
+  // has no actual choice to make; even then an explicit unknown ID stays blocked.
+  const genericVariant =
+    product.variantCount === 1 &&
+    product.variants.length === 1 &&
+    soleVariant.name === product.name &&
+    soleVariant.attributes.trim().length === 0 &&
+    soleVariant.parameters.length === 0
+      ? soleVariant
+      : undefined;
+  const variant =
+    variantId === undefined
+      ? genericVariant
+      : product.variants.find((item) => item.id === variantId);
+  const genericVariantSelected = variant !== undefined && variant === genericVariant;
   const current = variant
     ? {
         ...Struct.omit(product, ["packageQuantity"]),
@@ -40,6 +55,7 @@ export const selectProductDetail = (product: ProductDetailModel, variantId: stri
       : [variantImage, ...product.images.filter((src) => src !== variantImage)];
   return {
     current,
+    genericVariantSelected,
     images,
     parameters,
     selectionRequired: product.variants.length > 0 && !variant,

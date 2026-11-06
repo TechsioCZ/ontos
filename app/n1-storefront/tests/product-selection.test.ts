@@ -7,6 +7,11 @@ import { selectProductDetail } from "../src/features/product-selection";
 import { ProductView } from "../src/features/product-view";
 import { priceProps } from "../src/features/price-props";
 
+const selectWithOptionalVariant = (
+  owner: Parameters<typeof selectProductDetail>[0],
+  variantId?: string,
+) => selectProductDetail(owner, variantId);
+
 const {
   details: [product],
 } = projectCatalog(
@@ -48,6 +53,61 @@ const {
 );
 
 describe("real product variant presentation", () => {
+  it("implicitly selects only a single generic owner variant and keeps its purchase facts", () => {
+    const generic = {
+      ...product,
+      variants: [{ ...product.variants[0], attributes: " \n", name: product.name, parameters: [] }],
+    };
+    const selected = selectWithOptionalVariant(generic);
+    expect(selected).toMatchObject({ genericVariantSelected: true, selectionRequired: false });
+    expect(selected.variant).toBe(generic.variants[0]);
+    expect(selected.current).toMatchObject({ minimumQuantity: 2, priceMinor: 45_000, sku: "V1" });
+    expect(selectProductDetail(generic, "variant")).toMatchObject({
+      genericVariantSelected: true,
+      selectionRequired: false,
+    });
+    const unknown = selectProductDetail(generic, "unknown");
+    expect(unknown).toMatchObject({
+      genericVariantSelected: false,
+      selectionRequired: true,
+    });
+    expect(unknown.variant).toBeUndefined();
+  });
+  it.each([
+    { attributes: "", name: "M", parameters: [], variantCount: 1 },
+    { attributes: "M", name: product.name, parameters: [], variantCount: 1 },
+    {
+      attributes: "",
+      name: product.name,
+      parameters: [{ label: "Size", unit: "", value: "M" }],
+      variantCount: 1,
+    },
+    { attributes: "", name: `${product.name} `, parameters: [], variantCount: 1 },
+    { attributes: "", name: product.name, parameters: [], variantCount: 0 },
+    { attributes: "", name: product.name, parameters: [], variantCount: 2 },
+  ])("requires an explicit choice for a meaningful or inconsistent sole variant: %j", (facts) => {
+    const { variantCount, ...variantFacts } = facts;
+    const grouped = {
+      ...product,
+      variantCount,
+      variants: [{ ...product.variants[0], ...variantFacts }],
+    };
+    const selected = selectWithOptionalVariant(grouped);
+    expect(selected).toMatchObject({
+      genericVariantSelected: false,
+      selectionRequired: true,
+    });
+    expect(selected.variant).toBeUndefined();
+  });
+  it("does not implicitly choose when two active records disagree with the single-variant count", () => {
+    const generic = { ...product.variants[0], name: product.name, parameters: [] };
+    const selected = selectWithOptionalVariant({
+      ...product,
+      variants: [generic, { ...generic, id: "other" }],
+    });
+    expect(selected).toMatchObject({ genericVariantSelected: false, selectionRequired: true });
+    expect(selected.variant).toBeUndefined();
+  });
   it("keeps product parameters when a size contributes its own values without mutating either source", () => {
     const shared = [
       { label: "Značka", unit: "", value: "Spyder" },

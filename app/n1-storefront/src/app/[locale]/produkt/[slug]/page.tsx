@@ -26,6 +26,9 @@ const ProductPage = async ({
     notFound();
   }
   const search = await searchParams;
+  if (Array.isArray(search.variantId)) {
+    notFound();
+  }
   const variantId = Schema.is(Schema.String)(search.variantId) ? search.variantId : undefined;
   return (
     <ProductView

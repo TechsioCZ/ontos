@@ -46,9 +46,10 @@ a e-mail pod ikonou odpovídají mobilnímu návrhu; neopravují se CSS výjimko
 
 Mini košík `311:2490` skládá dvě nativní akce do vlastního layout wrapperu gap12;
 vnější panel si zachovává gap16. Před souhrnem je samostatný1px oddělovač
-`311:2475` v roli border-secondary. Aktuální VALID quote potvrzuje ceny všech
-řádků: draftPrice se skrývá jen pro tento stav, úspěch zůstává oznámený sr-only.
-Při změně výběru, chybě nebo neplatném množství zůstávají skutečné výstrahy.
+`311:2475` v roli border-secondary. Quote běží automaticky na pozadí; běžné
+pending/success stavy ani uložené jednotkové ceny nedostávají technické popisky.
+Skutečné chyby, neplatné množství a změny cen zůstávají akčními stavy. Checkout
+je stále podmíněný aktuálním platným owner quote.
 Doprava checkoutu `319:1756/1977` používá
 existující RadioCard sm role: control padding12, content gap8 a popis text-sm14.
 Žádné appearance className na knihovních komponentách nebo nové velikostní props.

@@ -128,7 +128,7 @@ describe("product purchase feedback", () => {
         }),
       );
       expect(html).not.toContain('href="/cs/kosik"');
-      expect(html).not.toContain(d.shopping.unverified);
+      expect(html).not.toContain("neověřen");
       expect(html).not.toContain('id="purchase-unavailable"');
     });
   }

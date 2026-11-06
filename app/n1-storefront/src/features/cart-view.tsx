@@ -69,7 +69,6 @@ const CartRow = ({
   locale,
   onDraft,
   onRemove,
-  pricesVerified,
 }: {
   dictionary: Dictionary;
   draft: QuantityDraft | undefined;
@@ -78,7 +77,6 @@ const CartRow = ({
   locale: string;
   onDraft: (draft: QuantityDraft) => void;
   onRemove: () => void;
-  pricesVerified: boolean;
 }) => {
   const cart = useCart();
   const [saveError, setSaveError] = useState(false);
@@ -99,13 +97,11 @@ const CartRow = ({
   return (
     <LineItem title={entry.name}>
       {image !== null && (
-        <div className="hidden n1-compact:block">
-          <LineItem.Image>
-            <Image alt="" as={NextImage} height={64} src={image} width={64} />
-          </LineItem.Image>
-        </div>
+        <LineItem.Image className="hidden n1-compact:block">
+          <Image alt="" as={NextImage} height={96} src={image} width={96} />
+        </LineItem.Image>
       )}
-      <LineItem.Body>
+      <LineItem.Body className="col-span-full n1-compact:col-span-1">
         <LineItem.Heading>
           <LineItem.Title>
             <Link as={NextLink} href={href}>
@@ -121,9 +117,6 @@ const CartRow = ({
               )}
               state="known"
             />
-            {!pricesVerified && (
-              <p className="text-xs text-fg-secondary">{d.shopping.draftPrice}</p>
-            )}
           </LineItem.Price>
         </LineItem.Heading>
         <LineItem.Options>
@@ -132,36 +125,38 @@ const CartRow = ({
         </LineItem.Options>
         <LineItem.Controls>
           <LineItem.Quantity readOnlyLabel={`${entry.quantity} ${entry.unit}`}>
-            <QuantityField
-              error={quantityError}
-              hideLabel
-              label={`${d.quantity}: ${entry.name}`}
-              max={1_000_000}
-              min={entry.minimumQuantity ?? 0.001}
-              onValueChange={({ value: next }) => {
-                const parsed = Number(next);
-                const valid = validCartQuantity(
-                  parsed,
-                  entry.minimumQuantity,
-                  entry.packageQuantity,
-                );
-                const saved = valid && (cart?.update(entry, parsed) ?? false);
-                onDraft({
-                  quantity: saved ? parsed : entry.quantity,
-                  saveError: valid && !saved,
-                  value: next,
-                });
-                setSaveError(false);
-              }}
-              size="md"
-              step={1}
-              translations={{
-                decrementLabel: d.shopping.decreaseQuantity,
-                incrementLabel: d.shopping.increaseQuantity,
-              }}
-              unitLabel={entry.unit}
-              value={value}
-            />
+            <div className="md:w-60">
+              <QuantityField
+                error={quantityError}
+                hideLabel
+                label={`${d.quantity}: ${entry.name}`}
+                max={1_000_000}
+                min={entry.minimumQuantity ?? 0.001}
+                onValueChange={({ value: next }) => {
+                  const parsed = Number(next);
+                  const valid = validCartQuantity(
+                    parsed,
+                    entry.minimumQuantity,
+                    entry.packageQuantity,
+                  );
+                  const saved = valid && (cart?.update(entry, parsed) ?? false);
+                  onDraft({
+                    quantity: saved ? parsed : entry.quantity,
+                    saveError: valid && !saved,
+                    value: next,
+                  });
+                  setSaveError(false);
+                }}
+                size="md"
+                step={1}
+                translations={{
+                  decrementLabel: d.shopping.decreaseQuantity,
+                  incrementLabel: d.shopping.increaseQuantity,
+                }}
+                unitLabel={entry.unit}
+                value={value}
+              />
+            </div>
           </LineItem.Quantity>
           <LineItem.Actions>
             <LineItem.Remove
@@ -272,7 +267,6 @@ const CartContent = ({
               locale={locale}
               onDraft={(value) => onDraft(entry, value)}
               onRemove={() => onRemove(entry)}
-              pricesVerified={verified !== null}
             />
           ))}
         </div>

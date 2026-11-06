@@ -6,6 +6,7 @@ import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { Struct } from "effect";
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Image } from "@techsio/ui-kit/atoms/image";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
@@ -18,7 +19,6 @@ import type { CartQuote } from "@/ontos/cart-quote";
 import { publicImage } from "@/ontos/catalog-model";
 import { useCart } from "./cart-provider";
 import { CartQuoteFeedback } from "./cart-quote-feedback";
-import { verifiedCartQuote } from "./cart-quote-state";
 import { cartLineKey } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import {
@@ -36,6 +36,46 @@ import { miniCartState } from "./header-panel-state";
 import { useCartQuote } from "./use-cart-quote";
 
 const noEntries: readonly CartEntry[] = [];
+const cartCountFormats = {
+  cs: new Intl.NumberFormat("cs", { maximumSignificantDigits: 15 }),
+  en: new Intl.NumberFormat("en", { maximumSignificantDigits: 15 }),
+};
+const cartCount = (entries: readonly CartEntry[], locale: string) => {
+  const quantity = entries.reduce((total, entry) => total + entry.quantity, 0);
+  const label = cartCountFormats[locale === "en" ? "en" : "cs"].format(quantity);
+  return { badge: quantity > 99 ? "99+" : label, label };
+};
+
+const MiniCartTrigger = ({
+  count,
+  state,
+  title,
+}: {
+  count: ReturnType<typeof cartCount>;
+  state: ReturnType<typeof miniCartState>;
+  title: string;
+}) => (
+  <Popover.Trigger
+    aria-label={state === "filled" ? `${title} (${count.label})` : title}
+    size="current"
+    theme="unstyled"
+    variant="tertiary"
+  >
+    <span className="relative inline-flex">
+      <Image alt="" as={NextImage} height={28} size="custom" src="/brand/cart.svg" width={28} />
+      {state === "filled" && (
+        <span className="n1-cart-count absolute -right-2 -top-2 grid min-h-5 min-w-5">
+          <Badge aria-hidden="true" size="sm" variant="primary">
+            {count.badge}
+          </Badge>
+        </span>
+      )}
+    </span>
+    <span aria-atomic="true" aria-live="polite" className="sr-only">
+      {state === "filled" || state === "empty" ? `${title}: ${count.label}` : ""}
+    </span>
+  </Popover.Trigger>
+);
 const formatMoney = (amount: number, currency: string, locale: string) =>
   new Intl.NumberFormat(locale, { currency, style: "currency" }).format(amount / 100);
 
@@ -47,7 +87,6 @@ const MiniCartLine = ({
   locale,
   onDraft,
   onRemove,
-  pricesVerified,
 }: {
   dictionary: Dictionary;
   draft: QuantityDraft | undefined;
@@ -56,7 +95,6 @@ const MiniCartLine = ({
   locale: string;
   onDraft: (draft: QuantityDraft) => void;
   onRemove: () => void;
-  pricesVerified: boolean;
 }) => {
   const cart = useCart();
   const value = draft?.value ?? String(entry.quantity);
@@ -94,7 +132,6 @@ const MiniCartLine = ({
             )}
             state="known"
           />
-          {!pricesVerified && <p className="text-xs text-fg-secondary">{d.shopping.draftPrice}</p>}
         </div>
         <div className="w-23 shrink-0 self-center">
           <NumericInput
@@ -286,6 +323,7 @@ export const MiniCart = ({
   const router = useRouter();
   const state = miniCartState(cart);
   const entries = cart?.entries ?? noEntries;
+  const count = cartCount(entries, locale);
   const [storedDrafts, setStoredDrafts] = useState<QuantityDrafts>({});
   const drafts = reconcileQuantityDrafts(storedDrafts, entries);
   if (drafts !== storedDrafts) {
@@ -303,7 +341,6 @@ export const MiniCart = ({
         }
       : null;
   const quote = useCartQuote(request, true);
-  const pricesVerified = verifiedCartQuote(quote, invalid) !== null;
   const [removal, setRemoval] = useState(0);
   const [mutationError, setMutationError] = useState(false);
   const heading = useRef<HTMLDivElement>(null);
@@ -322,16 +359,14 @@ export const MiniCart = ({
       shadow={false}
       size="sm"
     >
-      <Popover.Trigger aria-label={d.cart} size="current" theme="unstyled" variant="tertiary">
-        <Image alt="" as={NextImage} height={28} size="custom" src="/brand/cart.svg" width={28} />
-      </Popover.Trigger>
+      <MiniCartTrigger count={count} state={state} title={d.cart} />
       <Popover.Positioner>
         <Popover.Content>
           <Popover.Arrow />
           <div className="flex w-n1-header-panel-content max-w-n1-header-panel-viewport flex-col gap-4">
             <Popover.Title ref={heading} tabIndex={-1}>
               {d.cart}
-              {state === "filled" ? ` (${entries.length})` : ""}
+              {state === "filled" ? ` (${count.label})` : ""}
             </Popover.Title>
             {state === "filled" && cart?.scope && (
               <>
@@ -354,7 +389,6 @@ export const MiniCart = ({
                         setRemoval((value) => value + 1);
                       }
                     }}
-                    pricesVerified={pricesVerified}
                   />
                 ))}
                 <CartQuoteFeedback dictionary={d} invalid={invalid} quote={quote} />

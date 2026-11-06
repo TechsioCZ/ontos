@@ -35,16 +35,13 @@ const noticeText = (checkout: Checkout, d: Dictionary) => {
   if (checkout.notice !== null) {
     return d.checkout[checkout.notice];
   }
-  if (checkout.progress === "place") {
-    return d.checkout.sending;
-  }
   if (checkout.progress !== "idle") {
-    return d.checkout.checking;
+    return "";
   }
   if (checkout.guarded) {
     return d.checkout.uncertain;
   }
-  return checkout.quote?.outcome === "VALID" ? d.checkout.verified : "";
+  return "";
 };
 
 const ReceiptHeader = ({

@@ -7,6 +7,11 @@ import { createElement } from "react";
 import { ProductView } from "../src/features/product-view";
 import { getDictionary } from "../src/i18n";
 
+const selectWithOptionalVariant = (
+  owner: Parameters<typeof selectProductDetail>[0],
+  variantId?: string,
+) => selectProductDetail(owner, variantId);
+
 const base = {
   currency: "CZK",
   currentPriceMinor: 10_000,
@@ -43,6 +48,45 @@ const variant = {
 };
 
 describe("owner-backed PDP amounts and stock", () => {
+  it.each(["cs", "en"])(
+    "omits a generic duplicate title and chooser in %s while retaining the real inquiry variant",
+    (locale) => {
+      const product = detail({
+        ...leaf,
+        variantRecords: [{ ...variant, name: leaf.name }],
+        variantSummary: { count: 1, minGrossPriceMinor: 10_890, stockOnHand: 2 },
+      });
+      const dictionary = getDictionary(locale);
+      const html = renderToStaticMarkup(
+        createElement(ProductView, { dictionary, locale, product }),
+      );
+      expect(html).not.toContain(`${product.name} – ${product.name}`);
+      expect(html).not.toContain(dictionary.selectedVariant);
+      expect(html).not.toContain(dictionary.selectVariant);
+      expect(html).toContain(`variantIds=${variant.id}`);
+      expect(html).toContain('role="spinbutton"');
+      const unknown = renderToStaticMarkup(
+        createElement(ProductView, { dictionary, locale, product, variantId: "unknown" }),
+      );
+      expect(unknown).toContain(dictionary.selectVariant);
+      expect(unknown).toContain(`variantId=${variant.id}`);
+      expect(unknown).not.toContain('role="spinbutton"');
+      expect(unknown).not.toContain("variantIds=");
+    },
+  );
+  it("never implicitly selects an inactive generic owner record", () => {
+    const product = detail({
+      ...leaf,
+      variantRecords: [{ ...variant, active: false, name: leaf.name }],
+      variantSummary: { count: 1, minGrossPriceMinor: 10_890, stockOnHand: 2 },
+    });
+    expect(product.variants).toHaveLength(0);
+    const selected = selectWithOptionalVariant(product);
+    expect(selected).toMatchObject({
+      genericVariantSelected: false,
+    });
+    expect(selected.variant).toBeUndefined();
+  });
   it.each(["cs", "en"])(
     "renders only the proved manufacturer in %s without an invented manufacturer link",
     (locale) => {

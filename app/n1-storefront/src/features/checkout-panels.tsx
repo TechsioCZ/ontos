@@ -135,7 +135,6 @@ export const CheckoutItems = ({
           </div>
         );
       })}
-      {!verified && <p className="text-xs text-fg-secondary">{d.shopping.draftPrice}</p>}
     </div>
   );
 };

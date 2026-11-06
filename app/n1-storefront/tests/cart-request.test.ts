@@ -58,6 +58,29 @@ describe("cart quote request admission", () => {
 });
 
 describe("automatic cart quote summary", () => {
+  it.each(["idle", "pending"] as const)(
+    "keeps %s background validation out of the shopping UI while checkout remains disabled",
+    (state) => {
+      const d = getDictionary("cs");
+      const html = renderToStaticMarkup(
+        createElement(CartSummary, {
+          currency: "CZK",
+          dictionary: d,
+          invalid: false,
+          locale: "cs",
+          quote: { result: null, state, verify: () => {} },
+          verified: null,
+        }),
+      );
+      expect(html).not.toContain(d.retry);
+      expect(html).not.toContain("Ověřit");
+      expect(html).not.toContain("Neověřeno");
+      expect(html).toContain('aria-disabled="true"');
+      if (state === "pending") {
+        expect(html).toContain('aria-busy="true"');
+      }
+    },
+  );
   it("keeps explicit retry and blocks checkout when the owner is unavailable", () => {
     const d = getDictionary("cs");
     const html = renderToStaticMarkup(
@@ -70,7 +93,7 @@ describe("automatic cart quote summary", () => {
         verified: null,
       }),
     );
-    expect(html).toContain(d.shopping.verify);
+    expect(html).toContain(d.retry);
     expect(html).toContain('aria-disabled="true"');
     expect(html).toContain(d.shopping.unresolved);
   });
@@ -98,7 +121,7 @@ describe("automatic cart quote summary", () => {
         verified,
       }),
     );
-    expect(html).not.toContain(d.shopping.verify);
+    expect(html).not.toContain(d.retry);
     expect(html).toContain(d.shopping.checkout);
     expect(html).toContain('href="/cs/pokladna"');
     expect(html).not.toContain('aria-disabled="true"');

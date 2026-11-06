@@ -103,6 +103,13 @@
   --color-tabs-indicator-bg: var(--color-fg-primary);
 }
 
+/* Header cart count: supplied N1 UX reference uses a round primary Badge.
+ * Only this composition changes Badge radius/padding; colours stay canonical. */
+@utility n1-cart-count {
+  --radius-badge: var(--radius-full);
+  --padding-badge-sm: var(--dimension-0);
+}
+
 /* Desktop PDP219:2876 uses a neutral strip and compact controls. */
 @utility n1-product-tabs {
   --color-tabs-list-bg: var(--color-neutral-200);

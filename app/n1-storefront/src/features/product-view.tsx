@@ -82,7 +82,8 @@ export const ProductView = ({
 }) => {
   const selection = selectProductDetail(product, variantId);
   const desktop = useDesktopProduct();
-  const { current, images, parameters, selectionRequired, variant } = selection;
+  const { current, genericVariantSelected, images, parameters, selectionRequired, variant } =
+    selection;
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
@@ -121,7 +122,9 @@ export const ProductView = ({
       <div className="relative my-8 md:my-6">
         <h1 className="text-2xl font-bold leading-normal md:text-xl md:leading-9">
           {product.name}
-          {variant && <span className="hidden md:inline">{` – ${variant.name}`}</span>}
+          {variant && !genericVariantSelected && (
+            <span className="hidden md:inline">{` – ${variant.name}`}</span>
+          )}
         </h1>
         <div aria-hidden="true" className="absolute bottom-0 hidden h-1 w-24 bg-primary md:block" />
       </div>
@@ -173,7 +176,7 @@ export const ProductView = ({
               <dd>{current.sku}</dd>
             </dl>
           )}
-          {product.variants.length > 0 && (
+          {product.variants.length > 0 && !genericVariantSelected && (
             <fieldset className="order-1 md:mb-5">
               <legend className="mb-6 font-semibold md:mb-2 md:font-bold">{d.selectVariant}</legend>
               <div className="flex flex-wrap gap-2">
@@ -223,7 +226,7 @@ export const ProductView = ({
             className="order-3 hidden h-px bg-border-primary md:mb-3 md:block"
           />
           <div className="contents md:order-4 md:mb-4 md:flex md:items-center md:justify-between md:gap-4">
-            {variant && (
+            {variant && !genericVariantSelected && (
               <p className="order-2 font-semibold md:order-none md:font-normal">
                 <span className="md:font-bold">{d.selectedVariant}: </span>
                 {variant.name}
