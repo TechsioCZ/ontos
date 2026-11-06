@@ -100,7 +100,7 @@ export const ProductPurchase = ({
   }
   return (
     <div>
-      <div className="hidden items-center gap-2 md:flex">
+      <div className="n1-product-quantity-desktop hidden items-center gap-2 md:flex">
         <div className="w-26 shrink-0">
           <NumericInput
             allowOverflow={false}

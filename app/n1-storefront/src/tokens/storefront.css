@@ -116,6 +116,11 @@
   --font-weight-availability-status-label: var(--font-weight-bold);
 }
 
+/* Quantity61:1377 uses the canonical neutral fill only for desktop steppers. */
+@utility n1-product-quantity-desktop {
+  --color-numeric-input-trigger-bg: var(--color-neutral-300);
+}
+
 /* Desktop PDP219:2876 uses a neutral strip and compact controls. */
 @utility n1-product-tabs {
   --color-tabs-list-bg: var(--color-neutral-200);

@@ -55,6 +55,14 @@ Desktopová dostupnost PDP `39:2022` zachovává `AvailabilityStatus` bez ikony.
 Její label používá kanonické18px/bold tokeny jen v desktopovém wrapperu;
 mobilní dostupnost se nemění. Podtržení návrhu nemá v aktuálním kitu prop/token.
 
+Množství PDP `61:1377` používá skutečný `NumericInput` s `density="compact"`
+a `size="md"`: celek104px, ovladače28px, střed48px, výška36px. Desktopový
+wrapper váže vlastní trigger-bg na kanonické neutral300. Sdílený patch opravuje
+spotřebu existujících NumericInput barevných rolí; průhledný výchozí stav
+zachovává dosavadní vykreslení ostatních skladeb bez zdvojení alpha výplně.
+Mobilní `39:2500` zůstává `QuantityField` md mimo tuto barevnou výjimku.
+Limity, klávesnice, validace a focus zůstávají v Zag komponentě a aplikaci.
+
 Doprava checkoutu `319:1756/1977` používá
 existující RadioCard sm role: control padding12, content gap8 a popis text-sm14.
 Žádné appearance className na knihovních komponentách nebo nové velikostní props.

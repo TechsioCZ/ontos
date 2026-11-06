@@ -46,6 +46,28 @@ describe("published UI-kit patch contract", () => {
     expect(html).not.toContain("density=");
   });
 
+  it("uses the published numeric trigger colour roles for both stepper buttons", () => {
+    const html = renderToStaticMarkup(
+      <NumericInput max={2} min={1} size="md" value="1">
+        <NumericInput.Control>
+          <NumericInput.DecrementTrigger />
+          <NumericInput.Input />
+          <NumericInput.IncrementTrigger />
+        </NumericInput.Control>
+      </NumericInput>,
+    );
+    const triggers =
+      html.match(/<button[^>]*data-part="(?:decrement|increment)-trigger"[^>]*>/gu) ?? [];
+    expect(triggers).toHaveLength(2);
+    for (const trigger of triggers) {
+      expect(trigger).toContain("bg-numeric-input-trigger-bg");
+      expect(trigger).toContain("hover:bg-numeric-input-trigger-bg-hover");
+      expect(trigger).toContain("text-numeric-input-trigger-fg");
+      expect(trigger).not.toContain("bg-transparent");
+      expect(trigger).toContain("active:bg-icon-control-bg-active");
+    }
+  });
+
   it("contains uncropped thumbnail adapters without changing ordinary images", () => {
     const ordinary = renderToStaticMarkup(<Image alt="Original" src="/photo.jpg" />);
     const contained = renderToStaticMarkup(

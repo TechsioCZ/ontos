@@ -948,7 +948,7 @@ index 00ccc9b230020dd89b0b6713985f95ea75b63b57..051e5b7e3210e2a085d5fe1a41179264
              theme,
              size,
 diff --git a/dist/atoms/numeric-input.js b/dist/atoms/numeric-input.js
-index b63ec0ca42a27ce1a5949f59d12e355bba2fb3f0..d867fe079801acd55e68cc3abdb0190c89294965 100644
+index b63ec0ca42a27ce1a5949f59d12e355bba2fb3f0..dac2f7477d52a62262a9d89c56adc2c601850b83 100644
 --- a/dist/atoms/numeric-input.js
 +++ b/dist/atoms/numeric-input.js
 @@ -12,7 +12,6 @@ const numericInputVariants = tv({
@@ -959,15 +959,19 @@ index b63ec0ca42a27ce1a5949f59d12e355bba2fb3f0..d867fe079801acd55e68cc3abdb0190c
              "min-w-0 items-center overflow-clip",
              "hover:border-numeric-input-border-hover",
              "focus-within:border-numeric-input-border-focus",
-@@ -46,7 +45,7 @@ const numericInputVariants = tv({
+@@ -46,9 +45,9 @@ const numericInputVariants = tv({
          ],
          trigger: [
              "flex flex-1 place-items-center",
 -            "px-numeric-input-trigger-x py-numeric-input-trigger-y",
+-            "bg-transparent hover:bg-icon-control-bg-hover active:bg-icon-control-bg-active",
+-            "text-icon-control-fg",
 +            "py-numeric-input-trigger-y",
-             "bg-transparent hover:bg-icon-control-bg-hover active:bg-icon-control-bg-active",
-             "text-icon-control-fg",
++            "bg-numeric-input-trigger-bg hover:bg-numeric-input-trigger-bg-hover active:bg-icon-control-bg-active",
++            "text-numeric-input-trigger-fg",
              "cursor-pointer",
+             "transition-colors duration-200 motion-reduce:transition-none",
+             "disabled:cursor-not-allowed disabled:text-icon-control-fg-disabled"
 @@ -56,28 +55,39 @@ const numericInputVariants = tv({
          scrubber: "absolute inset-0 cursor-ew-resize"
      },
@@ -1398,3 +1402,16 @@ index 9b1d440048387229e6731324da573829e06bb44b..17494997dbf6253681bfcc0a417262c2
    --product-card-layout-row-grid: minmax(
        var(--width-product-card-image-min),
        var(--width-product-card-image-max)
+diff --git a/src/tokens/figma/variables.css b/src/tokens/figma/variables.css
+index b0f2f279be728a39d8884074adc95ad6258be42d..0b5e725b577815da990560a728137fda69f3afe7 100644
+--- a/src/tokens/figma/variables.css
++++ b/src/tokens/figma/variables.css
+@@ -715,7 +715,7 @@
+   --color-numeric-input-input-bg-focus: var(--color-form-control-bg-focus);
+   --color-numeric-input-input-bg-hover: var(--color-form-control-bg-hover);
+   --color-numeric-input-ring: var(--color-form-control-ring);
+-  --color-numeric-input-trigger-bg: var(--color-form-control-bg);
++  --color-numeric-input-trigger-bg: transparent;
+   --color-numeric-input-trigger-bg-hover: var(--color-form-control-bg-hover);
+   --color-numeric-input-trigger-container-bg: var(--color-form-control-border);
+   --color-numeric-input-trigger-fg: var(--color-input-fg);
