@@ -42,7 +42,6 @@
   --spacing-n1-nav-height: 3.75rem;
   --spacing-n1-nav-padding: 1.125rem;
   --spacing-n1-header: 5.5rem;
-  --spacing-n1-mobile-navigation: calc(var(--spacing-n1-utility-height) + var(--spacing-n1-header));
   --spacing-n1-section: 7rem;
   --spacing-n1-contact-address: 2.625rem;
   --spacing-n1-card-name: 3.375rem;

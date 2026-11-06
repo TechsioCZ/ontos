@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import NextImage from "next/image";
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Image } from "@techsio/ui-kit/atoms/image";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
@@ -34,6 +34,7 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
     pathname.split("/")[2] ?? "",
   );
   const [headerPanel, setHeaderPanel] = useState<HeaderPanel>(null);
+  const headerRef = useRef<HTMLElement>(null);
   const mobileMenuOpen = headerPanel === "navigation";
   useEffect(() => {
     const desktop = window.matchMedia("(min-width: 48rem)");
@@ -56,7 +57,7 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
       <Link as={NextLink} className="sr-only focus:not-sr-only" href="#main">
         {d.skip}
       </Link>
-      <Header direction="vertical" size="sm">
+      <Header direction="vertical" ref={headerRef} size="sm">
         <div className="flex h-n1-utility-height items-center gap-n1-utility-gap bg-highlight px-4 py-1.5 text-n1-utility text-white max-n1-compact:h-auto max-n1-compact:flex-wrap">
           <div className="flex shrink-0 flex-col items-start md:flex-row md:items-center md:gap-2">
             <Image
@@ -181,6 +182,7 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
       <MobileNavigation
         categories={categories}
         dictionary={d}
+        headerRef={headerRef}
         locale={locale}
         onOpenChange={(open) =>
           setHeaderPanel((current) => changeHeaderPanel(current, "navigation", open))

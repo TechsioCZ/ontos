@@ -108,6 +108,24 @@
   --text-label-md: var(--text-sm);
 }
 
+/* Mobile menu418:2491: transparent Accordion slots reveal the native drawer
+ * surface; title padding/weight follow the explicit N1 bindings. */
+@utility n1-mobile-navigation {
+  --color-accordion-bg: var(--color-transparent);
+  --color-accordion-title-bg: var(--color-transparent);
+  --color-accordion-content-bg: var(--color-transparent);
+  --color-dialog-content-border: var(--color-border-secondary);
+  --padding-accordion-title-md: var(--dimension-8) var(--dimension-16);
+  --padding-accordion-icon-right: var(--dimension-8);
+  --padding-vertical-navigation-item-x-md: var(--dimension-8);
+  --font-weight-button: var(--font-weight-normal);
+}
+
+/* Accordion.Header composes Button, whose weight wins the shipped cascade. */
+@utility n1-mobile-category-heading {
+  --font-weight-button: var(--font-weight-semibold);
+}
+
 /* Search438:1943: the footer separator uses the canonical foreground role. */
 @utility n1-search-suggestions {
   --color-popup-border: var(--color-fg-primary);

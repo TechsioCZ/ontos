@@ -1,6 +1,8 @@
 "use client";
 
 import NextLink from "next/link";
+import { useLayoutEffect, useState } from "react";
+import type { RefObject } from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Accordion } from "@techsio/ui-kit/molecules/accordion";
 import { Dialog } from "@techsio/ui-kit/molecules/dialog";
@@ -26,13 +28,13 @@ const CategoryDescendants = ({ destinations, locale, nodes, onNavigate }: Catego
         return null;
       }
       const link = (
-        <Link
+        <VerticalNavigation.Link
           as={NextLink}
           href={`/${locale}/kategorie/${encodeURIComponent(slug)}`}
           onClick={onNavigate}
         >
           {node.name}
-        </Link>
+        </VerticalNavigation.Link>
       );
       return node.children.length === 0 ? (
         <VerticalNavigation.Item key={node.id}>{link}</VerticalNavigation.Item>
@@ -83,7 +85,7 @@ export const MobileCategoryLinks = ({
         </div>
       ) : (
         <Accordion.Item key={node.id} value={node.id}>
-          <Accordion.Header>
+          <Accordion.Header className="n1-mobile-category-heading">
             <Accordion.Title>{node.name}</Accordion.Title>
             <Accordion.Indicator />
           </Accordion.Header>
@@ -115,49 +117,70 @@ export const MobileCategoryLinks = ({
 export const MobileNavigation = ({
   categories,
   dictionary: d,
+  headerRef,
   locale,
   onOpenChange,
   open,
 }: {
   categories: readonly CatalogModel["categories"][number][];
   dictionary: Dictionary;
+  headerRef: RefObject<HTMLElement | null>;
   locale: string;
   onOpenChange: (open: boolean) => void;
   open: boolean;
-}) => (
-  <div
-    className="pointer-events-none fixed inset-x-0 bottom-0 top-n1-mobile-navigation z-(--z-dialog-positioner) md:hidden"
-    id="n1-mobile-navigation"
-  >
-    <Dialog
-      closeLabel={d.closeMenu}
-      customTrigger
+}) => {
+  const [navigationTop, setNavigationTop] = useState(0);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    let observer: ResizeObserver | null = null;
+    if (open && header !== null) {
+      const updatePosition = () =>
+        setNavigationTop(
+          Math.min(window.innerHeight, Math.max(0, header.getBoundingClientRect().bottom)),
+        );
+      observer = new ResizeObserver(updatePosition);
+      observer.observe(header);
+      observer.observe(document.body);
+      updatePosition();
+    }
+    return () => observer?.disconnect();
+  }, [headerRef, open]);
+  return (
+    <div
+      className="n1-mobile-navigation pointer-events-none fixed inset-x-0 bottom-0 z-(--z-dialog-positioner) md:hidden"
       id="n1-mobile-navigation"
-      onOpenChange={({ open: next }) => onOpenChange(next)}
-      open={open}
-      placement="left"
-      portal={false}
-      position="absolute"
-      size="xs"
-      title={<span className="sr-only">{d.menu}</span>}
+      style={{ top: navigationTop }}
     >
-      <nav aria-label={d.menu}>
-        <div className="px-4 py-2">
-          <Link as={NextLink} href={`/${locale}/novinky`} onClick={() => onOpenChange(false)}>
-            {d.news}
-          </Link>
-        </div>
-        {categories.length === 0 ? (
-          <output>{d.unavailableDescription}</output>
-        ) : (
-          <MobileCategoryLinks
-            destinations={new Map(categories.map((category) => [category.id, category.slug]))}
-            locale={locale}
-            nodes={categoryTree(categories)}
-            onNavigate={() => onOpenChange(false)}
-          />
-        )}
-      </nav>
-    </Dialog>
-  </div>
-);
+      <Dialog
+        closeLabel={d.closeMenu}
+        customTrigger
+        id="n1-mobile-navigation"
+        onOpenChange={({ open: next }) => onOpenChange(next)}
+        open={open}
+        placement="left"
+        portal={false}
+        position="absolute"
+        size="xs"
+        title={<span className="sr-only">{d.menu}</span>}
+      >
+        <nav aria-label={d.menu}>
+          <div className="px-4 py-2">
+            <Link as={NextLink} href={`/${locale}/novinky`} onClick={() => onOpenChange(false)}>
+              {d.news}
+            </Link>
+          </div>
+          {categories.length === 0 ? (
+            <output>{d.unavailableDescription}</output>
+          ) : (
+            <MobileCategoryLinks
+              destinations={new Map(categories.map((category) => [category.id, category.slug]))}
+              locale={locale}
+              nodes={categoryTree(categories)}
+              onNavigate={() => onOpenChange(false)}
+            />
+          )}
+        </nav>
+      </Dialog>
+    </div>
+  );
+};

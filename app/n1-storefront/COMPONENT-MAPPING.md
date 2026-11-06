@@ -44,6 +44,26 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+Mobilní navigace59:1595/418:2491: existující Dialog left/xs s Accordion
+md/borderless a VerticalNavigation.Link pro skutečné větve ownera. Drawer se
+kotví podle skutečného spodního okraje Headeru přes veřejný ref; počáteční
+useLayoutEffect a ResizeObserver hlavičky i body mají cleanup; body zachytí
+také změnu výšky oznámení nad shellem. Modal nadále zamyká scroll pozadí.
+Dynamický top je pouze geometrie existujícího aplikačního wrapperu, nikoli
+inline vzhled knihovní komponenty. Statický součet nezahrnoval demo lištu
+ani zalomení utility odkazu a překrýval logo. Vzhled používá doložené role:
+průhledné plochy Accordionu nad šedým Dialogem, N1 border-secondary,
+8/16 padding titulu, icon-right8 a child-x8 + nativní Content16.
+Native Button font role je skutečně spotřebovaná i u Accordion.Header:
+root nav scope400, existující heading scope600; původní accordion weight
+v shipped cascade přebíjí font-button, proto se neuvádí neúčinný override.
+
+Nativní Dialog close zůstává dostupný uvnitř focus trapu. Figma close v headeru
+nelze jen vizuálně nahradit za vnější inertní tlačítko. Root řádek zůstává40px
+proti Figma38, child36 proti34 kvůli kanonické24px lince. Separátory borderless
+Accordionu nemají přímou slot roli; nový CSS border se nevyrábí. Skutečný strom,
+parent destination a další původní demo větve zůstávají, počet není Figma fixture.
+
 Hledání63:1548/438:1947: nativní SearchSuggestions uvnitř existujícího formu,
 48px datové obrázky a resultSlot s PriceBlock. Výsledkový scope váže skutečné
 popup role na viewport0, item-y-sm6 a indicator0; native x8 už odpovídá.
