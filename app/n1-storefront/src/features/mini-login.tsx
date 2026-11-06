@@ -44,7 +44,7 @@ export const MiniLogin = ({
         />
       </Popover.Trigger>
       <Popover.Positioner>
-        <Popover.Content>
+        <Popover.Content className="n1-header-popover">
           <Popover.Arrow />
           <div className="flex w-n1-header-panel-content max-w-n1-header-panel-viewport flex-col gap-2">
             <Popover.Title>{dictionary.auth.loginHeading}</Popover.Title>

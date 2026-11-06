@@ -64,6 +64,13 @@ pending/success stavy ani uložené jednotkové ceny nedostávají technické po
 Skutečné chyby, neplatné množství a změny cen zůstávají akčními stavy. Checkout
 je stále podmíněný aktuálním platným owner quote.
 
+Povrch panelů minikošíku311:2331/2164 a přihlášení333:7435 je explicitní
+Theme/N1 white/base. Token-only scope přímo na nativním Popover.Content váže
+color-popover-bg a color-popover-arrow na color-base. Existující Zag bridge
+arrow-background se musí ve stejném scope znovu vyhodnotit; zděděná root hodnota
+už je vypočtená na fill-overlay. Žádná změna globálního Popover theme, popupu
+velikostí ani menu. Rozměry, focus a autentizační/quote chování se nemění.
+
 Desktopová dostupnost PDP `39:2022` zachovává `AvailabilityStatus` bez ikony.
 Její label používá kanonické18px/bold tokeny jen v desktopovém wrapperu;
 mobilní dostupnost se nemění. Podtržení návrhu nemá v aktuálním kitu prop/token.

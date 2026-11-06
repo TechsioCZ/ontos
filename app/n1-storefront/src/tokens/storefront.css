@@ -136,6 +136,16 @@
   --text-table-sm: var(--text-md);
 }
 
+/* Header panels311:2331/2164 and333:7435 explicitly bind Theme/N1
+ * white/base, rather than the generic Popover fill-overlay default. */
+@utility n1-header-popover {
+  --color-popover-bg: var(--color-base);
+  --color-popover-arrow: var(--color-base);
+  /* Re-evaluate the shipped Zag alias here; its inherited root value has
+   * already resolved to fill-overlay before these local role bindings. */
+  --arrow-background: var(--color-popover-arrow);
+}
+
 /* Desktop subcategories214:3208/3214: md/secondary/outlined with a
  * light surface, 1px stroke and bold14px labels. Mobile38:2150/2156
  * keeps native transparent/2px/16px; this scope is responsive at its caller. */

@@ -361,7 +361,7 @@ export const MiniCart = ({
     >
       <MiniCartTrigger count={count} state={state} title={d.cart} />
       <Popover.Positioner>
-        <Popover.Content>
+        <Popover.Content className="n1-header-popover">
           <Popover.Arrow />
           <div className="flex w-n1-header-panel-content max-w-n1-header-panel-viewport flex-col gap-4">
             <Popover.Title ref={heading} tabIndex={-1}>
