@@ -136,6 +136,18 @@
   --text-table-sm: var(--text-md);
 }
 
+/* Desktop subcategories214:3208/3214: md/secondary/outlined with a
+ * light surface, 1px stroke and bold14px labels. Mobile38:2150/2156
+ * keeps native transparent/2px/16px; this scope is responsive at its caller. */
+@utility n1-subcategories {
+  --color-button-bg-outlined: var(--color-fill-hover);
+  --color-button-border-secondary: var(--color-border-secondary);
+  --border-width-button-md: var(--dimension-1);
+  --radius-button-md: var(--radius-none);
+  --text-button-md: var(--text-sm);
+  --font-weight-button: var(--font-weight-bold);
+}
+
 /* Card preview214:3276/3283/3290: native tertiary/outlined/compact/sm,
  * 12/18 regular labels and neutral surface/stroke. Both existing layout
  * groups carry this scope because expanded content is portalled. */

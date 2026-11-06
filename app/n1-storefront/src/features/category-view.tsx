@@ -134,7 +134,7 @@ export const CategoryView = ({
             </div>
           )}
           {children.length > 0 && (
-            <div className="mb-6 flex flex-col gap-6 md:mb-3 md:grid md:grid-cols-4 md:gap-1">
+            <div className="mb-6 flex flex-col gap-6 md:n1-subcategories md:mb-3 md:grid md:grid-cols-4 md:gap-1">
               {childRows.map((row) => (
                 <div
                   className="flex flex-wrap gap-x-2 gap-y-6 md:contents"

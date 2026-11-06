@@ -44,6 +44,13 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+Podkategorie214:3208/3214: veřejný LinkButton md/secondary/outlined v existujícím
+čtyřsloupcovém desktop gridu s gap4. Desktopový scope váže skutečné Button
+role na fill-hover, border-secondary/1px, radius-none a text-sm/bold. Výška44
+a nativní padding zůstávají. Mobil38:2150/2156 tento scope neaktivuje;
+zachovává transparentní outlined2px, text-md/medium a kanonický N1 radius.
+Skutečné názvy, počty a pořadí kategorií určuje owner, nikoli Figma fixture.
+
 Hlavička `39:2395`, actions `208:2267`: čtyři nativní ovládací prvky mají
 mezeru12, nikoli výchozích16. Existující role `spacing-header-actions-sm`
 odkazuje na kanonickou `dimension-12`, aby se mobilní logo nemuselo zmenšovat.
@@ -119,9 +126,10 @@ Navazující korekce C10:
   QuantityField. Mobilní medium/AUTO Figma instance nemá vlastní kit typography
   prop; neupravuje se appearance className.
 - Podkategorie `214:3208`: veřejný LinkButton md/secondary/outlined je správné CC
-  mapování. Figma instance fill-hover/border-secondary/bold se liší od sdílených
-  outlined/secondary/medium defaultů. Chybí samostatná navigační role; globální
-  změna Button by měnila další ovládání. Tento rozpor zůstává otevřený.
+  mapování. Doložený desktopový rozdíl fill-hover/border-secondary/bold je
+  vyřešený responzivním scope šesti existujících Button rolí popsaným výše;
+  sdílené defaulty a mobil se nemění. Mobilní Figma radius8 je navázaný na
+  button/Light kolekci, nikoli Theme/N1; zachováváme kanonický N1 radius2.
 
 Katalogový strom `214:3169` skládá veřejné TreeView.NodeProvider, Branch,
 BranchTrigger/Control/Text/Indicator, BranchContent a Item/Text. Aplikační wrapper
