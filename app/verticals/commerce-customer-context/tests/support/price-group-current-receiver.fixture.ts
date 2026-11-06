@@ -43,6 +43,7 @@ import {
 } from '@app/price-group-catalog-contracts/price-group';
 import {
   createPartyWithAuthorization,
+  resolveDuplicateCandidateCreateWithAuthorization,
   counterpartyCustomerOnboardWithAuthorization,
   executePartyDetailWithAuthorization,
   executeCounterpartyReadWithAuthorization,
@@ -1131,7 +1132,7 @@ const createParty = Effect.fn('PriceGroupTemporal.createParty')(function* create
     candidate: {
       businessName: subject.businessName,
       evidenceRefs: [`test:1248:reviewed-${requestId}`],
-      officialIdentifiers: [{ identifierType: 'ICO', value: subject.ico, verification: 'VERIFIED' }],
+      officialIdentifiers: [{ identifierType: 'ICO', value: subject.ico }],
       partyType: 'ORGANIZATION',
       provenance: { method: 'REVIEWED_DOCUMENT', source: 'stabilization-1248' },
       subjectEvidence: [
@@ -1164,11 +1165,25 @@ const createParty = Effect.fn('PriceGroupTemporal.createParty')(function* create
     yield* prepared.confirmRegistered;
   }
   const result = yield* createPartyWithAuthorization(payload, prepared.authorization, options);
-  yield* requireCondition(result.outcome === 'CREATED', 'party-created');
-  if (result.outcome !== 'CREATED') {
+  yield* requireCondition(result.outcome === 'AMBIGUOUS', 'party-create-review-required');
+  if (result.outcome !== 'AMBIGUOUS') {
     return yield* failure('party-create-outcome');
   }
-  return result.partyRef;
+  const reviewAuthority = yield* authority.prepare(partyAppId, party.buildMarker);
+  yield* reviewAuthority.register;
+  const reviewed = yield* resolveDuplicateCandidateCreateWithAuthorization(
+    {
+      caseRef: result.caseRef,
+      expectedRevision: 1,
+      reason: 'Reviewed distinct temporal customer independently of declared ICO',
+    },
+    reviewAuthority.authorization,
+    { ...options, idempotencyKey: `${requestId}-review` },
+  );
+  if (reviewed.partyRef === null) {
+    return yield* failure('party-reviewed-create-outcome');
+  }
+  return reviewed.partyRef;
 });
 const createCounterparty = Effect.fn('PriceGroupTemporal.createCounterparty')(function* createCounterparty(
   bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
@@ -1440,6 +1455,7 @@ export const describeReceiver = Schema.encodeEffect(Schema.fromJsonString(Descri
     'commerce.customer-context.remove-customer-price-group',
     'commerce.customer-context.remove-counterparty-price-group',
     'party.registry.create-party',
+    'party.registry.resolve-duplicate-candidate-create',
     'party.registry.counterparty-customer-onboard',
     'pricing.price-group-catalog.create-price-group',
     'pricing.price-group-catalog.create-price-group-definition-revision',

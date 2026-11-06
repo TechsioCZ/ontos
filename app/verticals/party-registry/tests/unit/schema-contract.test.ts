@@ -23,7 +23,6 @@ import {
   partyContactPoints,
   partyCorrections,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyMerges,
   partyOfficialIdentifiers,
@@ -44,7 +43,6 @@ const configuredTables = [
   partyContactPoints,
   partyCorrections,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyMerges,
   partyOfficialIdentifiers,
@@ -94,7 +92,6 @@ it('owns the complete Party Registry operational catalog in the party schema', (
     'party_contact_points',
     'party_corrections',
     'party_fact_assertions',
-    'party_identifier_claims',
     'party_match_decisions',
     'party_merges',
     'party_official_identifiers',
@@ -204,6 +201,32 @@ it('gives every tenant-owned record a tenant-qualified identity and forced-RLS p
   }
 });
 
+it('retains acceptance and lifecycle evidence without classifying Party assertions by verification', () => {
+  for (const table of [partyFactAssertions, partyOfficialIdentifiers, partyContactPoints, partyContactPointPurposes]) {
+    const config = configOf(table);
+    for (const columnName of ['accepted_by_action_invocation_id', 'accepted_by_principal_id', 'policy_version']) {
+      expect(
+        config.columns.some((column) => column.name === columnName && column.notNull),
+        columnName,
+      ).toBe(true);
+    }
+    for (const columnName of [
+      'verification_state',
+      'verification_method',
+      'verifier_reference',
+      'verified_by_principal_id',
+      'verified_at',
+    ]) {
+      expect(
+        config.columns.some((column) => column.name === columnName),
+        columnName,
+      ).toBe(false);
+    }
+    expect(config.checks.some((constraint) => constraint.name.endsWith('_verification_ck'))).toBe(false);
+    expect(config.checks.some((constraint) => constraint.name.endsWith('_interval_ck'))).toBe(true);
+  }
+});
+
 it('models Party identity and assertion history without conflating effective and recorded time', () => {
   const partyConfig = configOf(parties);
   for (const name of ['current_display_name', 'first_name', 'last_name', 'business_name']) {
@@ -226,7 +249,6 @@ it('models Party identity and assertion history without conflating effective and
     'state',
     'provenance_source',
     'provenance_method',
-    'verification_state',
     'accepted_by_action_invocation_id',
     'accepted_by_principal_id',
     'policy_version',
@@ -243,13 +265,7 @@ it('models Party identity and assertion history without conflating effective and
   ).toBe(getTableName(parties));
 });
 
-it('keeps official assertions historical while exclusive claims own exact matching uniqueness', () => {
-  expect(uniqueColumns(partyIdentifierClaims, 'party_identifier_claims_exact_claim_uk')).toEqual([
-    'tenant_id',
-    'identifier_type_key',
-    'namespace',
-    'normalized_value',
-  ]);
+it('keeps official assertions historical without exclusive identifier identity claims', () => {
   expect(
     configOf(partyOfficialIdentifiers)
       .checks.map((candidate) => candidate.name)
@@ -261,12 +277,8 @@ it('keeps official assertions historical while exclusive claims own exact matchi
     'party_official_identifiers_original_input_digits_ck',
     'party_official_identifiers_state_ck',
     'party_official_identifiers_type_ck',
-    'party_official_identifiers_verification_ck',
   ]);
-  const claims = configOf(partyIdentifierClaims);
-  expect(
-    claims.indexes.some((candidate) => candidate.config.name === 'party_identifier_claims_party_lookup_idx'),
-  ).toBeTruthy();
+  expect(configuredTables.map((table) => getTableName(table))).not.toContain('party_identifier_claims');
 });
 
 it('preserves bounded external observation evidence separately from trusted actor and effective time', () => {
@@ -308,8 +320,6 @@ it('models typed contact point lifecycles with owner-local references', () => {
     'provenance_authoritative',
     'evidence_reference',
     'additional_evidence_refs',
-    'verification_method',
-    'verifier_reference',
     'end_reason',
     'end_provenance_source',
     'end_provenance_method',
@@ -356,9 +366,6 @@ it('models contact point purpose lifecycles with owner-local references', () => 
     'jurisdiction',
     'provenance_authoritative',
     'evidence_reference',
-    'verification_state',
-    'verification_method',
-    'verifier_reference',
     'end_reason',
     'end_provenance_source',
     'end_provenance_method',
@@ -623,12 +630,9 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
       const migration = yield* FileSystem.FileSystem.use((fs) =>
         fs.readFileString(fileURLToPath(new URL(`${migrationFolders[0] ?? ''}/migration.sql`, migrationDirectory))),
       );
-      expect(migration.match(/ALTER TABLE "party"\."[^"]+" ENABLE ROW LEVEL SECURITY;/gu)?.length).toBe(
-        PARTY_TABLE_INVENTORY.length - 1,
-      );
-      expect(migration.match(/ALTER TABLE "party"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu)?.length).toBe(
-        PARTY_TABLE_INVENTORY.length - 1,
-      );
+      // The immutable initial migration includes claims and predates privacy executions.
+      expect(migration.match(/ALTER TABLE "party"\."[^"]+" ENABLE ROW LEVEL SECURITY;/gu)?.length).toBe(17);
+      expect(migration.match(/ALTER TABLE "party"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu)?.length).toBe(17);
       expect(migration).not.toMatch(/REFERENCES "(?:core|auth|contacts)"\./u);
       expect(migration).toMatch(/party_reject_correction_mutation/u);
       expect(migration).toMatch(/before update or delete on "party"\."party_corrections"/iu);

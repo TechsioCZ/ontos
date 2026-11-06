@@ -456,6 +456,7 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
           actionExecutor: 'manager-only',
           actionKeys: [
             'party.registry.create-party',
+            'party.registry.resolve-duplicate-candidate-create',
             'party.registry.add-contact-point',
             attributeGuestRetailCustomerAction.descriptor.actionKey,
           ],
@@ -621,7 +622,7 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
           candidate: {
             businessName: `Guest organization ${ico}`,
             evidenceRefs: [evidence],
-            officialIdentifiers: [{ identifierType: 'ICO', value: ico, verification: 'VERIFIED' }],
+            officialIdentifiers: [{ identifierType: 'ICO', value: ico }],
             partyType: 'ORGANIZATION',
             provenance: { method: 'REVIEWED_DOCUMENT', source: 'guest-authority-native' },
             subjectEvidence: [subjectEvidence],
@@ -631,38 +632,38 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
         yield* authorization(actor),
         yield* options,
       );
-      assert.isOk(created.outcome === 'CREATED' || created.outcome === 'MATCHED_EXISTING');
+      if (created.outcome === 'AMBIGUOUS') {
+        const reviewed = yield* resolveDuplicateCandidateCreateWithAuthorization(
+          {
+            caseRef: created.caseRef,
+            expectedRevision: 1,
+            reason: 'Reviewed the exact organization independently of declared identifiers',
+          },
+          yield* authorization(actor),
+          yield* options,
+        );
+        assert.isOk(reviewed.partyRef !== null);
+        return reviewed.partyRef;
+      }
       return created.partyRef;
     });
     const addWeakContact = Effect.fn('GuestAuthorityTest.addWeakContact')(function* addWeakContact(
       partyRef: Parameters<typeof addContactPointWithAuthorization>[0]['partyRef'],
       evidence: string,
-      verifiedAt?: DateTime.Utc,
+      authoritativeSource = false,
     ) {
-      let verification: Parameters<typeof addContactPointWithAuthorization>[0]['verification'] = {
-        state: 'UNVERIFIED',
-      };
-      if (verifiedAt !== undefined) {
-        verification = {
-          method: 'MANUAL_CONFIRMATION',
-          state: 'VERIFIED',
-          verifiedAt,
-          verifierReference: 'channel-only',
-        };
-      }
       return yield* addContactPointWithAuthorization(
         {
           contactPoint: { preferred: false, type: 'EMAIL', value: `${yield* nextId}@guest.test` },
           partyRef,
           privacyClassification: 'PERSONAL',
           provenance: {
-            authoritative: verifiedAt !== undefined,
+            authoritative: authoritativeSource,
             evidenceReference: evidence,
             method: 'MANUAL_CONFIRMATION',
             source: 'USER_ASSERTION',
           },
           validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-          verification,
         },
         yield* authorization(),
         yield* options,
@@ -727,7 +728,7 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
     const candidate = {
       businessName: 'Evidence-bound external organization',
       evidenceRefs: ['original-owner-proof'],
-      officialIdentifiers: [{ identifierType: 'ICO' as const, value: '27074358', verification: 'VERIFIED' as const }],
+      officialIdentifiers: [{ identifierType: 'ICO' as const, value: '27074358' }],
       partyType: 'ORGANIZATION' as const,
       provenance: { method: 'REVIEWED_DOCUMENT', source: 'guest-authority-native' },
       subjectEvidence: [
@@ -756,7 +757,6 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
           source: 'USER_ASSERTION',
         },
         validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-        verification: { state: 'UNVERIFIED' },
       },
       yield* authorization(),
       yield* options,
@@ -784,7 +784,18 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
       yield* authorization(),
       yield* options,
     );
-    expect(proven).toMatchObject({ outcome: 'MATCHED_EXISTING', partyRef: created.partyRef });
+    assert.isOk(proven.outcome === 'AMBIGUOUS');
+    const provenMatch = yield* resolveDuplicateCandidateMatchWithAuthorization(
+      {
+        caseRef: proven.caseRef,
+        expectedRevision: 1,
+        reason: 'Reviewed this exact Guest binding against the canonical organization',
+        selectedPartyRef: created.partyRef,
+      },
+      yield* authorization(),
+      yield* options,
+    );
+    expect(provenMatch).toMatchObject({ outcome: 'MATCH_EXISTING', partyRef: created.partyRef });
     const idempotencyKey = yield* nextId;
     const requestedAt = DateTime.formatIso(yield* DateTime.now);
     const attributed = yield* attribute(provenRoot, evidenceRef, idempotencyKey, requestedAt);
@@ -835,7 +846,7 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
         candidate: {
           ...candidate,
           businessName: 'Different external organization',
-          officialIdentifiers: [{ identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' }],
+          officialIdentifiers: [{ identifierType: 'ICO', value: '26168685' }],
           subjectEvidence: candidate.subjectEvidence.map((item) => ({ ...item, subjectKey: secondKey })),
         },
       },
@@ -855,7 +866,6 @@ const publicGuestAttributionAuthority = Effect.fn('GuestEvidenceTest.publicGuest
           source: 'USER_ASSERTION',
         },
         validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-        verification: { state: 'UNVERIFIED' },
       },
       yield* authorization(),
       yield* options,
@@ -903,14 +913,14 @@ const publicWeakContactEnd = Effect.fn('GuestEvidenceTest.publicWeakContactEnd')
   ).toEqual({ outcome: 'PARTY_INVALID' });
   const beforeEnd = yield* DateTime.now;
   expect((yield* test.resolve(root, evidence, beforeEnd)).outcome).toBe('INVALID_OR_INSUFFICIENT_EVIDENCE');
-  yield* test.addWeakContact(party, `verified-${evidence}`, yield* DateTime.now);
-  expect((yield* test.resolve(`verified-${root}`, `verified-${evidence}`, yield* DateTime.now)).outcome).toBe(
+  yield* test.addWeakContact(party, `authoritative-${evidence}`, true);
+  expect((yield* test.resolve(`authoritative-${root}`, `authoritative-${evidence}`, yield* DateTime.now)).outcome).toBe(
     'INVALID_OR_INSUFFICIENT_EVIDENCE',
   );
   expect(
     yield* test.attribute(
-      `verified-${root}`,
-      `verified-${evidence}`,
+      `authoritative-${root}`,
+      `authoritative-${evidence}`,
       yield* nextId,
       DateTime.formatIso(yield* DateTime.now),
     ),
@@ -980,18 +990,8 @@ const publicReviewedGuest = Effect.fn('GuestEvidenceTest.publicReviewedGuest')(f
     ],
     validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
   };
-  const openedSeed = yield* createPartyWithAuthorization(
-    { candidate },
-    yield* test.authorization(),
-    yield* test.options,
-  );
-  assert.isOk(openedSeed.outcome === 'AMBIGUOUS');
-  const seed = yield* resolveDuplicateCandidateCreateWithAuthorization(
-    { caseRef: openedSeed.caseRef, expectedRevision: 1, reason: 'Reviewed concrete person without strong identifier' },
-    yield* test.authorization(),
-    yield* test.options,
-  );
-  assert.isOk(seed.partyRef !== null);
+  const seed = yield* createPartyWithAuthorization({ candidate }, yield* test.authorization(), yield* test.options);
+  assert.isOk(seed.outcome === 'CREATED');
   yield* test.addWeakContact(seed.partyRef, evidence);
   const bound = {
     ...candidate,
@@ -1116,10 +1116,10 @@ const publicScopeAndArchive = Effect.fn('GuestEvidenceTest.publicScopeAndArchive
   const foreignCase = yield* createPartyWithAuthorization(
     {
       candidate: {
+        businessName: 'Foreign retained Guest candidate',
         evidenceRefs: [caseEvidence],
-        firstName: 'Foreign retained Guest candidate',
-        officialIdentifiers: [],
-        partyType: 'PERSON',
+        officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
+        partyType: 'ORGANIZATION',
         provenance: { method: 'DIRECT_INTERACTION', source: 'guest-scope-native' },
         subjectEvidence: [
           {
@@ -1127,7 +1127,7 @@ const publicScopeAndArchive = Effect.fn('GuestEvidenceTest.publicScopeAndArchive
             evidenceRef: caseEvidence,
             guestBinding: { correlationRoot: caseRoot, legalEntityRef: test.legalEntityRef },
             kind: 'ACTOR_ATTESTATION',
-            observedSubject: 'PERSON',
+            observedSubject: 'ORGANIZATION',
             statement: 'Observed this concrete foreign candidate',
             subjectKey: caseSubject,
           },

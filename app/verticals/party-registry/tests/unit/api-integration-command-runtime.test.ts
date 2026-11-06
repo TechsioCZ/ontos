@@ -135,9 +135,19 @@ const relationshipPayload = {
   validTo: null,
 } as const;
 
+const legacyContactPayload = {
+  contactPoint: { preferred: false, type: 'EMAIL', value: 'declared@example.com' },
+  partyRef,
+  privacyClassification: 'PERSONAL',
+  provenance: { authoritative: false, method: 'MANUAL_CONFIRMATION', source: 'USER_ASSERTION' },
+  validFrom: '2026-09-01T00:00:00.000Z',
+  verification: { state: 'UNVERIFIED' },
+} as const;
+
 type CommandTestPayload =
   | Readonly<Record<string, never>>
   | typeof archivePayload
+  | typeof legacyContactPayload
   | typeof createPayload
   | typeof relationshipPayload
   | Readonly<{
@@ -588,6 +598,25 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         expect(Predicate.isTagged(malformedBody, 'PartyCommandInvalidRequestProblem')).toBe(true);
         expect(harness.snapshot().invocations.length).toBe(0);
       }),
+  );
+
+  suite.effect('obsolete verification keys are rejected before an Action invocation is created', () =>
+    Effect.gen(function* rejectObsoleteVerificationKeys() {
+      const assertion = yield* makeAssertion();
+      const harness = yield* makeActionTestHarness({ ownerRegistration: partyRegistryBackendRegistration });
+      const app = yield* mountApp(harness, assertion.environment);
+      const response = yield* handle(
+        app,
+        commandRequest('add-contact-point', legacyContactPayload, assertion.token, {
+          'idempotency-key': 'obsolete-verification-key',
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(response.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
+      const body = yield* Effect.promise(() => response.json());
+      expect(Predicate.isTagged(body, 'PartyCommandInvalidRequestProblem')).toBe(true);
+      expect(harness.snapshot().invocations.length).toBe(0);
+    }),
   );
 
   suite.effect(

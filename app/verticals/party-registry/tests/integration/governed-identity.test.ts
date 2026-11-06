@@ -42,6 +42,7 @@ import { createPartyRelationshipAction } from '../../src/actions/create-party-re
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
 import { endPartyRelationshipAction } from '../../src/actions/end-party-relationship.action.ts';
+import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { unarchivePartyAction } from '../../src/actions/unarchive-party.action.ts';
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
@@ -54,7 +55,6 @@ import {
   duplicateCandidateCases,
   parties,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyOfficialIdentifiers,
   partyRelations,
@@ -66,7 +66,7 @@ type EncodedPartyCandidate = typeof PartyCandidateSchema.Encoded;
 const testAuthenticationNamespaceId = 'test.party.better-auth.v1';
 const candidate = (ico: string, extra: Partial<EncodedPartyCandidate> = {}): EncodedPartyCandidate => ({
   partyType: 'ORGANIZATION',
-  officialIdentifiers: [{ identifierType: 'ICO', value: ico, verification: 'VERIFIED' }],
+  officialIdentifiers: [{ identifierType: 'ICO', value: ico }],
   subjectEvidence: [
     {
       kind: 'ACTOR_ATTESTATION',
@@ -122,7 +122,7 @@ const resultingOf = <Fact>(detail: { readonly resultingAssertion?: Option.Option
 
 it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
   suite.effect(
-    'governed Party identity uses real PostgreSQL and SpiceDB for atomic claims, recovery and temporal authorization',
+    'governed Party identity uses real PostgreSQL and SpiceDB for explicit identity review, recovery and temporal authorization',
     () =>
       Effect.scoped(
         Effect.gen(function* governedIdentityTestEffect() {
@@ -139,6 +139,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             counterpartyRoleAddAction,
             counterpartyRoleEndAction,
             resolveDuplicateCandidateCreateAction,
+            resolveDuplicateCandidateMatchAction,
             createPartyRelationshipAction,
             updatePartyRelationshipAction,
             endPartyRelationshipAction,
@@ -236,7 +237,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               });
             });
           const snapshot = Effect.fn('GovernedIdentityTest.snapshot')(function* snapshotEffect() {
-            const [partyRows, assertions, claims, decisions, cases, core] = yield* Effect.all(
+            const [partyRows, assertions, decisions, cases, core] = yield* Effect.all(
               [
                 admin.select().from(parties).where(eq(parties.tenantId, fixture.tenantId)).orderBy(parties.partyId),
                 admin
@@ -244,15 +245,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   .from(partyFactAssertions)
                   .where(eq(partyFactAssertions.tenantId, fixture.tenantId))
                   .orderBy(partyFactAssertions.assertionId),
-                admin
-                  .select()
-                  .from(partyIdentifierClaims)
-                  .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId))
-                  .orderBy(
-                    partyIdentifierClaims.identifierTypeKey,
-                    partyIdentifierClaims.namespace,
-                    partyIdentifierClaims.normalizedValue,
-                  ),
                 admin
                   .select()
                   .from(partyMatchDecisions)
@@ -270,7 +262,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             return {
               partyRows,
               assertions,
-              claims,
               decisions,
               cases,
               core: {
@@ -283,51 +274,74 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               },
             };
           });
-          // Independent Action invocations, one canonical owner and one success event/outbox pair.
+          const createIndependent = (value: EncodedPartyCandidate, principal = managerPrincipal) =>
+            create(value, undefined, principal).pipe(
+              Effect.tap((result) => Effect.sync(() => assert.isOk(result.outcome === 'CREATED'))),
+            );
           const exact = candidate('27074358');
-          const concurrent = yield* Effect.all([run(create(exact)), run(create(exact))], {
-            concurrency: 2,
-          });
-          expect(concurrent.map((result) => result.outcome).toSorted()).toEqual(['CREATED', 'MATCHED_EXISTING']);
-          const created = concurrent.find((result) => result.outcome === 'CREATED');
-          assert.isOk(created && created.outcome === 'CREATED');
-
+          const created = yield* run(create(exact));
+          assert.isOk(created.outcome === 'CREATED');
           const { partyRef } = created;
+          // Independent invocations after a matching declaration serialize to one review case.
+          const concurrent = yield* Effect.all([run(create(exact)), run(create(exact))], { concurrency: 2 });
+          const [first, secondResult] = concurrent;
+          assert.isOk(first?.outcome === 'AMBIGUOUS' && secondResult?.outcome === 'AMBIGUOUS');
+          expect(first.caseRef).toEqual(secondResult.caseRef);
           let state = yield* snapshot();
           expect(state.partyRows.length).toBe(1);
-          expect(state.claims.length).toBe(1);
-          expect(state.decisions.length).toBe(2);
+          expect(state.decisions.length).toBe(3);
           expect(state.assertions.length).toBe(1);
           expect(state.core.events.length).toBe(1);
           expect(state.core.outbox.length).toBe(1);
-          expect(state.core.audits.length).toBe(2);
+          expect(state.core.audits.length).toBe(3);
           assert.isOk(state.core.invocations.every((invocation) => invocation.status === 'succeeded'));
-
           assert.isOk(state.assertions[0]?.evidenceEvaluation?.subjectEligible);
 
           const attachment = yield* run(
             create(
               candidate('27074358', {
-                officialIdentifiers: [
-                  ...exact.officialIdentifiers,
-                  {
-                    identifierType: 'CZ_DIC',
-                    value: 'CZ27074358',
-                    verification: 'VERIFIED',
-                  },
-                ],
+                officialIdentifiers: [...exact.officialIdentifiers, { identifierType: 'CZ_DIC', value: 'CZ27074358' }],
               }),
             ),
           );
-          expect(attachment.outcome).toBe('MATCHED_EXISTING');
+          assert.isOk(attachment.outcome === 'AMBIGUOUS');
+          const attached = yield* run(
+            runAction({
+              registration: resolveDuplicateCandidateMatchAction,
+              payload: {
+                caseRef: attachment.caseRef,
+                expectedRevision: 1,
+                selectedPartyRef: partyRef,
+                reason: 'Reviewed exact subject before attaching declared identifier',
+              },
+              principal: managerPrincipal,
+              transport: yield* freshTransport,
+            }),
+          );
+          expect(attached.outcome).toBe('MATCH_EXISTING');
           state = yield* snapshot();
           expect(state.partyRows.length).toBe(1);
-          expect(state.claims.length).toBe(2);
           expect(state.core.events.length).toBe(2);
           expect(state.core.outbox.length).toBe(2);
 
+          // Establish a concrete accepted review for the unchanged original candidate.
+          const exactOpened = yield* run(create(exact));
+          assert.isOk(exactOpened.outcome === 'AMBIGUOUS');
+          yield* run(
+            runAction({
+              registration: resolveDuplicateCandidateMatchAction,
+              payload: {
+                caseRef: exactOpened.caseRef,
+                expectedRevision: 1,
+                selectedPartyRef: partyRef,
+                reason: 'Reviewed original candidate against the canonical subject',
+              },
+              principal: managerPrincipal,
+              transport: yield* freshTransport,
+            }),
+          );
           const second = yield* run(
-            create(
+            createIndependent(
               candidate('26168685', {
                 firstName: 'Source',
                 lastName: 'Person',
@@ -350,15 +364,14 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               {
                 identifierType: 'ICO',
                 value: '26168685',
-                verification: 'VERIFIED',
               },
               {
                 identifierType: 'CZ_DIC',
                 value: 'CZ27074358',
-                verification: 'VERIFIED',
               },
             ],
           });
+          const beforeSplit = yield* snapshot();
           const ambiguity = yield* run(create(split));
           const repeated = yield* run(create(split));
           assert.isOk(ambiguity.outcome === 'AMBIGUOUS' && repeated.outcome === 'AMBIGUOUS');
@@ -366,19 +379,38 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           expect(repeated.caseRef).toEqual(ambiguity.caseRef);
           state = yield* snapshot();
           expect(state.partyRows.length).toBe(2);
-          expect(state.cases.length).toBe(1);
-          expect(state.decisions.filter((decision) => decision.committedCreateOutcome === 'AMBIGUOUS').length).toBe(2);
+          expect(state.cases.length).toBe(beforeSplit.cases.length + 1);
+          expect(state.decisions.filter((decision) => decision.committedCreateOutcome === 'AMBIGUOUS').length).toBe(
+            beforeSplit.decisions.filter((decision) => decision.committedCreateOutcome === 'AMBIGUOUS').length + 2,
+          );
 
           // Every Create outcome survives actual lost commit acknowledgement, followed by a new governed Read.
-          const recoveryCandidates = [candidate('45274649'), exact, split];
+          const pendingRecoveryCreate = yield* run(
+            create(candidate('27074358', { businessName: 'Reviewed recoverable subject' })),
+          );
+          assert.isOk(pendingRecoveryCreate.outcome === 'AMBIGUOUS');
+          const recoveryOperations = [
+            (key: string) =>
+              runAction({
+                registration: resolveDuplicateCandidateCreateAction,
+                payload: {
+                  caseRef: pendingRecoveryCreate.caseRef,
+                  expectedRevision: 1,
+                  reason: 'Reviewed recoverable Create',
+                },
+                principal: managerPrincipal,
+                transport: transport(key),
+              }).pipe(Effect.asVoid),
+            (key: string) => create(candidate('45274649'), key).pipe(Effect.asVoid),
+            (key: string) => create(exact, key).pipe(Effect.asVoid),
+            (key: string) => create(split, key).pipe(Effect.asVoid),
+          ];
           yield* Effect.forEach(
-            recoveryCandidates,
-            Effect.fn('GovernedIdentityTest.verifyCommitRecovery')(function* verifyCommitRecoveryEffect(value) {
+            recoveryOperations,
+            Effect.fn('GovernedIdentityTest.verifyCommitRecovery')(function* verifyCommitRecoveryEffect(invoke) {
               const key = yield* nextUuid;
               fixture.faultNextTransaction('lost-ack');
-              assert.isOk(
-                Predicate.isTagged(yield* run(create(value, key).pipe(Effect.flip)), 'ActionCommitIndeterminate'),
-              );
+              assert.isOk(Predicate.isTagged(yield* run(invoke(key).pipe(Effect.flip)), 'ActionCommitIndeterminate'));
 
               const before = yield* snapshot();
               const invocation = before.core.invocations.find((row) => row.idempotencyKey === key);
@@ -420,9 +452,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               expect(recoveredResult.decisionRef.resourceId).toBe(original.matchDecisionId);
               expect(recovered.partyRef?.resourceId ?? null).toBe(original.partyId);
               expect(recovered.caseRef?.resourceId ?? null).toBe(original.candidateCaseId);
-              assert.isOk(
-                Predicate.isTagged(yield* run(create(value, key).pipe(Effect.flip)), 'ActionAlreadyCommitted'),
-              );
+              assert.isOk(Predicate.isTagged(yield* run(invoke(key).pipe(Effect.flip)), 'ActionAlreadyCommitted'));
 
               const after = yield* snapshot();
               expect(after.partyRows).toEqual(before.partyRows);
@@ -455,18 +485,17 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const rolledBack = yield* snapshot();
           expect(rolledBack.partyRows).toEqual(beforeDenied.partyRows);
           expect(rolledBack.assertions).toEqual(beforeDenied.assertions);
-          expect(rolledBack.claims).toEqual(beforeDenied.claims);
           expect(rolledBack.cases).toEqual(beforeDenied.cases);
           expect(rolledBack.core.audits).toEqual(beforeDenied.core.audits);
           expect(rolledBack.decisions).toEqual(beforeDenied.decisions);
           expect(rolledBack.core.events).toEqual(beforeDenied.core.events);
           expect(rolledBack.core.outbox).toEqual(beforeDenied.core.outbox);
 
-          const independent = yield* create(exact, yield* nextUuid, otherManagerPrincipal).pipe(
+          const independent = yield* createIndependent(exact, otherManagerPrincipal).pipe(
             Effect.provideContext(otherContext),
           );
-          assert.isOk(independent.outcome === 'CREATED');
 
+          assert.isOk(independent.outcome === 'CREATED');
           expect(independent.partyRef.resourceId).not.toBe(partyRef.resourceId);
           assert.isOk(
             Predicate.isTagged(
@@ -647,22 +676,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               }),
             ),
           );
-          assert.isOk(person.outcome === 'AMBIGUOUS');
-
-          const reviewedPerson = yield* run(
-            runAction({
-              registration: resolveDuplicateCandidateCreateAction,
-              payload: {
-                caseRef: person.caseRef,
-                expectedRevision: 1,
-                reason: 'Reviewed concrete external person',
-              },
-              principal: managerPrincipal,
-              transport: yield* freshTransport,
-            }),
-          );
-          assert.isOk(reviewedPerson.partyRef);
-          const restoredNames = yield* run(readPartyDetail(reviewedPerson.partyRef, managerReadPrincipal));
+          assert.isOk(person.outcome === 'CREATED');
+          const restoredNames = yield* run(readPartyDetail(person.partyRef, managerReadPrincipal));
           expect(nameOf(restoredNames, 'firstName')).toBe('Live contact');
           expect(nameOf(restoredNames, 'lastName')).toBe(null);
           expect(nameOf(restoredNames, 'businessName')).toBe(null);
@@ -672,7 +687,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             runAction({
               registration: createPartyRelationshipAction,
               payload: {
-                fromPartyRef: reviewedPerson.partyRef,
+                fromPartyRef: person.partyRef,
                 toPartyRef: partyRef,
                 relationshipType: 'CONTACT_PERSON_OF',
                 validFrom: '2090-01-01T00:00:00.000Z',
@@ -686,7 +701,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           // Domain relationships never provision access to Party records.
           assert.isOk(
             Predicate.isTagged(
-              yield* run(readPartyDetail(reviewedPerson.partyRef, legalEntityOnlyPrincipal).pipe(Effect.flip)),
+              yield* run(readPartyDetail(person.partyRef, legalEntityOnlyPrincipal).pipe(Effect.flip)),
               'ReadPermissionDenied',
             ),
           );
@@ -729,11 +744,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           expect(endedRelationship.outcome).toBe('CHANGED');
 
-          // Seed a legacy unclaimed identifier assertion only in owner storage, then exercise
-          // the public unarchive Action against another Party's real current exact claim.
-          const legacy = yield* run(create(candidate('00006947')));
-          assert.isOk(legacy.outcome === 'CREATED');
+          // Equal declared identifiers may belong to separate reviewed subjects. They are not identity claims.
+          // Preserve the archive/unarchive path without fabricating a cross-Party exclusive conflict.
+          const legacy = yield* run(createIndependent(candidate('00006947')));
 
+          assert.isOk(legacy.outcome === 'CREATED');
           const legacyArchived = yield* run(
             runAction({
               registration: archivePartyAction,
@@ -769,13 +784,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               payload: {
                 partyRef: legacy.partyRef,
                 expectedRevision: legacyArchived.revision,
-                reason: 'Recheck historical claims',
+                reason: 'Recheck independent declared facts',
               },
               principal: managerPrincipal,
               transport: yield* freshTransport,
             }),
           );
-          assert.isOk(collision.outcome === 'BLOCKED' && collision.reasonCode === 'EXACT_CLAIM_CONFLICT');
+          expect(collision.outcome).toBe('UNARCHIVED');
+          const independentAfterUnarchive = yield* run(readPartyDetail(legacy.partyRef, managerReadPrincipal));
+          expect(independentAfterUnarchive.party.partyRef).toEqual(legacy.partyRef);
+          expect(independentAfterUnarchive.party.partyRef).not.toEqual(partyRef);
 
           const current = yield* run(readPartyDetail(partyRef, managerReadPrincipal));
           const archived = yield* run(

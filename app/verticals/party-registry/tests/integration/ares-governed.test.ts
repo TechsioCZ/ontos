@@ -62,7 +62,6 @@ import { addContactPointAction } from '../../src/actions/add-contact-point.actio
 import { addPartyOfficialIdentifierAction } from '../../src/actions/add-party-official-identifier.action.ts';
 import { correctPartyFactAction } from '../../src/actions/correct-party-fact.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
-import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
 import type { AresApplyRequest } from '../../src/api/action-gateway.ts';
 import { makeOperationGateway } from '../../src/api/action-gateway.ts';
@@ -70,7 +69,6 @@ import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-cl
 import {
   correctPartyFactWithAuthorization,
   createPartyWithAuthorization,
-  resolveDuplicateCandidateCreateWithAuthorization,
   updatePartyWithAuthorization,
 } from '../../src/api/party-command-client.ts';
 import { executePartyDetailWithAuthorization } from '../../src/api/party-detail-client.ts';
@@ -78,7 +76,6 @@ import { applyAresObservation } from '../../src/api/party-registry-client.ts';
 import {
   partyContactPoints,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyOfficialIdentifiers,
   partyRelations,
 } from '../../src/db/schema.ts';
@@ -141,7 +138,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               addPartyOfficialIdentifierAction,
               correctPartyFactAction,
               createPartyAction,
-              resolveDuplicateCandidateCreateAction,
               updatePartyAction,
             ].map(({ descriptor }) => descriptor.actionKey),
             adminConnectionString: Redacted.make(connections.admin.connectionString),
@@ -324,23 +320,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               yield* options,
             ),
           );
-          expect(created.outcome).toBe('AMBIGUOUS');
-          assert.isOk(created.outcome === 'AMBIGUOUS');
-
-          const reviewed = yield* runHttpEffect(
-            resolveDuplicateCandidateCreateWithAuthorization(
-              {
-                caseRef: created.caseRef,
-                expectedRevision: 1,
-                reason: 'Reviewed concrete organization without a strong identifier',
-              },
-              yield* authorization(),
-              yield* options,
-            ),
-          );
-          assert.isOk(reviewed.partyRef);
-
-          return reviewed.partyRef;
+          assert.isOk(created.outcome === 'CREATED');
+          return created.partyRef;
         });
         const lookup = Effect.fn('AresGovernedTest.lookup')(function* lookupEffect() {
           return yield* runHttpEffect(
@@ -367,10 +348,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 .select()
                 .from(partyFactAssertions)
                 .where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
-              claims: admin
-                .select()
-                .from(partyIdentifierClaims)
-                .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
               contacts: admin
                 .select()
                 .from(partyContactPoints)
@@ -381,7 +358,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 .from(partyOfficialIdentifiers)
                 .where(eq(partyOfficialIdentifiers.tenantId, fixture.tenantId)),
             },
-            { concurrency: 5 },
+            { concurrency: 4 },
           ),
         );
         const partyRef = yield* create();
@@ -437,7 +414,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                     identifier: {
                       identifierType: 'ICO',
                       value: '27074358',
-                      verification: 'VERIFIED',
                     },
                     validFrom: observation.observedAt,
                     provenanceMethod: 'ARES_USER_CONFIRMED',
@@ -477,7 +453,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                       method: 'PROVIDER_OBSERVATION',
                       source: 'EXTERNAL_EVIDENCE',
                     },
-                    verification: { state: 'UNVERIFIED' },
                   },
                 },
               ],
@@ -499,7 +474,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
 
         expect(applied.completed.length).toBe(3);
         const persisted = yield* state();
-        expect(persisted.claims.length).toBe(1);
+        expect(persisted.identifiers.length).toBe(1);
         expect(persisted.contacts.length).toBe(1);
         const identifierEvidence = persisted.identifiers[0]?.externalEvidence;
         const contactEvidence = persisted.contacts[0]?.externalEvidence;
@@ -550,16 +525,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           applyAresObservation(yield* requestFor(collisionParty), { gateway, baseUrl }),
         );
         const collisionOutcome = Match.value(collision).pipe(
-          Match.tag('AresApplyPartiallyCompleted', (outcome) => outcome),
-          Match.orElse(() => assert.fail(`Expected partial completion, received ${collision._tag}`)),
+          Match.tag('AresApplyCompleted', (outcome) => outcome),
+          Match.orElse(() => assert.fail(`Expected independent fact acceptance, received ${collision._tag}`)),
         );
-        expect(collisionOutcome.completed.length).toBe(1);
-        expect(collisionOutcome.failed.fact).toBe('ICO');
-        expect(collisionOutcome.failed.recovery).toBe('RESOLVE_STANDARD_ACTION_BEFORE_RETRY');
+        expect(collisionOutcome.completed.length).toBe(3);
+        expect(collisionParty).not.toEqual(partyRef);
         const afterCollision = yield* state();
-        expect(afterCollision.claims.length).toBe(1);
-        expect(afterCollision.contacts.length).toBe(1);
+        expect(afterCollision.identifiers.filter((item) => item.normalizedValue === lookupIco)).toHaveLength(2);
+        expect(afterCollision.contacts.length).toBe(2);
         const collisionDetail = yield* detail(collisionParty);
+        expect(collisionDetail.party.partyRef).toEqual(collisionParty);
         expect(Option.getOrUndefined(collisionDetail.party.businessName ?? Option.none())).toBe(
           rawSubject.obchodniJmeno,
         );

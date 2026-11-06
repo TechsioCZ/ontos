@@ -178,6 +178,7 @@ type IsolatedNativeDatabaseInput = (
         | 'stabilization-1250-market-revision'
         | 'stabilization-1248-price-group-effective-period'
         | 'stabilization-1281-party-legacy'
+        | 'party-verification-removal'
         | typeof exactDeadlinePurpose;
     }
 ) & {
@@ -245,6 +246,7 @@ const supportsPurpose = (input: IsolatedNativeDatabaseInput) =>
         'stabilization-1250-market-revision',
         'stabilization-1248-price-group-effective-period',
         'stabilization-1281-party-legacy',
+        'party-verification-removal',
         exactDeadlinePurpose,
       ].includes(input.purpose);
 

@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 
 import {
   PartySubjectEligibilityVersion,
@@ -10,12 +10,6 @@ import type {
   PartyEvidenceEvaluation,
   PartyEvidenceInsufficientError,
 } from '../../shared/domain/identity-contracts.ts';
-
-const CreateWithoutStrongIdentifierPolicyConfigurationSchema = Schema.Struct({
-  requireIdentityReview: Schema.Boolean,
-});
-export type CreateWithoutStrongIdentifierPolicyConfiguration =
-  typeof CreateWithoutStrongIdentifierPolicyConfigurationSchema.Type;
 
 const subjectEvidenceReason = (evidence: NonNullable<PartyCandidate['subjectEvidence']>) => {
   const subjects = new Set(evidence.map((item) => item.subjectKey));
@@ -61,34 +55,6 @@ export const evaluatePartySubjectEvidence = (
     typeRuleVersion: PartyTypeRuleVersion,
     typeSupported,
   };
-};
-
-const CreateWithoutStrongIdentifierDecisionSchema = Schema.Union([
-  Schema.Struct({
-    decision: Schema.Literal('ALLOW'),
-    reasonCode: Schema.Literal('proven_concrete_subject'),
-  }),
-  Schema.Struct({
-    decision: Schema.Literal('REVIEW_REQUIRED'),
-    reasonCode: Schema.Literal('identity_review_required'),
-  }),
-  Schema.Struct({
-    decision: Schema.Literal('DENY'),
-    reasonCode: Schema.String,
-  }),
-]);
-export type CreateWithoutStrongIdentifierDecision = typeof CreateWithoutStrongIdentifierDecisionSchema.Type;
-export const decideCreateWithoutStrongIdentifier = (
-  candidate: PartyCandidate,
-  configuration: CreateWithoutStrongIdentifierPolicyConfiguration,
-): CreateWithoutStrongIdentifierDecision => {
-  const evaluation = evaluatePartySubjectEvidence(candidate);
-  if (!evaluation.subjectEligible || !evaluation.typeSupported) {
-    return { decision: 'DENY', reasonCode: evaluation.reasonCode };
-  }
-  return configuration.requireIdentityReview
-    ? { decision: 'REVIEW_REQUIRED', reasonCode: 'identity_review_required' }
-    : { decision: 'ALLOW', reasonCode: 'proven_concrete_subject' };
 };
 
 export const requirePartySubjectEvidence = (

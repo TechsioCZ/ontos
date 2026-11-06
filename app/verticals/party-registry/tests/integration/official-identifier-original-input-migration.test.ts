@@ -122,7 +122,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
             ) values (
               ${identifierId},${fixture.tenantId},${partyId},${identifier.identifierType},${identifier.namespace},${identifier.normalizedValue},
               ${oldInvocationId},${fixture.manager.principalId},${'party-official-identifier.v1'},
-              ${'MANUAL'},${'pre-migration-acceptance'},${DateTime.toDateUtc(DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'))},${identifier.verification}
+              ${'MANUAL'},${'pre-migration-acceptance'},${DateTime.toDateUtc(DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'))},${'UNVERIFIED'}
             )
           `,
             'objects',
@@ -228,7 +228,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       const reused = yield* runAction({
         registration: addPartyOfficialIdentifierAction,
         payload: {
-          identifier: { identifierType: 'ICO', value: '01000004', verification: 'UNVERIFIED' },
+          identifier: { identifierType: 'ICO', value: '01000004' },
           partyRef,
           provenanceMethod: 'MANUAL',
           provenanceSource: 'post-migration-intake',

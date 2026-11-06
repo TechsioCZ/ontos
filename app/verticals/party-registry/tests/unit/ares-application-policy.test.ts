@@ -80,36 +80,89 @@ it('business-name equality is independent of the Party type and its personal pre
   expect(derive(snapshot).factDecisions[0]?.outcome).toBe('NO_CHANGE');
 });
 
+const observedAddress = { addressLine1: 'Main 10', city: 'Praha', countryCode: 'CZ', postalCode: '12000' };
+const declaredRegisteredAddress = {
+  address: observedAddress,
+  provenance: { authoritative: false, method: 'DECLARED_BY_PARTY', source: 'PARTY_DECLARATION' },
+} as const;
+const registeredAddressEvidence = () => {
+  const application = derive();
+  const decision = application.factDecisions.find(({ fact }) => fact === 'REGISTERED_ADDRESS');
+  if (decision === undefined) {
+    throw new Error('Expected the selected REGISTERED_ADDRESS decision');
+  }
+  return makeAresAppliedEvidence(application, decision);
+};
+const aresRegisteredAddress = {
+  address: observedAddress,
+  provenance: {
+    authoritative: true,
+    evidenceReference: 'ares:01234567',
+    externalEvidence: registeredAddressEvidence(),
+    method: 'PROVIDER_OBSERVATION',
+    source: 'EXTERNAL_EVIDENCE',
+  },
+  registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
+} as const;
+const otherAddress = { ...observedAddress, addressLine1: 'Main 100' };
+
 it('#246 canonical equality is no-change and conflicting facts never authorize overwrite', () => {
   const result = derive({
     ...canonical,
     businessName: 'Example',
     icoValues: ['01234567'],
-    registeredAddresses: [
-      {
-        addressLine1: 'Main 10',
-        city: 'Praha',
-        countryCode: 'CZ',
-        postalCode: '12000',
-      },
-    ],
+    registeredAddresses: [declaredRegisteredAddress],
   });
   expect(result.outcome).toBe('NO_CHANGE');
   expect(result.factDecisions.every((decision) => decision.route === null)).toBe(true);
   const conflict = derive({
     ...canonical,
     businessName: 'Different',
-    registeredAddresses: [
-      {
-        addressLine1: 'Main 100',
-        city: 'Praha',
-        countryCode: 'CZ',
-        postalCode: '12000',
-      },
-    ],
+    registeredAddresses: [{ ...declaredRegisteredAddress, address: otherAddress }],
   });
   expect(conflict.factDecisions[0]?.outcome).toBe('NEEDS_CONFIRMATION');
   expect(conflict.factDecisions[2]?.outcome).toBe('NEEDS_CONFIRMATION');
+});
+
+it('a matching manual address cannot hide a conflicting Current ARES assertion', () => {
+  const conflict = derive({
+    ...canonical,
+    registeredAddresses: [declaredRegisteredAddress, { ...aresRegisteredAddress, address: otherAddress }],
+  });
+  expect(conflict.factDecisions[2]?.outcome).toBe('NEEDS_CONFIRMATION');
+});
+
+it('a Current ARES observation satisfies the selection without changing another registry scope', () => {
+  const result = derive({
+    ...canonical,
+    registeredAddresses: [
+      aresRegisteredAddress,
+      {
+        ...aresRegisteredAddress,
+        address: otherAddress,
+        registryContext: { jurisdiction: 'SK', registryKey: 'OTHER' },
+      },
+    ],
+  });
+  expect(result.factDecisions[2]?.outcome).toBe('NO_CHANGE');
+});
+
+it('matching ARES scope and source labels without applied evidence require confirmation', () => {
+  const result = derive({
+    ...canonical,
+    registeredAddresses: [
+      {
+        ...aresRegisteredAddress,
+        provenance: {
+          authoritative: true,
+          evidenceReference: 'ares:01234567',
+          method: 'PROVIDER_OBSERVATION',
+          source: 'EXTERNAL_EVIDENCE',
+        },
+      },
+    ],
+  });
+  expect(result.factDecisions[2]?.outcome).toBe('NEEDS_CONFIRMATION');
 });
 
 it('#246 conflicting official identity blocks all enrichment and no Party remains prefill-only', () => {
@@ -335,7 +388,6 @@ it('candidate prefill supplies a proposal without declaring subject type or acto
     {
       identifierType: 'ICO',
       value: evidence.subject.ico,
-      verification: 'UNVERIFIED',
     },
   ]);
   expect(candidate.provenance.externalEvidence).toBe(undefined);

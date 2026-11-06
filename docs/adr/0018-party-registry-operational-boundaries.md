@@ -66,54 +66,25 @@ boundaries.
 
 All Party state changes are declared Actions. Party create requires idempotency.
 
-`PartyCreate` does not implement `search, then insert`. Inside one canonical PostgreSQL transaction
-it:
+`PartyCreate` makes its identity decision inside one Core-owned PostgreSQL transaction.
+Under the tenant identity write lock it checks subject evidence and canonical Party candidates.
+A legitimate `NO_MATCH` with sufficient evidence allows one Party and its initial assertions.
+A candidate conflict creates or reuses a Duplicate Candidate case. A still-applicable reviewed
+decision can select its canonical Party. Declared identifiers and names are weak candidate signals.
+[#1322](https://github.com/TechsioCZ/ontos/issues/1322) and
+[#1333](https://github.com/TechsioCZ/ontos/issues/1333) retire verification-only exclusive claims.
 
-1. decodes and type-normalizes the Party Candidate;
-2. asks a CoreSDK-constructed owner-local claim service to lock every normalized strong-claim key in
-   deterministic order inside the one Core-owned transaction;
-3. resolves exact active claims from the Party Registry operational store and partitions them into
-   resolved Party claims and unclaimed claims;
-4. creates or reuses a Duplicate Candidate case when resolved claims point to several Parties or
-   authoritative evidence conflicts;
-5. when all resolved claims point to one Party, validates every remaining authoritative fact and
-   atomically attaches every compatible unclaimed claim to that Party before returning it;
-6. when no claim resolves, reserves every type-specific uniqueness claim before creating one Party and
-   its accepted initial assertions;
-7. stores one Party Match Decision linked to the Action Invocation and resulting Party or case.
+`CREATED`, `MATCHED_EXISTING`, and `AMBIGUOUS` are committed Action results. Insufficient subject
+evidence is a typed rejection that commits neither a Match Decision nor a case. Party state, the
+Match Decision, any Duplicate Candidate case, Audit and Data Access evidence, Domain Events,
+linked Outbox Messages and invocation success commit atomically. Search and consumer projections
+follow the commit and have no role in deciding identity.
 
-`CREATED`, `MATCHED_EXISTING`, and `AMBIGUOUS` are committed Action results. Ambiguity is not an
-Action failure whose rollback would erase the review case. Insufficient evidence that the Candidate
-represents one real-world subject remains a typed rejection and commits no Party Match Decision or
-case.
-
-Party state, identifier claims, Party Match Decision, Duplicate Candidate case where applicable,
-Audit and Data Access evidence, Domain Events, linked Outbox Messages, and the Action invocation
-success marker commit atomically. Nothing is published to search or consumers before that commit.
-
-If database acknowledgement is indeterminate, the caller uses the standard Action commit-resolution
-operation. A succeeded invocation proves commit, and a governed Party Match Decision Read recovers
-the same result by Action Invocation or caller idempotency identity. The caller never retries create
-because an eventually consistent search result is absent.
-
-Core Search, Neo4j, caches, and other projections are never used to enforce identity uniqueness.
-Weak-signal matching may rank candidates, but it cannot replace the transactional exact-claim
-invariant. CoreSDK owns the transaction and supplies the owner-local claim service bound to it; the
-business handler never receives an executor and never opens, commits, rolls back, or retries a
-transaction. Contending Actions serialize on deterministic transaction-scoped claim-key locks and the
-later Action observes the committed owner.
-
-Creating a Party without a strong identifier is an explicit policy path and may require an Identity
-Reviewer. A Duplicate Candidate resolution may authorize `CREATE_NEW` only after a canonical
-transactional recheck proves all qualifying strong claims are unclaimed. Claims already owned by an
-existing Party must be matched, explicitly corrected/reassigned, or resolved through the duplicate
-existing-Party flow; authoritative evidence cannot be silently discarded to create another Party.
-
-A reviewed `MATCH_EXISTING` decision is a dedicated Action carrying `caseRef`, `selectedPartyRef`, and
-expected case revision. Inside one Core-owned transaction it locks the case, selected Party, and every
-Candidate claim key; rejects any claim owned by another Party; attaches compatible unclaimed claims;
-closes the case; and commits a new MATCHED Party Match Decision. It does not loop through ordinary
-matching without consuming the selected Party.
+After an indeterminate acknowledgement, use standard Action commit resolution and the governed
+Match Decision Read to recover the outcome. An absent Search result is insufficient grounds for retry.
+Review uses separate governed resolution Actions. The reviewer supplies the expected case revision and,
+for `MATCH_EXISTING`, an explicit canonical Party. The transaction rechecks scope, lifecycle and
+evidence before recording the resolution and resulting assertions.
 
 ### Party facts share assertion semantics
 
@@ -129,12 +100,10 @@ Each assertion records, where applicable:
 - `recordedAt` for when OntOS learned the assertion;
 - lifecycle state such as active, ended, superseded, retracted, or disputed;
 - provenance and optional Evidence Artifact references;
-- verification state, verifier, and verification time;
 - Action, Principal, and policy version that accepted or changed the assertion.
 
 `current` is derived from lifecycle and validity; it is not an unversioned overwrite. Formal
-validity, provenance, authoritative verification, freshness, and matching strength are separate
-concepts. A correction retracts or supersedes a wrong assertion and preserves why it changed.
+validity, provenance, source authority, freshness, and matching strength are separate concepts. A correction retracts or supersedes a wrong assertion and preserves why it changed.
 
 ### Counterparty is a durable context
 
@@ -202,7 +171,7 @@ The initial implementation includes:
 - ICO and CZ_DIC Official Identifier types;
 - EMAIL, PHONE, and structured ADDRESS Contact Points;
 - Counterparty with CUSTOMER and SUPPLIER role periods;
-- exact authoritative matching and atomic create claims;
+- qualified matching and atomic Party Create decisions;
 - tenant-level Party authorization and Legal-Entity-scoped Counterparty authorization;
 - Party/Counterparty search descriptors;
 - explicit correction of Party-owned assertions;
@@ -224,7 +193,7 @@ The initial implementation excludes until a concrete use case and tested contrac
 - Party Registry remains the sole owner of Party identity and cannot mirror managed Legal Entities.
 - Tenant-wide identity permissions and Legal-Entity-scoped commercial permissions remain explicit.
 - Party creation is safe under concurrency and projection lag.
-- Every Party fact family can preserve history, provenance, verification, and correction coherently.
+- Every Party fact family can preserve history, provenance, and correction coherently.
 - Merge cannot ship before consumer collisions and recovery are real, tested behavior.
 - Planning issues describe delivery work; this ADR and the implementation document own the durable
   boundaries.

@@ -5,12 +5,7 @@ import { createActionCollector } from '../../../../packages/core-runtime/src/act
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { makePartyRef, PartySubjectEvidenceSchema } from '../../shared/domain/identity-contracts.ts';
-import {
-  PartyMatchDecisionRecordSchema,
-  committedCreateResult,
-  evaluateExactClaims,
-  sortClaimKeys,
-} from '../../shared/domain/matching-contracts.ts';
+import { PartyMatchDecisionRecordSchema, committedCreateResult } from '../../shared/domain/matching-contracts.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
 import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 import { confirmDuplicatePartiesAction } from '../../src/actions/confirm-duplicate-parties.action.ts';
@@ -19,7 +14,7 @@ import { markDuplicateCandidateNeedsEvidenceAction } from '../../src/actions/mar
 import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { partyGuestBindingFailure } from '../../src/policies/create-party-without-strong-identifier.policy.ts';
-import { tenantClaimLockKeys } from '../../src/services/party-identifier-claim.service.ts';
+import { tenantIdentityWriteLockKey } from '../../src/services/party-identifier-claim.service.ts';
 
 const evidenceTenantId = Schema.decodeSync(TenantIdSchema)('10000000-0000-4000-8000-000000000001');
 const evidencePrincipalId = Schema.decodeSync(PrincipalIdSchema)('30000000-0000-4000-8000-000000000001');
@@ -93,13 +88,6 @@ it.effect('reviewed duplicate confirmation records safe invariant evidence witho
   }),
 );
 
-it('claim locks are acquired in one deterministic order', () => {
-  expect(sortClaimKeys(['CZ_DIC\u0000cz:dic\u0000CZ27074358', 'ICO\u0000cz:ico\u000027074358'])).toEqual([
-    'CZ_DIC\u0000cz:dic\u0000CZ27074358',
-    'ICO\u0000cz:ico\u000027074358',
-  ]);
-});
-
 it('all Duplicate Candidate resolutions are reviewed, idempotent tenant Actions', () => {
   for (const action of [
     resolveDuplicateCandidateMatchAction,
@@ -118,75 +106,9 @@ it('all Duplicate Candidate resolutions are reviewed, idempotent tenant Actions'
   }
 });
 
-it('claim lock identity is tenant-qualified, normalized, sorted, and deduplicated', () => {
-  expect(
-    tenantClaimLockKeys('tenant-b', [
-      {
-        identifierType: 'ICO',
-        namespace: 'CZ:ICO',
-        normalizedValue: '27074358',
-        verification: 'VERIFIED',
-      },
-      {
-        identifierType: 'CZ_DIC',
-        namespace: 'CZ:DIC',
-        normalizedValue: 'CZ27074358',
-        verification: 'VERIFIED',
-      },
-      {
-        identifierType: 'ICO',
-        namespace: 'CZ:ICO',
-        normalizedValue: '27074358',
-        verification: 'VERIFIED',
-      },
-    ]),
-  ).toEqual(['["tenant-b","CZ_DIC","CZ:DIC","CZ27074358"]', '["tenant-b","ICO","CZ:ICO","27074358"]']);
-  expect(
-    tenantClaimLockKeys('tenant-a', [
-      {
-        identifierType: 'ICO',
-        namespace: 'CZ:ICO',
-        normalizedValue: '27074358',
-        verification: 'VERIFIED',
-      },
-    ]),
-  ).not.toEqual(
-    tenantClaimLockKeys('tenant-b', [
-      {
-        identifierType: 'ICO',
-        namespace: 'CZ:ICO',
-        normalizedValue: '27074358',
-        verification: 'VERIFIED',
-      },
-    ]),
-  );
-  expect(
-    tenantClaimLockKeys('tenant-b', [
-      {
-        identifierType: 'ICO',
-        namespace: 'CZ:ICO',
-        normalizedValue: '27074358',
-        verification: 'VERIFIED',
-      },
-    ]).some((key) => key.includes('\u0000')),
-  ).toBe(false);
-});
-
-it('authoritative exact claims cannot be outvoted by weak evidence', () => {
-  expect(evaluateExactClaims([])).toEqual({
-    outcome: 'NO_MATCH',
-    partyIds: [],
-  });
-  expect(evaluateExactClaims(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'])).toEqual({
-    outcome: 'MATCHED',
-    partyIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
-  });
-  expect(evaluateExactClaims(['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'])).toEqual(
-    {
-      outcome: 'AMBIGUOUS',
-      partyIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'],
-    },
-  );
+it('identity write serialization remains tenant-qualified after exclusive claim removal', () => {
+  expect(tenantIdentityWriteLockKey('tenant-a')).toBe('["party.registry.identity-write.v1","tenant-a"]');
+  expect(tenantIdentityWriteLockKey('tenant-a')).not.toBe(tenantIdentityWriteLockKey('tenant-b'));
 });
 
 it('review provenance is additive evidence and never a second MATCHED result reference', () => {

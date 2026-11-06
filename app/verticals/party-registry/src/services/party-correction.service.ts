@@ -47,15 +47,13 @@ import {
   partyAliases,
   partyCorrections,
   partyFactAssertions,
-  partyIdentifierClaims,
   partyOfficialIdentifiers,
   partyRelationships,
 } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget, resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 import { evaluatePartySubjectEvidence } from '../policies/create-party-without-strong-identifier.policy.ts';
-import { lockAndResolveClaims, lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
-import { reconcilePartyIdentifierClaims } from './party-identity-persistence.service.ts';
+import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
 import { findCurrentMatchingIdentifier } from './party-official-identifier-persistence.service.ts';
 
 type CorrectionTransaction = Pick<PartyTransaction, 'select' | 'insert' | 'update' | 'delete'>;
@@ -258,18 +256,6 @@ const validatePartyTypeCorrection = Effect.fn('PartyCorrectionService.validatePa
         reason: 'Resolving an UNRESOLVED Party Type is enrichment; use Update Party',
       });
     }
-    const claims = yield* reconcilePartyIdentifierClaims(transaction, tenantId, command.partyId, nextType);
-    const hasConflictingClaims = Match.value(claims).pipe(
-      Match.tag('available', () => false),
-      Match.orElse(() => true),
-    );
-    if (hasConflictingClaims) {
-      return yield* new PartyCorrectionConflict({
-        code: 'party_correction_conflict',
-        reason: 'The corrected Party Type conflicts with existing exclusive identifier claims',
-      });
-    }
-
     // Relationship Create locks endpoint Party rows before inspecting or inserting an
     // assertion. This correction already holds the target Party row lock, so taking the
     // dependent relationship locks here serializes both race orderings at the canonical seam.
@@ -414,7 +400,6 @@ const isCompatibleOfficialIdentifierReplacement = (
   replacement.identifierTypeKey === identifier?.identifierType &&
   replacement.namespace === identifier?.namespace &&
   replacement.normalizedValue === identifier?.normalizedValue &&
-  replacement.verificationState !== 'REJECTED' &&
   isEffectiveOfficialIdentifier(replacement, now);
 
 const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOfficialIdentifier')(
@@ -449,23 +434,12 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
       'The target Official Identifier assertion is absent or not active',
     );
     const { officialIdentifierId } = target;
-    // The shared tenant-qualified claim lock serializes releases against create/add/unarchive.
-    // SAFETY: The persisted identifier columns are constrained to the closed identifier vocabulary.
-    yield* lockAndResolveClaims(transaction, tenantId, [
-      {
-        identifierType: target.identifierTypeKey as NormalizedOfficialIdentifier['identifierType'],
-        namespace: target.namespace as NormalizedOfficialIdentifier['namespace'],
-        normalizedValue: target.normalizedValue,
-        verification: target.verificationState as NormalizedOfficialIdentifier['verification'],
-      },
-    ]);
     const replacementIdentifier =
       command.replacementValue === undefined
         ? undefined
         : yield* Schema.decodeUnknownEffect(OfficialIdentifierInputSchema)({
             identifierType: target.identifierTypeKey,
             value: command.replacementValue,
-            verification: 'UNVERIFIED',
           }).pipe(
             Effect.map(normalizeOfficialIdentifier),
             Effect.mapError((cause) =>
@@ -500,7 +474,7 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
       });
     }
     // A correction record owns the A -> B edge. Reusing B must never rewrite its
-    // acceptance, verification, validity, provenance or original supersession link.
+    // acceptance, validity, provenance or original supersession link.
     replacementOfficialIdentifierId = existingReplacement?.officialIdentifierId ?? null;
     yield* transaction
       .update(partyOfficialIdentifiers)
@@ -513,15 +487,6 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
         and(
           eq(partyOfficialIdentifiers.tenantId, tenantId),
           eq(partyOfficialIdentifiers.officialIdentifierId, target.officialIdentifierId),
-        ),
-      )
-      .pipe(Effect.mapError(unavailable));
-    yield* transaction
-      .delete(partyIdentifierClaims)
-      .where(
-        and(
-          eq(partyIdentifierClaims.tenantId, tenantId),
-          eq(partyIdentifierClaims.officialIdentifierId, target.officialIdentifierId),
         ),
       )
       .pipe(Effect.mapError(unavailable));
@@ -542,7 +507,6 @@ const correctOfficialIdentifier = Effect.fn('PartyCorrectionService.correctOffic
           supersedesOfficialIdentifierId: target.officialIdentifierId,
           tenantId,
           validFrom: now,
-          verificationState: 'UNVERIFIED',
         })
         .returning()
         .pipe(Effect.mapError(unavailable));
@@ -821,7 +785,6 @@ const loadCorrectionAssertion = Effect.fn('PartyCorrectionService.loadCorrection
         validFrom: row.validFrom.toISOString(),
         validTo: row.validTo?.toISOString() ?? null,
         value: row.normalizedValue,
-        verification: row.verificationState,
       }).pipe(Effect.mapError(unavailable));
     }
     const [row] = yield* transaction

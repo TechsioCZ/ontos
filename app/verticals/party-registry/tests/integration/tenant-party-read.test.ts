@@ -142,13 +142,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           expect(verified.legalEntityId).toBe(actor.legalEntityId);
           return verified;
         });
-        const created = yield* runAction({
+        const opened = yield* runAction({
           registration: createPartyAction,
           payload: {
             candidate: {
               partyType: 'ORGANIZATION',
               businessName: 'Tenant Party proof',
-              officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+              officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }],
               subjectEvidence: [
                 {
                   kind: 'ACTOR_ATTESTATION',
@@ -171,11 +171,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             targetModuleKey: 'party.registry',
           },
         }).pipe(Effect.provideContext(context));
-        expect(created.outcome).toBe('CREATED');
-        if (created.outcome !== 'CREATED') {
-          return yield* Effect.die('Expected a newly created Party');
+        expect(opened.outcome).toBe('CREATED');
+        if (opened.outcome !== 'CREATED') {
+          return yield* Effect.die('Expected a newly created Party after NO_MATCH');
         }
-        const { partyRef } = created;
+        const { partyRef } = opened;
         const read = (reader: typeof principal, includeFactHistory = false) =>
           verifyPrincipal(reader).pipe(
             Effect.flatMap((verified) =>

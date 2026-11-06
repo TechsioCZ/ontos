@@ -25,6 +25,7 @@ import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-c
 import { RetailPortalBindingResultSchema } from '../../shared/actions/bind-retail-portal-profile.ts';
 import {
   InvoiceRecipientResolutionRequestSchema,
+  InvoiceRecipientResolutionResponseSchema,
   InvoiceRecipientResolutionUnavailableProblemSchema,
 } from '../../shared/apis/invoice-recipient-resolution.ts';
 import {
@@ -443,7 +444,9 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
         }),
       );
       const body = yield* Effect.promise(() => response.json());
-      expect(JSON.stringify(body)).not.toContain(produced.address.savedAddressRef.resourceId);
+      if (!response.ok) {
+        expect(JSON.stringify(body)).not.toContain(produced.address.savedAddressRef.resourceId);
+      }
       return { body, correlationId, status: response.status };
     });
   // The v2 role admits a member of the company, then the owner's rule decides the profile's facts (O62, O67-Q1):
@@ -542,6 +545,82 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
   expect(JSON.stringify(yield* Effect.promise(() => replay.json()))).not.toContain(
     produced.address.savedAddressRef.resourceId,
   );
+  const invoiceChild = yield* ChildProcess.make(
+    process.execPath,
+    [
+      artifact,
+      JSON.stringify({
+        legalEntityId: fixture.legalEntityId,
+        principalId: principal.principalId,
+        profileId: profile.profileRef.resourceId,
+        tenantId: fixture.tenantId,
+      }),
+    ],
+    { cwd: appRoot, env: environment, stderr: 'pipe', stdout: 'pipe' },
+  );
+  yield* Stream.runDrain(invoiceChild.stderr).pipe(Effect.forkScoped);
+  const invoiceLine = yield* invoiceChild.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead);
+  if (Option.isNone(invoiceLine)) {
+    return yield* Effect.die('Invoice owner-fixture receiver did not start');
+  }
+  const invoiceReady = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReceiverReadySchema))(invoiceLine.value);
+  expect(invoiceReady.marker).toEqual(marker);
+  const invoiceUrl = `http://127.0.0.1:${invoiceReady.port}`;
+  const invoiceResponse = yield* invoke('invoice-recipient-resolution', withAddress, principal, invoiceUrl);
+  expect(invoiceResponse.status).toBe(200);
+  const invoice = yield* Schema.decodeUnknownEffect(InvoiceRecipientResolutionResponseSchema)(invoiceResponse.body, {
+    onExcessProperty: 'error',
+  });
+  expect(invoice.resolution.kind).toBe('INVOICE_RECIPIENT_RESOLVED');
+  if (invoice.resolution.kind !== 'INVOICE_RECIPIENT_RESOLVED') {
+    return yield* Effect.die('Expected a resolved Invoice Recipient');
+  }
+  const { recipient } = invoice.resolution.decisionBundle;
+  expect(recipient.source).toMatchObject({
+    kind: 'SAVED_ADDRESS',
+    originKind: 'COMMERCE_ONLY',
+    savedAddressRef: produced.address.savedAddressRef,
+  });
+  expect(recipient.identity.officialIdentifiers).toEqual([
+    {
+      identifierType: 'CZ_DIC',
+      normalizedValue: 'CZ12345678',
+      officialIdentifierRef: {
+        moduleId: 'party.registry',
+        resourceId: 'fixture-party-identifier',
+        resourceType: 'party.registry.party-official-identifier',
+        tenantId: fixture.tenantId,
+      },
+      source: 'PARTY_REGISTRY',
+      sourceRevision: 3,
+    },
+    {
+      evidenceRef: 'fixture-purchase-evidence',
+      identifierType: 'CZ_DIC',
+      normalizedValue: 'CZ87654321',
+      source: 'PURCHASE_EVIDENCE',
+      sourceRevision: 4,
+    },
+  ]);
+  expect(yield* invoke('invoice-recipient-resolution', withAddress, fixture.legalEntityOnly, invoiceUrl)).toMatchObject(
+    {
+      status: 403,
+    },
+  );
+  const staleInvoice = yield* executeInvoiceRecipientResolutionWithAuthorization(
+    {
+      ...invoiceInput,
+      purchasingContext: {
+        ...invoiceInput.purchasingContext,
+        expectedSourceRevisions: [{ revision: 'stale', source: 'cart' }],
+      },
+    },
+    `Bearer ${yield* freshAssertion()}`,
+    randomUUID(),
+    { baseUrl: invoiceUrl, compositionRevision: snapshot.composition.revision },
+  ).pipe(Effect.provide(FetchHttpClient.layer));
+  expect(staleInvoice.resolution.kind).toBe('STALE_SOURCE');
+
   const unavailableChild = yield* ChildProcess.make(process.execPath, [artifact], {
     cwd: appRoot,
     env: { ...environment, SPICEDB_ENDPOINT: 'localhost:1' },
@@ -574,7 +653,7 @@ const nativePurchasePermissionPlans = Effect.gen(function* nativePurchasePermiss
 
 it.layer(nativeServices, { excludeTestServices: true })('native purchase permission plans', (suite) => {
   suite.effect(
-    'commits the real Saved Address producer and reaches both default receiving owner boundaries',
+    'guards the native purchase Reads and returns declared invoice identifiers with current owner evidence',
     () => nativePurchasePermissionPlans,
     // Two receiver processes and the Tenant's v2 access bootstrap and projection.
     120_000,

@@ -59,7 +59,6 @@ import { makePartyDatabase } from '../../src/db/client.ts';
 import {
   duplicateCandidateCases,
   parties,
-  partyIdentifierClaims,
   partyMatchDecisions,
   partyOfficialIdentifiers,
 } from '../../src/db/schema.ts';
@@ -179,9 +178,7 @@ it.layer(
         const candidate = {
           businessName: 'Reviewed external organization',
           evidenceRefs: ['reviewed-match/document'],
-          officialIdentifiers: [
-            { identifierType: 'ICO' as const, value: '27074358', verification: 'VERIFIED' as const },
-          ],
+          officialIdentifiers: [{ identifierType: 'ICO' as const, value: '27074358' }],
           partyType: 'ORGANIZATION' as const,
           provenance: { method: 'DOCUMENT', source: 'reviewed-match-test' },
           subjectEvidence: [
@@ -205,7 +202,6 @@ it.layer(
           ...candidate,
           officialIdentifiers: candidate.officialIdentifiers.map((identifier) => ({
             ...identifier,
-            verification: 'UNVERIFIED' as const,
           })),
         };
         yield* Effect.logInfo('1239 stage open');
@@ -300,10 +296,6 @@ it.layer(
               .select()
               .from(duplicateCandidateCases)
               .where(eq(duplicateCandidateCases.tenantId, fixture.tenantId)),
-            claims: admin
-              .select()
-              .from(partyIdentifierClaims)
-              .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
             identifiers: admin
               .select()
               .from(partyOfficialIdentifiers)
@@ -350,7 +342,7 @@ it.layer(
             expect.arrayContaining([expect.objectContaining({ reviewedCaseRef: opened.caseRef })]),
           );
         }
-        expect((yield* ownerSnapshot()).cases).toEqual(caseBefore);
+        expect((yield* ownerSnapshot()).cases).toEqual(beforeReplay.cases);
         expect((yield* ownerSnapshot()).parties).toEqual(beforeReplay.parties);
         expect((yield* ownerSnapshot()).decisions).toHaveLength(beforeReplay.decisions.length + 2);
 
@@ -564,7 +556,7 @@ it.layer(
               candidate: {
                 ...candidate,
                 businessName: 'Independent competing organization',
-                officialIdentifiers: [{ identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' }],
+                officialIdentifiers: [{ identifierType: 'ICO', value: '26168685' }],
                 subjectEvidence: candidate.subjectEvidence.map((evidence) => ({
                   ...evidence,
                   subjectKey: competingSubjectKey,
@@ -582,10 +574,7 @@ it.layer(
             {
               candidate: {
                 ...candidate,
-                officialIdentifiers: [
-                  ...candidate.officialIdentifiers,
-                  { identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' },
-                ],
+                officialIdentifiers: [...candidate.officialIdentifiers, { identifierType: 'ICO', value: '26168685' }],
               },
             },
             yield* authorization(),
@@ -597,7 +586,6 @@ it.layer(
         expect(competingDecision.partyRef).toBe(null);
         expect(competingDecision.caseRef).not.toBe(null);
         const afterCompeting = yield* ownerSnapshot();
-        expect(afterCompeting.claims).toEqual(beforeCompeting.claims);
         expect(afterCompeting.identifiers).toEqual(beforeCompeting.identifiers);
         expect(afterCompeting.parties).toEqual(beforeCompeting.parties);
         yield* Effect.logInfo('1239 stage retained case');

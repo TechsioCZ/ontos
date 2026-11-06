@@ -94,7 +94,6 @@ it.effect('Party Candidate accepts an evidenced identifier without inventing a d
         {
           identifierType: 'ICO',
           value: '27074358',
-          verification: 'VERIFIED',
         },
       ],
       partyType: 'ORGANIZATION' as const,
@@ -154,8 +153,8 @@ it('Party unarchive declares durable blocked outcomes with case and decision ref
   const firstPartyId = '22222222-2222-4222-8222-222222222222';
   const secondPartyId = '33333333-3333-4333-8333-333333333333';
   for (const reasonCode of [
-    'EXACT_CLAIM_CONFLICT',
-    'EXACT_CLAIM_AMBIGUOUS',
+    'OPEN_DUPLICATE_CASE',
+    'UNRESOLVED_IDENTITY',
     'OPEN_DUPLICATE_CASE',
     'UNRESOLVED_IDENTITY',
   ]) {

@@ -21,7 +21,6 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { addContactPointAction } from '../../src/actions/add-contact-point.action.ts';
 import { endContactPointAction } from '../../src/actions/end-contact-point.action.ts';
-import { resolveDuplicateCandidateCreateAction } from '../../src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
 import { guestPartyResolutionRead } from '../../src/api/guest-party-resolution.read.ts';
 import { makePartyDatabase } from '../../src/db/client.ts';
@@ -53,7 +52,6 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
           createPartyAction,
           addContactPointAction,
           endContactPointAction,
-          resolveDuplicateCandidateCreateAction,
           resolveDuplicateCandidateMatchAction,
         ].map(({ descriptor }) => descriptor.actionKey),
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -105,21 +103,8 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
         transport: yield* transport,
       })
       .pipe(Effect.provideContext(context));
-    assert.isOk(seedCase.outcome === 'AMBIGUOUS');
-    const seeded = yield* runtime
-      .runAction({
-        registration: resolveDuplicateCandidateCreateAction,
-        payload: {
-          caseRef: seedCase.caseRef,
-          expectedRevision: 1,
-          reason: 'Reviewed one concrete human without a strong identifier',
-        },
-        principal: yield* gateway.verifyPrincipal(principal),
-        transport: yield* transport,
-      })
-      .pipe(Effect.provideContext(context));
-    assert.isOk(seeded.partyRef !== null);
-    const { partyRef } = seeded;
+    assert.isOk(seedCase.outcome === 'CREATED');
+    const { partyRef } = seedCase;
     const evidenceRef = `guest-evidence-${yield* nextId}`;
     const correlationRoot = `purchase-${yield* nextId}`;
     const legalEntityRef = {
@@ -139,7 +124,6 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
         source: 'USER_ASSERTION',
       },
       validFrom: '2020-01-01T00:00:00.000Z',
-      verification: { state: 'UNVERIFIED' },
     };
     const contact = yield* runtime
       .runAction({
@@ -160,7 +144,6 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
       );
     expect(storedContact).toMatchObject({
       provenanceAuthoritative: false,
-      verificationState: 'UNVERIFIED',
       evidenceReference: evidenceRef,
       state: 'ACTIVE',
     });
@@ -198,12 +181,6 @@ const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvi
           ...contactPayload,
           contactPoint: { preferred: false, type: 'EMAIL', value: 'verified-guest-1241@example.test' },
           provenance: { ...contactPayload.provenance, authoritative: true },
-          verification: {
-            state: 'VERIFIED',
-            method: 'MANUAL_CONFIRMATION',
-            verifiedAt: DateTime.formatIso(yield* DateTime.now),
-            verifierReference: 'reviewed-channel-control',
-          },
         },
         principal: yield* gateway.verifyPrincipal(principal),
         transport: yield* transport,

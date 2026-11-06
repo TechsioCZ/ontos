@@ -1,0 +1,1 @@
+ALTER TABLE "party"."party_contact_point_purposes" DROP CONSTRAINT "party_contact_point_purposes_registry_ck", ADD CONSTRAINT "party_contact_point_purposes_registry_ck" CHECK (("registry_context" = 'GENERAL' and "jurisdiction" = 'ZZ') or ("purpose_key" = 'REGISTERED' and "registry_context" = 'ARES' and "jurisdiction" = 'CZ'));

@@ -6,7 +6,6 @@ import {
   ContactPointPrivacyClassificationSchema,
   ContactPointProvenanceSchema,
   ContactPointTimestampSchema,
-  ContactPointVerificationSchema,
   PartyContactPointSchema,
 } from '../domain/contact-point.ts';
 import { PartyRefSchema } from '../resources/party.ts';
@@ -17,7 +16,6 @@ export const AddContactPointPayloadSchema = Schema.Struct({
   privacyClassification: ContactPointPrivacyClassificationSchema,
   provenance: ContactPointProvenanceSchema,
   validFrom: ContactPointTimestampSchema,
-  verification: ContactPointVerificationSchema,
 });
 export type AddContactPointPayload = typeof AddContactPointPayloadSchema.Type;
 

@@ -25,7 +25,6 @@ const assertion = Schema.decodeSync(OfficialIdentifierAssertionSchema)({
   state: 'ACTIVE',
   validFrom: '2026-01-01T00:00:00.000Z',
   validTo: null,
-  verification: 'VERIFIED',
 });
 
 /** The paths a read declares, exactly as the runtime removes them for a caller without the group. */

@@ -251,7 +251,6 @@ it.effect('CreateParty MATCHED_EXISTING publishes an attached identifier and ind
             {
               identifierType: 'CZ_DIC',
               value: identifier.value,
-              verification: 'VERIFIED',
             },
           ],
           partyType: 'ORGANIZATION',
@@ -331,9 +330,6 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
     const before = {
       state: 'ACTIVE',
       validTo: null,
-      verification: 'VERIFIED',
-      verifiedAt: null,
-      verifiedByPrincipalId: null,
     } as const;
     const after = { ...before, state: 'ENDED', validTo } as const;
     const harness = yield* makeActionTestHarness({
@@ -351,7 +347,6 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
                   partyRef,
                   state: 'ENDED',
                   validTo: Option.some(DateTime.makeUnsafe(validTo)),
-                  verification: 'VERIFIED',
                 },
               }),
             ),
