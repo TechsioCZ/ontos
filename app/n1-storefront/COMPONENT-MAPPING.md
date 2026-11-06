@@ -11,8 +11,9 @@ sm/tertiary/outlined/compact; native wrapper flex/center/gap1(4px), následně
 `+N` dle owner total−3. Native preview dodává stabilní veřejné variant IDs,
 názvy a total; při absenci se velikosti ani počet nevymýšlejí. Kliknutí vede na
 reálný detail produktu jako historická card navigace. Žádné appearance classes
-nebo inline styly na komponentách. BE projekce schválená uživatelem, runtime
-ověření zatím neproběhlo; hover/focus expansion z historické reference není hotové.
+nebo inline styly na komponentách. BE projekce schválená uživatelem; hover/focus
+expansion používá veřejný Popover a živý market-scoped reader. Dne6.11. ověřeno
+rozbalení `+N` se skutečnými velikostmi i přechod na správné vlastní variant ID.
 
 Autorita vzhledových tokenů: [New Design System / Theme / N1](https://www.figma.com/design/gi5GUSWwAeXknaKEeLqK5w/New-Design-System?node-id=2667-2),
 447 proměnných, mode `4082:0`, čtecí session `0397b40e-b436-4ebb-bf27-114466df5aa0`.
@@ -62,6 +63,18 @@ spotřebu existujících NumericInput barevných rolí; průhledný výchozí st
 zachovává dosavadní vykreslení ostatních skladeb bez zdvojení alpha výplně.
 Mobilní `39:2500` zůstává `QuantityField` md mimo tuto barevnou výjimku.
 Limity, klávesnice, validace a focus zůstávají v Zag komponentě a aplikaci.
+
+Produktové sdílení `219:2870/2873`, mobil `39:2540`: veřejný `Link` a dekorativní
+`Icon` email-outline. Akce připraví mailto návrh v klientovi návštěvníka s názvem
+a veřejným odkazem na konkrétní produkt/platně vybranou variantu. Figma ani starý
+ProductActions handler neurčují; mailto je minimální funkční interpretace tohoto
+odkazu, nikoli kopie existujícího serverového rozesílání. Žádný nový dialog.
+Odkaz používá aktuální origin a pouze řízený product/variant path, bez ostatních
+query/hash hodnot. Před hydratací je neaktivní, server veřejný origin nehádá.
+Mobilní akce se skládají pod sebe s gap24, desktop do řádku s gap16.
+Favourites/watch a známé Link appearance/selected-border mezery tím uzavřené nejsou.
+Prázdný layout wrapper popisu nemá padding, pokud owner nevrátí žádné odstavce;
+neprázdný popis zůstává viditelný i při přepnutí tabů jako historická kompozice.
 
 Doprava checkoutu `319:1756/1977` používá
 existující RadioCard sm role: control padding12, content gap8 a popis text-sm14.

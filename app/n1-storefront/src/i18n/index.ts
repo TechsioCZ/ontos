@@ -316,6 +316,7 @@ const cs = {
   selectedVariant: "Zvolená varianta",
   selectVariant: "Zvolte variantu",
   selectVariantAction: "Vyberte variantu",
+  sendToFriend: "Poslat kamarádovi",
   shipping: "Způsoby dopravy",
   shippingOptions: "Možnosti dopravy",
   shopping: {
@@ -705,6 +706,7 @@ const en: typeof cs = {
   selectedVariant: "Selected variant",
   selectVariant: "Select a variant",
   selectVariantAction: "Choose a variant",
+  sendToFriend: "Send to a friend",
   shipping: "Shipping methods",
   shippingOptions: "Shipping options",
   shopping: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment } from "react";
+import { Fragment, useSyncExternalStore } from "react";
 import NextImage from "next/image";
 import NextLink from "next/link";
 import { Gallery } from "@techsio/ui-kit/organisms/gallery";
@@ -20,6 +20,7 @@ import { priceProps } from "./price-props";
 import { ProductPurchase } from "./product-purchase";
 import { selectProductDetail } from "./product-selection";
 import { useDesktopProduct } from "./product-viewport";
+import { productShareHref, productShareOrigin } from "./product-share";
 
 type Parameter = ProductDetailModel["parameters"][number];
 const emptyCategories: CatalogModel["categories"] = [];
@@ -82,11 +83,23 @@ export const ProductView = ({
 }) => {
   const selection = selectProductDetail(product, variantId);
   const desktop = useDesktopProduct();
+  const origin = useSyncExternalStore(
+    productShareOrigin.subscribe,
+    productShareOrigin.getSnapshot,
+    productShareOrigin.getServerSnapshot,
+  );
   const { current, genericVariantSelected, images, parameters, selectionRequired, variant } =
     selection;
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
+  const shareHref = productShareHref({
+    locale,
+    name: product.name,
+    origin,
+    slug: product.slug,
+    variant,
+  });
   const questionSearch = new URLSearchParams({ productId: product.id });
   if (variant !== undefined) {
     questionSearch.set("variantIds", variant.id);
@@ -255,17 +268,27 @@ export const ProductView = ({
             />
           </div>
           <div aria-hidden="true" className="order-7 hidden h-px bg-border-primary md:block" />
-          <div className="order-8 flex items-center gap-2 md:mt-4">
-            <div className="hidden md:block">
-              <Icon color="secondary" icon="icon-[mdi--help-circle-outline]" size="md" />
+          <div className="order-8 flex flex-col items-start gap-6 md:mt-4 md:flex-row md:flex-wrap md:items-center md:gap-x-4 md:gap-y-2">
+            <div className="flex items-center gap-2">
+              <div className="hidden md:block">
+                <Icon color="secondary" icon="icon-[mdi--help-circle-outline]" size="md" />
+              </div>
+              <Link
+                as={NextLink}
+                href={`/${locale}/kontakty?${questionSearch}#contact-form-heading`}
+                prefetch={false}
+              >
+                {d.contact.productQuestion}
+              </Link>
             </div>
-            <Link
-              as={NextLink}
-              href={`/${locale}/kontakty?${questionSearch}#contact-form-heading`}
-              prefetch={false}
-            >
-              {d.contact.productQuestion}
-            </Link>
+            <div className="flex items-center gap-2">
+              <div className="hidden md:block">
+                <Icon color="secondary" icon="icon-[mdi--email-outline]" size="md" />
+              </div>
+              <Link aria-disabled={shareHref === null} href={shareHref ?? undefined}>
+                {d.sendToFriend}
+              </Link>
+            </div>
           </div>
         </div>
       </div>
@@ -280,7 +303,7 @@ export const ProductView = ({
               <Tabs.Indicator />
             </Tabs.List>
           </div>
-          <div className="flex flex-col gap-3 py-8 md:py-3">
+          <div className="flex flex-col gap-3 py-8 empty:hidden md:py-3">
             {product.paragraphs.map((paragraph) => (
               <p className="whitespace-pre-line" key={paragraph}>
                 {paragraph}
