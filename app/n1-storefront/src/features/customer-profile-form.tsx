@@ -6,10 +6,13 @@ import { Effect, Exit, Match, Schema } from "effect";
 import { HttpApiClient } from "effect/http-api";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { useToast } from "@techsio/ui-kit/molecules/toast";
 import type { Dictionary } from "@/i18n";
 import { CustomerProfileApi, CustomerProfileUpdateSchema } from "@/ontos/customer-profile";
 import type { CustomerProfile } from "@/ontos/customer-profile";
 import { clientRuntime } from "@/ontos/client-runtime";
+import { profileActionFeedback } from "./action-feedback";
+import type { ProfileFeedbackState } from "./action-feedback";
 
 const profileClient = HttpApiClient.make(CustomerProfileApi);
 const updateProfile = (fields: FormData, profile: CustomerProfile) =>
@@ -24,16 +27,7 @@ const updateProfile = (fields: FormData, profile: CustomerProfile) =>
     ),
     Effect.timeout("65 seconds"),
   );
-type Notice =
-  | "idle"
-  | "saving"
-  | "saved"
-  | "invalid"
-  | "anonymous"
-  | "forbidden"
-  | "conflict"
-  | "unavailable"
-  | "unconfirmed";
+type Notice = ProfileFeedbackState;
 const failureNotice = (error: Effect.Error<ReturnType<typeof updateProfile>>): Notice =>
   Match.value(error).pipe(
     Match.tag("SchemaError", () => "invalid" as const),
@@ -57,6 +51,7 @@ export const CustomerProfileForm = ({
 }) => {
   const id = useId();
   const router = useRouter();
+  const toaster = useToast();
   const [notice, setNotice] = useState<Notice>("idle");
   const [invalid, setInvalid] = useState<readonly string[]>([]);
   const active = useRef(false);
@@ -88,6 +83,10 @@ export const CustomerProfileForm = ({
       }
       const next = Exit.isSuccess(exit) ? exit.value : "unconfirmed";
       setNotice(next);
+      const { successToast } = profileActionFeedback(next, d.accountPage);
+      if (successToast !== null) {
+        toaster.create(successToast);
+      }
       if (next === "saved" || next === "anonymous") {
         router.refresh();
       }
@@ -100,7 +99,7 @@ export const CustomerProfileForm = ({
       valid ? previous.filter((value) => value !== name) : [...new Set([...previous, name])],
     );
   };
-  const message = notice === "idle" ? "" : d.accountPage[notice];
+  const message = profileActionFeedback(notice, d.accountPage).statusText;
   return (
     <form
       action="/api/customer-profile"

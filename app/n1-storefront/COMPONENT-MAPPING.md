@@ -44,6 +44,22 @@ Původní 418-tokenový mix komponentových snapshotů a App overrides byl nahra
 
 ## Kompozice
 
+Krátké výsledky formulářových akcí: jediný globální Toaster v shellu a nativní
+useToast, stejně jako u vložení do košíku. Kontakt43:1162/1595 a profil54:1417/1629
+nemají ve Figmě samostatné inline success potvrzení. Společná čistá projekce
+action-feedback rozlišuje potvrzené sent/saved od pending a trvalých chyb.
+Toast vzniká pouze ve stávajícím potvrzovacím callbacku, nikoli při renderu,
+mountu, focus readu nebo router refreshi. Používá existující CS/EN texty a kit
+tokeny; žádná další notifikační vrstva, provider nebo vlastní alert styly.
+
+Pending zůstává v nativním loading tlačítku; status output jej neopakuje.
+Kontakt po potvrzení zachovává sent lock i durable barrier pravidla, profil
+zachovává mounted guard/version CAS/needsRead. Validační, forbidden/unavailable
+a především unconfirmed stavy zůstávají dostupné u formuláře. aria-describedby
+neodkazuje na skrytý success/pending output. Figma auth chyby a pokyny k e-mailu,
+recovery terminal instrukce a potvrzení objednávky se nemění na mizící toast.
+Adresy jsou aktuálně read-only; nepředstírá se toast pro neexistující save akci.
+
 Mobilní navigace59:1595/418:2491: existující Dialog left/xs s Accordion
 md/borderless a VerticalNavigation.Link pro skutečné větve ownera. Drawer se
 kotví podle skutečného spodního okraje Headeru přes veřejný ref; počáteční

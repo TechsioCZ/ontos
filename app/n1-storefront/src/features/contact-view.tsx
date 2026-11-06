@@ -4,6 +4,7 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { FormTextarea } from "@techsio/ui-kit/molecules/form-textarea";
+import { useToast } from "@techsio/ui-kit/molecules/toast";
 import { Effect, Fiber } from "effect";
 import { useParams } from "next/navigation";
 import type { SubmitEvent } from "react";
@@ -13,8 +14,10 @@ import type { InquiryOutcome, InquiryProductContext } from "@/ontos/inquiry";
 import { inquiryRuntime, startInquirySubmission } from "@/ontos/inquiry-client";
 import type { Dictionary } from "@/i18n";
 import { inquiryGuardKey, readInquiryBarrier, submitGuardedInquiry } from "./inquiry-guard";
+import { contactActionFeedback } from "./action-feedback";
+import type { ContactFeedbackState } from "./action-feedback";
 
-type ContactState = InquiryOutcome["state"] | "idle" | "pending";
+type ContactState = ContactFeedbackState;
 type BarrierState = "loading" | "clear" | "blocked" | "unavailable";
 const observeBarrier = (accept: (value: BarrierState) => void) =>
   readInquiryBarrier().pipe(
@@ -68,6 +71,7 @@ export const ContactView = ({
   question?: { product: InquiryProductContext; state: "ready" } | { state: "unavailable" };
 }) => {
   const { locale } = useParams<{ locale: string }>();
+  const toaster = useToast();
   const product = question?.state === "ready" ? question.product : undefined;
   const unavailableProduct = question?.state === "unavailable";
   const defaultMessage =
@@ -108,15 +112,7 @@ export const ContactView = ({
     state === "unconfirmed";
   const statusText = unavailableProduct
     ? d.contact.formUnavailable
-    : {
-        forbidden: d.contact.forbidden,
-        idle: "",
-        invalid: d.contact.invalid,
-        pending: d.contact.submitting,
-        sent: d.contact.sent,
-        unavailable: d.contact.formUnavailable,
-        unconfirmed: d.contact.unconfirmed,
-      }[state];
+    : contactActionFeedback(state, d.contact).statusText;
   const buttonText = { pending: d.contact.submitting, unavailable: d.contact.retry };
   const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -137,6 +133,10 @@ export const ContactView = ({
       (result) => {
         setLocalState(result.state);
         refresh();
+        const { successToast } = contactActionFeedback(result.state, d.contact);
+        if (successToast !== null) {
+          toaster.create(successToast);
+        }
       },
       submitGuardedInquiry(fields, locale, selector),
     );
@@ -192,7 +192,7 @@ export const ContactView = ({
         <h2 className="text-lg font-semibold" id="contact-form-heading">
           {d.contact.formHeading}
         </h2>
-        {(state !== "idle" || unavailableProduct) && (
+        {statusText !== "" && (
           <output aria-live="polite" className="mt-4 block" id="contact-form-status">
             {statusText}
           </output>
@@ -200,9 +200,7 @@ export const ContactView = ({
         <form onSubmit={submit}>
           <fieldset
             aria-busy={state === "pending"}
-            aria-describedby={
-              state === "idle" && !unavailableProduct ? undefined : "contact-form-status"
-            }
+            aria-describedby={statusText === "" ? undefined : "contact-form-status"}
             className="n1-contact-form mt-6 grid min-w-0 grid-cols-2 gap-4"
             disabled={locked}
           >
@@ -256,6 +254,8 @@ export const ContactView = ({
               <Button
                 block
                 disabled={locked}
+                isLoading={state === "pending"}
+                loadingText={d.contact.submitting}
                 size="md"
                 theme="solid"
                 type="submit"
