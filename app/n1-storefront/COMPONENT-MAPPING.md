@@ -211,9 +211,13 @@ Button primary/solid/sm/block. Formulář má šířku448, na mobilu FILL, jmén
 dva sloupce s gap4; vnější rozestupy28/24 a login/register gap4/8 jsou layout.
 Tři app layout tokeny určují šířku a minimální výšku, nemění vzhled primitiv.
 
-Theme zůstává kanonické: žluté primary tlačítko32px, knihovní labely a input radius.
-Šedá28px instance, bold labely a odlišné link/radius metriky ve Figmě nejsou
-důvodem pro per-instance CSS. Tyto rozdíly zůstávají výslovně nevyřešené.
+Theme zůstává kanonické: primary/solid/sm/compact tlačítko28px, knihovní labely
+a input radius. Kontrola6.11. potvrzuje labely FormInput700. Šedá login instance
+333:6597 má navzdory deklarovanému primary výplň Light/secondary; není podklad
+pro přepsání N1 primary. Tučný label FormCheckbox nemá v instalované komponentě
+spotřebovávanou váhovou roli; nepřidává se náhradní vzhledové CSS.
+Mobilní celé stránky mají formulář FILL bez bočního paddingu; samostatné chybové
+fixtures56:883/978 mají16px. Izolovaný stav nemění rozložení celé stránky.
 Footer registrace používá aktuální text „Přihlaste se“.
 
 Login/registrace volají veřejné portalAuthSession/portalAuthEnrollment kontrakty.
@@ -223,10 +227,14 @@ provider callbackURL se zahodí a následuje pevný redirect bez tokenu. Ověře
 není přihlášení. Pending enrollment může uživatel explicitně obnovit přes resume;
 nejistý write ani reconciliation nenabízí opakování zápisu.
 
-Password minimum12 je owner kontrakt, nikoli8znaková Figma fixture. MFA,
-verification a reconciliation mají poctivé stavy; dokončení MFA a forgot-password
-zatím nejsou implementované. Skutečné N1 přihlášení a registrace čekají na běžící
-lokální owner služby a skutečnou serverovou konfiguraci; designová data se nepřebírají.
+Password minimum12 je owner kontrakt, nikoli8znaková Figma fixture; jména vyžadují
+neprázdný znak, nikoli dva znaky z fixture. E-mail má při blur i nativní pattern
+shodný s Portal doménovým pravidlem. Změna původního hesla zneplatní starý stav
+potvrzení; rovnost se znovu kontroluje při blur potvrzení a před odesláním.
+Obnova hesla je implementovaná přes veřejný owner kontrakt; dokončení MFA zůstává
+samostatná mezera. Storefront je napojený na sdílený Stage. Živé dokončení
+registrace/e-mailu/přihlášení ještě není prokázané, konkrétní403 vyžaduje dohledání
+vlastníkem Stage. Klientské validační kontroly nejsou důkazem zákaznického admission.
 
 # Košík a owner quote — aktuální pokračování
 

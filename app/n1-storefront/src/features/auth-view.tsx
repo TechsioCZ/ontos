@@ -46,7 +46,12 @@ type FieldErrors = Partial<Record<AuthField, string>>;
 const passwordAutoComplete = { login: "current-password", register: "new-password" } as const;
 
 const inputAttributes = {
-  email: { autoComplete: "email", maxLength: 320, type: "email" },
+  email: {
+    autoComplete: "email",
+    maxLength: 320,
+    pattern: String.raw`[^\s@]+@[^\s@]+\.[^\s@]+`,
+    type: "email",
+  },
   firstName: {
     autoComplete: "given-name",
     maxLength: 100,
@@ -147,6 +152,7 @@ const AuthForm = ({
         onChange={() => {
           clearError(field);
           if (field === "password") {
+            clearError("passwordConfirmation");
             setValidated({ password: false, passwordConfirmation: false });
           }
           if (field === "passwordConfirmation") {

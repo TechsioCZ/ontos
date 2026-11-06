@@ -7,6 +7,27 @@ import { getDictionary } from "../src/i18n";
 
 const dictionary = getDictionary("en");
 describe("shared page and header login", () => {
+  for (const mode of ["login", "register"] as const) {
+    it(`rejects incomplete email domains at the ${mode} field before submission`, () => {
+      const markup = renderToStaticMarkup(
+        createElement(AuthView, { dictionary, locale: "en", mode }),
+      );
+      const emailInput = /<input\b[^>]*\bname="email"[^>]*>/u.exec(markup)?.[0];
+      const pattern = /\bpattern="(?<constraint>[^"]+)"/u.exec(emailInput ?? "")?.groups
+        ?.constraint;
+      expect(pattern).toBeDefined();
+      if (pattern === undefined) {
+        return;
+      }
+      const constraint = new RegExp(`^(?:${pattern})$`, "v");
+      for (const address of ["a@b", "name@", "not-an-email", "name@bad domain.test"]) {
+        expect(constraint.test(address)).toBe(false);
+      }
+      for (const address of ["a@b.cz", "shopper+demo@example.test", "name@sub.example.com"]) {
+        expect(constraint.test(address)).toBe(true);
+      }
+    });
+  }
   it("assigns independent field IDs when multiple shared forms are mounted", () => {
     const markup = renderToStaticMarkup(
       createElement(
