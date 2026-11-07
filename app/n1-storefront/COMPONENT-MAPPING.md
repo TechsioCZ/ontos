@@ -640,3 +640,28 @@ with its text utility. The app's @theme initialization bridges the supported
 Tailwind typography companion to that existing role, yielding the Figma16/30
 without per-instance classes or a new theme value. This applies to all N1
 StatusText md messages; sm messages retain their existing typography.
+
+### Checkout operation feedback
+
+The persistent failure pattern in57:3088/322:1665 uses the native StatusText
+md/error. Checkout operation failures now use that same component; unresolved
+orders and a preserved cart use its warning state. The specific owner rejection
+replaces the simultaneous generic form instruction. A fresh quote hides the
+previous rejection, while a confirmed receipt suppresses stale quote/guard
+fallbacks. Explicit storage, recovery and preserved-cart notices remain visible.
+This is application state mapping, not a claim that Figma defines each backend
+failure. No new copy, component styles, price calculations, transport or intent
+guard changes are introduced. Persistent recovery instructions stay on screen.
+
+An isolated SSR render of the actual CheckoutView was inspected at320/390/1440,
+including English recovery. No Stage rejection/order was manufactured for the
+screenshots. The existing320px pending Button still overflows its long loading
+label; this separate composition issue is recorded and excluded from this
+notice-only visual approval.
+
+Price semantics remain owner unit amounts. Although fixture319:1787 displays
+950 Kč with quantity2, the layer is named Unit price including tax, and the
+historical N1 CartItemRow also renders the unit amount. Its sample arithmetic
+does not justify changing checkout to derived line totals. Recovered native
+orders deliberately expose no lineTotalMinor; unit price times quantity is not
+used as a substitute for an owner total.

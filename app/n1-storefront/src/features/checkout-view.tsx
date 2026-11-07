@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import type { Dictionary } from "@/i18n";
 import type { CheckoutOptions } from "@/ontos/checkout-server";
 import { CheckoutFields } from "./checkout-fields";
@@ -32,17 +33,32 @@ const noticeText = (checkout: Checkout, d: Dictionary) => {
   if (checkout.notice === "scope-mismatch") {
     return d.checkout.scopeMismatch;
   }
+  if (checkout.notice === "invalid" && checkout.quote?.outcome === "REJECTED") {
+    return d.checkout.rejected;
+  }
   if (checkout.notice !== null) {
     return d.checkout[checkout.notice];
   }
   if (checkout.progress !== "idle") {
     return "";
   }
+  if (checkout.receipt !== null) {
+    return "";
+  }
   if (checkout.guarded) {
     return d.checkout.uncertain;
   }
+  if (checkout.quote?.outcome === "REJECTED") {
+    return d.checkout.rejected;
+  }
   return "";
 };
+const noticeStatus = (checkout: Checkout) =>
+  checkout.notice === "uncertain" ||
+  checkout.notice === "cart-preserved" ||
+  (checkout.notice === null && checkout.guarded)
+    ? "warning"
+    : "error";
 
 const ReceiptHeader = ({
   checkout,
@@ -124,6 +140,7 @@ const ConfirmedCheckout = ({
   const { receipt } = result;
   const shipping = options.shippingMethods.find((method) => method.id === receipt?.shippingMethod);
   const home = `/${locale}`;
+  const notice = noticeText(checkout, d);
   return (
     <article className="mx-auto flex w-full max-w-n1-product-content flex-col items-center gap-5 p-5">
       <div
@@ -192,7 +209,11 @@ const ConfirmedCheckout = ({
             result={result}
           />
         </section>
-        {checkout.notice !== null && <p role="alert">{noticeText(checkout, d)}</p>}
+        {notice !== "" && (
+          <StatusText align="start" showIcon status={noticeStatus(checkout)}>
+            {notice}
+          </StatusText>
+        )}
       </div>
     </article>
   );
@@ -280,6 +301,7 @@ const ReadyCheckout = ({
   );
   const method = options.shippingMethods.find((item) => item.id === shippingId);
   const pending = checkout.progress !== "idle";
+  const notice = noticeText(checkout, d);
   if (checkout.receipt !== null) {
     return (
       <ConfirmedCheckout checkout={checkout} dictionary={d} locale={locale} options={options} />
@@ -291,7 +313,11 @@ const ReadyCheckout = ({
   } else if (checkout.guarded) {
     body = (
       <div className="flex flex-col items-start gap-4">
-        <output>{noticeText(checkout, d)}</output>
+        {notice !== "" && (
+          <StatusText align="start" showIcon status={noticeStatus(checkout)}>
+            {notice}
+          </StatusText>
+        )}
         <Button
           disabled={pending}
           isLoading={pending}
@@ -306,9 +332,17 @@ const ReadyCheckout = ({
       </div>
     );
   } else if (checkout.cart.error || checkout.notice === "storage") {
-    body = <p role="alert">{d.checkout.storage}</p>;
+    body = (
+      <StatusText align="start" showIcon status="error">
+        {d.checkout.storage}
+      </StatusText>
+    );
   } else if (checkout.cart.scope === null) {
-    body = <p role="alert">{d.checkout.scopeMismatch}</p>;
+    body = (
+      <StatusText align="start" showIcon status="error">
+        {d.checkout.scopeMismatch}
+      </StatusText>
+    );
   } else if (checkout.cart.entries.length === 0) {
     return <EmptyCartView dictionary={d} locale={locale} />;
   } else {
@@ -375,8 +409,11 @@ const ReadyCheckout = ({
               locale={locale}
               result={checkout.quote}
             />
-            <output aria-live="polite">{noticeText(checkout, d)}</output>
-            {checkout.quote?.outcome === "REJECTED" && <p role="alert">{d.checkout.rejected}</p>}
+            {notice !== "" && (
+              <StatusText align="start" showIcon status={noticeStatus(checkout)}>
+                {notice}
+              </StatusText>
+            )}
           </section>
         </div>
       </form>
