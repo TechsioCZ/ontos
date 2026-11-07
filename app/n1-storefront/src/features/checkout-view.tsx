@@ -231,6 +231,9 @@ const CheckoutActions = ({
   locale: string;
 }) => {
   const pending = checkout.progress !== "idle";
+  const confirming = checkout.quote?.outcome === "VALID";
+  const pendingLabel = checkout.progress === "place" ? d.checkout.sending : d.checkout.checking;
+  const actionLabel = confirming ? d.checkout.confirm : d.checkout.verify;
   const submit = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
   const wasPending = useRef(pending);
@@ -267,10 +270,11 @@ const CheckoutActions = ({
         {d.checkout.back}
       </LinkButton>
       <Button
+        aria-busy={pending}
+        aria-label={pending ? pendingLabel : actionLabel}
         block
         disabled={disabled || pending}
         isLoading={pending}
-        loadingText={checkout.progress === "place" ? d.checkout.sending : d.checkout.checking}
         onClick={() => {
           restoreFocus.current = submit.current?.form?.contains(document.activeElement) ?? false;
         }}
@@ -280,7 +284,14 @@ const CheckoutActions = ({
         type="submit"
         variant="primary"
       >
-        {checkout.quote?.outcome === "VALID" ? d.checkout.confirm : d.checkout.verify}
+        {pending && <span className="sr-only xl:not-sr-only">{pendingLabel}</span>}
+        {!pending && confirming && d.checkout.confirm}
+        {!pending && !confirming && (
+          <>
+            <span className="xl:hidden">{d.checkout.verifyShort}</span>
+            <span className="hidden xl:inline">{d.checkout.verify}</span>
+          </>
+        )}
       </Button>
     </div>
   );

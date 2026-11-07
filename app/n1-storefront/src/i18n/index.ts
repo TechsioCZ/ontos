@@ -182,6 +182,7 @@ const cs = {
     uncertain:
       "Výsledek objednávky zatím není potvrzený. Neodesílejte ji znovu; ověřte výsledek nebo nás kontaktujte.",
     verify: "Ověřit objednávku",
+    verifyShort: "Ověřit",
   },
   closeMenu: "Zavřít nabídku kategorií",
   commerceUnavailable: "Nákup zatím není dostupný.",
@@ -580,6 +581,7 @@ const en: typeof cs = {
     uncertain:
       "Your order result is not confirmed yet. Do not submit it again; check the result or contact us.",
     verify: "Check order",
+    verifyShort: "Check",
   },
   closeMenu: "Close category menu",
   commerceUnavailable: "Purchasing is not available yet.",

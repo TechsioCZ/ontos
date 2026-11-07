@@ -89,13 +89,50 @@ const rejected = () =>
     totalVatMinor: null,
   });
 
-const render = (checkout: ReturnType<typeof useCheckout>) => {
+const render = (checkout: ReturnType<typeof useCheckout>, locale = "cs") => {
   rs.mocked(useCheckout).mockReturnValue(checkout);
-  return renderToStaticMarkup(<CheckoutView dictionary={d} locale="cs" options={options} />);
+  return renderToStaticMarkup(
+    <CheckoutView dictionary={getDictionary(locale)} locale={locale} options={options} />,
+  );
 };
 
 beforeEach(() => {
   rs.clearAllMocks();
+});
+
+describe("checkout action accessibility", () => {
+  it.effect(
+    "keeps one busy submit with the localized operation name while verifying or placing",
+    () =>
+      Effect.sync(() => {
+        for (const locale of ["cs", "en"]) {
+          const dictionary = getDictionary(locale);
+          for (const progress of ["quote", "place"] as const) {
+            const html = render({ ...populatedState(), progress }, locale);
+            const button = /<button(?=[^>]*type="submit")[^>]*>[\s\S]*?<\/button>/u.exec(html)?.[0];
+            const label =
+              progress === "place" ? dictionary.checkout.sending : dictionary.checkout.checking;
+            expect(html.split('type="submit"')).toHaveLength(2);
+            expect(button).toContain('aria-busy="true"');
+            expect(button).toContain(`aria-label="${label}"`);
+            expect(button).toContain('disabled=""');
+            expect(button).toContain(label);
+          }
+        }
+      }),
+  );
+
+  it.effect("keeps the full verification purpose as the accessible name when idle", () =>
+    Effect.sync(() => {
+      for (const locale of ["cs", "en"]) {
+        const html = render(populatedState(), locale);
+        const button = /<button(?=[^>]*type="submit")[^>]*>[\s\S]*?<\/button>/u.exec(html)?.[0];
+        expect(button).toContain(`aria-label="${getDictionary(locale).checkout.verify}"`);
+        expect(button).not.toContain('aria-busy="true"');
+        expect(button).not.toContain('disabled=""');
+      }
+    }),
+  );
 });
 
 describe("checkout cart state and navigation", () => {

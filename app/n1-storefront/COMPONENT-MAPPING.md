@@ -655,8 +655,8 @@ guard changes are introduced. Persistent recovery instructions stay on screen.
 
 An isolated SSR render of the actual CheckoutView was inspected at320/390/1440,
 including English recovery. No Stage rejection/order was manufactured for the
-screenshots. The existing320px pending Button still overflows its long loading
-label; this separate composition issue is recorded and excluded from this
+screenshots. The320px action-label overflow found during that pass is addressed
+by the responsive action composition below; it was excluded from the earlier
 notice-only visual approval.
 
 Price semantics remain owner unit amounts. Although fixture319:1787 displays
@@ -665,3 +665,27 @@ historical N1 CartItemRow also renders the unit amount. Its sample arithmetic
 does not justify changing checkout to derived line totals. Recovered native
 orders deliberately expose no lineTotalMinor; unit price times quantity is not
 used as a substitute for an owner total.
+
+### Responsive checkout action labels — 319:1803 / 319:2032
+
+Fresh desktop/mobile Code Connect preserves Button md/primary/solid, the
+two-column action row and its8px gap. The existing native Button loading branch
+accepts ReactNode children when loadingText is omitted, so the pending label is
+an accessible child span: sr-only below the canonical xl breakpoint, visible
+from xl. The kit still renders and animates its own spinner. No custom spinner,
+appearance CSS, viewport JavaScript, kit/token change or duplicate submit is
+introduced. The button exposes aria-busy and the full localized operation name.
+
+The initial verification action also clipped vertically at320px. Below xl its
+visible label is the localized Ověřit/Check, while aria-label retains the full
+verification purpose. Wide layouts keep the full label. The previously approved
+Objednat/Order confirmation label is unchanged. The same Button, ref, click
+handler, disabled logic and form submission remain in place.
+
+Actual-component SSR browser checks cover56 CS/EN combinations: idle,
+verified, quoting and placing at320/390/768/1024/1279/1280/1440px. Geometry,
+effective visibility, busy/name/disabled semantics and eight320px AX snapshots
+passed; the real local checkout idle action was also inspected. Native spinner
+frames vary through its ring-resize animation, and its own margin remains.
+This verifies layout and accessible names, not an unsolicited screen-reader
+announcement or a new Stage order end-to-end test.
