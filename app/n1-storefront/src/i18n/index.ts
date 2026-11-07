@@ -229,7 +229,7 @@ const cs = {
   from: "od",
   fulfillment: {
     noPayment: "Platební možnosti nyní nejsou dostupné. Kontaktujte nás prosím.",
-    noShipping: "Pro tento trh nyní nejsou dostupné žádné způsoby dopravy.",
+    noShipping: "Žádné způsoby dopravy nejsou momentálně k dispozici. Zkuste to prosím později.",
     paymentDetailsUnavailable:
       "Podrobnosti o konkrétních způsobech platby zatím nejsou dostupné. Kontaktujte nás prosím.",
     shippingDescriptions: {
@@ -620,7 +620,7 @@ const en: typeof cs = {
   from: "from",
   fulfillment: {
     noPayment: "Payment options are currently unavailable. Please contact us.",
-    noShipping: "No shipping methods are currently available for this market.",
+    noShipping: "No shipping methods are currently available. Please try again later.",
     paymentDetailsUnavailable:
       "Details of specific payment methods are not available yet. Please contact us.",
     shippingDescriptions: {

@@ -603,3 +603,20 @@ delivery is not evidence that an email was sent.
 An isolated test-only SSR render of the actual CheckoutView with shipped CSS
 was inspected at320/390/1440. It uses explicit visual fixture data outside
 the application; no order, backend call or runtime mock was introduced.
+
+### Unavailable shipping — 57:3088 / 322:1665
+
+An owner-ready response with no shipping methods renders the connected native
+StatusText md/error with its supported showIcon prop, using the exact Figma
+Czech copy and its English translation. It replaces the empty required
+RadioCard group; available methods still use the existing native choices.
+The shared no-shipping text also remains suitable for the shipping information
+page. Parent action disabling and the submit guard still require a real method.
+The fixture's cash-on-delivery payment is not evidence of an available provider;
+the actual payment state is preserved. No ad-hoc component styles or backend changes.
+
+The installed kit exports line-height-status-text-md but does not pair it
+with its text utility. The app's @theme initialization bridges the supported
+Tailwind typography companion to that existing role, yielding the Figma16/30
+without per-instance classes or a new theme value. This applies to all N1
+StatusText md messages; sm messages retain their existing typography.

@@ -2,7 +2,8 @@ import { describe, expect, it } from "effect-rstest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Schema } from "effect";
-import { CheckoutItems } from "../src/features/checkout-panels";
+import { CheckoutItems, CheckoutShipping } from "../src/features/checkout-panels";
+import type { CheckoutOptions } from "../src/ontos/checkout-server";
 import { getDictionary } from "../src/i18n";
 import { CheckoutResultSchema } from "../src/ontos/checkout";
 import type { CheckoutResult } from "../src/ontos/checkout";
@@ -55,6 +56,57 @@ const render = (receipt: CheckoutResult, entries: readonly CartEntry[] = []) =>
       result: receipt,
     }),
   );
+
+describe("owner shipping availability", () => {
+  const options = {
+    countryCodes: ["CZ"],
+    paymentAvailable: false,
+    scope: result.scope,
+    shippingMethods: [],
+    state: "ready",
+  } satisfies CheckoutOptions;
+
+  for (const locale of ["cs", "en"] as const) {
+    it(`announces unavailable shipping without an empty required radio group (${locale})`, () => {
+      const d = getDictionary(locale);
+      const html = renderToStaticMarkup(
+        createElement(CheckoutShipping, {
+          dictionary: d,
+          disabled: false,
+          locale,
+          onChange: () => {},
+          options,
+          value: null,
+        }),
+      );
+      expect(html).toContain('role="alert"');
+      expect(html).toContain(d.fulfillment.noShipping);
+      expect(html).not.toContain('role="radiogroup"');
+      expect(html).not.toContain('type="radio"');
+    });
+  }
+
+  it("keeps the owner's real shipping choice available without an error alert", () => {
+    const html = renderToStaticMarkup(
+      createElement(CheckoutShipping, {
+        dictionary: getDictionary("cs"),
+        disabled: false,
+        locale: "cs",
+        onChange: () => {},
+        options: {
+          ...options,
+          shippingMethods: [{ id: "PPL", priceMinor: 12_900, title: "PPL" }],
+        },
+        value: "PPL",
+      }),
+    );
+    expect(html).toContain('role="radiogroup"');
+    expect(html).toContain('type="radio"');
+    expect(html).toContain('value="PPL"');
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain(getDictionary("cs").fulfillment.noShipping);
+  });
+});
 
 describe("recovered checkout item presentation", () => {
   it("renders the exact current product thumbnail and encoded variant link with saved commercial data", () => {
