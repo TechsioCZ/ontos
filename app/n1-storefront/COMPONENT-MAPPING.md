@@ -422,6 +422,26 @@ potvrzení o odeslání e-mailu se nepředstírají. Souhrn zobrazuje owner celk
 až druhé potvrzuje objednávku. Obnova používá stabilní nonce a veřejný read.
 Guest potvrzení neodkazuje na neimplementované zákaznické objednávky.
 
+### Checkout field errors after blur
+
+Fresh Figma `323:1813`, field compositions `324:1700`, `324:1714` and
+`324:1708`: keep the connected FormInput md and a sibling StatusText sm/error
+with its supported icon. A plain layout wrapper supplies the source 4px gap;
+no appearance classes or styles are passed to either kit component. The
+stable error id is linked through FormInput aria-describedby, and its native
+validateStatus supplies aria-invalid. Editing clears both the message and
+association; blur and native invalid events recompute them.
+
+Required/blank first name and invalid email use the exact Czech design copy
+and an English translation. Email also requires the dotted domain already
+required by the public checkout schema. Other errors retain the generic
+validation message. Figma's postal example `123` conflicts with the native
+address contract (trimmed length 3–12); this slice preserves that contract
+for every market country rather than adding a Czech-only admission rule or
+misleading format message. The postal fixture is an unresolved design/contract
+difference, not a fully reproduced state. No schema, country, shipping or order
+write behavior changes.
+
 ## C8 — zákaznický účet
 
 Profil54:1417/54:1629: max1024,p16,gap16; desktop navigace vlevo,

@@ -142,6 +142,10 @@ const cs = {
     country: "Země",
     countryPlaceholder: "Vyberte zemi",
     email: "E-mail",
+    errors: {
+      email: "Zadejte platnou e-mailovou adresu",
+      firstName: "Jméno je povinné",
+    },
     firstName: "Jméno",
     forbidden: "Objednávku nyní nelze odeslat. Kontaktujte nás prosím.",
     guest: "Objednáváte bez přihlášení; adresa se neukládá do zákaznického účtu.",
@@ -536,6 +540,10 @@ const en: typeof cs = {
     country: "Country",
     countryPlaceholder: "Choose a country",
     email: "Email",
+    errors: {
+      email: "Enter a valid email address",
+      firstName: "First name is required",
+    },
     firstName: "First name",
     forbidden: "Your order cannot be submitted at the moment. Please contact us.",
     guest: "You are ordering as a guest; this address will not be saved to a customer account.",

@@ -1,31 +1,18 @@
 "use client";
 
 import { useId, useState } from "react";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { Select } from "@techsio/ui-kit/molecules/select";
 import type { Dictionary } from "@/i18n";
+import { checkoutFieldAttributes, checkoutFieldError } from "./checkout-field-validation";
+
+type Field = keyof typeof checkoutFieldAttributes;
 
 const countryNames = {
   cs: new Intl.DisplayNames(["cs"], { type: "region" }),
   en: new Intl.DisplayNames(["en"], { type: "region" }),
 };
-const attributes = {
-  city: { autoComplete: "address-level2", maxLength: 120, required: true, type: "text" },
-  email: { autoComplete: "email", maxLength: 200, required: true, type: "email" },
-  firstName: { autoComplete: "given-name", maxLength: 100, required: true, type: "text" },
-  lastName: { autoComplete: "family-name", maxLength: 99, required: true, type: "text" },
-  phone: { autoComplete: "tel", maxLength: 40, required: false, type: "tel" },
-  postalCode: {
-    autoComplete: "postal-code",
-    maxLength: 12,
-    minLength: 3,
-    required: true,
-    type: "text",
-  },
-  street: { autoComplete: "street-address", maxLength: 200, required: true, type: "text" },
-} as const;
-type Field = keyof typeof attributes;
-
 /** Guest fields supported by the native order; three optional Figma fields are deliberately omitted. */
 export const CheckoutFields = ({
   countryCodes,
@@ -41,35 +28,49 @@ export const CheckoutFields = ({
   onEdit: () => void;
 }) => {
   const id = useId();
-  const [errors, setErrors] = useState<Partial<Record<Field, boolean>>>({});
+  const [errors, setErrors] = useState<Partial<Record<Field, string | null>>>({});
   const countries = countryCodes.map((value) => ({
     label: countryNames[locale === "en" ? "en" : "cs"].of(value) ?? value,
     value,
   }));
-  const input = (field: Field) => (
-    <FormInput
-      {...attributes[field]}
-      disabled={disabled}
-      helpText={errors[field] === true ? d.checkout.invalidField : undefined}
-      id={`${id}-${field}`}
-      label={d.checkout[field]}
-      name={field}
-      onBlur={(event) => {
-        const invalid = !event.currentTarget.validity.valid;
-        setErrors((previous) => ({ ...previous, [field]: invalid }));
-      }}
-      onChange={() => {
-        setErrors((previous) => ({ ...previous, [field]: false }));
-        onEdit();
-      }}
-      onInvalid={() => {
-        setErrors((previous) => ({ ...previous, [field]: true }));
-      }}
-      pattern={field === "phone" || field === "email" ? undefined : String.raw`.*\S.*`}
-      size="md"
-      validateStatus={errors[field] === true ? "error" : "default"}
-    />
-  );
+  const input = (field: Field) => {
+    const error = errors[field] ?? undefined;
+    const errorId = `${id}-${field}-error`;
+    // The dotted-domain constraint matches the existing public checkout contact schema.
+    const pattern = field === "email" ? String.raw`[^\s@]+@[^\s@]+\.[^\s@]+` : String.raw`.*\S.*`;
+    return (
+      <div className="flex min-w-0 flex-col gap-1">
+        <FormInput
+          {...checkoutFieldAttributes[field]}
+          aria-describedby={error === undefined ? undefined : errorId}
+          disabled={disabled}
+          id={`${id}-${field}`}
+          label={d.checkout[field]}
+          name={field}
+          onBlur={(event) => {
+            const message = checkoutFieldError(field, event.currentTarget.validity, d);
+            setErrors((previous) => ({ ...previous, [field]: message }));
+          }}
+          onChange={() => {
+            setErrors((previous) => ({ ...previous, [field]: null }));
+            onEdit();
+          }}
+          onInvalid={(event) => {
+            const message = checkoutFieldError(field, event.currentTarget.validity, d);
+            setErrors((previous) => ({ ...previous, [field]: message }));
+          }}
+          pattern={field === "phone" ? undefined : pattern}
+          size="md"
+          validateStatus={error === undefined ? "default" : "error"}
+        />
+        {error === undefined ? null : (
+          <StatusText id={errorId} showIcon size="sm" status="error">
+            {error}
+          </StatusText>
+        )}
+      </div>
+    );
+  };
   return (
     <section className="flex min-w-0 flex-col gap-4 rounded-xs border border-border-secondary bg-fill-surface p-4">
       <h2 className="text-lg font-semibold">{d.checkout.address}</h2>
