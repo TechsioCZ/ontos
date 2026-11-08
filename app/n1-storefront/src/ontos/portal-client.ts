@@ -2,7 +2,13 @@ import { Effect, ManagedRuntime, Match } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 import { PortalApi } from "./portal";
-import type { PortalLogin, PortalOutcome, PortalRegistration } from "./portal";
+import type {
+  PortalLogin,
+  PortalMfaResult,
+  PortalMfaVerify,
+  PortalOutcome,
+  PortalRegistration,
+} from "./portal";
 
 export const portalRuntime = ManagedRuntime.make(FetchHttpClient.layer);
 const client = HttpApiClient.make(PortalApi);
@@ -39,3 +45,50 @@ export const logoutPortal = () =>
   outcome(client.pipe(Effect.flatMap((api) => api.portal.logout({ payload: {} }))));
 export const resumePortalEnrollment = () =>
   outcome(client.pipe(Effect.flatMap((api) => api.portal.resume({ payload: {} }))));
+
+const callVerifyMfa = (input: PortalMfaVerify) =>
+  client.pipe(Effect.flatMap((api) => api.portal.verifyMfa({ payload: input })));
+type MfaChannelFailure = Effect.Error<ReturnType<typeof callVerifyMfa>>;
+const mfaOutcome = <R>(program: Effect.Effect<PortalMfaResult, MfaChannelFailure, R>) =>
+  program.pipe(
+    Effect.match({
+      onFailure: (error): PortalMfaResult =>
+        Match.value(error).pipe(
+          Match.tags({
+            PortalInvalidProblem: () => ({
+              reason: "invalid" as const,
+              state: "mfa-error" as const,
+            }),
+            PortalMfaAuthenticationProblem: (problem) => ({
+              reason: problem.reason,
+              state: "mfa-error" as const,
+            }),
+            PortalMfaInvalidProblem: (problem) => ({
+              reason: problem.reason,
+              state: "mfa-error" as const,
+            }),
+            PortalMfaRateLimitedProblem: (problem) => ({
+              reason: problem.reason,
+              state: "mfa-error" as const,
+            }),
+            PortalMfaRefusedProblem: (problem) => ({
+              reason: problem.reason,
+              state: "mfa-error" as const,
+            }),
+            PortalMfaUnavailableProblem: (problem) => ({
+              reason: problem.reason,
+              state: "mfa-error" as const,
+            }),
+            PortalRefusedProblem: () => ({
+              reason: "refused" as const,
+              state: "mfa-error" as const,
+            }),
+          }),
+          Match.orElse(() => ({ reason: "unconfirmed" as const, state: "mfa-error" as const })),
+        ),
+      onSuccess: (result) => result,
+    }),
+  );
+export const verifyPortalMfa = (input: PortalMfaVerify) => mfaOutcome(callVerifyMfa(input));
+export const requestPortalMfaOtp = () =>
+  mfaOutcome(client.pipe(Effect.flatMap((api) => api.portal.requestMfaOtp({ payload: {} }))));

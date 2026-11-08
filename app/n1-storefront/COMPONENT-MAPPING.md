@@ -77,6 +77,21 @@ proto rozbalený selector nemá produkční vizuální GO. Ostatní country inst
 by měly zachovat výchozí positioning. Funkční a testovací hranice jsou ve
 VALIDATION.md; izolovaný harness není runtime náhrada účtu nebo backendu.
 
+MFA completion rozšiřuje stávající AuthContent. Fresh metadata celé Figma
+stránky42:635/50:635/56:635 neukazují samostatný MFA rámec; login333:4672
+byl znovu načtený jako kompoziční reference FormInput md, Button sm a Link.
+Nejde o tvrzení pixelové shody s existující MFA předlohou. Nabízené metody
+jsou nativní Button ve fieldset/legend, kód FormInput s one-time-code autocomplete
+a skutečnými nativními mezemi1–32/isTrimmed. Nevyžaduje se šest číslic.
+Kód se neukládá do React ani trvalého stavu a po odeslání se vyprázdní.
+
+Potvrzené odeslání OTP používá jediný globální Toaster. Změna zobrazeného auth stavu,
+mount nebo safe GET samy toast nevytvářejí. Odmítnutý/neplatný kód má právě
+jeden FormInput error text; vypršení, throttle a ostatní trvalé stavy zůstávají
+oddělené. Throttle bez nativního času nedostává odpočet. Pending zakazuje
+současné akce a označuje formulář aria-busy. Žádná nová komponentová definice,
+CSS, appearance class na kitu, paleta nebo obecné nastavení knihovny nevzniklo.
+
 Mobilní navigace59:1595/418:2491: existující Dialog left/xs s Accordion
 md/borderless a VerticalNavigation.Link pro skutečné větve ownera. Drawer se
 kotví podle skutečného spodního okraje Headeru přes veřejný ref; počáteční
@@ -706,3 +721,22 @@ passed; the real local checkout idle action was also inspected. Native spinner
 frames vary through its ring-resize animation, and its own margin remains.
 This verifies layout and accessible names, not an unsolicited screen-reader
 announcement or a new Stage order end-to-end test.
+
+### Právní články — 370:2679/2870/3084/3264
+
+Existující LegalView převádí dodaný český redakční dokument, ne runtime CMS
+nebo přepočítanou policy. Figma výslovně používá p40 i na mobilu, Privacy
+navíc pt48. Vnitřní šířky1120/310, mezery24/16/8, nadpisy a96×4 underline
+jsou v současné kompozici přítomné. Obsah ponechává lang=cs pod EN chrome.
+Nové actual desktop/mobile PNG potvrzují strukturu bez přetékání. Zalamování
+system-ui vs Inter způsobuje známou24px odchylku výšky vybraných sestav;
+padding se kvůli tomu nemění. Nejde o nové vzhledové přepisy ani pixelové GO.
+
+### Kategorie — mobilní Pagination 38:2409 / desktop 214:4488
+
+Existující CatalogPagination nadále skládá skutečné kit Pagination a NextLink.
+Mobilní Figma parent 38:2138 řadí stránkování vlevo, desktop vpravo.
+CategoryView proto volí `mobileAlignment="start"`; samostatné vyhledávání
+ponechává výchozí end. Mění se jen responzivní flex zarovnání app wrapperu,
+nikoli vzhled nebo interakční kontrakt knihovní komponenty. Skutečné count,
+stránka a query zůstávají datové; návrhových 182 stránek se nekopíruje.

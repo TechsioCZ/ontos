@@ -1498,3 +1498,110 @@ a oba simulované PNG. Sdílený patch ani lockfile zatím nejsou změněné;
 produkční vizuální GO pro tento selector se proto **neuděluje**. Živý pozitivní
 Portal průchod, zákaznické adresy na Stage a přihlášená objednávka zůstávají
 neověřené. Nebyl odeslán registrační, e-mailový ani objednávkový zápis.
+
+## 8. 11. 2026 — dokončení probíhajícího MFA přihlášení
+
+N1 nově používá existující veřejnou skupinu `portalAuthMfa` pro explicitní
+odeslání OTP a ověření OTP/TOTP. Scope je pouze dokončení challenge vrácené
+současným loginem. Backend, provider, granty, role ani klíče se nemění.
+Native verify acknowledgement nestačí: nový owner klient musí s rotovanými
+cookies načíst čerstvou zákaznickou admission. Anonymní, cizí tenant nebo
+nevalidní admission není úspěšné přihlášení. Odpovědi zachovávají i mazání
+cookies při odmítnutí. Odeslání OTP se potvrdí pouze při skutečném true;
+false vede na nejasný výsledek. Origin a uzavřené payloady zůstávají chráněné.
+
+Prvních šest testů nejprve reprodukovalo neexistující endpointy 404. Finální
+cílený celek prošel 77 testy v 5 souborech; celá N1 sada prošla **770 testy
+v 74 souborech**, bez skip/todo. N1 lint, finální typová kontrola, diff-check
+a produkční Next build včetně obou nových API rout prošly. Globální
+`i18n:boundaries` má nadále 28 nálezů `strict-effect-api-boundaries`, všechny
+mimo N1; žádná diagnostika nebyla potlačená. Globální repository PASS se netvrdí.
+
+Regrese zahrnují chybný/cizí payload, Origin bez owner dispatch, nativní
+chybové kódy, false OTP ack, rotované i expirované cookies, neplatné/cizí/
+anonymní admission a ochranu proti opožděnému přijetí nebo toastu. Kód je
+neprázdný řetězec bez okrajových mezer do 32 znaků podle veřejného kontraktu,
+nikoli nucených šest číslic. Vstup se nemění trimem, nepřesouvá do URL, logů
+ani storage a po odeslání se maže. Nejasné ověření se automaticky neopakuje;
+safe GET může potvrdit aktuální session, neobnovuje domnělou ztracenou challenge.
+
+Fresh Figma metadata formulářů, účtu a stavů neobsahují MFA rámec; načtená
+login reference `333:4672` určuje použití stávajících komponent, nikoli nový
+MFA pixelový cíl. Root i nezávislý reviewer otevřeli skutečné PNG finálního
+desktopu 1440, mobilní chyby 390 a EN throttle 320. Native formulář má 448 px
+na desktopu, obě úzké sestavy nepřetékají. Chyba kódu se po nalezené browserové
+regresi zobrazuje pouze jednou u pole s aria-invalid/describedby.
+
+Izolovaný loopback harness používá skutečný AuthView, session controller
+a veřejný HTTP klient. Pouze framework adaptéry a odpovědi HTTP jsou testovací;
+nevolá Stage ani neposílá e-maily. V prohlížeči prošla explicitní volba metody,
+zadání nenumerického platného test kódu, přijetí výsledku, vypršení → prázdné
+credentials, a pending → zakázané akce/aria-busy/prázdný kód. Unconfirmed stav
+odstraní opakovaný submit; po jediném verify POST následoval safe GET recovery.
+Volba OTP nic sama neposlala. Read-only DOM pozorování zachytilo skutečný
+native toast až po explicitním request POST; na 390 px měl 360 px a x6. Nový
+toastový PNG není dokladem tohoto průchodu, krátké oznámení při snímání již
+zmizelo. Konzole kontrolovaných stavů byla bez chyb a varování.
+
+Source i vymezené layout review mají GO. Skutečný zákaznický MFA účet,
+doručení OTP a živý pozitivní Portal průchod zůstávají neověřené. Nastavení/
+vypnutí MFA, backup kódy a trust-device nejsou součástí této implementace.
+
+## 8. 11. 2026 — aktuální inventář a ověření právních článků
+
+Fresh metadata všech pěti Figma stránek obsahují 87 top-level rámců
+(3/6/10/26/42). Nová úvodní tabulka FIGMA-INVENTORY rozlišuje současnou
+implementaci od původních historických stavů. Strukturní inventář není
+87 čerstvých pixelových review ani seznam 87 routes.
+
+Zdrojová kontrola nalezla staré nepřesné tvrzení README: obě právní routes
+již renderují dodanou statickou českou kopii. Jejich article lang=cs je
+výslovný i pod anglickým chrome. Nejde o CMS, nativní policy/verzi ani tvrzení
+právní správnosti. Novinky nadále zobrazují unavailable, vlastní CMS route chybí.
+
+Oba články byly skutečně otevřené na localhost3071 při 1440 a 390 px.
+Fresh Figma main370:2679/2870/3084/3264 i všechny čtyři actual PNG otevřel
+root a nezávislý reviewer. P40, Privacy extra48, vnitřní1120/310, nadpisy,
+obsahové bloky a hierarchie odpovídají. Žádný článek není oříznutý a mobil
+nepřetéká. Kompozice článků má dílčí GO; jejich zdroj se neměnil.
+
+Pixelová shoda zůstává otevřená. Terms desktop má958px stejně jako návrh,
+mobil1300 oproti1324. Privacy desktop1022 oproti1046, mobil1750 oproti1774.
+Konkrétní odstavec370:3125 má při shodných1120px šířky a16/24 typografii
+v návrhu72px, v DOM48px. Aktuální system-ui a návrhový Inter jinak zalamují
+text. Rozdíl se neobchází24px spacerem ani novou fontovou výjimkou. Hlavička,
+patička a již odložené typografické rozdíly nejsou tímto dílčím GO uzavřené.
+Konzole kontrolovaných reálných právních stránek byla bez chyb/varování.
+
+Tato navazující změna opravuje dokumentaci a inventář, nikoli runtime.
+Předcházející770testů, lint/type/build zůstávají datovanou evidencí stejného
+runtime snapshotu; kvůli dokumentaci se znovu nespouštějí jako nový důkaz.
+
+## 8. 11. 2026 — mobilní zarovnání stránkování kategorie
+
+Fresh Figma `38:2138` a `38:2409` umisťují mobilní Pagination na levý
+okraj obsahu; desktop `214:4488` je výslovně zarovnaný vpravo. Skutečná
+kategorie před úpravou měla při 390 px nav x=234 v obsahu x=16 / w=358.
+Oprava mění pouze aplikační layout wrapper přes volitelný `mobileAlignment`.
+CategoryView předává start; výchozí end zachovává původní vyhledávání.
+Knihovní Pagination, její props, velikost, count a tvorba URL se nemění.
+
+Actual localhost po opravě: kategorie na mobilu x=16, desktop při 1440 px
+stále x=1257 / pravý okraj=1397. Skutečné kliknutí na stránku 2 zachovalo
+`?page=2`, aktivní stránku 2 a mobilní levé zarovnání. Vyhledávání Spyder
+při 390 px zůstalo vpravo x=198 / pravý okraj=374 a odkazy dál obsahují
+`q=Spyder` i cílovou stránku. Obě mobilní stránky mají scrollWidth=390.
+Root a nezávislý reviewer otevřeli všechny čtyři before/after PNG kategorie
+(desktop i mobil) a aktuální Figma kontexty. Dílčí source/layout GO.
+
+Existující katalogové testy: 40/40 ve 4 souborech PASS; N1 typecheck a lint PASS.
+Neúspěšný filtr category nevybral žádný test a nebyl počítaný jako úspěch;
+první katalogový běh blokoval sandboxový listen EPERM, stejný test potom
+prošel s povoleným lokálním socketem. Nový test kopírující jednu layout
+class se nepřidával. Poslední celý runtime suite měl 770 testů; tento
+záznam netvrdí nový běh celé sady ani nový produkční build.
+
+Lokální Next konzole při scrollu hlásila LCP doporučení loading=eager pro
+konkrétní produktový obrázek. Tento warning nebyl skrytý ani označený za
+čistou konzoli; není předmětem opravy stránkování. Odložené metriky UI kitu
+se touto změnou nemění a celý katalog nedostává plošné vizuální schválení.

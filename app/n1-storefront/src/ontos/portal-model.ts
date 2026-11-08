@@ -1,5 +1,10 @@
 import { Effect, Redacted, Schema, flow } from "effect";
-import type { PortalEnrollmentPhase, PortalOutcome, PortalRegistration } from "./portal";
+import type {
+  PortalEnrollmentPhase,
+  PortalMfaResult,
+  PortalOutcome,
+  PortalRegistration,
+} from "./portal";
 import { PortalRefusalDiagnosticSchema } from "./portal";
 
 export class PortalFailure extends Schema.TaggedError<PortalFailure>()("PortalFailure", {
@@ -192,3 +197,57 @@ export const registerWithPortalOwner = <WriteError, ReadError, WriteServices, Re
       ? admitted
       : portalEnrollmentProgress(result.attempt.state);
   });
+
+/** A verified provider challenge is not customer admission; never retry its consumption. */
+export const completeMfaWithPortalOwner = <
+  WriteError,
+  ReadError,
+  WriteServices,
+  ReadServices,
+>(owner: {
+  readonly admit: Effect.Effect<PortalOutcome, ReadError, ReadServices>;
+  readonly verify: Effect.Effect<{ readonly status: true }, WriteError, WriteServices>;
+}) =>
+  Effect.gen(function* completePortalMfaProgram() {
+    yield* owner.verify;
+    const admitted = yield* owner.admit.pipe(
+      Effect.mapError(() => new PortalFailure({ reason: "unconfirmed" })),
+    );
+    return admitted.state === "admitted"
+      ? { outcome: admitted, state: "complete" as const }
+      : { reason: "unconfirmed" as const, state: "mfa-error" as const };
+  });
+
+/** MFA methods remain local to this exact in-memory challenge, never a browser authority claim. */
+export const portalMfaTransition = (
+  current: PortalOutcome,
+  expected: PortalOutcome,
+  result: PortalMfaResult,
+): PortalOutcome => {
+  if (current !== expected || current.state !== "mfa") {
+    return current;
+  }
+  if (result.state === "complete") {
+    return result.outcome;
+  }
+  if (result.state === "otp-sent") {
+    return { ...current, feedback: "otp-sent" };
+  }
+  if (result.reason === "expired") {
+    return { state: "mfa-expired" };
+  }
+  if (result.reason === "authentication-required") {
+    return { state: "mfa-authentication-required" };
+  }
+  if (result.reason === "unconfirmed" || result.reason === "refused") {
+    return { state: result.reason };
+  }
+  return { ...current, feedback: result.reason };
+};
+
+/** A safe read cannot prove a pending challenge absent; only keep its existing, non-admitted UI. */
+export const portalRefreshOutcome = (
+  current: PortalOutcome,
+  observed: PortalOutcome,
+): PortalOutcome =>
+  current.state === "mfa" && observed.state === "anonymous" ? current : observed;

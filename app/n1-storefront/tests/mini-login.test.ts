@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@rstest/core";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AuthView } from "../src/features/auth-view";
+import { AuthContent, AuthView } from "../src/features/auth-view";
 import { MiniLogin } from "../src/features/mini-login";
 import { getDictionary } from "../src/i18n";
 
@@ -81,3 +81,77 @@ describe("shared page and header login", () => {
     expect(markup).not.toContain('href="/en/prihlaseni"');
   });
 });
+
+describe("ongoing MFA presentation", () => {
+  for (const methods of [["totp"], ["otp"], ["totp", "otp"]] as const) {
+    it(`offers only the native advertised ${methods.join("/")} methods before explicit choice`, () => {
+      const html = renderToStaticMarkup(
+        createElement(AuthContent, {
+          controller: {
+            edit: () => {},
+            loaded: true,
+            outcome: { methods, state: "mfa" },
+            pending: false,
+            run: () => {},
+            submit: () => {},
+          },
+          dictionary,
+          locale: "en",
+          mode: "login",
+        }),
+      );
+      for (const method of ["totp", "otp"] as const) {
+        expect(html.includes(dictionary.auth.mfa.methods[method])).toBe(
+          methods.some((value) => value === method),
+        );
+      }
+      expect(html).not.toContain('name="password"');
+      expect(html).not.toContain('name="code"');
+      expect(html).not.toContain(dictionary.auth.mfa.otpSent);
+      expect(html).not.toContain('name="trustDevice"');
+    });
+  }
+  it("returns expired MFA to the credential form without an automatic resend", () => {
+    const html = renderToStaticMarkup(
+      createElement(AuthContent, {
+        controller: {
+          edit: () => {},
+          loaded: true,
+          outcome: { state: "mfa-expired" },
+          pending: false,
+          run: () => {},
+          submit: () => {},
+        },
+        dictionary,
+        locale: "en",
+        mode: "login",
+      }),
+    );
+    expect(html).toContain(dictionary.auth.mfa.expired);
+    expect(html).toContain('name="password"');
+    expect(html).not.toContain(dictionary.auth.mfa.sendOtp);
+  });
+});
+
+for (const locale of ["cs", "en"] as const) {
+  it(`keeps one accessible ${locale} rejection message before a method is chosen`, () => {
+    const copy = getDictionary(locale);
+    const html = renderToStaticMarkup(
+      createElement(AuthContent, {
+        controller: {
+          edit: () => {},
+          loaded: true,
+          outcome: { feedback: "rejected", methods: ["totp"], state: "mfa" },
+          pending: false,
+          run: () => {},
+          submit: () => {},
+        },
+        dictionary: copy,
+        locale,
+        mode: "login",
+      }),
+    );
+    expect(html.split(copy.auth.mfa.rejected)).toHaveLength(2);
+    expect(html).toContain('aria-live="polite"');
+  });
+}

@@ -4,6 +4,7 @@ import NextLink from "next/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
+import { useToast } from "@techsio/ui-kit/molecules/toast";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { Effect, Exit, Fiber, Struct } from "effect";
 import type { HttpClient } from "effect/http";
@@ -18,17 +19,24 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import type { Dictionary } from "@/i18n";
-import { decodePortalLogin, decodePortalRegistration } from "@/ontos/portal";
+import { decodePortalLogin, decodePortalMfaVerify, decodePortalRegistration } from "@/ontos/portal";
 import type { PortalOutcome } from "@/ontos/portal";
 import {
   loginPortal,
   logoutPortal,
   portalRuntime,
   readPortalCurrent,
+  requestPortalMfaOtp,
+  verifyPortalMfa,
   registerPortal,
   resumePortalEnrollment,
 } from "@/ontos/portal-client";
-import { canResumePortalEnrollment, portalVerificationOutcome } from "@/ontos/portal-model";
+import {
+  canResumePortalEnrollment,
+  portalMfaTransition,
+  portalRefreshOutcome,
+  portalVerificationOutcome,
+} from "@/ontos/portal-model";
 import { subscribePortalSessionRefresh } from "./portal-session-events";
 
 type AuthMode = "login" | "register";
@@ -293,7 +301,12 @@ const outcomeText = (outcome: PortalOutcome, d: Dictionary) => {
     credentials: d.auth.credentials,
     "email-verified": d.auth.emailVerified,
     invalid: d.auth.invalid,
-    mfa: d.auth.mfaRequired,
+    mfa:
+      outcome.state === "mfa" && outcome.feedback !== undefined && outcome.feedback !== "otp-sent"
+        ? d.auth.mfa[outcome.feedback]
+        : d.auth.mfaRequired,
+    "mfa-authentication-required": d.auth.mfa.authenticationRequired,
+    "mfa-expired": d.auth.mfa.expired,
     "rate-limited": d.auth.rateLimited,
     refused: d.auth.refused,
     "registration-progress":
@@ -313,16 +326,28 @@ const usePortalSession = (enabled = true) => {
   const [loaded, setLoaded] = useState(false);
   const active = useRef<Fiber.Fiber<PortalOutcome> | null>(null);
   const activeIsRefresh = useRef(false);
+  const activeIsMfa = useRef(false);
+  const currentOutcome = useRef(outcome);
+  const publishOutcome = (value: PortalOutcome) => {
+    currentOutcome.current = value;
+    setOutcome(value);
+  };
   const refreshAfterRead = useRef(false);
   const start = (
     program: Effect.Effect<PortalOutcome, never, HttpClient.HttpClient>,
     isRefresh: boolean,
+    expected?: PortalOutcome,
+    onComplete?: (value: PortalOutcome) => void,
   ) => {
-    if (active.current !== null) {
+    if (
+      active.current !== null ||
+      (expected !== undefined && currentOutcome.current !== expected)
+    ) {
       return;
     }
     setPending(true);
     activeIsRefresh.current = isRefresh;
+    activeIsMfa.current = expected?.state === "mfa";
     const fiber = portalRuntime.runFork(program);
     active.current = fiber;
     fiber.addObserver((exit) => {
@@ -330,24 +355,40 @@ const usePortalSession = (enabled = true) => {
         return;
       }
       active.current = null;
+      const wasMfa = activeIsMfa.current;
       activeIsRefresh.current = false;
-      // A focus event during an older read invalidates that read's result. Re-read serially;
-      // never publish its admitted viewer even for one frame. Explicit writes retain their outcome.
-      if (isRefresh && refreshAfterRead.current) {
+      activeIsMfa.current = false;
+      if (expected !== undefined && currentOutcome.current !== expected) {
+        setPending(false);
+        setLoaded(true);
+        return;
+      }
+      const observed: PortalOutcome = Exit.isSuccess(exit) ? exit.value : { state: "unconfirmed" };
+      // An external session change fences this response. Re-read, never replay MFA consumption;
+      // an uncertain write must not revive its former challenge when the read is anonymous.
+      if ((isRefresh || wasMfa) && refreshAfterRead.current) {
         refreshAfterRead.current = false;
+        if (wasMfa) {
+          publishOutcome(observed.state === "admitted" ? { state: "unconfirmed" } : observed);
+        }
         start(readPortalCurrent(), true);
         return;
       }
       setPending(false);
       setLoaded(true);
-      setOutcome(Exit.isSuccess(exit) ? exit.value : { state: "unconfirmed" });
+      const next = isRefresh ? portalRefreshOutcome(currentOutcome.current, observed) : observed;
+      publishOutcome(next);
+      onComplete?.(next);
     });
   };
-  const run = (program: Effect.Effect<PortalOutcome, never, HttpClient.HttpClient>) =>
-    start(program, false);
+  const run = (
+    program: Effect.Effect<PortalOutcome, never, HttpClient.HttpClient>,
+    expected?: PortalOutcome,
+    onComplete?: (value: PortalOutcome) => void,
+  ) => start(program, false, expected, onComplete);
   const restoreSession = useEffectEvent(() => {
     if (active.current !== null) {
-      if (activeIsRefresh.current) {
+      if (activeIsRefresh.current || activeIsMfa.current) {
         refreshAfterRead.current = true;
       }
       return;
@@ -364,6 +405,7 @@ const usePortalSession = (enabled = true) => {
       const fiber = active.current;
       active.current = null;
       activeIsRefresh.current = false;
+      activeIsMfa.current = false;
       refreshAfterRead.current = false;
       if (fiber !== null) {
         portalRuntime.runFork(Fiber.interrupt(fiber));
@@ -371,8 +413,14 @@ const usePortalSession = (enabled = true) => {
     };
   }, [enabled]);
   const edit = () => {
-    if (outcome.state === "credentials") {
-      setOutcome({ state: "anonymous" });
+    const { current } = currentOutcome;
+    if (current.state === "credentials") {
+      publishOutcome({ state: "anonymous" });
+    } else if (
+      current.state === "mfa" &&
+      (current.feedback === "invalid" || current.feedback === "rejected")
+    ) {
+      publishOutcome(Struct.omit(current, ["feedback"]));
     }
   };
   return { edit, loaded, outcome, pending, run };
@@ -427,6 +475,27 @@ export const usePortalAuth = ({
   return { edit, loaded, outcome, pending, run, submit };
 };
 
+const mfaCodeError = (outcome: PortalOutcome, d: Dictionary) =>
+  outcome.state === "mfa" && (outcome.feedback === "invalid" || outcome.feedback === "rejected")
+    ? d.auth.mfa[outcome.feedback]
+    : undefined;
+
+const authFeedbackText = (
+  outcome: PortalOutcome,
+  d: Dictionary,
+  mode: AuthMode,
+  codeFieldVisible: boolean,
+) => {
+  if (
+    outcome.state === "anonymous" ||
+    (mode === "login" && outcome.state === "credentials") ||
+    (codeFieldVisible && mfaCodeError(outcome, d) !== undefined)
+  ) {
+    return "";
+  }
+  return outcomeText(outcome, d);
+};
+
 /** Shared presentation for page and header; only owner admission shows a customer. */
 export const AuthContent = ({
   controller,
@@ -442,6 +511,55 @@ export const AuthContent = ({
   onNavigate?: (() => void) | undefined;
 }) => {
   const { edit, outcome, pending, run, submit } = controller;
+  const toaster = useToast();
+  const codeError = mfaCodeError(outcome, d);
+  const mfaId = useId();
+  const mfaForm = useRef<HTMLFormElement>(null);
+  const [selection, setSelection] = useState<{
+    method: "totp" | "otp";
+    methods: readonly ("totp" | "otp")[];
+  } | null>(null);
+  const selectedMethod =
+    outcome.state === "mfa" && selection?.methods === outcome.methods ? selection.method : null;
+  const feedbackText = authFeedbackText(outcome, d, mode, selectedMethod !== null);
+  const verifyMfa = (fields: FormData) => {
+    if (outcome.state !== "mfa" || selectedMethod === null) {
+      return;
+    }
+    run(
+      decodePortalMfaVerify({ code: fields.get("code"), method: selectedMethod }).pipe(
+        Effect.matchEffect({
+          onFailure: () =>
+            Effect.succeed(
+              portalMfaTransition(outcome, outcome, { reason: "invalid", state: "mfa-error" }),
+            ),
+          onSuccess: (input) =>
+            verifyPortalMfa(input).pipe(
+              Effect.map((result) => portalMfaTransition(outcome, outcome, result)),
+            ),
+        }),
+      ),
+      outcome,
+    );
+    mfaForm.current?.reset();
+  };
+  const requestOtp = () => {
+    if (outcome.state !== "mfa" || !outcome.methods.includes("otp")) {
+      return;
+    }
+    mfaForm.current?.reset();
+    run(
+      requestPortalMfaOtp().pipe(
+        Effect.map((result) => portalMfaTransition(outcome, outcome, result)),
+      ),
+      outcome,
+      (accepted) => {
+        if (accepted.state === "mfa" && accepted.feedback === "otp-sent") {
+          toaster.create({ title: d.auth.mfa.otpSent, type: "success" });
+        }
+      },
+    );
+  };
   const terminal = [
     "admitted",
     "unconfirmed",
@@ -451,12 +569,86 @@ export const AuthContent = ({
   ].includes(outcome.state);
   return (
     <>
-      {outcome.state !== "anonymous" &&
-        (mode === "register" || outcome.state !== "credentials") && (
-          <output aria-live="polite" className="mb-2 block">
-            {outcomeText(outcome, d)}
-          </output>
-        )}
+      {feedbackText !== "" && (
+        <output aria-live="polite" className="mb-2 block">
+          {feedbackText}
+        </output>
+      )}
+      {outcome.state === "mfa" && (
+        <div className="flex flex-col gap-1">
+          <fieldset className="flex flex-wrap gap-1">
+            <legend>{d.auth.mfa.methodLabel}</legend>
+            {outcome.methods.map((available) => (
+              <Button
+                aria-pressed={selectedMethod === available}
+                disabled={pending}
+                key={available}
+                onClick={() => {
+                  setSelection({ method: available, methods: outcome.methods });
+                  mfaForm.current?.reset();
+                  edit();
+                }}
+                size="sm"
+                theme="solid"
+                type="button"
+                variant="secondary"
+              >
+                {d.auth.mfa.methods[available]}
+              </Button>
+            ))}
+          </fieldset>
+          {selectedMethod !== null && (
+            <form
+              action="/api/account/mfa/verify"
+              aria-busy={pending}
+              className="flex flex-col gap-1"
+              method="post"
+              onSubmit={(event) => {
+                event.preventDefault();
+                verifyMfa(new FormData(event.currentTarget));
+              }}
+              ref={mfaForm}
+            >
+              {selectedMethod === "otp" && (
+                <Button
+                  disabled={pending}
+                  onClick={requestOtp}
+                  size="sm"
+                  theme="solid"
+                  type="button"
+                  variant="secondary"
+                >
+                  {d.auth.mfa.sendOtp}
+                </Button>
+              )}
+              <FormInput
+                autoComplete="one-time-code"
+                disabled={pending}
+                helpText={codeError}
+                id={`${mfaId}-code`}
+                label={d.auth.mfa.code}
+                maxLength={32}
+                minLength={1}
+                name="code"
+                onChange={edit}
+                required
+                type="text"
+                validateStatus={codeError === undefined ? "default" : "error"}
+              />
+              <Button
+                block
+                disabled={pending}
+                size="sm"
+                theme="solid"
+                type="submit"
+                variant="primary"
+              >
+                {d.auth.mfa.verify}
+              </Button>
+            </form>
+          )}
+        </div>
+      )}
       {outcome.state === "admitted" && (
         <div className="mb-4 space-y-2">
           <p>{outcome.name}</p>

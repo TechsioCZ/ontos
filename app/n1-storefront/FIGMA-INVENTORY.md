@@ -1,5 +1,47 @@
 # N1 — úplný inventář aktuální Figmy
 
+## Aktuální stav k 8. 11. 2026
+
+Struktura byla znovu načtená ze všech pěti Figma stránek: **87 top-level rámců**
+(3 referenční, 6 katalogových, 10 formulářových, 26 účet/obsah, 42 stavů/navigace).
+Počet rámců není počet aplikovaných routes ani počet vizuálních schválení.
+Níže uvedené původní tabulky „při zahájení“ zůstávají historickým záznamem;
+aktuální zdrojový rozsah shrnuje tato tabulka a datované záznamy ve VALIDATION.md.
+
+| Celek                        | Aktuální implementace                      | Otevřené                                                                             |
+| ---------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Homepage                     | Implementováno, obsah částečný             | Kurace katalogu a doporučeného obsahu, úplná vizuální shoda.                         |
+| Kategorie                    | Implementováno                             | Dokončit kategoriální kuraci a celkovou vizuální kontrolu.                           |
+| Produkt                      | Implementováno, schopnosti částečné        | ETA, skutečné související vztahy, redakční ořez, aktivní wishlist/watch.             |
+| Tabulka velikostí            | Pouze nedostupný stav                      | Skutečná brand data a nativní zdroj tabulky.                                         |
+| Kontakt / produktový dotaz   | Implementováno                             | Celkový živý a vizuální průchod není touto mapou znovu potvrzený.                    |
+| Přihlášení                   | Implementováno                             | Pozitivní živý Portal účet chybí; MFA nemá vlastní Figma rámec.                      |
+| Registrace                   | Implementováno; živě neověřeno             | Registrace/e-mail nejsou pozitivně ověřené, potřebná BE diagnostika.                 |
+| Checkout / potvrzení vstupů  | Implementováno                             | Živý přihlášený nákup; vynechání firmy/line2/kraje schválené.                        |
+| PPL výdejní místo            | Není napojeno v N1                         | Samostatný výběr/widget a zápis vybraného místa; carrier shipping method není totéž. |
+| Novinky                      | Pouze nedostupný obsah                     | Skutečný redakční zdroj a naplněné obrazovky.                                        |
+| CMS šablona                  | Chybí napojení / vlastní route             | Owner obsah a veřejné směrování konkrétních článků.                                  |
+| Právní dokumenty             | Statická dodaná česká kopie implementovaná | system-ui vs Figma Inter mění zalamování; nejde o CMS ani právní validaci.           |
+| Doprava / platby             | Čtení skutečných možností implementováno   | Online platební brána není doložená; nevydávat fixture za podporovanou platbu.       |
+| Uložené adresy               | Read + výslovná kopie do checkoutu         | Adresní CRUD; popup positioning v knihovně čeká konkrétní výjimku.                   |
+| Přidat/upravit/smazat adresu | Neimplementováno                           | Nativní zápis a teprve potom formuláře; žádné FE náhradní úložiště.                  |
+| Vlastní profil / účet        | Read + CAS update implementováno           | Živý ověřený zákazník; agregované statistiky nejsou náhradně dopočítané.             |
+| Vlastní objednávky           | Seznam a stavy implementované              | Živé ověření vlastnictví s reálným přihlášeným účtem.                                |
+| Detail vlastní objednávky    | Implementováno                             | Živý přihlášený zákazník a reálný vlastní detail.                                    |
+| Potvrzení objednávky         | Implementováno v checkout stavu            | Nový ověřený backend deploy a aktuální živý průchod.                                 |
+| Minikošík                    | Implementováno                             | Aktuální native quote musí být dostupné; plná vizuální shoda neuzavřená.             |
+| Navigace                     | Implementováno                             | Skutečné počty a pořadí kategorií se nepřepisují podle fixture.                      |
+| Množství / balení            | Implementováno                             | Respektovat balení a veřejné kit varianty, žádné vlastní číslicové ovladače.         |
+| Hledání / suggestions        | Implementováno                             | Značky a další filtry pouze se skutečným kontraktem; známé kit metriky přiznané.     |
+
+MFA completion (TOTP/OTP) a obnova hesla používají stávající Portal kontrakty;
+samostatné MFA obrazovky v načteném inventáři nejsou. To neznamená vizuální
+schválení ostatních auth rámců. Dílčí GO z 8. 11. patří konkrétním PDP stavům,
+desktop menu, zavřenému výběru adres, MFA kompozici a kompozici právních článků.
+Popup uložených adres má naopak doložený problém šířky UI kitu. Živý pozitivní
+zákaznický Portal průchod a plošná pixelová shoda storefrontu zůstávají otevřené.
+Právní články jsou dodaná statická česká kopie, ne chybějící route ani CMS odpověď.
+
 Načteno 2026-11-02, Figma session `a9159725-64c3-4266-80d6-c4c922c33291`.
 Zdroj: [N1 Storefront](https://www.figma.com/design/gIHtMwCCl2OXhMAW9s9LIn/N1-Storefront).
 Inventář top-level rámců není tvrzení vizuální parity. Každý návrhový fixture je pouze reference UI;

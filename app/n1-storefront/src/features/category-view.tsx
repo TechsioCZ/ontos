@@ -190,6 +190,7 @@ export const CategoryView = ({
             <CatalogPagination
               count={catalog.total}
               dictionary={d}
+              mobileAlignment="start"
               page={catalog.page}
               pageSize={catalog.pageSize}
               pathname={pathname}
