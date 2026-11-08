@@ -3611,8 +3611,8 @@ const hasPublishedActionClientOperation = (
 };
 
 interface SelectedOwnerContract {
-  readonly appId: string | undefined;
-  readonly clientModules: ReadonlySet<string> | undefined;
+  readonly appId?: string | undefined;
+  readonly clientModules?: ReadonlySet<string> | undefined;
   readonly consumer: string;
   readonly name: string;
   readonly nativeApi: boolean;
@@ -3679,6 +3679,10 @@ const ownExportContractDeclaration = (module: SourceModule, name: string): Selec
       ) {
         return ownConstContractDeclaration(module, type.exprName.left.name);
       }
+      return { expression: statement.declaration, module };
+    }
+    if (statement.declaration?.type === 'TSInterfaceDeclaration' && statement.declaration.id.name === name) {
+      return { expression: statement.declaration, module };
     }
   }
   return undefined;
@@ -3902,16 +3906,49 @@ const contractLiteralNode = (expression: SchemaNode): SchemaNode | undefined => 
     : undefined;
 };
 
-// A type-only import is erased at runtime, so it carries no value across the
-// seam: it needs the owner's public contract to be immutable, not a runtime
-// value proof. The owner module itself must still prove as a public contract.
+const hasPublicContractTypeQueries = (
+  selection: SelectedOwnerContract,
+  binding: SelectedContractDeclaration,
+): boolean => {
+  let valid = true;
+  traverseFast(binding.expression, (node) => {
+    if (node.type !== 'TSTypeQuery') {
+      return;
+    }
+    const referenced =
+      node.exprName.type === 'Identifier'
+        ? selection.state.graph.resolve(binding.module, node.exprName.name, 'local')
+        : undefined;
+    if (
+      referenced?.kind !== 'declaration' ||
+      (contractLiteralNode(referenced.expression) === undefined &&
+        !hasSelectedContractConstructor(selection, referenced))
+    ) {
+      valid = false;
+    }
+  });
+  return valid;
+};
+
+// An erased declaration may share its published module with dormant routines.
+// Resolve the actual exported type first, then retain the eager-runtime and
+// imported-origin checks without classifying those routines as schemas.
 const isErasedSelectedOwnerTypeImport = (
   selection: SelectedOwnerContract,
   statement: ImportDeclaration,
-  imported: ContractImportSpecifier,
+  imported: ImportSpecifier,
+  binding: SelectedContractDeclaration,
 ): boolean =>
-  (statement.importKind === 'type' || (imported.type === 'ImportSpecifier' && imported.importKind === 'type')) &&
-  isImmutablePublicContract(selection.state, selection.target);
+  (statement.importKind === 'type' || imported.importKind === 'type') &&
+  (binding.expression.type === 'TSTypeAliasDeclaration' || binding.expression.type === 'TSInterfaceDeclaration') &&
+  hasPublicContractTypeQueries(selection, binding) &&
+  isImmutablePublicContract(
+    selection.state,
+    nodePath.relative(selection.state.root, binding.module.path).replaceAll('\\', '/'),
+    new Set(),
+    false,
+    binding.expression,
+  );
 
 const hasNativeSelectedOwnerClientApi = (
   selection: SelectedOwnerContract,
@@ -3941,12 +3978,12 @@ const hasSelectedOwnerImport = (
     return false;
   }
   const { state } = selection;
-  if (isErasedSelectedOwnerTypeImport(selection, statement, imported)) {
-    return true;
-  }
   const binding = resolveSelectedOwnerBinding(selection, statement, imported);
   if (binding === undefined || privateImplementationPath.test(nodePath.relative(state.root, binding.module.path))) {
     return false;
+  }
+  if (isErasedSelectedOwnerTypeImport(selection, statement, imported, binding)) {
+    return true;
   }
   if (selection.clientModules?.has(nodePath.relative(state.root, binding.module.path).replaceAll('\\', '/')) === true) {
     return true;
@@ -3976,7 +4013,7 @@ const hasSelectedOwnerImport = (
   return hasSelectedContractConstructor(selection, binding);
 };
 
-const hasSelectedOwnerContract = (
+export const hasSelectedOwnerContract = (
   selection: SelectedOwnerContract,
   importedSpecifier: string,
   dependencyDeclared: boolean,

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createModuleGraph } from '@modern-js/code-tools/microvertical-api-boundary';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { isImmutablePublicContract } from '../check-module-entrypoint-boundaries.mts';
+import { hasSelectedOwnerContract, isImmutablePublicContract } from '../check-module-entrypoint-boundaries.mts';
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const records = 'verticals/merchandise/shared/apis/records.ts';
@@ -12,6 +12,7 @@ const approvals = 'packages/shared-contracts/src/ai-approvals.ts';
 const proposals = 'packages/shared-contracts/src/agent-proposals.ts';
 const offers = 'verticals/merchandise/shared/domain/market-offers.ts';
 const portal = 'verticals/commerce-customer-context/shared/portal-auth-contracts.ts';
+const opportunityEvent = 'verticals/sales-pipeline/shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 const factoryResult = 'return { change, slice };';
 const nonzeroFilter = '/[1-9]/u.test(value)';
 const secretSource = 'export const secret = () => true;';
@@ -106,7 +107,7 @@ const writeFixturePackage = Effect.fn(function* writeFixturePackage(root: string
   return { directory, metadata: decoded };
 });
 
-const withContract = (entry: string, change?: (sources: Map<string, string>) => void) =>
+const withContract = (entry: string, change?: (sources: Map<string, string>) => void, selectedImport?: string) =>
   Effect.scoped(
     Effect.gen(function* classifyNativeContract() {
       const root = yield* Effect.acquireRelease(
@@ -115,6 +116,11 @@ const withContract = (entry: string, change?: (sources: Map<string, string>) => 
       );
       const { packages, sources } = yield* nativeSources(entry);
       change?.(sources);
+      const consumer = 'verticals/finance-billing/src/selected-contract.ts';
+      const specifier = '@app/sales-pipeline/outbox/opportunity-stage-changed';
+      if (selectedImport !== undefined) {
+        sources.set(consumer, `import ${selectedImport} from '${specifier}';`);
+      }
       yield* writeFixtureSource(root, 'pnpm-workspace.yaml', 'packages:\n  - packages/*\n  - verticals/*\n');
       yield* writeFixtureSource(root, 'package.json', '{"private":true}');
       const writtenPackages = yield* Effect.forEach(
@@ -127,21 +133,32 @@ const withContract = (entry: string, change?: (sources: Map<string, string>) => 
         concurrency: 4,
         discard: true,
       });
-      return isImmutablePublicContract(
-        {
-          businessPermissionEntries: [],
-          canonicalPaths: new Map([...sources.keys()].map((file) => [file, file])),
-          completeModuleApiSeams: new Map(),
-          graph: createModuleGraph(),
-          inventoryEntries: [],
-          owners: new Map(),
-          ownershipPackages,
-          root,
-          routeEntrypoints: [],
-          sourceMap: sources,
-        },
-        entry,
-      );
+      const state = {
+        businessPermissionEntries: [],
+        canonicalPaths: new Map([...sources.keys()].map((file) => [file, file])),
+        completeModuleApiSeams: new Map(),
+        graph: createModuleGraph(),
+        inventoryEntries: [],
+        owners: new Map(),
+        ownershipPackages,
+        root,
+        routeEntrypoints: [],
+        sourceMap: sources,
+      };
+      return selectedImport === undefined
+        ? isImmutablePublicContract(state, entry)
+        : hasSelectedOwnerContract(
+            {
+              consumer,
+              name: path.basename(entry, '.ts'),
+              nativeApi: false,
+              owner: 'verticals/sales-pipeline',
+              state,
+              target: entry,
+            },
+            specifier,
+            true,
+          );
     }),
   );
 
@@ -180,6 +197,71 @@ it.live('keeps erased platform types separate from unrelated runtime exports', (
         );
       }),
     ).toBe(true);
+  }),
+);
+
+it.live('accepts the native opportunity schemas independently of their key routine', () =>
+  Effect.gen(function* nativeOpportunitySchemas() {
+    expect(
+      yield* withContract(opportunityEvent, (sources) => {
+        const source = requiredSource(sources, opportunityEvent);
+        const start = source.indexOf('/** Idempotency key =');
+        const end = source.indexOf('export const outboxTopic', start);
+        expect(start).toBeGreaterThanOrEqual(0);
+        expect(end).toBeGreaterThan(start);
+        sources.set(opportunityEvent, `${source.slice(0, start)}${source.slice(end)}`);
+      }),
+    ).toBe(true);
+  }),
+);
+
+for (const selectedImport of [
+  'type { OpportunityStageChangedLine, OutboxPayload }',
+  '{ OutboxPayloadSchema }',
+  '{ outboxProducerModuleKey, outboxTopic }',
+  '{ opportunityStageChangedIdempotencyKey }',
+]) {
+  it.live(`accepts the actual opportunity event selected import ${selectedImport}`, () =>
+    Effect.gen(function* actualOpportunityEventContract() {
+      expect(yield* withContract(opportunityEvent, undefined, selectedImport)).toBe(true);
+    }),
+  );
+}
+
+for (const [name, before, after] of [
+  ['eager effect', '', '\nfetch("/leak");\n'],
+  ['eager mutation', '', '\nOutboxPayloadSchema.authority = true;\n'],
+  ['forged schema provider', "from 'effect'", "from 'forged-effect'"],
+  ['private type origin', '', '\nimport type { secret } from "../src/handlers/secret.ts";\n'],
+] as const) {
+  it.live(`rejects selected opportunity types with ${name}`, () =>
+    Effect.gen(function* contaminatedOpportunityType() {
+      expect(
+        yield* withContract(
+          opportunityEvent,
+          (sources) => {
+            const source = requiredSource(sources, opportunityEvent);
+            sources.set(opportunityEvent, before === '' ? `${source}${after}` : source.replace(before, after));
+            sources.set('verticals/sales-pipeline/shared/src/handlers/secret.ts', secretSource);
+          },
+          'type { OutboxPayload }',
+        ),
+      ).toBe(false);
+    }),
+  );
+}
+
+for (const selectedImport of ['type { MissingPayload }', '{ OutboxPayload }']) {
+  it.live(`rejects unresolved or runtime use of erased types ${selectedImport}`, () =>
+    Effect.gen(function* invalidOpportunityTypeSelection() {
+      expect(yield* withContract(opportunityEvent, undefined, selectedImport)).toBe(false);
+    }),
+  );
+}
+
+it.live('does not classify ordinary contract routines as a schema-only whole module', () =>
+  Effect.gen(function* mixedOpportunityContract() {
+    expect(yield* withContract(opportunityEvent)).toBe(false);
   }),
 );
 
