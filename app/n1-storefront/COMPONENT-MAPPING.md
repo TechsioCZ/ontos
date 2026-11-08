@@ -60,6 +60,23 @@ neodkazuje na skrytý success/pending output. Figma auth chyby a pokyny k e-mail
 recovery terminal instrukce a potvrzení objednávky se nemění na mizící toast.
 Adresy jsou aktuálně read-only; nepředstírá se toast pro neexistující save akci.
 
+Checkout44:1226/44:1687 zachovává nativní FormInput md a Code Connect Select lg.
+Výslovný výběr uložené adresy je navazující kompozice tohoto Selectu podle
+historického N1 billing-address-section/address-picker, které uživatel určil
+jako UX referenci pro chybějící Figma stavy. Objeví se jen při skutečných
+uložených položkách přijatého účtu a nic nevybírá automaticky. Zkopíruje pouze
+čtyři podporovaná poštovní pole; kontakty nezmění a kopie zůstává editovatelná.
+Nevhodné položky zachová nevolitelné s úplným lokalizovaným důvodem.
+Guest poznámka pouze odkazuje na přihlášení pro použití adres; neslibuje zápis.
+
+Dlouhý seznam má doloženou veřejnou API mezeru instalovaného Selectu:
+deklarované positioning se v runtime nepředává Zag. Návrh opravy má jen dvě
+předání této hodnoty a N1 by pak použilo sameWidth; nevyžaduje nový token,
+zkracování adres ani appearance CSS. Sdílený patch není zatím aplikovaný,
+proto rozbalený selector nemá produkční vizuální GO. Ostatní country instance
+by měly zachovat výchozí positioning. Funkční a testovací hranice jsou ve
+VALIDATION.md; izolovaný harness není runtime náhrada účtu nebo backendu.
+
 Mobilní navigace59:1595/418:2491: existující Dialog left/xs s Accordion
 md/borderless a VerticalNavigation.Link pro skutečné větve ownera. Drawer se
 kotví podle skutečného spodního okraje Headeru přes veřejný ref; počáteční
