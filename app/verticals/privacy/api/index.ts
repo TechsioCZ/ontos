@@ -4,7 +4,7 @@ import {
   OwnerActionApprovalSchemaErrorLive,
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
-import { privacyRegistration } from '../vertical.registration.ts';
+import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';
 import { PrivacySubjectPartyOwnerUnavailableLive } from '../src/persistence/privacy-subject-party-owner.ts';
 import { GatewayAssertionRedemptionDatabaseLive } from '../src/auth/gateway-assertion-redemption-runtime.ts';
 import {

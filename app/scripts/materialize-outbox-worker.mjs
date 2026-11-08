@@ -307,7 +307,7 @@ const resolveOwnerReleaseIdentity = ({ declared, keptRevision, ownerId, sourceRe
  * }} context Plugin dependencies.
  * @returns {import('esbuild').Plugin} Production dependency externalization plugin.
  */
-const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => ({
+export const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => ({
   name: 'worker-production-dependencies',
   setup(builder) {
     builder.onResolve({ filter: esbuildFilter(/^@effect\/platform-node$/u) }, () => ({

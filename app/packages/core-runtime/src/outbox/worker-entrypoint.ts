@@ -1,8 +1,16 @@
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
+export { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
+export { databaseRuntime } from '#database-runtime';
 export { defineAction, defineActionOwnerPermissions, defineActionResourcePermission } from '../actions/definition.ts';
-export { ActionPermissionCheckError } from '../actions/errors.ts';
-export { commitActionThenReject } from '../actions/context.ts';
+export { ActionPermissionCheckError, ActionResultValidationError } from '../actions/errors.ts';
+export { commitActionThenReject, TrustedPrincipalContextSchema } from '../actions/context.ts';
+export { ActionRuntime } from '../actions/runtime.ts';
 export { defineMicroverticalPolicy, denyPolicy } from '../actions/policy.ts';
+export { decodeAccessDeclarationOrThrow } from '../authorization/access-declaration.ts';
+export {
+  assertCurrentExternalIdentityBinding,
+  CurrentExternalIdentityBindingSchema,
+} from '../auth/external-identity/repository.ts';
 export {
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
@@ -34,6 +42,7 @@ export {
 } from '../modules/active-application-composition.ts';
 export { ApplicationCompositionSchema } from '../modules/application-composition.ts';
 export { defineOntosModuleManifest, OntosModuleIdSchema } from '../modules/manifest.ts';
+export { defineOntosMcpContribution } from '../modules/mcp-contribution.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 export { defineScopedRoutine } from '../db/scoped-routine.ts';
 export { findPostgresFailure, isPostgresUniqueViolation } from '../database/postgres-failure.ts';
@@ -51,6 +60,7 @@ export {
   isOwnerPermissionAccessTargetValid,
 } from '../permissions/context-access.ts';
 export { PrincipalEligibility, PrincipalRefSchema } from '../permissions/principal-ref.ts';
+export { humanPrincipalCandidatesForTransaction } from '../permissions/human-principal-candidates.ts';
 export {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
@@ -67,13 +77,22 @@ export {
   tenantRlsPolicies,
 } from '../db/scoped-transaction.ts';
 export { DatabaseConfigLive, makeDatabaseConfigLive } from '../db/config.ts';
+export { DatabaseIdentityEnrollmentContext, makeDatabaseIdentityEnrollmentLive } from '../db/database-identities.ts';
 export { CorePersistenceLive } from '../runtime-infrastructure.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';
+export {
+  coreSearchIngestionRegistryLayer,
+  defineCoreSearchIngestionRegistrations,
+} from '../search/ingestion-registry.ts';
 export { CoreSearchProjectionStoreLive } from '../search/persistence.ts';
 export {
   CoreSearchProjectionDocumentSchema,
+  CoreSearchProjectionHitSchema,
+  CoreSearchProjectionInvalid,
   CoreSearchProjectionMutationSchema,
+  CoreSearchProjectionReplacementSchema,
   CoreSearchProjectionStore,
+  CoreSearchQueryRuntime,
   CoreSearchResourceRefSchema,
 } from '../search/projection.ts';
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from '../search/worker-snapshot.ts';
