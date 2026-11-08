@@ -14,7 +14,7 @@ import { SalesPipelineReferenceUnavailable } from '../errors/sales-pipeline-refe
 import { SalesPipelineReferenceIneligible } from '../errors/sales-pipeline-reference-ineligible.ts';
 import { SalesPipelinePermissionDenied } from '../errors/sales-pipeline-permission-denied.ts';
 import { SalesPipelineNotImplemented } from '../errors/sales-pipeline-not-implemented.ts';
-import { CalendarDateWireSchema as CalendarDateSchema } from '@app/shared-contracts';
+import { CalendarDateWireSchema as CalendarDateSchema } from '@app/shared-contracts/calendar-date';
 import {
   EmployeeIdSchema,
   OpportunityIdSchema,

@@ -56,6 +56,7 @@ import {
 } from './published-outbox-contracts.mts';
 import { isAllowedCompositionSeam } from './check-lean-core-dependencies.mts';
 import { isProblemDetailsFactory } from './api-contract-schema-rules.mts';
+import { closedCalendarSchemaNodes } from './native-calendar-schema-boundary.mts';
 import {
   PublicContractOwnerAppIdSchema,
   PublicContractOwnerModuleIdSchema,
@@ -1063,6 +1064,10 @@ const nativeContractLeaf = (value: GraphValue): boolean =>
   (value.specifier === EFFECT_SCHEMA_PROVIDER ||
     value.specifier === 'effect/SchemaGetter' ||
     ['Schema', 'SchemaGetter', 'HttpApi', 'HttpApiEndpoint', 'HttpApiGroup'].includes(value.name) ||
+    (value.specifier === 'effect' &&
+      ((value.name === 'Struct' && (value.members.length === 0 || value.members.join('.') === 'omit')) ||
+        (value.name === 'SchemaTransformation' &&
+          (value.members.length === 0 || value.members.join('.') === 'transform')))) ||
     ((value.specifier === EFFECT_CLIENT_PROVIDER || value.specifier === 'effect/http-api') &&
       value.name === 'HttpApiMiddleware' &&
       value.members.length === 1 &&
@@ -1791,7 +1796,7 @@ const closedContractFilterNodes = (state: BoundaryCheckState, module: SourceModu
   if (cached !== undefined) {
     return cached;
   }
-  const closed = new Set<SchemaNode>();
+  const closed = new Set<SchemaNode>(closedCalendarSchemaNodes(state.graph, module));
   const literalResult = (node: SchemaNode): boolean =>
     node.type === 'StringLiteral' ||
     (node.type === 'Identifier' && node.name === 'undefined' && state.graph.isUnboundReference(module, node));
@@ -2371,7 +2376,10 @@ const hasClosedNativeContractCall = (
   return (
     (closedFactory ||
       (factory?.kind !== 'declaration' &&
-        hasCanonicalSchemaConstructor(state, module, expression) &&
+        (hasCanonicalSchemaConstructor(state, module, expression) ||
+          hasOnlyContractCallees(state, module, expression.callee, (value) =>
+            isNativeContractOperation(value, 'Struct', 'omit'),
+          )) &&
         (expression.callee.type !== 'MemberExpression' || prove(expression.callee.object)))) &&
     expression.arguments.every((argument) =>
       argument.type === 'ArrowFunctionExpression'

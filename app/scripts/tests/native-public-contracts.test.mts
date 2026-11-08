@@ -8,6 +8,8 @@ import { hasSelectedOwnerContract, isImmutablePublicContract } from '../check-mo
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const records = 'verticals/merchandise/shared/apis/records.ts';
+const salesRecords = 'verticals/sales-pipeline/shared/apis/records.ts';
+const calendarDate = 'packages/shared-contracts/src/calendar-date.ts';
 const approvals = 'packages/shared-contracts/src/ai-approvals.ts';
 const proposals = 'packages/shared-contracts/src/agent-proposals.ts';
 const offers = 'verticals/merchandise/shared/domain/market-offers.ts';
@@ -16,6 +18,9 @@ const opportunityEvent = 'verticals/sales-pipeline/shared/outbox/sales-pipeline-
 const factoryResult = 'return { change, slice };';
 const nonzeroFilter = '/[1-9]/u.test(value)';
 const secretSource = 'export const secret = () => true;';
+const midnightTemplate = `\`\${value}T00:00:00.000Z\``;
+const calendarDecode = `DateTime.makeUnsafe(${midnightTemplate})`;
+const calendarParse = `DateTime.make(${midnightTemplate})`;
 
 const requiredSource = (sources: ReadonlyMap<string, string>, file: string): string => {
   const source = sources.get(file);
@@ -38,7 +43,7 @@ const nativeSources = Effect.fn(function* discoverNativeSources(entry: string) {
   const boundaries = new Set<string>();
   const visited = new Set<string>();
   let pending = [path.join(appRoot, entry)];
-  if (entry === records) {
+  if (entry === records || entry === salesRecords) {
     pending.push(path.join(appRoot, 'packages/shared-contracts/src/problem-details.ts'));
   }
   while (pending.length > 0) {
@@ -165,6 +170,64 @@ const withContract = (entry: string, change?: (sources: Map<string, string>) => 
 it.live('accepts the actual merchandise records native contract closure', () =>
   Effect.gen(function* actualMerchandiseNativeContract() {
     expect(yield* withContract(records)).toBe(true);
+  }),
+);
+
+for (const entry of [salesRecords, calendarDate]) {
+  it.live(`accepts the native calendar-date schema closure in ${entry}`, () =>
+    Effect.gen(function* nativeTemporalSchemaContract() {
+      expect(yield* withContract(entry)).toBe(true);
+    }),
+  );
+}
+
+for (const [name, before, after] of [
+  ['transform global capture', calendarDecode, 'globalThis.decode(value)'],
+  ['transform input mutation', calendarDecode, 'DateTime.makeUnsafe(value = "changed")'],
+  ['transform hidden effect', calendarDecode, `(fetch("/leak"), ${calendarDecode})`],
+  ['transform callback escape', calendarDecode, '() => value'],
+  ['transform extra property', 'decode: (value) =>', 'authority: globalThis, decode: (value) =>'],
+  ['date filter global', calendarParse, 'globalThis.parse(value)'],
+  ['date filter input mutation', calendarParse, 'DateTime.make(value = "changed")'],
+  ['date filter hidden effect', 'return Option.isSome(parsed)', 'return fetch("/leak") && Option.isSome(parsed)'],
+  [
+    'forged temporal provider',
+    "import { DateTime, Option, Schema, SchemaTransformation } from 'effect';",
+    "import { Option, Schema, SchemaTransformation } from 'effect'; import { DateTime } from 'forged-effect';",
+  ],
+  [
+    'forged transformation provider',
+    "import { DateTime, Option, Schema, SchemaTransformation } from 'effect';",
+    "import { DateTime, Option, Schema } from 'effect'; import { SchemaTransformation } from 'forged-effect';",
+  ],
+] as const) {
+  it.live(`rejects native calendar schema ${name}`, () =>
+    Effect.gen(function* contaminatedCalendarContract() {
+      expect(
+        yield* withContract(calendarDate, (sources) => {
+          const source = requiredSource(sources, calendarDate);
+          expect(source).toContain(before);
+          sources.set(calendarDate, source.replaceAll(before, after));
+        }),
+      ).toBe(false);
+    }),
+  );
+}
+
+it.live('rejects a forged Struct omission in the native sales schema closure', () =>
+  Effect.gen(function* forgedStructOmission() {
+    expect(
+      yield* withContract(salesRecords, (sources) => {
+        const file = 'verticals/sales-pipeline/shared/actions/apply-command.ts';
+        sources.set(
+          file,
+          requiredSource(sources, file).replace(
+            "import { Schema, Struct } from 'effect';",
+            "import { Schema } from 'effect'; import { Struct } from 'forged-effect';",
+          ),
+        );
+      }),
+    ).toBe(false);
   }),
 );
 

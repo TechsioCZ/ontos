@@ -1,4 +1,4 @@
-import { CalendarDateWireSchema as CalendarDateSchema } from '@app/shared-contracts';
+import { CalendarDateWireSchema as CalendarDateSchema } from '@app/shared-contracts/calendar-date';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 import {
