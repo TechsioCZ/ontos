@@ -34,6 +34,8 @@ rstest.mock('../../api/auth/action-principal.ts', () => ({
     ),
 }));
 
+export const registrations = [applyCommandAction, updateEmployeeAction] as const;
+
 const id = '50000000-0000-4000-8000-000000000001';
 const result = { employees: [], revision: 2 };
 const httpApi = HttpApi.make('WorkforceApi').addHttpApi(ApplyCommandActionApi).addHttpApi(UpdateEmployeeActionApi);

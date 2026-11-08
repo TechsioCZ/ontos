@@ -41,6 +41,13 @@ rstest.mock('../../api/auth/action-principal.ts', () => ({
     ),
 }));
 
+export const registrations = [
+  applyCommandAction,
+  updateMetricAction,
+  assignMetricAction,
+  changeMetricStateAction,
+] as const;
+
 const id = '50000000-0000-4000-8000-000000000001';
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const metricRef = {

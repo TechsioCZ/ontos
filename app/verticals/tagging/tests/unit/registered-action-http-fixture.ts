@@ -43,6 +43,14 @@ rstest.mock('../../api/auth/action-principal.ts', () => ({
     ),
 }));
 
+export const registrations = [
+  applyCommandAction,
+  updateTagAction,
+  deleteTagAction,
+  assignTagAction,
+  unassignTagAction,
+] as const;
+
 const id = '50000000-0000-4000-8000-000000000001';
 const result = { affectedAssignments: 1, revision: 2, tagId: TagIdSchema.make(id) };
 const httpApi = HttpApi.make('TaggingApi')

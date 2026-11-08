@@ -57,6 +57,19 @@ rstest.mock('../../api/auth/action-principal.ts', () => ({
     ),
 }));
 
+export const registrations = [
+  applyCommandAction,
+  manageCatalogAction,
+  manageMarketsAction,
+  cleanupDemoAction,
+  changeProductImagesAction,
+  recordStockMovementAction,
+  changeOrderStatusAction,
+  placeStorefrontOrderAction,
+  proposeOrderChangesAction,
+  reviewOrderChangesAction,
+] as const;
+
 const id = '50000000-0000-4000-8000-000000000001';
 const result = { entityIds: [], revision: 2 };
 const httpApi = HttpApi.make('MerchandiseApi')

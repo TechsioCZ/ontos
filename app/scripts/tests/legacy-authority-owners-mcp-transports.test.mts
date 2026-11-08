@@ -12,21 +12,25 @@ import { taggingManifest } from '../../verticals/tagging/vertical.manifest.ts';
 import {
   cases as taggingCases,
   makeFixture as taggingFixture,
+  registrations as taggingRegistrations,
 } from '../../verticals/tagging/tests/unit/registered-action-http-fixture.ts';
 import { workforceManifest } from '../../verticals/workforce/vertical.manifest.ts';
 import {
   cases as workforceCases,
   makeFixture as workforceFixture,
+  registrations as workforceRegistrations,
 } from '../../verticals/workforce/tests/unit/registered-action-http-fixture.ts';
 import { salesInsightsManifest } from '../../verticals/sales-insights/vertical.manifest.ts';
 import {
   cases as salesInsightsCases,
   makeFixture as salesInsightsFixture,
+  registrations as salesInsightsRegistrations,
 } from '../../verticals/sales-insights/tests/unit/registered-action-http-fixture.ts';
 import { merchandiseManifest } from '../../verticals/merchandise/vertical.manifest.ts';
 import {
   cases as merchandiseCases,
   makeFixture as merchandiseFixture,
+  registrations as merchandiseRegistrations,
 } from '../../verticals/merchandise/tests/unit/registered-action-http-fixture.ts';
 
 const expectedContribution = 'Expected the real owner MCP contribution';
@@ -66,12 +70,13 @@ it.effect(
           }
           expect(tool.invoke.path).toBe(`/tagging/actions/${slug}`);
           expect(tool.access).toBe('write');
-          const registration = manifest.publicSurface.actions.find(
+          const registration = taggingRegistrations.find(
             (action) => action.descriptor.actionKey === `demo.tagging.${slug}`,
           );
           if (registration === undefined) {
             expect.unreachable(expectedRegistration);
           }
+          expect(manifest.publicSurface.actions).toContain(registration);
           yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)({ command, expectedRevision: 1 });
           const { harness, request, writes } = yield* taggingFixture();
           const response = yield* request(tool.invoke.path, command, `mcp-${slug}`);
@@ -123,12 +128,13 @@ it.effect(
           }
           expect(tool.invoke.path).toBe(`/workforce/actions/${slug}`);
           expect(tool.access).toBe('write');
-          const registration = manifest.publicSurface.actions.find(
+          const registration = workforceRegistrations.find(
             (action) => action.descriptor.actionKey === `demo.workforce.${slug}`,
           );
           if (registration === undefined) {
             expect.unreachable(expectedRegistration);
           }
+          expect(manifest.publicSurface.actions).toContain(registration);
           yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)({ command, expectedRevision: 1 });
           const { harness, request, writes } = yield* workforceFixture();
           const response = yield* request(tool.invoke.path, command, `mcp-${slug}`);
@@ -180,12 +186,13 @@ it.effect(
           }
           expect(tool.invoke.path).toBe(`/sales-insights/actions/${slug}`);
           expect(tool.access).toBe('write');
-          const registration = manifest.publicSurface.actions.find(
+          const registration = salesInsightsRegistrations.find(
             (action) => action.descriptor.actionKey === `demo.sales-insights.${slug}`,
           );
           if (registration === undefined) {
             expect.unreachable(expectedRegistration);
           }
+          expect(manifest.publicSurface.actions).toContain(registration);
           yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)({ command, expectedRevision: 1 });
           const { harness, request, writes } = yield* salesInsightsFixture();
           const response = yield* request(tool.invoke.path, command, `mcp-${slug}`);
@@ -237,12 +244,13 @@ it.effect(
           }
           expect(tool.invoke.path).toBe(`/merchandise/actions/${slug}`);
           expect(tool.access).toBe('write');
-          const registration = manifest.publicSurface.actions.find(
+          const registration = merchandiseRegistrations.find(
             (action) => action.descriptor.actionKey === `demo.merchandise.${slug}`,
           );
           if (registration === undefined) {
             expect.unreachable(expectedRegistration);
           }
+          expect(manifest.publicSurface.actions).toContain(registration);
           yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)({ command, expectedRevision: 1 });
           const { harness, request, writes } = yield* merchandiseFixture();
           const response = yield* request(tool.invoke.path, command, `mcp-${slug}`);
