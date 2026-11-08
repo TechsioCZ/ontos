@@ -30,6 +30,16 @@ const FRESH_FORWARD = 'executeRecords(payload, requestCorrelation, options)';
 const FRESH_OPTION_VALUE = "requestCache: 'no-store'";
 const UNDECODED_PAYLOAD = 'undecoded payload';
 const FALLBACK_AUTHORITY = 'fallback authority';
+const RECORDS_CLIENT_SOURCE = "from './records-client.ts'";
+const FOREIGN_RANDOM_IMPORT = "import { Effect, Schema } from 'effect';\nimport { Random } from './foreign-effect.ts';";
+const PROJECTION_SIDE_EFFECT = 'projection side effect';
+const PROJECTION_CALLBACK_INVOCATION = 'projection callback invocation';
+const MAP_TO_FLATMAP = 'map replaced by flatMap';
+const EXTRA_FORWARDING_ARGUMENT = 'extra forwarding argument';
+const MUTATED_RANDOM_IMPORT = 'mutated Random import';
+const DROPPED_CORRELATION_PROVENANCE = 'dropped correlation provenance';
+const TAGGING_VERTICAL = 'tagging';
+const TAGGING_TAGS = 'records.tags';
 const CHANGED_CORRELATION = 'changed correlation';
 const CHANGED_PAYLOAD = 'changed payload';
 const DECODE_RECORDS_PAYLOAD = 'Schema.decodeEffect(RecordsRequestSchema)(payload)';
@@ -168,11 +178,8 @@ const mutations: readonly (readonly [string, (source: string) => string])[] = [
         "import { RecordsRequestSchema } from '../../shared/apis/foreign.ts';",
       ),
   ],
-  [FOREIGN_CLIENT, (source) => source.replace("from './records-client.ts'", "from './foreign-client.ts'")],
-  [
-    'private client source',
-    (source) => source.replace("from './records-client.ts'", "from '../database/records-client.ts'"),
-  ],
+  [FOREIGN_CLIENT, (source) => source.replace(RECORDS_CLIENT_SOURCE, "from './foreign-client.ts'")],
+  ['private client source', (source) => source.replace(RECORDS_CLIENT_SOURCE, "from '../database/records-client.ts'")],
   [
     'foreign Effect',
     (source) =>
@@ -257,9 +264,9 @@ const mutations: readonly (readonly [string, (source: string) => string])[] = [
     'extra projection argument',
     (source) => source.replace('viewPayload(view), requestCorrelation', 'viewPayload(view), requestCorrelation, {}'),
   ],
-  ['projection side effect', (source) => source.replace('response.products', '(fetch("/leak"), response.products)')],
-  ['projection callback invocation', (source) => source.replace('response.products', 'response.products()')],
-  ['map replaced by flatMap', (source) => source.replace('Effect.map((response)', 'Effect.flatMap((response)')],
+  [PROJECTION_SIDE_EFFECT, (source) => source.replace('response.products', '(fetch("/leak"), response.products)')],
+  [PROJECTION_CALLBACK_INVOCATION, (source) => source.replace('response.products', 'response.products()')],
+  [MAP_TO_FLATMAP, (source) => source.replace('Effect.map((response)', 'Effect.flatMap((response)')],
   [
     'impure request constructor',
     (source) => source.replace('view === undefined ? {} : { view }', 'view === undefined ? fetch("/leak") : { view }'),
@@ -343,6 +350,10 @@ const consumedFacades: readonly (readonly [string, readonly string[]])[] = [
   ['finance-billing', ['listInvoices']],
   ['workforce', ['executeRecords', 'executeRecordsWithAuthorization', 'executeFreshRecords', 'listEmployees']],
   ['work-tasks', ['executeRecords', 'executeRecordsWithAuthorization', 'listTasks']],
+  [
+    TAGGING_VERTICAL,
+    ['executeRecords', 'executeRecordsWithAuthorization', 'listTags', 'recordsOfKind', 'subjectsWithTag'],
+  ],
 ];
 
 for (const [vertical, operations] of consumedFacades) {
@@ -366,7 +377,7 @@ const salesPipelineMutations: readonly (readonly [string, (source: string) => st
   [CHANGED_PAYLOAD, (source) => source.replace(FORWARDED_FILTERS, 'executeRecords({}, ...invocation)')],
   ['dropped rest context', (source) => source.replace(FORWARDED_FILTERS, 'executeRecords(filters)')],
   [
-    'extra forwarding argument',
+    EXTRA_FORWARDING_ARGUMENT,
     (source) => source.replace(FORWARDED_FILTERS, "executeRecords(filters, ...invocation, 'extra')"),
   ],
   [
@@ -437,14 +448,11 @@ const financeMutations: readonly (readonly [string, (source: string) => string])
     IMPURE_DEFAULT,
     (source) => source.replace('filters: InvoiceListFilters = {}', 'filters: InvoiceListFilters = fetch("/leak")'),
   ],
-  [
-    'projection side effect',
-    (source) => source.replace(INVOICE_PROJECTION, '(fetch("/leak"), response.state.invoices)'),
-  ],
-  ['projection callback invocation', (source) => source.replace(INVOICE_PROJECTION, 'response.state.invoices()')],
+  [PROJECTION_SIDE_EFFECT, (source) => source.replace(INVOICE_PROJECTION, '(fetch("/leak"), response.state.invoices)')],
+  [PROJECTION_CALLBACK_INVOCATION, (source) => source.replace(INVOICE_PROJECTION, 'response.state.invoices()')],
   ['shallow projection', (source) => source.replace(INVOICE_PROJECTION, 'response.state')],
   ['computed projection', (source) => source.replace(INVOICE_PROJECTION, 'response["state"].invoices')],
-  ['map replaced by flatMap', (source) => source.replace('Effect.map((response)', 'Effect.flatMap((response)')],
+  [MAP_TO_FLATMAP, (source) => source.replace('Effect.map((response)', 'Effect.flatMap((response)')],
   [
     'non-governed re-export',
     (source) =>
@@ -469,14 +477,7 @@ const financeMutations: readonly (readonly [string, (source: string) => string])
 ];
 
 const workTasksMutations: readonly (readonly [string, (source: string) => string])[] = [
-  [
-    'mutated Random import',
-    (source) =>
-      source.replace(
-        EFFECT_RANDOM_SCHEMA_IMPORT,
-        "import { Effect, Schema } from 'effect';\nimport { Random } from './foreign-effect.ts';",
-      ),
-  ],
+  [MUTATED_RANDOM_IMPORT, (source) => source.replace(EFFECT_RANDOM_SCHEMA_IMPORT, FOREIGN_RANDOM_IMPORT)],
   [
     'mutated Effect import',
     (source) =>
@@ -486,7 +487,7 @@ const workTasksMutations: readonly (readonly [string, (source: string) => string
       ),
   ],
   [
-    'dropped correlation provenance',
+    DROPPED_CORRELATION_PROVENANCE,
     (source) => source.replace('Random.nextInt, Random.nextInt', 'Effect.succeed(1), Effect.succeed(2)'),
   ],
   [CHANGED_PAYLOAD, (source) => source.replace(WORK_TASKS_FORWARD, 'executeRecords({}, requestCorrelation)')],
@@ -496,7 +497,7 @@ const workTasksMutations: readonly (readonly [string, (source: string) => string
     (source) => source.replace(WORK_TASKS_FORWARD, 'executeRecordsWithAuthorization(filters, requestCorrelation)'),
   ],
   [
-    'extra forwarding argument',
+    EXTRA_FORWARDING_ARGUMENT,
     (source) => source.replace(WORK_TASKS_FORWARD, "executeRecords(filters, requestCorrelation, 'extra')"),
   ],
   [
@@ -522,14 +523,7 @@ const workTasksMutations: readonly (readonly [string, (source: string) => string
 ];
 
 const workforceMutations: readonly (readonly [string, (source: string) => string])[] = [
-  [
-    'mutated Random import',
-    (source) =>
-      source.replace(
-        EFFECT_RANDOM_SCHEMA_IMPORT,
-        "import { Effect, Schema } from 'effect';\nimport { Random } from './foreign-effect.ts';",
-      ),
-  ],
+  [MUTATED_RANDOM_IMPORT, (source) => source.replace(EFFECT_RANDOM_SCHEMA_IMPORT, FOREIGN_RANDOM_IMPORT)],
   [
     'mutated Effect import',
     (source) =>
@@ -538,7 +532,7 @@ const workforceMutations: readonly (readonly [string, (source: string) => string
         "import { Random, Schema } from 'effect';\nimport { Effect } from './foreign-effect.ts';",
       ),
   ],
-  ['dropped correlation provenance', (source) => source.replace(WORKFORCE_RANDOM, 'yield* Effect.succeed(1)')],
+  [DROPPED_CORRELATION_PROVENANCE, (source) => source.replace(WORKFORCE_RANDOM, 'yield* Effect.succeed(1)')],
   [CHANGED_CORRELATION, (source) => source.replace(WORKFORCE_LABEL, WORKFORCE_ALTERNATE_LABEL)],
   [
     CHANGED_PAYLOAD,
@@ -583,11 +577,144 @@ const workforceMutations: readonly (readonly [string, (source: string) => string
   ],
 ];
 
+const taggingFacades = [
+  'executeRecords',
+  'executeRecordsWithAuthorization',
+  'listTags',
+  'recordsOfKind',
+  'subjectsWithTag',
+  'assignmentsForSubjects',
+];
+const TAGGING_KIND_READ = 'executeRecords({ subjectKind: kind }, id)';
+const TAGGING_SUBJECTS_READ = 'executeRecords({ subjectKind: kind, tagId }, id)';
+const TAGGING_SUBJECTS_PROJECTION = 'records.assignments.map((assignment) => assignment.subject.id)';
+const TAGGING_SUBJECTS_PAYLOAD = '{ subjectKind: kind, tagId }';
+const TAGGING_CHUNK_READ = 'executeRecords({ subjectIds }, id)';
+const TAGGING_CHUNKS = 'subjectIdQueries(ids)';
+const TAGGING_FILTER = 'wanted.has(';
+const TAGGING_IDS_STATE = 'const ids = [...new Set(subjects.map((subject) => subject.id))];';
+
+const taggingMutations: readonly (readonly [string, (source: string) => string])[] = [
+  [MUTATED_RANDOM_IMPORT, (source) => source.replace(EFFECT_RANDOM_SCHEMA_IMPORT, FOREIGN_RANDOM_IMPORT)],
+  [
+    DROPPED_CORRELATION_PROVENANCE,
+    (source) => source.replace('Random.nextInt, Random.nextInt', 'Effect.succeed(1), Effect.succeed(2)'),
+  ],
+  [
+    CHANGED_CORRELATION,
+    (source) => source.replace(TAGGING_SUBJECTS_READ, 'executeRecords({ subjectKind: kind, tagId }, "other")'),
+  ],
+  [
+    'dropped correlation argument',
+    (source) => source.replace(TAGGING_KIND_READ, 'executeRecords({ subjectKind: kind })'),
+  ],
+  [
+    EXTRA_FORWARDING_ARGUMENT,
+    (source) => source.replace(TAGGING_KIND_READ, 'executeRecords({ subjectKind: kind }, id, {})'),
+  ],
+  [
+    'shadowed correlation parameter',
+    (source) =>
+      source.replace(
+        'Effect.flatMap((id) => executeRecords({ subjectKind: kind }, id))',
+        'Effect.flatMap((kind) => executeRecords({ subjectKind: kind }, kind))',
+      ),
+  ],
+  [CHANGED_PAYLOAD, (source) => source.replace(TAGGING_SUBJECTS_PAYLOAD, '{ subjectKind: kind }')],
+  ['constant payload', (source) => source.replace('{ subjectKind: kind }', "{ subjectKind: 'customer' }")],
+  [
+    MAP_TO_FLATMAP,
+    (source) => source.replace('Effect.map((records) => records.tags)', 'Effect.flatMap((records) => records.tags)'),
+  ],
+  [PROJECTION_SIDE_EFFECT, (source) => source.replace(TAGGING_TAGS, '(fetch("/leak"), records.tags)')],
+  [PROJECTION_CALLBACK_INVOCATION, (source) => source.replace(TAGGING_TAGS, 'records.tags()')],
+  ['computed projection', (source) => source.replace(TAGGING_TAGS, 'records["tags"]')],
+  [
+    'mapped projection side effect',
+    (source) =>
+      source.replace(
+        TAGGING_SUBJECTS_PROJECTION,
+        'records.assignments.map((assignment) => (fetch("/leak"), assignment.subject.id))',
+      ),
+  ],
+  [
+    'mapped projection impure selector',
+    (source) => source.replace(TAGGING_SUBJECTS_PROJECTION, 'records.assignments.map((assignment) => fetch("/leak"))'),
+  ],
+  [
+    'mapped projection callback invocation',
+    (source) =>
+      source.replace(TAGGING_SUBJECTS_PROJECTION, 'records.assignments.map((assignment) => assignment.subject.id())'),
+  ],
+  [
+    'non-map collection call',
+    (source) =>
+      source.replace(TAGGING_SUBJECTS_PROJECTION, 'records.assignments.flatMap((assignment) => assignment.subject.id)'),
+  ],
+  [
+    'chunked changed correlation',
+    (source) => source.replace(TAGGING_CHUNK_READ, 'executeRecords({ subjectIds }, "other")'),
+  ],
+  [
+    'chunked authorized read',
+    (source) => source.replace(TAGGING_CHUNK_READ, 'executeRecordsWithAuthorization({ subjectIds }, id)'),
+  ],
+  ['chunked undecoded payload', (source) => source.replace(TAGGING_CHUNK_READ, 'executeRecords(subjectIds, id)')],
+  ['chunked effect chunk list', (source) => source.replace(TAGGING_CHUNKS, 'executeRecords({})')],
+  [
+    'chunked impure chunk list',
+    (source) =>
+      source.replace(TAGGING_IDS_STATE, 'const ids = [...new Set(subjects.map((subject) => window.location.href))];'),
+  ],
+  ['chunked projection side effect', (source) => source.replace(TAGGING_FILTER, 'wanted.has(fetch("/leak"), ')],
+  ['chunked projection effect call', (source) => source.replace(TAGGING_FILTER, 'executeRecords(')],
+  [
+    'impure chunk helper',
+    (source) => `${source}\nconst sneaky = (ids: readonly string[]) => { fetch('/leak'); return ids; };\n`,
+  ],
+  [
+    'impure chunk helper body',
+    (source) => source.replace('const last = queries.at(-1);', 'const last = fetch("/leak");'),
+  ],
+  [
+    'enrolled call in pure helper',
+    (source) => `${source}\nconst sneaky = (ids: readonly string[]) => executeRecords(ids);\n`,
+  ],
+  ['effect in pure helper', (source) => `${source}\nconst sneaky = (ids: readonly string[]) => Effect.succeed(ids);\n`],
+  [
+    'assigned pure helper',
+    (source) => `${source}\nconst sneaky = (ids: readonly string[]) => { let last = ids; last = []; return last; };\n`,
+  ],
+  [
+    'shared mutable chunk state',
+    (source) =>
+      `${source.replace('const queries: string[] = [];', 'const queries = sharedIds;')}\nconst sharedIds: string[] = [];\n`,
+  ],
+  [
+    'mutation of caller-owned subjects',
+    (source) =>
+      source.replace('subjects.map((subject) => subject.id)', 'subjects.splice(0, 1).map((subject) => subject.id)'),
+  ],
+  [
+    'eager mutation of shared data',
+    (source) => `${source}\nconst sharedIds: string[] = [];\nconst eagerMutation = sharedIds.push("hidden");\n`,
+  ],
+  ['detached enrolled value', (source) => `${source}\nconst sneaky = executeRecords;\n`],
+  [FOREIGN_CLIENT, (source) => source.replace(RECORDS_CLIENT_SOURCE, "from './foreign-client.ts'")],
+  [UNDECODED_PAYLOAD, (source) => source.replaceAll(DECODE_RECORDS_PAYLOAD, 'payload')],
+  [EAGER_SIDE_EFFECT, (source) => `${source}\nfetch('/leak');\n`],
+  [
+    UNRELATED_EXPORT,
+    (source) => `${source}\nexport const unrelated = () => { void executeRecords; return fetch('/other'); };\n`,
+  ],
+];
+
 for (const [vertical, facades, facadeMutations] of [
   ['sales-pipeline', salesPipelineFacades, salesPipelineMutations],
   ['finance-billing', financeFacades, financeMutations],
   ['work-tasks', workTasksFacades, workTasksMutations],
   ['workforce', workforceFacades, workforceMutations],
+  [TAGGING_VERTICAL, taggingFacades, taggingMutations],
 ] as const) {
   for (const [name, change] of facadeMutations) {
     it.effect(`rejects the real ${vertical} ${name}`, () =>
@@ -601,3 +728,30 @@ for (const [vertical, facades, facadeMutations] of [
     );
   }
 }
+
+it.effect('publishes only the tagging read interface and never the owner-only orchestration', () =>
+  Effect.gen(function* taggingReadInterface() {
+    const { accepts, source } = yield* realVerticalFixture(TAGGING_VERTICAL);
+    for (const read of taggingFacades) {
+      expect(accepts(read)).toBe(true);
+    }
+    for (const ownerOnly of [
+      'freshCorrelation',
+      'subjectIdQueries',
+      'applyTaggingCommand',
+      'applyTaggingCommandIfUnchanged',
+      'assignTag',
+      'unassignTag',
+      'recordsFor',
+      'assignmentsFor',
+    ]) {
+      expect(accepts(ownerOnly)).toBe(false);
+    }
+    expect(source).not.toContain('-action-client.ts');
+    expect(source).not.toContain('committedResult');
+    expect(source).not.toContain('Match.');
+    // The public chunking bound and the requested-subject filter stay in the published read path.
+    expect(source).toContain('subjectIdsQueryLimit = 8000');
+    expect(source).toContain(TAGGING_FILTER);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

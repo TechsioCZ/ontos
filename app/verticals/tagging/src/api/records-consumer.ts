@@ -1,15 +1,10 @@
-// Owner and consumer calls over the generated governed records client. Callers pass the encoded request, which is
-// decoded here before the generated client sends it.
-import { Effect, Match, Random, Schema } from 'effect';
+// Public read interface over the generated governed records client. Callers pass the encoded request, which is
+// decoded here before the generated client sends it. Owner-only write orchestration builds on this interface from
+// `records-commands.ts`, and the owner-only unchunked reads from `records-queries.ts`, so the published surface
+// stays pure reads and the write path stays private.
+import { Effect, Random, Schema } from 'effect';
 import { RecordsRequestSchema } from '../../shared/apis/records.ts';
-import type { RecordsRequestEncoded, RecordsResponse, Subject, SubjectKind, TagId } from '../../shared/apis/records.ts';
-import type { TaggingCommand } from '../../shared/actions/apply-command.ts';
-import { executeApplyCommand } from './apply-command-action-client.ts';
-import { executeUpdateTag } from './update-tag-action-client.ts';
-import { executeDeleteTag } from './delete-tag-action-client.ts';
-import { executeAssignTag } from './assign-tag-action-client.ts';
-import { executeUnassignTag } from './unassign-tag-action-client.ts';
-import { committedResult } from './action-result.ts';
+import type { RecordsRequestEncoded, SubjectKind, TagId } from '../../shared/apis/records.ts';
 import {
   executeRecords as executeDecodedRecords,
   executeRecordsWithAuthorization as executeDecodedRecordsWithAuthorization,
@@ -36,9 +31,11 @@ export const executeRecords = (
     Effect.flatMap((decoded) => executeDecodedRecords(decoded, ...invocation)),
   );
 
-// Consumer helpers. Subject ids must not contain commas (records query format).
-
-const freshCorrelation = Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+/**
+ * The native randomness source every tagging read draws its correlation from, so one operation never reuses the
+ * correlation of another.
+ */
+export const freshCorrelation = Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
   Effect.map(([first, second]) => `tagging:${first}:${second}`),
 );
 
@@ -48,32 +45,34 @@ export const listTags = freshCorrelation.pipe(
   Effect.map((records) => records.tags),
 );
 
-/** Assignments of the given subject ids of one kind, across all tags. */
-export const assignmentsFor = (kind: SubjectKind, ids: readonly string[]) =>
-  ids.length === 0
-    ? Effect.succeed([])
-    : freshCorrelation.pipe(
-        Effect.flatMap((id) => executeRecords({ subjectIds: ids.join(','), subjectKind: kind }, id)),
-        Effect.map((records) => records.assignments),
-      );
+/** Tags and every assignment of one subject kind in one operation, without needing the subject ids first. */
+export const recordsOfKind = (kind: SubjectKind) =>
+  freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectKind: kind }, id)));
+
+/** Ids of the subjects of one kind that carry the given tag. */
+export const subjectsWithTag = (kind: SubjectKind, tagId: TagId) =>
+  freshCorrelation.pipe(
+    Effect.flatMap((id) => executeRecords({ subjectKind: kind, tagId }, id)),
+    Effect.map((records) => records.assignments.map((assignment) => assignment.subject.id)),
+  );
 
 /** `SubjectIdsQuerySchema` caps one records query at this many characters. */
 const subjectIdsQueryLimit = 8000;
 
-/** Comma-joined id lists, each within the records query limit. */
-const subjectIdQueries = (ids: readonly string[]): string[] => {
+/**
+ * Comma-joined id lists, each within the records query limit. Exported so the owner-only reads in
+ * `records-queries.ts` share this one implementation of the public chunking bound. The accumulator belongs to this
+ * invocation; the caller's ids and shared module state are never mutated.
+ */
+export const subjectIdQueries = (ids: readonly string[]): string[] => {
   const queries: string[] = [];
-  let current = '';
   for (const id of ids) {
-    if (current !== '' && current.length + 1 + id.length > subjectIdsQueryLimit) {
-      queries.push(current);
-      current = id;
+    const last = queries.at(-1);
+    if (last !== undefined && last.length + 1 + id.length <= subjectIdsQueryLimit) {
+      queries.splice(-1, 1, `${last},${id}`);
     } else {
-      current = current === '' ? id : `${current},${id}`;
+      queries.push(id);
     }
-  }
-  if (current !== '') {
-    queries.push(current);
   }
   return queries;
 };
@@ -102,93 +101,3 @@ export const assignmentsForSubjects = (subjects: readonly { readonly id: string;
         ),
       );
 };
-
-/**
- * Tags and the assignments of the given subject ids. One operation per query-limit chunk: the tags come from the
- * first page and the assignments of every page are concatenated. Callers skip the call for an empty list.
- */
-export const recordsFor = (kind: SubjectKind, ids: readonly string[]) =>
-  Effect.forEach(
-    subjectIdQueries(ids),
-    (subjectIds) =>
-      freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectIds, subjectKind: kind }, id))),
-    { concurrency: 1 },
-  ).pipe(
-    Effect.flatMap(([first, ...rest]) =>
-      first === undefined
-        ? freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectIds: '', subjectKind: kind }, id)))
-        : Effect.succeed({
-            ...first,
-            assignments: [...first.assignments, ...rest.flatMap((page) => page.assignments)],
-          }),
-    ),
-  );
-
-/** Tags and every assignment of one subject kind in one operation, without needing the subject ids first. */
-export const recordsOfKind = (kind: SubjectKind) =>
-  freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectKind: kind }, id)));
-
-/** Ids of the subjects of one kind that carry the given tag. */
-export const subjectsWithTag = (kind: SubjectKind, tagId: TagId) =>
-  freshCorrelation.pipe(
-    Effect.flatMap((id) => executeRecords({ subjectKind: kind, tagId }, id)),
-    Effect.map((records) => records.assignments.map((assignment) => assignment.subject.id)),
-  );
-
-/** The owner workflow chooses the published operation before obtaining its single-use assertion. */
-const submitTagCommand = (command: TaggingCommand, expectedRevision: number, id: string) =>
-  Match.value(command).pipe(
-    Match.tag('CreateTag', (value) =>
-      executeApplyCommand({ command: value, expectedRevision }, id, { idempotencyKey: id }),
-    ),
-    Match.tag('UpdateTag', (value) =>
-      executeUpdateTag({ command: value, expectedRevision }, id, { idempotencyKey: id }),
-    ),
-    Match.tag('DeleteTag', (value) =>
-      executeDeleteTag({ command: value, expectedRevision }, id, { idempotencyKey: id }),
-    ),
-    Match.tag('AssignTag', (value) =>
-      executeAssignTag({ command: value, expectedRevision }, id, { idempotencyKey: id }),
-    ),
-    Match.tag('UnassignTag', (value) =>
-      executeUnassignTag({ command: value, expectedRevision }, id, { idempotencyKey: id }),
-    ),
-    Match.exhaustive,
-    Effect.flatMap(committedResult),
-  );
-
-/** Runs one command against the current revision, read immediately before the write. */
-export const applyTaggingCommand = (command: TaggingCommand) =>
-  freshCorrelation.pipe(
-    Effect.flatMap((readId) => executeRecords({}, readId)),
-    Effect.flatMap((current) =>
-      freshCorrelation.pipe(Effect.flatMap((id) => submitTagCommand(command, current.revision, id))),
-    ),
-  );
-
-/**
- * Runs one command only while `unchanged` holds for the records read immediately before the write, against that read's
- * revision: `stale` when the caller's version is outdated, so nothing is overwritten.
- */
-export const applyTaggingCommandIfUnchanged = (
-  command: TaggingCommand,
-  unchanged: (current: RecordsResponse) => boolean,
-) =>
-  freshCorrelation.pipe(
-    Effect.flatMap((readId) => executeRecords({}, readId)),
-    Effect.flatMap((current) =>
-      unchanged(current)
-        ? freshCorrelation.pipe(
-            Effect.flatMap((id) => submitTagCommand(command, current.revision, id)),
-            Effect.as('applied' as const),
-          )
-        : Effect.succeed('stale' as const),
-    ),
-  );
-
-/** Idempotent: subjects that already carry the tag are skipped. */
-export const assignTag = (tagId: TagId, subjects: readonly Subject[]) =>
-  applyTaggingCommand({ _tag: 'AssignTag', subjects, tagId });
-
-export const unassignTag = (tagId: TagId, subjects: readonly Subject[]) =>
-  applyTaggingCommand({ _tag: 'UnassignTag', subjects, tagId });

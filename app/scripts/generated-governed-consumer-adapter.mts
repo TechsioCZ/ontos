@@ -1,4 +1,5 @@
 import type { createModuleGraph, SourceModule } from '@modern-js/code-tools/microvertical-api-boundary';
+import { isFunction, traverseFast } from '@babel/types';
 import type {
   ArrowFunctionExpression,
   CallExpression,
@@ -6,6 +7,7 @@ import type {
   Identifier,
   ImportDeclaration,
   Node,
+  VariableDeclarator,
 } from '@babel/types';
 
 /** The native providers a proven facade may reach: Effect, Schema and the randomness correlation source. */
@@ -532,6 +534,673 @@ const randomForwardedRead = (context: AdapterContext, fn: ArrowFunctionExpressio
   );
 };
 
+/** A payload position built only from the facade's own parameters and closed literals. */
+const payloadParameter = (node: Node, parameters: ReadonlySet<string>, used: Set<string>): boolean => {
+  if (node.type === 'Identifier') {
+    if (!parameters.has(node.name)) {
+      return false;
+    }
+    used.add(node.name);
+    return true;
+  }
+  if (node.type === 'ArrayExpression') {
+    return node.elements.every(
+      (element) => element !== null && element.type !== 'SpreadElement' && payloadParameter(element, parameters, used),
+    );
+  }
+  if (node.type === 'ObjectExpression') {
+    return node.properties.every(
+      (property) =>
+        property.type === 'ObjectProperty' && !property.computed && payloadParameter(property.value, parameters, used),
+    );
+  }
+  return pureDefault(node);
+};
+
+/**
+ * A reader payload built from the facade's own parameters and closed literals, using every parameter:
+ * `{ subjectKind: kind, tagId }`. A declared input the payload never reaches would be a payload substitution, so
+ * every parameter must appear in the payload.
+ */
+const parameterPayload = (node: Node | null | undefined, parameters: ReadonlySet<string>): boolean => {
+  if (node === null || node === undefined || (node.type !== 'ObjectExpression' && node.type !== 'ArrayExpression')) {
+    return false;
+  }
+  const used = new Set<string>();
+  return payloadParameter(node, parameters, used) && [...parameters].every((name) => used.has(name));
+};
+
+/** `response.rows.map((row) => row.subject.id)`: one pure member chain mapped by a pure member chain. */
+const mappedProjection = (node: Node | null | undefined, name: string): boolean => {
+  if (
+    node?.type !== 'CallExpression' ||
+    node.arguments.length !== 1 ||
+    node.callee.type !== 'MemberExpression' ||
+    node.callee.computed ||
+    !identifier(node.callee.property, 'map') ||
+    !memberProjection(node.callee.object, name, 1)
+  ) {
+    return false;
+  }
+  const selector = expressionArrow(node.arguments[0]);
+  if (selector === undefined) {
+    return false;
+  }
+  const [element] = namedParameters(selector, 1) ?? [];
+  return element !== undefined && memberProjection(selector.body, element.name, 1);
+};
+
+/** A pure response projection: one member chain, or one `.map` of a member chain by a member chain. */
+const readProjection = (selector: ArrowFunctionExpression): boolean => {
+  const [response] = namedParameters(selector, 1) ?? [];
+  return (
+    response !== undefined &&
+    (memberProjection(selector.body, response.name, 1) || mappedProjection(selector.body, response.name))
+  );
+};
+
+interface CorrelationReadPipeline {
+  readonly correlation: Node;
+  readonly projection: ArrowFunctionExpression | undefined;
+  readonly read: ArrowFunctionExpression;
+}
+
+/** The `Effect.flatMap` read and optional `Effect.map` projection of one correlation pipeline body. */
+const correlationReadPipeline = (context: AdapterContext, body: Node): CorrelationReadPipeline | undefined => {
+  if (
+    body.type !== 'CallExpression' ||
+    body.callee.type !== 'MemberExpression' ||
+    body.callee.computed ||
+    !identifier(body.callee.property, 'pipe') ||
+    (body.arguments.length !== 1 && body.arguments.length !== 2)
+  ) {
+    return undefined;
+  }
+  const [readStep, projectionStep] = body.arguments;
+  const read = exactCall(readStep, 1);
+  if (read === undefined || !native(context, read.callee, 'Effect', 'flatMap')) {
+    return undefined;
+  }
+  const readCallback = expressionArrow(read.arguments[0]);
+  if (readCallback === undefined) {
+    return undefined;
+  }
+  let projected: ArrowFunctionExpression | undefined;
+  if (projectionStep !== undefined) {
+    const step = exactCall(projectionStep, 1);
+    if (step === undefined || !native(context, step.callee, 'Effect', 'map')) {
+      return undefined;
+    }
+    projected = expressionArrow(step.arguments[0]);
+    if (projected === undefined) {
+      return undefined;
+    }
+  }
+  return { correlation: body.callee.object, projection: projected, read: readCallback };
+};
+
+/**
+ * Prove a facade that generates its own native correlation and reads one collection: it builds its payload from its
+ * own parameters and closed literals, forwards that payload and the correlation to a proven governed public
+ * operation, and optionally projects one collection of the response with a pure member access.
+ * `(kind, tagId) => freshCorrelation.pipe(Effect.flatMap((id) => executeRecords({ subjectKind: kind, tagId }, id)))`.
+ */
+const correlationReadBody = (context: AdapterContext, body: Node, parameters: ReadonlySet<string>): boolean => {
+  const pipeline = correlationReadPipeline(context, body);
+  if (pipeline === undefined || !resolvedCorrelationEffect(context, pipeline.correlation)) {
+    return false;
+  }
+  const [correlation] = namedParameters(pipeline.read, 1) ?? [];
+  if (correlation === undefined || correlation.optional === true || parameters.has(correlation.name)) {
+    return false;
+  }
+  const invocation = exactCall(pipeline.read.body, 2);
+  if (invocation === undefined) {
+    return false;
+  }
+  const [payload, forwardedCorrelation] = invocation.arguments;
+  return (
+    identifier(forwardedCorrelation, correlation.name) &&
+    parameterPayload(payload, parameters) &&
+    governedPublicOperation(context, invocation.callee) &&
+    (pipeline.projection === undefined || readProjection(pipeline.projection))
+  );
+};
+
+const correlationRead = (context: AdapterContext, fn: ArrowFunctionExpression): boolean => {
+  const parameters = new Set<string>();
+  for (const parameter of fn.params) {
+    const bound = forwardingParameter(parameter);
+    if (bound === undefined || parameters.has(bound.name)) {
+      return false;
+    }
+    parameters.add(bound.name);
+  }
+  return correlationReadBody(context, fn.body, parameters);
+};
+
+/** The same proven body published as a value, with no facade parameters: `freshCorrelation.pipe(Effect.flatMap(…))`. */
+const correlationReadValue = (context: AdapterContext, expression: Node): boolean =>
+  correlationReadBody(context, expression, new Set());
+
+/** Native collection, set and string methods a pure computation may call on one of its own values. */
+const pureNativeMethods = new Set([
+  'add',
+  'at',
+  'concat',
+  'every',
+  'filter',
+  'flatMap',
+  'has',
+  'includes',
+  'indexOf',
+  'join',
+  'map',
+  'pop',
+  'push',
+  'slice',
+  'some',
+  'splice',
+  'split',
+  'trim',
+]);
+const pureNativeOperators = new Set(['!==', '===', '<', '<=', '>', '>=', '+', '-']);
+const pureNativeLogical = new Set(['&&', '||', '??']);
+const pureNativeUnary = new Set(['!', '-', '+']);
+const pureNativeLiteralTypes = new Set(['StringLiteral', 'NumericLiteral', 'BooleanLiteral', 'NullLiteral']);
+
+/**
+ * A closed, side-effect-free native computation over the module's own values: literals, template literals, member
+ * reads, native collection/set/string methods, `new Set(…)` and pure same-module values. It can read only its own
+ * parameters, local `const` bindings and pure same-module values, and it can never read an import, call an enrolled
+ * operation, or reach the network, the clock or any ambient binding.
+ */
+type PureNativeCheck = (
+  context: AdapterContext,
+  node: Node | null | undefined,
+  bindings: ReadonlySet<string>,
+  visited: Set<Node>,
+) => boolean;
+
+/** The statement check a pure routine uses for the statements of its own body. */
+type PureNativeStatement = (
+  context: AdapterContext,
+  node: Node,
+  bindings: Set<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+) => boolean;
+
+/** A same-module value a pure computation may read; anything imported, private or impure is refused. */
+const pureNativeModuleValue = (
+  context: AdapterContext,
+  node: Node,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+): boolean => {
+  const binding = context.graph.resolveReference(context.module, node);
+  return (
+    binding?.kind === 'declaration' &&
+    binding.module.path === context.module.path &&
+    !visited.has(binding.expression) &&
+    check(context, binding.expression, new Set(), visited)
+  );
+};
+
+/** A pure name: a bound local, the `undefined` primitive, or a pure same-module value. */
+const pureNativeName = (
+  context: AdapterContext,
+  node: Identifier,
+  bindings: ReadonlySet<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+): boolean => {
+  if (bindings.has(node.name)) {
+    return true;
+  }
+  if (node.name === 'undefined' && context.graph.isUnboundReference(context.module, node)) {
+    return true;
+  }
+  return pureNativeModuleValue(context, node, visited, check);
+};
+
+/** Every call argument is a pure expression; a spread argument is never one. */
+const pureNativeArguments = (
+  context: AdapterContext,
+  args: CallExpression['arguments'],
+  bindings: ReadonlySet<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+): boolean =>
+  args.every((argument) => (argument.type === 'SpreadElement' ? false : check(context, argument, bindings, visited)));
+
+const mutatingNativeMethods = new Set(['add', 'pop', 'push', 'splice']);
+
+const enclosingNativeRoutine = (context: AdapterContext, node: Node): Node | undefined => {
+  const { end, start } = node;
+  if (start === null || start === undefined || end === null || end === undefined) {
+    return undefined;
+  }
+  let owner: Node | undefined;
+  let smallest = Number.POSITIVE_INFINITY;
+  traverseFast(context.module.file, (candidate) => {
+    if (
+      !isFunction(candidate) ||
+      candidate.start === null ||
+      candidate.start === undefined ||
+      candidate.end === null ||
+      candidate.end === undefined
+    ) {
+      return;
+    }
+    const width = candidate.end - candidate.start;
+    if (candidate.start <= start && candidate.end >= end && width < smallest) {
+      owner = candidate;
+      smallest = width;
+    }
+  });
+  return owner;
+};
+
+// Mutating methods are local algorithms only when the collection is allocated
+// by this very invocation, never a caller parameter or captured module value.
+const hasInvocationOwnedCollection = (context: AdapterContext, receiver: Node, call: CallExpression): boolean => {
+  if (receiver.type !== 'Identifier') {
+    return false;
+  }
+  const binding = context.graph.resolveReference(context.module, receiver);
+  if (
+    binding?.kind !== 'declaration' ||
+    binding.module.path !== context.module.path ||
+    (binding.expression.type !== 'ArrayExpression' &&
+      !(
+        binding.expression.type === 'NewExpression' &&
+        binding.expression.callee.type === 'Identifier' &&
+        binding.expression.callee.name === 'Set' &&
+        context.graph.isUnboundReference(context.module, binding.expression.callee)
+      ))
+  ) {
+    return false;
+  }
+  let allocated = false;
+  traverseFast(context.module.file, (node) => {
+    if (
+      node.type === 'VariableDeclaration' &&
+      node.kind === 'const' &&
+      node.declarations.some(
+        (declaration) => declaration.id.type === 'Identifier' && declaration.init === binding.expression,
+      )
+    ) {
+      allocated = true;
+    }
+  });
+  const owner = enclosingNativeRoutine(context, binding.expression);
+  return allocated && owner !== undefined && owner === enclosingNativeRoutine(context, call);
+};
+
+/** A native method call on one of the routine's own values, or a call to a pure same-module routine. */
+const pureNativeCall = (
+  context: AdapterContext,
+  node: CallExpression,
+  bindings: ReadonlySet<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+): boolean => {
+  const { callee } = node;
+  if (callee.type === 'Identifier') {
+    const binding = context.graph.resolveReference(context.module, callee);
+    return (
+      binding?.kind === 'declaration' &&
+      binding.module.path === context.module.path &&
+      binding.expression.type === 'ArrowFunctionExpression' &&
+      !visited.has(binding.expression) &&
+      check(context, binding.expression, new Set(), visited) &&
+      pureNativeArguments(context, node.arguments, bindings, visited, check)
+    );
+  }
+  return (
+    callee.type === 'MemberExpression' &&
+    !callee.computed &&
+    callee.property.type === 'Identifier' &&
+    pureNativeMethods.has(callee.property.name) &&
+    (!mutatingNativeMethods.has(callee.property.name) || hasInvocationOwnedCollection(context, callee.object, node)) &&
+    check(context, callee.object, bindings, visited) &&
+    pureNativeArguments(context, node.arguments, bindings, visited, check)
+  );
+};
+
+/** Aggregate literals, `new Set(…)` and native calls: the composite pure native forms. */
+const pureNativeComposite = (
+  context: AdapterContext,
+  node: Node,
+  bindings: ReadonlySet<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+): boolean => {
+  if (node.type === 'ArrayExpression') {
+    return node.elements.every((element) => {
+      if (element === null) {
+        return false;
+      }
+      return element.type === 'SpreadElement'
+        ? check(context, element.argument, bindings, visited)
+        : check(context, element, bindings, visited);
+    });
+  }
+  if (node.type === 'ObjectExpression') {
+    return node.properties.every(
+      (property) =>
+        property.type === 'ObjectProperty' && !property.computed && check(context, property.value, bindings, visited),
+    );
+  }
+  if (node.type === 'NewExpression') {
+    return (
+      node.callee.type === 'Identifier' &&
+      node.callee.name === 'Set' &&
+      context.graph.isUnboundReference(context.module, node.callee) &&
+      pureNativeArguments(context, node.arguments, bindings, visited, check)
+    );
+  }
+  return node.type === 'CallExpression' && pureNativeCall(context, node, bindings, visited, check);
+};
+
+/** Native unary, binary and logical operators over pure operands. */
+const pureNativeOperator = (
+  context: AdapterContext,
+  node: Node,
+  bindings: ReadonlySet<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+): boolean => {
+  if (node.type === 'UnaryExpression') {
+    return pureNativeUnary.has(node.operator) && check(context, node.argument, bindings, visited);
+  }
+  if (node.type !== 'BinaryExpression' && node.type !== 'LogicalExpression') {
+    return false;
+  }
+  const operators = node.type === 'BinaryExpression' ? pureNativeOperators : pureNativeLogical;
+  return (
+    operators.has(node.operator) &&
+    check(context, node.left, bindings, visited) &&
+    check(context, node.right, bindings, visited)
+  );
+};
+
+/** One `const` binding of a pure value; the bound name then joins the routine's readable names. */
+const pureNativeBinding = (
+  context: AdapterContext,
+  declaration: VariableDeclarator,
+  bindings: Set<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+): boolean => {
+  const { init } = declaration;
+  if (declaration.id.type !== 'Identifier' || init === null || init === undefined) {
+    return false;
+  }
+  if (!check(context, init, bindings, visited)) {
+    return false;
+  }
+  bindings.add(declaration.id.name);
+  return true;
+};
+
+/** A pure `if`: a pure test and pure branches. */
+const pureNativeIf = (
+  context: AdapterContext,
+  node: Extract<Node, { readonly type: 'IfStatement' }>,
+  bindings: Set<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+  statement: PureNativeStatement,
+): boolean =>
+  check(context, node.test, bindings, visited) &&
+  statement(context, node.consequent, bindings, visited, check) &&
+  (node.alternate === null || node.alternate === undefined
+    ? true
+    : statement(context, node.alternate, bindings, visited, check));
+
+/** A pure `for…of` over a pure iterable: the loop variable joins the body's readable names. */
+const pureNativeForOf = (
+  context: AdapterContext,
+  node: Extract<Node, { readonly type: 'ForOfStatement' }>,
+  bindings: Set<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+  statement: PureNativeStatement,
+): boolean => {
+  const [declaration] = node.left.type === 'VariableDeclaration' ? node.left.declarations : [];
+  if (declaration === undefined || declaration.id.type !== 'Identifier' || declaration.init !== null) {
+    return false;
+  }
+  if (!check(context, node.right, bindings, visited)) {
+    return false;
+  }
+  const inner = new Set([...bindings, declaration.id.name]);
+  return statement(context, node.body, inner, visited, check);
+};
+
+/**
+ * The statements a pure routine may contain: `const` bindings of pure values, pure `if`/`for…of`, pure expression
+ * statements, blocks and returns. No assignment, update or `var` — the module-wide no-mutation guard already forbids
+ * the first two, and none of them can reach an effect.
+ */
+const pureNativeStatement = (
+  context: AdapterContext,
+  node: Node,
+  bindings: Set<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+): boolean => {
+  if (node.type === 'VariableDeclaration') {
+    return (
+      node.kind === 'const' &&
+      node.declarations.every((declaration) => pureNativeBinding(context, declaration, bindings, visited, check))
+    );
+  }
+  if (node.type === 'ExpressionStatement') {
+    return check(context, node.expression, bindings, visited);
+  }
+  if (node.type === 'BlockStatement') {
+    return node.body.every((statement) => pureNativeStatement(context, statement, bindings, visited, check));
+  }
+  if (node.type === 'IfStatement') {
+    return pureNativeIf(context, node, bindings, visited, check, pureNativeStatement);
+  }
+  if (node.type === 'ForOfStatement') {
+    return pureNativeForOf(context, node, bindings, visited, check, pureNativeStatement);
+  }
+  return (
+    node.type === 'ReturnStatement' &&
+    (node.argument === null || node.argument === undefined || check(context, node.argument, bindings, visited))
+  );
+};
+
+/** A pure routine: plain parameters and a body of pure native statements. */
+const pureNativeRoutine = (
+  context: AdapterContext,
+  fn: ArrowFunctionExpression,
+  outer: ReadonlySet<string>,
+  visited: Set<Node>,
+  check: PureNativeCheck,
+): boolean => {
+  if (visited.has(fn)) {
+    return false;
+  }
+  visited.add(fn);
+  const bindings = new Set(outer);
+  let valid = true;
+  for (const parameter of fn.params) {
+    if (parameter.type !== 'Identifier' || bindings.has(parameter.name)) {
+      valid = false;
+      break;
+    }
+    bindings.add(parameter.name);
+  }
+  if (valid) {
+    valid =
+      fn.body.type === 'BlockStatement'
+        ? fn.body.body.every((statement) => pureNativeStatement(context, statement, bindings, visited, check))
+        : check(context, fn.body, bindings, visited);
+  }
+  visited.delete(fn);
+  return valid;
+};
+
+const pureNativeExpression = (
+  context: AdapterContext,
+  node: Node | null | undefined,
+  bindings: ReadonlySet<string>,
+  visited: Set<Node>,
+): boolean => {
+  if (node === null || node === undefined) {
+    return false;
+  }
+  if (pureNativeLiteralTypes.has(node.type)) {
+    return true;
+  }
+  if (node.type === 'Identifier') {
+    return pureNativeName(context, node, bindings, visited, pureNativeExpression);
+  }
+  if (node.type === 'TemplateLiteral') {
+    return node.expressions.every((expression) => pureNativeExpression(context, expression, bindings, visited));
+  }
+  if (node.type === 'MemberExpression') {
+    return (
+      !node.computed &&
+      node.property.type === 'Identifier' &&
+      pureNativeExpression(context, node.object, bindings, visited)
+    );
+  }
+  if (node.type === 'ArrowFunctionExpression') {
+    return pureNativeRoutine(context, node, bindings, visited, pureNativeExpression);
+  }
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression' || node.type === 'TSNonNullExpression') {
+    return pureNativeExpression(context, node.expression, bindings, visited);
+  }
+  if (node.type === 'UnaryExpression' || node.type === 'BinaryExpression' || node.type === 'LogicalExpression') {
+    return pureNativeOperator(context, node, bindings, visited, pureNativeExpression);
+  }
+  return pureNativeComposite(context, node, bindings, visited, pureNativeExpression);
+};
+
+interface ChunkedReadSteps {
+  readonly projection?: ArrowFunctionExpression;
+  readonly reads: Node;
+}
+
+/** The `Effect.forEach` read and the optional `Effect.map` projection of one chunked-read pipeline. */
+const chunkedReadSteps = (context: AdapterContext, node: Node): ChunkedReadSteps | undefined => {
+  const piped = exactCall(node, 1);
+  if (
+    piped === undefined ||
+    piped.callee.type !== 'MemberExpression' ||
+    piped.callee.computed ||
+    !identifier(piped.callee.property, 'pipe')
+  ) {
+    return { reads: node };
+  }
+  const mapped = exactCall(piped.arguments[0], 1);
+  if (mapped === undefined || !native(context, mapped.callee, 'Effect', 'map')) {
+    return undefined;
+  }
+  const projected = expressionArrow(mapped.arguments[0]);
+  return projected === undefined ? undefined : { projection: projected, reads: piped.callee.object };
+};
+
+/** `Effect.forEach(<pure chunks>, <enrolled chunk reader>, <pure options>)[.pipe(Effect.map(<pure projection>))]`. */
+const scopedChunkedReadPipeline = (
+  context: AdapterContext,
+  node: Node,
+  bindings: ReadonlySet<string>,
+  visited: Set<Node>,
+): boolean => {
+  const steps = chunkedReadSteps(context, node);
+  if (steps === undefined) {
+    return false;
+  }
+  const forEach = exactCall(steps.reads, 3);
+  if (forEach === undefined || !native(context, forEach.callee, 'Effect', 'forEach')) {
+    return false;
+  }
+  const [chunks, reader, options] = forEach.arguments;
+  if (
+    chunks === undefined ||
+    options === undefined ||
+    !pureNativeExpression(context, chunks, bindings, visited) ||
+    !pureNativeExpression(context, options, bindings, visited)
+  ) {
+    return false;
+  }
+  const chunkReader = expressionArrow(reader);
+  if (chunkReader === undefined || !correlationRead(context, chunkReader)) {
+    return false;
+  }
+  if (steps.projection === undefined) {
+    return true;
+  }
+  const [pages] = namedParameters(steps.projection, 1) ?? [];
+  if (pages === undefined || pages.optional === true || bindings.has(pages.name)) {
+    return false;
+  }
+  return pureNativeExpression(context, steps.projection.body, new Set([...bindings, pages.name]), visited);
+};
+
+/** `<pure test> ? Effect.succeed(<pure>) : <chunked read>`, or the chunked read on its own. */
+const scopedChunkedReadReturn = (
+  context: AdapterContext,
+  node: Node,
+  bindings: ReadonlySet<string>,
+  visited: Set<Node>,
+): boolean => {
+  if (node.type !== 'ConditionalExpression') {
+    return scopedChunkedReadPipeline(context, node, bindings, visited);
+  }
+  const succeeded = exactCall(node.consequent, 1);
+  return (
+    pureNativeExpression(context, node.test, bindings, visited) &&
+    succeeded !== undefined &&
+    native(context, succeeded.callee, 'Effect', 'succeed') &&
+    pureNativeExpression(context, succeeded.arguments[0], bindings, visited) &&
+    scopedChunkedReadPipeline(context, node.alternate, bindings, visited)
+  );
+};
+
+/**
+ * Prove a scoped chunked read: a facade that binds pure local state over its parameters, then reads the requested
+ * chunks through one enrolled governed operation per chunk — each with a fresh native correlation — and returns a
+ * pure projection of the pages. The local state and the projection reach no import, no module binding and no effect.
+ */
+const scopedChunkedRead = (context: AdapterContext, fn: ArrowFunctionExpression): boolean => {
+  if (fn.body.type !== 'BlockStatement') {
+    return false;
+  }
+  const visited = new Set<Node>();
+  const bindings = new Set<string>();
+  for (const parameter of fn.params) {
+    if (parameter.type !== 'Identifier' || bindings.has(parameter.name)) {
+      return false;
+    }
+    bindings.add(parameter.name);
+  }
+  const statements = fn.body.body;
+  const returned = statements.at(-1);
+  if (returned?.type !== 'ReturnStatement' || returned.argument === null || returned.argument === undefined) {
+    return false;
+  }
+  for (const statement of statements.slice(0, -1)) {
+    if (statement.type !== 'VariableDeclaration' || statement.kind !== 'const') {
+      return false;
+    }
+    for (const declaration of statement.declarations) {
+      if (!pureNativeBinding(context, declaration, bindings, visited, pureNativeExpression)) {
+        return false;
+      }
+    }
+  }
+  return scopedChunkedReadReturn(context, returned.argument, bindings, visited);
+};
+
 interface YieldBinding {
   readonly argument: Node;
   readonly name: string;
@@ -688,6 +1357,7 @@ const reExportsGovernedOperations = (context: AdapterContext, statement: ExportN
 /** The closed forms an expression-bodied facade may take. */
 const arrowFacade = (context: AdapterContext, arrow: ArrowFunctionExpression): boolean =>
   decodeForward(context, arrow) !== undefined ||
+  correlationRead(context, arrow) ||
   projection(context, arrow) ||
   forwardedRead(context, arrow) ||
   forwardedProjection(context, arrow) ||
@@ -701,20 +1371,33 @@ const isGovernedFacade = (context: AdapterContext, expression: Node): boolean =>
     return arrowFacade(context, arrow);
   }
   const block = blockArrow(expression);
-  return (block !== undefined && freshForwardedRead(context, block)) || generatorForwardedRead(context, expression);
+  return (
+    (block !== undefined && (freshForwardedRead(context, block) || scopedChunkedRead(context, block))) ||
+    generatorForwardedRead(context, expression) ||
+    correlationReadValue(context, expression)
+  );
 };
 
 /** Every runtime declaration must be a closed form: a proven facade, a pure helper, or a correlation effect. */
 const isAdmissibleDeclaration = (context: AdapterContext, init: Node): boolean => {
   const arrow = expressionArrow(init);
   if (arrow !== undefined) {
-    return purePayload(context, arrow) || arrowFacade(context, arrow);
+    return (
+      purePayload(context, arrow) ||
+      arrowFacade(context, arrow) ||
+      pureNativeRoutine(context, arrow, new Set(), new Set(), pureNativeExpression)
+    );
   }
   const block = blockArrow(init);
   return (
-    (block !== undefined && freshForwardedRead(context, block)) ||
+    (block !== undefined &&
+      (freshForwardedRead(context, block) ||
+        scopedChunkedRead(context, block) ||
+        pureNativeRoutine(context, block, new Set(), new Set(), pureNativeExpression))) ||
     generatorForwardedRead(context, init) ||
-    isCorrelationEffect(context, init)
+    isCorrelationEffect(context, init) ||
+    correlationReadValue(context, init) ||
+    pureNativeExpression(context, init, new Set(), new Set())
   );
 };
 
@@ -796,9 +1479,10 @@ const inspectDeclaration = (context: AdapterContext, statement: Node, declaratio
 };
 
 /**
- * Prove exact decode/forward, pure-default forwarding, collection projection, native-random correlation and
- * `Effect.fn` generator forwarding, plus governed-operation republication value flow. Every runtime declaration must
- * be one of these closed forms, not merely reach a native SDK.
+ * Prove exact decode/forward, pure-default forwarding, collection projection, native-random correlation (including
+ * the parameter payload form and the scoped chunked read), `Effect.fn` generator forwarding, plus governed-operation
+ * republication value flow. Every runtime declaration must be one of these closed forms, or a pure native helper that
+ * reaches no import, module binding or effect — not merely a declaration that reaches a native SDK.
  */
 export const hasGeneratedGovernedConsumerAdapter = (proof: AdapterProof): boolean => {
   const { module } = proof.selected;

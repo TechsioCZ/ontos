@@ -26,11 +26,8 @@ import { modulePagePreload } from '@app/shared-contracts/page-data';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Predicate, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
-import {
-  applyTaggingCommand,
-  applyTaggingCommandIfUnchanged,
-  subjectsWithTag,
-} from '../../../../api/records-consumer.ts';
+import { applyTaggingCommand, applyTaggingCommandIfUnchanged } from '../../../../api/records-commands.ts';
+import { subjectsWithTag } from '../../../../api/records-consumer.ts';
 import { loadSubjectNames } from '../../../../api/subject-names.ts';
 import type { SubjectNames } from '../../../../api/subject-names.ts';
 import {

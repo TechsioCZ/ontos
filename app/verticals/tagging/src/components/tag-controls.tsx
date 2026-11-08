@@ -42,7 +42,9 @@ import { definePageData, pageDataPending } from '@app/shared-contracts/page-data
 import { Effect, Schema } from 'effect';
 import type { ReactNode } from 'react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { assignTag, listTags, recordsFor, recordsOfKind, unassignTag } from '../api/records-consumer.ts';
+import { assignTag, unassignTag } from '../api/records-commands.ts';
+import { listTags, recordsOfKind } from '../api/records-consumer.ts';
+import { recordsFor } from '../api/records-queries.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { isTagReadForbidden, tagsFailureStatus, tagsReadable } from '../tags/tag-access.ts';
 import type { TagCallFailure, TagsStatus } from '../tags/tag-access.ts';
