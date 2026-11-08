@@ -378,7 +378,10 @@ const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliver
 
 const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, catalogBackendRegistration).pipe(
   Layer.provideMerge(ownerActionApprovalsLive),
-  Layer.provide(Layer.mergeAll(catalogSourceActionPersistenceLive, accessEnforcementLive)),
+  // The source and local override Actions build their persistence from this factory while they execute in the
+  // handler's request fiber, so it must stay visible beside the Action runtime.
+  Layer.provideMerge(catalogSourceActionPersistenceLive),
+  Layer.provide(accessEnforcementLive),
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,

@@ -174,7 +174,10 @@ export const makePartyRegistryApiRuntime = (
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
     partyRegistryCommandsLive.pipe(Layer.provide(governedActionRuntimeLive)),
-    partyRegistryCommandRecoveryLive.pipe(Layer.provide(governedActionRuntimeLive)),
+    // Commit recovery reads the committed create result through the governed Read runtime.
+    partyRegistryCommandRecoveryLive.pipe(
+      Layer.provide(Layer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive)),
+    ),
     engagementProfileApiHandlersLive.pipe(Layer.provide(governedActionRuntimeLive)),
     makeOwnerActionApprovalApiLive(partyRegistryApi, authenticateOwnerApprovalPrincipal).pipe(
       GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
