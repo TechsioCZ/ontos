@@ -89,15 +89,17 @@ it('accepts the actual tenant-qualified read programs for Payment Term Catalog a
   expect(accepts(productDetail, readSource(productDetail))).toBe(true);
 });
 
-it('requires original scoped factory proof even when a replacement callback is executable', () => {
+it('rejects executable service factories that do not produce an Effect', () => {
   const target = paymentTerm(PAYMENT_TERM_HISTORY);
   const original = readSource(target);
-  const invalid = original.replace(
-    '(transaction, scope) => paymentTermCatalogPersistenceForScope(transaction, scope)',
-    '(transaction, scope) => 42',
-  );
-  expect(invalid).not.toBe(original);
-  expect(accepts(target, invalid)).toBe(false);
+  for (const invalidFactory of ['() => 42', '() => null', '() => ({})', '() => []']) {
+    const invalid = original.replace(
+      '(transaction, scope) => paymentTermCatalogPersistenceForScope(transaction, scope)',
+      invalidFactory,
+    );
+    expect(invalid).not.toBe(original);
+    expect(accepts(target, invalid), invalidFactory).toBe(false);
+  }
 });
 
 it('rejects hostile tenant, service, helper, Effect, factory, eager-effect and rebinding shapes', () => {

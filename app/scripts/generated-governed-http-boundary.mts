@@ -13348,6 +13348,13 @@ const hasOriginalNativeReadFactory = (owner: ReadPhaseOwner, source: string, rea
   );
 };
 
+const hasReadServiceFactoryCallback = (
+  owner: ReadPhaseOwner,
+  source: string,
+  readExpression: string,
+  candidate: string | undefined,
+): boolean => hasOriginalNativeReadFactory(owner, source, readExpression) || isReadHandlerCallback(candidate, source);
+
 const hasReadCallbacks = (
   source: string,
   readExpression: string,
@@ -13433,7 +13440,9 @@ const hasReadCallbacks = (
         return hasReadOwnerPermissionDeclaration(sources, readFile, ownerPath, callback);
       }
       return (
-        isExecutableCallback(callback, source) ||
+        (index === 2
+          ? hasReadServiceFactoryCallback(phaseOwner, source, readExpression, callback)
+          : isExecutableCallback(callback, source)) ||
         isOwnerLocalImportedCallback(callback) ||
         isOwnerLocalImportedFactoryResult(callback) ||
         (index === 2 && hasOriginalServiceClosureFactory({ ownerPath, readFile, sources }, source, callback)) ||
