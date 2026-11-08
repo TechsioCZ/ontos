@@ -77,6 +77,21 @@ proto rozbalený selector nemá produkční vizuální GO. Ostatní country inst
 by měly zachovat výchozí positioning. Funkční a testovací hranice jsou ve
 VALIDATION.md; izolovaný harness není runtime náhrada účtu nebo backendu.
 
+MFA completion rozšiřuje stávající AuthContent. Fresh metadata celé Figma
+stránky42:635/50:635/56:635 neukazují samostatný MFA rámec; login333:4672
+byl znovu načtený jako kompoziční reference FormInput md, Button sm a Link.
+Nejde o tvrzení pixelové shody s existující MFA předlohou. Nabízené metody
+jsou nativní Button ve fieldset/legend, kód FormInput s one-time-code autocomplete
+a skutečnými nativními mezemi1–32/isTrimmed. Nevyžaduje se šest číslic.
+Kód se neukládá do React ani trvalého stavu a po odeslání se vyprázdní.
+
+Potvrzené odeslání OTP používá jediný globální Toaster. Změna zobrazeného auth stavu,
+mount nebo safe GET samy toast nevytvářejí. Odmítnutý/neplatný kód má právě
+jeden FormInput error text; vypršení, throttle a ostatní trvalé stavy zůstávají
+oddělené. Throttle bez nativního času nedostává odpočet. Pending zakazuje
+současné akce a označuje formulář aria-busy. Žádná nová komponentová definice,
+CSS, appearance class na kitu, paleta nebo obecné nastavení knihovny nevzniklo.
+
 Mobilní navigace59:1595/418:2491: existující Dialog left/xs s Accordion
 md/borderless a VerticalNavigation.Link pro skutečné větve ownera. Drawer se
 kotví podle skutečného spodního okraje Headeru přes veřejný ref; počáteční

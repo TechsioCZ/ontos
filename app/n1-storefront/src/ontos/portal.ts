@@ -33,6 +33,23 @@ export const PortalRegistrationSchema = Schema.Struct({
 }).check(Schema.makeFilter((input) => input.password === input.passwordConfirmation));
 export type PortalLogin = typeof PortalLoginSchema.Type;
 export type PortalRegistration = typeof PortalRegistrationSchema.Type;
+export const PortalMfaMethodSchema = Schema.Literals(["totp", "otp"]);
+export const PortalMfaVerifySchema = Schema.Struct({
+  code: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(32)),
+  method: PortalMfaMethodSchema,
+});
+export type PortalMfaVerify = typeof PortalMfaVerifySchema.Type;
+const PortalMfaErrorReasonSchema = Schema.Literals([
+  "invalid",
+  "rejected",
+  "expired",
+  "authentication-required",
+  "throttled",
+  "refused",
+  "unavailable",
+  "unconfirmed",
+]);
+export type PortalMfaErrorReason = typeof PortalMfaErrorReasonSchema.Type;
 const PortalEnrollmentPhaseSchema = Schema.Literals([
   "IN_PROGRESS",
   "VERIFICATION_REQUIRED",
@@ -56,7 +73,10 @@ export const PortalOutcomeSchema = Schema.Union([
     state: Schema.Literal("registration-progress"),
   }),
   Schema.Struct({
-    methods: Schema.Array(Schema.Literals(["otp", "totp"])),
+    feedback: Schema.optionalKey(
+      Schema.Literals(["otp-sent", "invalid", "rejected", "throttled", "unavailable"]),
+    ),
+    methods: Schema.Array(PortalMfaMethodSchema),
     state: Schema.Literal("mfa"),
   }),
   Schema.Struct({
@@ -76,10 +96,50 @@ export const PortalOutcomeSchema = Schema.Union([
       "verification-required",
       "anonymous",
       "email-verified",
+      "mfa-expired",
+      "mfa-authentication-required",
     ]),
   }),
 ]);
 export type PortalOutcome = typeof PortalOutcomeSchema.Type;
+export const PortalMfaResultSchema = Schema.Union([
+  Schema.Struct({ state: Schema.Literal("otp-sent") }),
+  Schema.Struct({ outcome: PortalOutcomeSchema, state: Schema.Literal("complete") }),
+  Schema.Struct({ reason: PortalMfaErrorReasonSchema, state: Schema.Literal("mfa-error") }),
+]);
+export type PortalMfaResult = typeof PortalMfaResultSchema.Type;
+export const PortalMfaInvalidProblem = makeProblemDetailsSchema("PortalMfaInvalidProblem", 400, {
+  reason: Schema.Literal("invalid"),
+  state: Schema.Literal("mfa-error"),
+});
+export const PortalMfaAuthenticationProblem = makeProblemDetailsSchema(
+  "PortalMfaAuthenticationProblem",
+  401,
+  {
+    reason: Schema.Literals(["rejected", "expired", "authentication-required"]),
+    state: Schema.Literal("mfa-error"),
+  },
+);
+export const PortalMfaRateLimitedProblem = makeProblemDetailsSchema(
+  "PortalMfaRateLimitedProblem",
+  429,
+  {
+    reason: Schema.Literal("throttled"),
+    state: Schema.Literal("mfa-error"),
+  },
+);
+export const PortalMfaRefusedProblem = makeProblemDetailsSchema("PortalMfaRefusedProblem", 403, {
+  reason: Schema.Literal("refused"),
+  state: Schema.Literal("mfa-error"),
+});
+export const PortalMfaUnavailableProblem = makeProblemDetailsSchema(
+  "PortalMfaUnavailableProblem",
+  503,
+  {
+    reason: Schema.Literals(["unavailable", "unconfirmed"]),
+    state: Schema.Literal("mfa-error"),
+  },
+);
 export const PortalInvalidProblem = makeProblemDetailsSchema("PortalInvalidProblem", 400, {
   state: Schema.Literal("invalid"),
 });
@@ -112,6 +172,15 @@ export class PortalSchemaErrorMiddleware extends HttpApiMiddleware.Service<Porta
   "n1/PortalSchemaErrorMiddleware",
   { error: PortalInvalidProblem },
 ) {}
+const mfaProblems = [
+  PortalInvalidProblem,
+  PortalRefusedProblem,
+  PortalMfaInvalidProblem,
+  PortalMfaAuthenticationProblem,
+  PortalMfaRateLimitedProblem,
+  PortalMfaRefusedProblem,
+  PortalMfaUnavailableProblem,
+] as const;
 const empty = Schema.Record(Schema.String, Schema.Never);
 export const PortalApi = HttpApi.make("N1Portal")
   .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: "error" })
@@ -132,6 +201,20 @@ export const PortalApi = HttpApi.make("N1Portal")
           error: portalProblems,
           payload: PortalLoginSchema,
           success: PortalOutcomeSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post("requestMfaOtp", "/api/account/mfa/request", {
+          error: mfaProblems,
+          payload: empty,
+          success: PortalMfaResultSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post("verifyMfa", "/api/account/mfa/verify", {
+          error: mfaProblems,
+          payload: PortalMfaVerifySchema,
+          success: PortalMfaResultSchema,
         }),
       )
       .add(
@@ -168,5 +251,9 @@ export const decodePortalLogin = Schema.decodeUnknownEffect(PortalLoginSchema, {
   onExcessProperty: "error",
 });
 export const decodePortalRegistration = Schema.decodeUnknownEffect(PortalRegistrationSchema, {
+  onExcessProperty: "error",
+});
+
+export const decodePortalMfaVerify = Schema.decodeUnknownEffect(PortalMfaVerifySchema, {
   onExcessProperty: "error",
 });

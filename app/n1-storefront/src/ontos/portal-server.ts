@@ -8,8 +8,15 @@ import { Cookies, HttpClient, HttpClientRequest } from "effect/http";
 import { HttpApi } from "effect/http-api";
 import type { StorefrontConfiguration } from "./config";
 import { readConfiguration } from "./config";
-import type { PortalLogin, PortalOutcome, PortalRegistration } from "./portal";
+import type {
+  PortalLogin,
+  PortalMfaResult,
+  PortalMfaVerify,
+  PortalOutcome,
+  PortalRegistration,
+} from "./portal";
 import {
+  completeMfaWithPortalOwner,
   decodePortalAdmission,
   enrollmentBody,
   loginWithPortalOwner,
@@ -28,6 +35,7 @@ const ownerApi = HttpApi.make("N1PortalOwner")
   .add(commerceCustomerContextApi.groups.customerOwnProfileRead)
   .add(commerceCustomerContextApi.groups.customerOwnProfileUpdate)
   .add(commerceCustomerContextApi.groups.portalAuthSession)
+  .add(commerceCustomerContextApi.groups.portalAuthMfa)
   .add(commerceCustomerContextApi.groups.portalAuthEnrollment)
   .add(commerceCustomerContextApi.groups.portalAuthRecovery);
 const readDeadline = "10 seconds";
@@ -408,4 +416,69 @@ export const portalFailureOutcome = (error: PortalOwnerFailure): PortalOutcome =
           : { state: failure.reason },
     }),
     Match.orElse(() => ({ state: "unconfirmed" as const })),
+  );
+
+/** Complete only the challenge already bound to the realm's HttpOnly cookie. */
+export const verifyPortalMfaServer = (input: PortalMfaVerify, request: PortalRequestContext) =>
+  Effect.gen(function* verifyPortalMfaProgram() {
+    const config = yield* configuration;
+    const client = yield* makeOwnerClient(config, request);
+    const payload = { code: input.code, trustDevice: false };
+    return yield* completeMfaWithPortalOwner({
+      admit: readAdmission(config, request),
+      verify: (input.method === "totp"
+        ? client.portalAuthMfa.verifyTotp({ payload })
+        : client.portalAuthMfa.verifyOtp({ payload })
+      ).pipe(Effect.timeout(writeDeadline)),
+    });
+  });
+export const requestPortalMfaOtpServer = (request: PortalRequestContext) =>
+  Effect.gen(function* requestPortalMfaOtpProgram() {
+    const config = yield* configuration;
+    const client = yield* makeOwnerClient(config, request);
+    const result = yield* client.portalAuthMfa
+      .sendOtp({ payload: { trustDevice: false } })
+      .pipe(Effect.timeout(writeDeadline));
+    return result.status
+      ? { state: "otp-sent" as const }
+      : { reason: "unconfirmed" as const, state: "mfa-error" as const };
+  });
+type PortalMfaOwnerFailure = Effect.Error<
+  ReturnType<typeof verifyPortalMfaServer> | ReturnType<typeof requestPortalMfaOtpServer>
+>;
+export const portalMfaFailureOutcome = (error: PortalMfaOwnerFailure): PortalMfaResult =>
+  Match.value(error).pipe(
+    Match.tags({
+      CommercePortalAuthMfaAuthenticationProblem: (problem) => ({
+        reason: (
+          {
+            mfa_authentication_not_fresh: "authentication-required",
+            mfa_challenge_expired: "expired",
+            mfa_rejected: "rejected",
+          } as const
+        )[problem.code],
+        state: "mfa-error" as const,
+      }),
+      CommercePortalAuthMfaForbiddenProblem: () => ({
+        reason: "refused" as const,
+        state: "mfa-error" as const,
+      }),
+      CommercePortalAuthMfaInvalidProblem: () => ({
+        reason: "invalid" as const,
+        state: "mfa-error" as const,
+      }),
+      CommercePortalAuthMfaRateLimitedProblem: () => ({
+        reason: "throttled" as const,
+        state: "mfa-error" as const,
+      }),
+      CommercePortalAuthMfaUnavailableProblem: () => ({
+        reason: "unavailable" as const,
+        state: "mfa-error" as const,
+      }),
+      PortalFailure: (failure) => ({
+        reason: failure.reason === "credentials" ? ("expired" as const) : failure.reason,
+        state: "mfa-error" as const,
+      }),
+    }),
+    Match.orElse(() => ({ reason: "unconfirmed" as const, state: "mfa-error" as const })),
   );

@@ -219,8 +219,15 @@ BE konfigurace `COMMERCE_PORTAL_AUTH_URL`; FE ji nemění ani nenahrazuje.
 pokračování, po dokončení se znovu ověřuje customer admission.
 
 Obnova hesla, profil a seznam/detail vlastních objednávek jsou implementované.
-Dokončení MFA zatím implementované není. Pozitivní živé ověření registrace,
-doručení e-mailu, přihlášení a účtu zůstává otevřené.
+Probíhající MFA přihlášení lze dokončit nabízenou metodou TOTP nebo OTP;
+odeslání OTP vyžaduje výslovnou akci. Kód zůstává jen v dočasném vstupu.
+Úspěšné ověření pokračuje čerstvou zákaznickou admission; samotné potvrzení
+kódu přihlášení nepředstírá. Po nejasném výsledku je dostupné bezpečné
+ověření session, zápis se automaticky neopakuje. Vypršelá challenge vrátí
+prázdné přihlášení. Nastavení/vypnutí MFA, záložní kódy, zapamatování zařízení
+a obnovení rozpracované challenge po reloadu nejsou tímto celkem implementované.
+Pozitivní živé ověření registrace, doručení e-mailu, přihlášení, MFA a účtu
+zůstává otevřené.
 Vývojový frontend může používat sdílený Stage backend; při tomto zapojení
 lokální Shell ani owners nejsou nutní. N1 má vlastní tenant/seller a katalog;
 serverová konfigurace a přístupové údaje zůstávají mimo Git.
@@ -253,7 +260,7 @@ ověřit ve workflow a release receipt odděleně od lokální aplikace.
    Filtry používat podle návrhu a podporovaného owner kontraktu; nefiltrovat
    náhradně jednu stránku ve FE ani nevymýšlet produktové vztahy.
 3. Doložit pozitivní Portal průchod od registrace přes e-mail po vlastní objednávky;
-   dokončit MFA a úpravy adres. U výběru uložené adresy dořešit knihovní
+   živě ověřit dokončení MFA a doplnit úpravy adres. U výběru uložené adresy dořešit knihovní
    šířku seznamu a doložit použití se skutečnou Portal session.
 4. Doplnit skutečný právní/CMS obsah a chybějící owner schopnosti pro produktové
    ETA, tabulky velikostí, související zboží, oblíbené, hlídání a online platby.

@@ -1498,3 +1498,51 @@ a oba simulované PNG. Sdílený patch ani lockfile zatím nejsou změněné;
 produkční vizuální GO pro tento selector se proto **neuděluje**. Živý pozitivní
 Portal průchod, zákaznické adresy na Stage a přihlášená objednávka zůstávají
 neověřené. Nebyl odeslán registrační, e-mailový ani objednávkový zápis.
+
+## 8. 11. 2026 — dokončení probíhajícího MFA přihlášení
+
+N1 nově používá existující veřejnou skupinu `portalAuthMfa` pro explicitní
+odeslání OTP a ověření OTP/TOTP. Scope je pouze dokončení challenge vrácené
+současným loginem. Backend, provider, granty, role ani klíče se nemění.
+Native verify acknowledgement nestačí: nový owner klient musí s rotovanými
+cookies načíst čerstvou zákaznickou admission. Anonymní, cizí tenant nebo
+nevalidní admission není úspěšné přihlášení. Odpovědi zachovávají i mazání
+cookies při odmítnutí. Odeslání OTP se potvrdí pouze při skutečném true;
+false vede na nejasný výsledek. Origin a uzavřené payloady zůstávají chráněné.
+
+Prvních šest testů nejprve reprodukovalo neexistující endpointy 404. Finální
+cílený celek prošel 77 testy v 5 souborech; celá N1 sada prošla **770 testy
+v 74 souborech**, bez skip/todo. N1 lint, finální typová kontrola, diff-check
+a produkční Next build včetně obou nových API rout prošly. Globální
+`i18n:boundaries` má nadále 28 nálezů `strict-effect-api-boundaries`, všechny
+mimo N1; žádná diagnostika nebyla potlačená. Globální repository PASS se netvrdí.
+
+Regrese zahrnují chybný/cizí payload, Origin bez owner dispatch, nativní
+chybové kódy, false OTP ack, rotované i expirované cookies, neplatné/cizí/
+anonymní admission a ochranu proti opožděnému přijetí nebo toastu. Kód je
+neprázdný řetězec bez okrajových mezer do 32 znaků podle veřejného kontraktu,
+nikoli nucených šest číslic. Vstup se nemění trimem, nepřesouvá do URL, logů
+ani storage a po odeslání se maže. Nejasné ověření se automaticky neopakuje;
+safe GET může potvrdit aktuální session, neobnovuje domnělou ztracenou challenge.
+
+Fresh Figma metadata formulářů, účtu a stavů neobsahují MFA rámec; načtená
+login reference `333:4672` určuje použití stávajících komponent, nikoli nový
+MFA pixelový cíl. Root i nezávislý reviewer otevřeli skutečné PNG finálního
+desktopu 1440, mobilní chyby 390 a EN throttle 320. Native formulář má 448 px
+na desktopu, obě úzké sestavy nepřetékají. Chyba kódu se po nalezené browserové
+regresi zobrazuje pouze jednou u pole s aria-invalid/describedby.
+
+Izolovaný loopback harness používá skutečný AuthView, session controller
+a veřejný HTTP klient. Pouze framework adaptéry a odpovědi HTTP jsou testovací;
+nevolá Stage ani neposílá e-maily. V prohlížeči prošla explicitní volba metody,
+zadání nenumerického platného test kódu, přijetí výsledku, vypršení → prázdné
+credentials, a pending → zakázané akce/aria-busy/prázdný kód. Unconfirmed stav
+odstraní opakovaný submit; po jediném verify POST následoval safe GET recovery.
+Volba OTP nic sama neposlala. Read-only DOM pozorování zachytilo skutečný
+native toast až po explicitním request POST; na 390 px měl 360 px a x6. Nový
+toastový PNG není dokladem tohoto průchodu, krátké oznámení při snímání již
+zmizelo. Konzole kontrolovaných stavů byla bez chyb a varování.
+
+Source i vymezené layout review mají GO. Skutečný zákaznický MFA účet,
+doručení OTP a živý pozitivní Portal průchod zůstávají neověřené. Nastavení/
+vypnutí MFA, backup kódy a trust-device nejsou součástí této implementace.

@@ -13,6 +13,12 @@ import {
   PortalApi,
   PortalCredentialsProblem,
   PortalInvalidProblem,
+  PortalMfaAuthenticationProblem,
+  PortalMfaInvalidProblem,
+  PortalMfaRateLimitedProblem,
+  PortalMfaRefusedProblem,
+  PortalMfaResultSchema,
+  PortalMfaUnavailableProblem,
   PortalOutcomeSchema,
   PortalRateLimitedProblem,
   PortalRefusedProblem,
@@ -21,7 +27,7 @@ import {
   PortalUnconfirmedProblem,
   PortalVerificationQuerySchema,
 } from "./portal";
-import type { PortalOutcome } from "./portal";
+import type { PortalMfaResult, PortalOutcome } from "./portal";
 import { isPortalOrigin } from "./portal-model";
 import { normalizePublicRequest } from "./request-origin";
 import {
@@ -29,6 +35,9 @@ import {
   loginPortalServer,
   logoutPortalServer,
   portalFailureOutcome,
+  portalMfaFailureOutcome,
+  requestPortalMfaOtpServer,
+  verifyPortalMfaServer,
   portalRequestContext,
   registerPortalServer,
   verifyPortalEmailServer,
@@ -101,35 +110,69 @@ const responseForOutcome = (outcome: PortalOutcome) =>
     ),
     Match.orElse((value) => HttpServerResponse.schemaJson(PortalOutcomeSchema)(value)),
   );
-type OwnerProgram =
-  | ReturnType<typeof loginPortalServer>
-  | ReturnType<typeof registerPortalServer>
-  | ReturnType<typeof currentPortalServer>
-  | ReturnType<typeof logoutPortalServer>;
-type PortalProgram = Effect.Effect<
-  PortalOutcome,
-  Effect.Error<OwnerProgram>,
-  Effect.Services<OwnerProgram>
->;
-const channel = (
+const responseForMfa = (result: PortalMfaResult) => {
+  if (result.state !== "mfa-error") {
+    return HttpServerResponse.schemaJson(PortalMfaResultSchema)(result);
+  }
+  const base = { ...details, state: "mfa-error" as const };
+  return Match.value(result.reason).pipe(
+    Match.when("invalid", (reason) =>
+      HttpServerResponse.schemaJson(PortalMfaInvalidProblem)(
+        PortalMfaInvalidProblem.make({ ...base, reason, status: 400 }),
+        { contentType: problemContentType, status: 400 },
+      ),
+    ),
+    Match.when(
+      (reason) =>
+        reason === "expired" || reason === "rejected" || reason === "authentication-required",
+      (reason) =>
+        HttpServerResponse.schemaJson(PortalMfaAuthenticationProblem)(
+          PortalMfaAuthenticationProblem.make({ ...base, reason, status: 401 }),
+          { contentType: problemContentType, status: 401 },
+        ),
+    ),
+    Match.when("throttled", (reason) =>
+      HttpServerResponse.schemaJson(PortalMfaRateLimitedProblem)(
+        PortalMfaRateLimitedProblem.make({ ...base, reason, status: 429 }),
+        { contentType: problemContentType, status: 429 },
+      ),
+    ),
+    Match.when("refused", (reason) =>
+      HttpServerResponse.schemaJson(PortalMfaRefusedProblem)(
+        PortalMfaRefusedProblem.make({ ...base, reason, status: 403 }),
+        { contentType: problemContentType, status: 403 },
+      ),
+    ),
+    Match.orElse((reason) =>
+      HttpServerResponse.schemaJson(PortalMfaUnavailableProblem)(
+        PortalMfaUnavailableProblem.make({ ...base, reason, status: 503 }),
+        { contentType: problemContentType, status: 503 },
+      ),
+    ),
+  );
+};
+/** Every account operation shares the exact Origin, no-store and realm-cookie transport. */
+const channel = <A, E, R>(
   request: HttpServerRequest.HttpServerRequest,
-  program: (context: PortalRequestContext) => PortalProgram,
+  program: (context: PortalRequestContext) => Effect.Effect<A, E, R>,
+  failure: (error: E) => A,
+  respond: (value: A) => ReturnType<typeof responseForOutcome>,
 ) =>
   Effect.gen(function* portalChannel() {
     const context = portalRequestContext(
       new URL(request.originalUrl).origin,
       request.headers.cookie,
     );
-    const result =
+    const response =
       request.method !== "GET" && !isPortalOrigin(request.headers.origin, request.originalUrl)
-        ? { diagnostic: "bff-origin-refused" as const, state: "refused" as const }
+        ? yield* responseForOutcome({ diagnostic: "bff-origin-refused", state: "refused" }).pipe(
+            Effect.orDie,
+          )
         : yield* program(context).pipe(
-            Effect.match({
-              onFailure: portalFailureOutcome,
-              onSuccess: (value): PortalOutcome => value,
-            }),
+            Effect.match({ onFailure: failure, onSuccess: (value) => value }),
+            Effect.flatMap(respond),
+            Effect.orDie,
           );
-    const response = yield* responseForOutcome(result).pipe(Effect.orDie);
     return response.pipe(
       HttpServerResponse.setHeaders({
         "cache-control": "no-store",
@@ -144,15 +187,45 @@ const handlers = HttpApiBuilder.group(PortalApi, "portal", (group) =>
       verifyPortalEmailServer(query.token).pipe(Effect.map(verificationRedirect)),
     )
     .handle("login", ({ payload, request }) =>
-      channel(request, (context) => loginPortalServer(payload, context)),
+      channel(
+        request,
+        (context) => loginPortalServer(payload, context),
+        portalFailureOutcome,
+        responseForOutcome,
+      ),
+    )
+    .handle("requestMfaOtp", ({ request }) =>
+      channel(request, requestPortalMfaOtpServer, portalMfaFailureOutcome, responseForMfa),
+    )
+    .handle("verifyMfa", ({ payload, request }) =>
+      channel(
+        request,
+        (context) => verifyPortalMfaServer(payload, context),
+        portalMfaFailureOutcome,
+        responseForMfa,
+      ),
     )
     .handle("register", ({ payload, request }) =>
-      channel(request, (context) => registerPortalServer(payload, context)),
+      channel(
+        request,
+        (context) => registerPortalServer(payload, context),
+        portalFailureOutcome,
+        responseForOutcome,
+      ),
     )
-    .handle("current", ({ request }) => channel(request, currentPortalServer))
-    .handle("logout", ({ request }) => channel(request, logoutPortalServer))
+    .handle("current", ({ request }) =>
+      channel(request, currentPortalServer, portalFailureOutcome, responseForOutcome),
+    )
+    .handle("logout", ({ request }) =>
+      channel(request, logoutPortalServer, portalFailureOutcome, responseForOutcome),
+    )
     .handle("resume", ({ request }) =>
-      channel(request, (context) => currentPortalServer(context, true)),
+      channel(
+        request,
+        (context) => currentPortalServer(context, true),
+        portalFailureOutcome,
+        responseForOutcome,
+      ),
     ),
 ).pipe(Layer.provide(schemaErrors));
 const application = HttpApiBuilder.layer(PortalApi).pipe(
