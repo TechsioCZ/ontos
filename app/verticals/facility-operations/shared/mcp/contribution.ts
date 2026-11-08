@@ -1,5 +1,8 @@
 import { defineOntosMcpContribution } from '@app/core-runtime';
 
+// Matches the personal-command routing in src/ui/use-agenda.ts.
+const personalAgendaActionSlug = 'update-personal-agenda';
+
 export const facilityOperationsMcpContribution = defineOntosMcpContribution({
   actions: { 'request-search-rebuild': 'hidden' },
   approvals: true,
@@ -36,12 +39,17 @@ export const facilityOperationsMcpContribution = defineOntosMcpContribution({
     AgendaExportRecord: { title: { cs: 'Zaznamenat export agendy', en: 'Record an agenda export' } },
     AgendaNotificationsDeliver: { title: { cs: 'Doručit upozornění agendy', en: 'Deliver agenda notifications' } },
     AgendaNotificationsMarkAllRead: {
+      actionSlug: personalAgendaActionSlug,
       title: { cs: 'Označit všechna upozornění jako přečtená', en: 'Mark all notifications as read' },
     },
     AgendaNotificationsMarkRead: {
+      actionSlug: personalAgendaActionSlug,
       title: { cs: 'Označit upozornění jako přečtená', en: 'Mark notifications as read' },
     },
-    AgendaPreferencesSet: { title: { cs: 'Nastavit předvolby agendy', en: 'Set agenda preferences' } },
+    AgendaPreferencesSet: {
+      actionSlug: personalAgendaActionSlug,
+      title: { cs: 'Nastavit předvolby agendy', en: 'Set agenda preferences' },
+    },
     AssetArchive: { title: { cs: 'Archivovat majetek', en: 'Archive an asset' } },
     AssetArchiveRestore: {
       destructive: false,

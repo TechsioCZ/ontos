@@ -452,6 +452,44 @@ interface ToolDraft {
   readonly tool: Omit<OntosMcpTool, 'inputSchema'>;
 }
 
+interface CommandCandidate {
+  readonly action: ActionEndpoint;
+  readonly variant: TaggedVariant;
+}
+
+/** Preserve the existing Action/variant order for commands that already have one owner. */
+const commandCandidatesOf = (actions: readonly ActionEndpoint[]): Map<string, CommandCandidate[]> => {
+  const candidates = new Map<string, CommandCandidate[]>();
+  for (const action of actions) {
+    for (const variant of action.variants ?? []) {
+      const candidate = { action, variant };
+      const previous = candidates.get(variant.tag);
+      if (previous === undefined) {
+        candidates.set(variant.tag, [candidate]);
+      } else {
+        previous.push(candidate);
+      }
+    }
+  }
+  return candidates;
+};
+
+const selectCommandCandidate = (
+  candidates: readonly CommandCandidate[],
+  actionSlug: string | undefined,
+  tag: string,
+  moduleId: string,
+): Result.Result<CommandCandidate, OntosMcpContributionDerivationError> => {
+  const matches = actionSlug === undefined ? candidates : candidates.filter(({ action }) => action.slug === actionSlug);
+  const [selected] = matches;
+  if (matches.length !== 1 || selected === undefined) {
+    return fail(
+      `${moduleId}: MCP command ${tag} actionSlug ${actionSlug ?? '(not declared)'} must select exactly one published Action containing that command`,
+    );
+  }
+  return Result.succeed(selected);
+};
+
 const collectDrafts = (
   authored: OntosMcpContributionInput,
   reads: readonly ReadEndpoint[],
@@ -483,24 +521,23 @@ const collectDrafts = (
         },
       });
     }
-    for (const action of commandActions) {
-      for (const variant of action.variants ?? []) {
-        const entry = authored.commands?.[variant.tag];
-        if (entry === undefined || entry === OntosMcpHidden) {
-          continue;
-        }
-        yield* mergeDefinitions(definitions, action.document.definitions, `${moduleId} command ${variant.tag}`);
-        drafts.push({
-          schema: commandInputSchema(variant.schema),
-          tool: {
-            access: 'write',
-            id: `${moduleId}/command/${variant.tag}`,
-            invoke: { commandTag: variant.tag, path: action.path },
-            name: mcpToolName(appId, variant.tag),
-            ...writeFields(entry, variant.tag),
-          },
-        });
+    for (const [tag, candidates] of commandCandidatesOf(commandActions)) {
+      const entry = authored.commands?.[tag];
+      if (entry === undefined || entry === OntosMcpHidden) {
+        continue;
       }
+      const { action, variant } = yield* selectCommandCandidate(candidates, entry.actionSlug, tag, moduleId);
+      yield* mergeDefinitions(definitions, action.document.definitions, `${moduleId} command ${tag}`);
+      drafts.push({
+        schema: commandInputSchema(variant.schema),
+        tool: {
+          access: 'write',
+          id: `${moduleId}/command/${tag}`,
+          invoke: { commandTag: tag, path: action.path },
+          name: mcpToolName(appId, tag),
+          ...writeFields(entry, tag),
+        },
+      });
     }
     for (const action of namedActions) {
       const entry = authored.actions?.[action.slug];
