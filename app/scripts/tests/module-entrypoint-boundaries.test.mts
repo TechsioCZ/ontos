@@ -541,7 +541,7 @@ const moduleReadFixture = (
   camel: string,
 ): string => `${MODULE_API_HEADER}import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 export const ${camel}Entrypoint = defineTenantModuleEntrypoint({ access: 'read', authorization: { kind: 'protected' }, entrypointKey: 'inventory.stock.api.${name}', moduleKey: 'inventory.stock', role: 'api' });
-export const ${camel}Read = defineRead({ accessDeclaration: { key: 'inventory.stock.api.${name}.read', kind: 'read', modes: ['run'], placement: { group: 'stock', level: 'basic' }, risk: 'routine', selectors: [] }, accessKind: 'list', entrypoint: ${camel}Entrypoint, inputSchema: ${type}RequestSchema, resultSchema: ${type}ResponseSchema, legalEntityScope: 'optional', owningModuleKey: 'inventory.stock', policies: [], readKey: 'inventory.stock.api.${name}', schemaVersion: '1' }, () => Effect.succeed({}), () => Layer.empty);`;
+export const ${camel}Read = defineRead({ accessDeclaration: { key: 'inventory.stock.api.${name}.read', kind: 'read', modes: ['run'], placement: { group: 'stock', level: 'basic' }, risk: 'routine', selectors: [] }, accessKind: 'list', entrypoint: ${camel}Entrypoint, inputSchema: ${type}RequestSchema, resultSchema: ${type}ResponseSchema, legalEntityScope: 'optional', owningModuleKey: 'inventory.stock', policies: [], readKey: 'inventory.stock.api.${name}', schemaVersion: '1' }, () => Effect.succeed({}), () => Effect.succeed({}));`;
 
 it('governed servers bind the trusted handler, authentication, registration, and problem schemas', () => {
   const exportedName = 'stockListReadApiLive';

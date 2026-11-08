@@ -4,7 +4,7 @@ import path from 'node:path';
 import { SyntaxKind } from '@typescript/native/unstable/ast';
 import { Option, Schema } from 'effect';
 import { parseSync, Visitor } from 'oxc-parser';
-import type { ObjectExpression } from 'oxc-parser';
+import type { Expression, ObjectExpression } from 'oxc-parser';
 
 import { hasOriginalConfiguredReadPhase } from './generated-ccc-configured-read-provenance.mts';
 import {
@@ -13348,12 +13348,59 @@ const hasOriginalNativeReadFactory = (owner: ReadPhaseOwner, source: string, rea
   );
 };
 
+const isNonEffectFactoryValue = (value: Expression | null | undefined): boolean => {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (
+    value.type === 'ParenthesizedExpression' ||
+    value.type === 'TSAsExpression' ||
+    value.type === 'TSSatisfiesExpression' ||
+    value.type === 'TSNonNullExpression' ||
+    value.type === 'TSTypeAssertion'
+  ) {
+    return isNonEffectFactoryValue(value.expression);
+  }
+  return (
+    value.type === 'Literal' ||
+    value.type === 'ObjectExpression' ||
+    value.type === 'ArrayExpression' ||
+    value.type === 'TemplateLiteral' ||
+    value.type === 'UnaryExpression' ||
+    (value.type === 'Identifier' && value.name === 'undefined')
+  );
+};
+
+const returnsNonEffectFactoryValue = (source: string, candidate: string | undefined): boolean => {
+  const initializer = candidate === undefined ? undefined : (constInitializer(source, candidate) ?? candidate);
+  if (initializer === undefined || !hasBalancedArrowCallback(initializer)) {
+    return false;
+  }
+  const returned = callbackReturnedExpression(initializer);
+  if (returned === undefined) {
+    return false;
+  }
+  const parsed = parseSync('read-factory-return.ts', `const factoryValue = (${returned});`, {
+    astType: 'ts',
+    lang: 'ts',
+    sourceType: 'module',
+  });
+  const [statement] = parsed.program.body;
+  return (
+    parsed.errors.length === 0 &&
+    statement?.type === 'VariableDeclaration' &&
+    isNonEffectFactoryValue(statement.declarations[0]?.init)
+  );
+};
+
 const hasReadServiceFactoryCallback = (
   owner: ReadPhaseOwner,
   source: string,
   readExpression: string,
   candidate: string | undefined,
-): boolean => hasOriginalNativeReadFactory(owner, source, readExpression) || isReadHandlerCallback(candidate, source);
+): boolean =>
+  hasOriginalNativeReadFactory(owner, source, readExpression) ||
+  (isExecutableCallback(candidate, source) && !returnsNonEffectFactoryValue(source, candidate));
 
 const hasReadCallbacks = (
   source: string,
