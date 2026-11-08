@@ -1576,3 +1576,32 @@ Konzole kontrolovaných reálných právních stránek byla bez chyb/varování.
 Tato navazující změna opravuje dokumentaci a inventář, nikoli runtime.
 Předcházející770testů, lint/type/build zůstávají datovanou evidencí stejného
 runtime snapshotu; kvůli dokumentaci se znovu nespouštějí jako nový důkaz.
+
+## 8. 11. 2026 — mobilní zarovnání stránkování kategorie
+
+Fresh Figma `38:2138` a `38:2409` umisťují mobilní Pagination na levý
+okraj obsahu; desktop `214:4488` je výslovně zarovnaný vpravo. Skutečná
+kategorie před úpravou měla při 390 px nav x=234 v obsahu x=16 / w=358.
+Oprava mění pouze aplikační layout wrapper přes volitelný `mobileAlignment`.
+CategoryView předává start; výchozí end zachovává původní vyhledávání.
+Knihovní Pagination, její props, velikost, count a tvorba URL se nemění.
+
+Actual localhost po opravě: kategorie na mobilu x=16, desktop při 1440 px
+stále x=1257 / pravý okraj=1397. Skutečné kliknutí na stránku 2 zachovalo
+`?page=2`, aktivní stránku 2 a mobilní levé zarovnání. Vyhledávání Spyder
+při 390 px zůstalo vpravo x=198 / pravý okraj=374 a odkazy dál obsahují
+`q=Spyder` i cílovou stránku. Obě mobilní stránky mají scrollWidth=390.
+Root a nezávislý reviewer otevřeli všechny čtyři before/after PNG kategorie
+(desktop i mobil) a aktuální Figma kontexty. Dílčí source/layout GO.
+
+Existující katalogové testy: 40/40 ve 4 souborech PASS; N1 typecheck a lint PASS.
+Neúspěšný filtr category nevybral žádný test a nebyl počítaný jako úspěch;
+první katalogový běh blokoval sandboxový listen EPERM, stejný test potom
+prošel s povoleným lokálním socketem. Nový test kopírující jednu layout
+class se nepřidával. Poslední celý runtime suite měl 770 testů; tento
+záznam netvrdí nový běh celé sady ani nový produkční build.
+
+Lokální Next konzole při scrollu hlásila LCP doporučení loading=eager pro
+konkrétní produktový obrázek. Tento warning nebyl skrytý ani označený za
+čistou konzoli; není předmětem opravy stránkování. Odložené metriky UI kitu
+se touto změnou nemění a celý katalog nedostává plošné vizuální schválení.

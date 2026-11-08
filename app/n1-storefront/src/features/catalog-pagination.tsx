@@ -8,6 +8,7 @@ import type { Dictionary } from "@/i18n";
 export const CatalogPagination = ({
   count,
   dictionary: d,
+  mobileAlignment = "end",
   page,
   pageSize,
   pathname,
@@ -15,6 +16,7 @@ export const CatalogPagination = ({
 }: {
   count: number;
   dictionary: Dictionary;
+  mobileAlignment?: "start" | "end";
   page: number;
   pageSize: number;
   pathname: string;
@@ -30,7 +32,13 @@ export const CatalogPagination = ({
     prevTriggerLabel: d.previous,
   };
   return (
-    <div className="flex justify-end pt-8">
+    <div
+      className={
+        mobileAlignment === "start"
+          ? "flex justify-start pt-8 md:justify-end"
+          : "flex justify-end pt-8"
+      }
+    >
       <div className="n1-compact:hidden">
         <Pagination
           aria-label={d.page}

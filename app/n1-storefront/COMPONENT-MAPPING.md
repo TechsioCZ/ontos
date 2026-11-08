@@ -731,3 +731,12 @@ jsou v současné kompozici přítomné. Obsah ponechává lang=cs pod EN chrome
 Nové actual desktop/mobile PNG potvrzují strukturu bez přetékání. Zalamování
 system-ui vs Inter způsobuje známou24px odchylku výšky vybraných sestav;
 padding se kvůli tomu nemění. Nejde o nové vzhledové přepisy ani pixelové GO.
+
+### Kategorie — mobilní Pagination 38:2409 / desktop 214:4488
+
+Existující CatalogPagination nadále skládá skutečné kit Pagination a NextLink.
+Mobilní Figma parent 38:2138 řadí stránkování vlevo, desktop vpravo.
+CategoryView proto volí `mobileAlignment="start"`; samostatné vyhledávání
+ponechává výchozí end. Mění se jen responzivní flex zarovnání app wrapperu,
+nikoli vzhled nebo interakční kontrakt knihovní komponenty. Skutečné count,
+stránka a query zůstávají datové; návrhových 182 stránek se nekopíruje.
