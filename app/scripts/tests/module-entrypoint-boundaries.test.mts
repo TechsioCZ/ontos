@@ -2608,6 +2608,22 @@ export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: st
   }),
 );
 
+it.live('proves real registration entries without unused footer markers', () =>
+  Effect.gen(function* registrationWithoutObsoleteFooters() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const source = yield* Effect.promise(() => readFile(path.join(root, INVENTORY_REGISTRATION_PATH), 'utf-8'));
+    const registration = source.replaceAll(
+      /^\/\/ <\/?generated-(?:public-component|search|report)-registrations>\n?/gmu,
+      '',
+    );
+    expect(registration).not.toBe(source);
+    expect(registration).toContain("'stock-list': () => import('./src/api/stock-list-client.ts')");
+    yield* write(root, INVENTORY_REGISTRATION_PATH, registration);
+    yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
 const violations = [
   {
     expected: /raw loadRemote.*approved Shell module-entrypoint loader/u,
@@ -2653,11 +2669,6 @@ const violations = [
     expected: /package exports must not publish private/u,
     file: 'verticals/inventory-stock/package.json',
     source: `{"exports":{"./private":"./src/db/schema.ts"}}`,
-  },
-  {
-    expected: /reserved generated-public-component-registrations slots/u,
-    file: INVENTORY_REGISTRATION_PATH,
-    source: `export const registration = {};`,
   },
   {
     expected: /Core may export only module-entrypoint descriptors/u,

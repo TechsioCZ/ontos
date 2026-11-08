@@ -5009,24 +5009,6 @@ const validatePackageExports = (file: string, source: string) =>
     }
   });
 
-const validateRegistrationSlots = (file: string, source: string) =>
-  Effect.gen(function* validateRegistrationSlotsEffect() {
-    if (file.endsWith('/vertical.registration.ts')) {
-      for (const marker of [
-        'generated-public-component-registrations',
-        'generated-search-registrations',
-        'generated-report-registrations',
-      ]) {
-        if (!source.includes(`<${marker}>`) || !source.includes(`</${marker}>`)) {
-          yield* fail(
-            file,
-            `Vertical Runtime Registration is missing reserved ${marker} slots; extend Codesmith first`,
-          );
-        }
-      }
-    }
-  });
-
 const validateCoreExports = (file: string, source: string) =>
   Effect.gen(function* validateCoreExportsEffect() {
     if (file === 'packages/core-runtime/src/index.ts') {
@@ -5084,7 +5066,6 @@ const validateGeneralSource = (file: string, source: string, importedModuleSpeci
     }
     yield* validatePrivateHandlerAccess(file, source);
     yield* validatePackageExports(file, source);
-    yield* validateRegistrationSlots(file, source);
     yield* validateCoreExports(file, source);
   });
 
