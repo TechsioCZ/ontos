@@ -38,6 +38,21 @@ afterEach(() => {
   rs.restoreAllMocks();
 });
 
+it.each(["cs", "en"])("shows unavailable product actions without enabling them in %s", (locale) => {
+  const dictionary = getDictionary(locale);
+  const html = renderToStaticMarkup(
+    <ProductView dictionary={dictionary} locale={locale} product={product} />,
+  );
+  const buttons = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/gu) ?? [];
+  for (const label of [dictionary.addToFavorites, dictionary.watchProduct]) {
+    const action = buttons.find((button) => button.endsWith(`${label}</button>`));
+    expect(action).toBeDefined();
+    expect(action).toContain('disabled=""');
+    expect(action).toContain(`aria-label="${label}: ${dictionary.featureUnavailable}"`);
+    expect(action).not.toContain("href=");
+  }
+});
+
 it.each(["cs", "en"])("renders a safe inactive share action during SSR in %s", (locale) => {
   const dictionary = getDictionary(locale);
   const html = renderToStaticMarkup(

@@ -2,7 +2,7 @@
 import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const crmMcpContribution = defineOntosMcpContribution({
-  actions: { 'request-search-rebuild': 'hidden' },
+  actions: { 'intake-client-party': OntosMcpHidden, 'request-search-rebuild': 'hidden' },
   // Clients are private per salesperson: proposals about clients the reader cannot see stay hidden.
   approvalReview: { privateRecords: true, read: 'agent-review' },
   approvals: true,
@@ -77,6 +77,7 @@ export const crmMcpContribution = defineOntosMcpContribution({
   page: '/crm/klienti',
   reads: {
     'agent-review': OntosMcpHidden,
+    'pending-client-intake': OntosMcpHidden,
     records: { title: { cs: 'Přehled klientů, kontaktů a objednávek', en: 'Clients, contacts and orders overview' } },
   },
   recordLinks: [

@@ -24,6 +24,10 @@ import { productShareHref, productShareOrigin } from "./product-share";
 
 type Parameter = ProductDetailModel["parameters"][number];
 const emptyCategories: CatalogModel["categories"] = [];
+const mobileInformationOrder = (selectionRequired: boolean) =>
+  selectionRequired
+    ? { price: "order-1", stock: "order-2" }
+    : { price: "order-4", stock: "order-3" };
 const parameterColumns = (d: Dictionary, desktop = false): ColumnDef<Parameter>[] => {
   const label: ColumnDef<Parameter> = {
     accessorKey: "label",
@@ -90,6 +94,7 @@ export const ProductView = ({
   );
   const { current, genericVariantSelected, images, parameters, selectionRequired, variant } =
     selection;
+  const informationOrder = mobileInformationOrder(selectionRequired);
   const category = categories.find((item) => item.id === product.categoryId);
   const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   const pathname = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
@@ -198,7 +203,7 @@ export const ProductView = ({
               variants={product.variants}
             />
           )}
-          <div className="order-3 md:order-2 md:mb-6">
+          <div className={`${informationOrder.stock} md:order-2 md:mb-6`}>
             <div className="n1-product-stock-desktop hidden md:block">
               <AvailabilityStatus
                 label={productStockLabel(selection, d, locale)}
@@ -230,7 +235,7 @@ export const ProductView = ({
               </Link>
             </div>
           </div>
-          <div className="order-4 md:order-5 md:mb-n1-product-price-quantity">
+          <div className={`${informationOrder.price} md:order-5 md:mb-n1-product-price-quantity`}>
             <PriceBlock {...priceProps(current, d, locale, current.priceExcludingVatMinor)} />
           </div>
           <div className="order-5 md:hidden">
@@ -248,6 +253,34 @@ export const ProductView = ({
           </div>
           <div aria-hidden="true" className="order-7 hidden h-px bg-border-primary md:block" />
           <div className="order-8 flex flex-col items-start gap-6 md:mt-4 md:flex-row md:flex-wrap md:items-center md:gap-x-4 md:gap-y-2">
+            <div className="flex items-center gap-2">
+              <div className="hidden md:block">
+                <Icon color="secondary" icon="icon-[mdi--heart-outline]" size="md" />
+              </div>
+              <Link
+                aria-label={`${d.addToFavorites}: ${d.featureUnavailable}`}
+                as="button"
+                disabled
+                title={d.featureUnavailable}
+                type="button"
+              >
+                {d.addToFavorites}
+              </Link>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="hidden md:block">
+                <Icon color="secondary" icon="icon-[mdi--paw-outline]" size="md" />
+              </div>
+              <Link
+                aria-label={`${d.watchProduct}: ${d.featureUnavailable}`}
+                as="button"
+                disabled
+                title={d.featureUnavailable}
+                type="button"
+              >
+                {d.watchProduct}
+              </Link>
+            </div>
             <div className="flex items-center gap-2">
               <div className="hidden md:block">
                 <Icon color="secondary" icon="icon-[mdi--help-circle-outline]" size="md" />

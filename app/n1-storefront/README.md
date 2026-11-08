@@ -4,7 +4,8 @@
 > ověření cen byly ověřené se skutečným lokálním N1 kontextem. Nejde o hotový
 > převod všech obrazovek Figmy. Detail nyní rozlišuje desktopový NumericInput
 > a mobilní QuantityField; karty používají contain a vypnutý stín přes knihovní API.
-> Guest checkout, profil a vlastní objednávky mají nativní integraci. Uložené adresy a zákaznický checkout ještě chybí.
+> Guest i přihlášený checkout, profil, vlastní objednávky a čtení uložených adres
+> mají nativní integraci. Úpravy adres a jejich výběr do checkoutu ještě chybí.
 > Portal registrace/přihlášení mají implementaci a testy; celý pozitivní živý
 > průchod ještě není doložený. Lokální data ani přístupové údaje nejsou součástí aplikace.
 
@@ -31,7 +32,10 @@ Je to rozpracovaný storefront, nikoliv hotový převod všech obrazovek Figmy. 
 registrace a ověření e-mailu mají existující Portal integraci; košík a owner dry-run
 ověření jsou popsané níže. Guest checkout čte skutečné dopravy, ověřuje celkovou
 cenu a vytváří objednávku s dohledáním výsledku podle stabilního požadavku.
-Profil a seznam/detail vlastních objednávek mají implementaci a testy; pozitivní živý Portal průchod ještě není doložený. Uložené adresy nejsou zapojené. Doprava a platby čtou skutečné market checkout možnosti; právní
+Profil, seznam/detail vlastních objednávek a čtení uložených adres mají implementaci
+a testy; pozitivní živý Portal průchod ještě není doložený. Přihlášený checkout
+určuje zákazníka z čerstvé serverové Portal admission; nepoužitelnou přítomnou
+session nezmění na guest nákup. Doprava a platby čtou skutečné market checkout možnosti; právní
 texty a ostatní obsahové stránky kromě kontaktů čekají na skutečný obsah.
 
 Úplný seznam všech aktuálních rámců a stavů je v `FIGMA-INVENTORY.md`. Kategorie nyní
@@ -147,7 +151,7 @@ zůstává omezený vlastními timeouty; samotný browser abort nedokládá jeho
 Nejvýše osm produktových návrhů pochází ze skutečného owner výsledku. Značky nebo
 historické Fox produkty se nevymýšlejí. Loading, skutečně prázdný výsledek a nedostupnost
 jsou odlišné stavy; nedostupnost používá návrhovou kompozici empty s pravdivým textem.
-Živé naplněné výsledky čekají na funkční N1 konfiguraci a data.
+Naplněné našeptávání bylo ověřené také proti sdílenému Stage katalogu.
 
 Statické promo obrázky a popisky odpovídají návrhu včetně mobilní skladby 3+1.
 Jejich odkazy nemají v předaných podkladech potvrzený cílový owner záznam; proto jsou
@@ -188,9 +192,9 @@ Server drží jeden Effect ManagedRuntime. Odpovědi dekóduje Effect Schema a o
 chyby mapuje na nedostupný stav. Karty a detail neukazují neplatnou nebo cizoměnovou
 cenu jako platnou. Samotný počet na skladě neurčuje dostupnost.
 
-Produktová média typu `media:` zatím potřebují doplnění skutečného owner media readu.
-Aplikace z nich neodvozuje adresy ani nepřebírá AKROS obrázky. Zatím podporuje pouze
-výslovně povolené veřejné HTTPS URL. Rovněž nepřebírá AKROS váhový index, Smart Address
+Produktová média podporují povolené veřejné HTTPS URL i nativní media reference
+obsluhované vlastní routou `/obrazky/[product]/[asset]`. Nedostupná média
+se nenahrazují cizími obrázky. Aplikace nepřebírá AKROS váhový index, Smart Address
 ani lokální oblíbené. Benefit pás přebírá statický marketingový obsah návrhu;
 nedokládá skutečnou dostupnost online platby ani výpočet dopravy v checkoutu.
 Cookie settings zůstávají neaktivní do zapojení skutečné správy souhlasu.
@@ -213,9 +217,12 @@ BE konfigurace `COMMERCE_PORTAL_AUTH_URL`; FE ji nemění ani nenahrazuje.
 Úspěšné ověření e-mailu nezaručuje dokončený enrollment: čekající stav má explicitní
 pokračování, po dokončení se znovu ověřuje customer admission.
 
-MFA completion, forgotten-password a úplný account/order přehled zatím chybí.
-Skutečný N1 tenant, produkty a end-to-end auth nejsou potvrzené. Lokální Shell
-a owners musí běžet a N1 musí mít vlastní klíč a přiřazený tenant/seller.
+Obnova hesla, profil a seznam/detail vlastních objednávek jsou implementované.
+Dokončení MFA zatím implementované není. Pozitivní živé ověření registrace,
+doručení e-mailu, přihlášení a účtu zůstává otevřené.
+Vývojový frontend může používat sdílený Stage backend; při tomto zapojení
+lokální Shell ani owners nejsou nutní. N1 má vlastní tenant/seller a katalog;
+serverová konfigurace a přístupové údaje zůstávají mimo Git.
 
 ## Lokální spuštění a kontroly
 
@@ -232,21 +239,24 @@ mise exec -- pnpm --filter n1-storefront build
 
 Vývojový server běží na `http://127.0.0.1:3071/cs`. Prohlížení vyžaduje skutečnou N1
 konfiguraci pouze pro datové části. Bez ní lze ověřit rozložení a nedostupné stavy.
-Produkční build je standalone; nasazení a provisioning N1 zatím nejsou zapojené.
+Produkční build je standalone. Nasazený frontend je na
+`https://ontos-stage-n1.web-revolution.cz/cs`. Automatické Stage nasazení je zapojené;
+push není důkaz úspěšného deploye. Konkrétní release a živé kontrakty je nutné
+ověřit ve workflow a release receipt odděleně od lokální aplikace.
 
 ## Pokračování
 
-1. Připravit N1 tenant/seller, Storefront Client, oprávnění, asociované trhy a import
-   skutečných produktů; ověřit katalogová čtení proti těmto datům.
-2. Dokončit a ověřit naplněné katalogové rozložení, skutečné Core Media čtení,
-   kategoriální obsah a všechny produktové stavy. Veřejný media read existuje, ale jeho
-   storefront oprávnění pro samostatnou N1 prodávající entitu potřebuje potvrzení BE;
-   nepřebírat staff oprávnění jako náhradní cestu. Filtry přidávat pouze podle návrhu
-   a podporovaného owner kontraktu; nefiltrovat náhradně jednu stránku ve FE.
-3. Převést dostupné OntOS account, quote a order kontrakty do N1 rozhraní. Ověřit reálné
-   dopravní a platební možnosti před implementací jejich konkrétních ovládacích prvků.
-4. Dokončit všechny obrazovky a stavy Figmy, provést vizuální kontrolu s reálnými N1 daty
-   a teprve potom připravit cílový deployment. Tato změna nic nenasazuje ani nepushuje.
+1. Ověřit aktuální úspěšné Stage nasazení a nové živé cart quote/checkout kontrakty.
+   Selhání sdíleného buildu ani owner operace se neobchází ve storefrontu.
+2. Dokončit kategoriální přiřazení importovaných produktů a skutečnou kuraci.
+   Filtry používat podle návrhu a podporovaného owner kontraktu; nefiltrovat
+   náhradně jednu stránku ve FE ani nevymýšlet produktové vztahy.
+3. Doložit pozitivní Portal průchod od registrace přes e-mail po vlastní objednávky;
+   dokončit MFA, úpravy adres a použití uložené adresy v checkoutu.
+4. Doplnit skutečný právní/CMS obsah a chybějící owner schopnosti pro produktové
+   ETA, tabulky velikostí, související zboží, oblíbené, hlídání a online platby.
+5. Pokračovat v porovnávání všech obrazovek a stavů Figmy na desktopu i mobilu.
+   Průchod jednoho bloku ani automatické testy nejsou vizuální schválení celého webu.
 
 ## Zákaznický účet — C8
 
@@ -258,9 +268,12 @@ Profil zachovává celé `displayName`; neodhaduje rozdělení na jméno/příjm
 z browseru se nepřijímají, ceny používají uloženou měnu objednávky. Guest
 objednávky se automaticky nepřiřazují podle emailu.
 
-295 testů, build, N1 lint/format a source review prošly. Živě ověřené jsou
-anonymní stavy, odmítnutí podvrženého customer ID a cross-origin zápisu.
-Pozitivní Portal účet není k dispozici; naplněný účet a jeho vizuální shoda
-proto nemají live PASS. Další mezery: bezpečný adresářový most, agregovaná
-útrata/statistiky a historická média nejsou současným kontraktem dodané.
-Nezastupují je fixture hodnoty nebo odvozené součty jedné stránky historie.
+Záložka účtu čte skutečné uložené adresy přes `/api/customer-addresses`.
+Úpravy adres ani jejich výběr do checkoutu nejsou implementované; nerozřešené
+Party-backed adresy mají explicitní stav. Agregovaná útrata/statistiky nejsou
+doplněné odvozenými součty jedné stránky historie.
+
+Výsledky kontrol a jejich konkrétní datum/rozsah zaznamenává `VALIDATION.md`;
+starší záznamy nejsou aktuálním inventářem schopností. Testy a lokální kontrola
+vybraných obrazovek nedokládají pozitivní živý Portal průchod ani vizuální shodu
+celého storefrontu.

@@ -11,6 +11,7 @@ const shell = 'apps/shell-super-app';
 const script = path.join(workspace, 'scripts/generate-shell-ui-candidates.mts');
 const candidates = `${shell}/generated/ui-candidates`;
 const ALPHA_VIEW = 'verticals/alpha/src/view.tsx';
+const ALPHA_MANIFEST = 'verticals/alpha/vertical.manifest.ts';
 const AVAILABILITY_VIEW = 'verticals/availability/src/view.tsx';
 const ALPHA_PROJECTION = 'alpha.txt';
 const CHECK = '--check';
@@ -61,7 +62,7 @@ it.live('ignores a source rename but fails closed for a new utility, icon or the
       '<div className="p-4 icon-[mdi--account-plus]" />',
       'const color = "--color-red-500";',
     ]) {
-      write(root, 'verticals/alpha/vertical.manifest.ts', source);
+      write(root, ALPHA_MANIFEST, source);
       const result = run(root, CHECK, VERTICAL, 'alpha');
       expect(result.status).not.toBe(0);
       expect(result.stdout + result.stderr).toContain('Stale Shell UI candidates: alpha');
@@ -73,14 +74,13 @@ it.live('ignores a source rename but fails closed for a new utility, icon or the
 
 it.live('preserves navigation icon CSS when its owner declaration moves out of the UI manifest', () =>
   fixture((root) => {
-    const manifest = 'verticals/alpha/vertical.manifest.ts';
     const declaration = 'verticals/alpha/vertical.runtime-declaration.ts';
     const source = "export const navigation = { icon: 'icon-[mdi--account-plus]' };\n";
-    write(root, manifest, source);
+    write(root, ALPHA_MANIFEST, source);
     succeeds(root, ALL);
     const before = readFileSync(path.join(root, candidates, ALPHA_PROJECTION), 'utf-8');
     expect(before).toContain('icon-[mdi--account-plus]');
-    write(root, manifest, 'export const manifest = {};\n');
+    write(root, ALPHA_MANIFEST, 'export const manifest = {};\n');
     write(root, declaration, source);
     succeeds(root, CHECK, ALL, GOLDEN);
     expect(readFileSync(path.join(root, candidates, ALPHA_PROJECTION), 'utf-8')).toBe(before);
@@ -100,6 +100,23 @@ it.live('checks unreleased availability and new/deleted verticals instead of tru
     succeeds(root, ALL);
     succeeds(root, CHECK, ALL, GOLDEN);
     expect(run(root, CHECK, VERTICAL, '../alpha').status).not.toBe(0);
+  }),
+);
+
+it.live('retains navigation utilities when owner metadata moves into a runtime declaration', () =>
+  fixture((root) => {
+    const declaration = 'verticals/alpha/vertical.runtime-declaration.ts';
+    const metadata = "export const navigation = { icon: 'icon-[mdi--account-plus]', className: 'me-50' };\n";
+    write(root, ALPHA_MANIFEST, metadata);
+    succeeds(root, ALL);
+    const before = readFileSync(path.join(root, candidates, ALPHA_PROJECTION), 'utf-8');
+    expect(before).toContain('icon-[mdi--account-plus]');
+    write(root, ALPHA_MANIFEST, "export { navigation } from './vertical.runtime-declaration.ts';\n");
+    write(root, declaration, metadata);
+    succeeds(root, CHECK, ALL, GOLDEN);
+    expect(readFileSync(path.join(root, candidates, ALPHA_PROJECTION), 'utf-8')).toBe(before);
+    write(root, declaration, metadata.replace('account-plus', 'account-minus'));
+    expect(outputOf(run(root, CHECK, VERTICAL, 'alpha'))).toContain('Stale Shell UI candidates: alpha');
   }),
 );
 

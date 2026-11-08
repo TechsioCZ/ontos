@@ -19,7 +19,7 @@ import { useCart } from "./cart-provider";
 import { CartQuoteFeedback } from "./cart-quote-feedback";
 import { requestForCart } from "./cart-quote-request";
 import { verifiedCartQuote } from "./cart-quote-state";
-import { cartLineKey } from "./cart-state";
+import { cartLineKey, cartQuantityStep } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import { useCartQuote } from "./use-cart-quote";
 
@@ -148,7 +148,7 @@ const CartRow = ({
                   setSaveError(false);
                 }}
                 size="md"
-                step={1}
+                step={cartQuantityStep(entry.packageQuantity)}
                 translations={{
                   decrementLabel: d.shopping.decreaseQuantity,
                   incrementLabel: d.shopping.increaseQuantity,

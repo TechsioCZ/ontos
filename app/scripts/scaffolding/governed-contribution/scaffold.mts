@@ -924,7 +924,13 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
           ),
         ),
     ]);
-    if (!hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot)) {
+    if (
+      !hasValidGovernedHttpCompositionRoot(
+        sharedApi,
+        handlerRoot,
+        vertical.runtimeDeclaration === undefined ? undefined : `${toCamelCase(vertical.slug)}BackendRegistration`,
+      )
+    ) {
       return raiseScaffoldFailure('governed HTTP composition slots are not bound to the exported runtime root');
     }
     const nextSharedApi = yield* tryScaffold('failed to patch governed HTTP API root', () =>
@@ -1905,7 +1911,11 @@ export const planExistingReadPublication = Effect.fn('GovernedContributionScaffo
         entrypoint.name,
       ) ||
       !imports.every(([binding, module]) => hasRuntimeNamedSourceImport(read, binding, binding, module)) ||
-      !hasValidGovernedHttpCompositionRoot(shared, handler) ||
+      !hasValidGovernedHttpCompositionRoot(
+        shared,
+        handler,
+        vertical.runtimeDeclaration === undefined ? undefined : `${toCamelCase(vertical.slug)}BackendRegistration`,
+      ) ||
       !hasRuntimeNamedSourceImport(handler, layer, layer, `./${name}-read-server.ts`) ||
       !hasRuntimeNamedSourceImport(server, readName, readName, `../src/api/${name}.read.ts`) ||
       !hasRuntimeNamedSourceImport(

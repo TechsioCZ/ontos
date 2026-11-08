@@ -292,6 +292,7 @@ export interface ActionBoundaryScaffoldConfig {
 
 export interface ModuleContractScaffoldConfig {
   readonly module: string;
+  readonly splitRuntime?: boolean;
   readonly vertical: string;
 }
 

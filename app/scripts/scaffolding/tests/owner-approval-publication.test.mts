@@ -423,7 +423,7 @@ it('rejects foreign, shadowed, replaced and duplicate approval authority in the 
       'authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal',
       'foreignAuthentication as authenticateOwnerApprovalPrincipal',
     ),
-    root.replace('../vertical.registration.ts', '../foreign.registration.ts'),
+    root.replace('../vertical.runtime-declaration.ts', '../foreign.runtime-declaration.ts'),
     root.replace('../shared/ultramodern-build.ts', '../shared/foreign-build.ts'),
     root.replace('GovernedReadLayer.provideMerge(ownerActionApprovalsLive),', ''),
     root.replace(

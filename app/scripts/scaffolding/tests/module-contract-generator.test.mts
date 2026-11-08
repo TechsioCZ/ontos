@@ -35,6 +35,8 @@ const PRODUCER_FLAG = '--producer';
 const OUTBOX_WORKER_COMMAND = 'outbox-worker';
 const RUNTIME_DECLARATION_FILE = 'vertical.runtime-declaration.ts';
 const MODULE_MANIFEST_FILE = 'vertical.manifest.ts';
+const SPLIT_RUNTIME_FLAG = '--split-runtime';
+const MICROVERTICAL_PAGE_COMMAND = 'microvertical-page';
 
 const { checkOntosModuleContracts, OntosModuleContractCheckError } = await import(
   /* webpackIgnore: true */
@@ -292,12 +294,6 @@ const createFixture = (apiOnly = false): Effect.Effect<string, unknown> =>
 
 const withFixture = withCreatedFixture(createFixture());
 
-const scaffold = Effect.fn(function* scenario4(root: string, vertical = APP_ID, module = MODULE_ID) {
-  return yield* runScaffoldEffect(MODULE_CONTRACT_COMMAND, [VERTICAL_FLAG, vertical, '--module', module], {
-    workspaceRoot: root,
-  }).pipe(Effect.provide(NodeServices.layer));
-});
-
 const sourceSpan = (node: Span, source: string): string => source.slice(node.start, node.end);
 const fixtureDeclaration = (source: Program, name: string) => {
   const statement = source.body.find(
@@ -325,6 +321,12 @@ const fixtureMember = (object: ObjectExpression, key: string) => {
   }
   return property;
 };
+const scaffold = Effect.fn(function* scenario4(root: string, vertical = APP_ID, module = MODULE_ID) {
+  return yield* runScaffoldEffect(MODULE_CONTRACT_COMMAND, [VERTICAL_FLAG, vertical, '--module', module], {
+    workspaceRoot: root,
+  }).pipe(Effect.provide(NodeServices.layer));
+});
+
 const splitFixtureOwner = Effect.fn('ModuleContractTest.splitOwner')(function* splitFixtureOwner(root: string) {
   const manifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
   const registrationPath = path.join(root, PROPERTY_DIRECTORY, MODULE_REGISTRATION_FILE);
@@ -428,11 +430,15 @@ export default defineEffectBff({ api: fixtureApi, layer });
         );
         expect(generated).not.toContain("from '../vertical.registration.ts'");
         const shared = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_API_PATH), 'utf-8'));
-        expect(hasValidGovernedHttpCompositionRoot(shared, generated)).toBe(true);
+        const backendRegistration = 'propertyRegistryBackendRegistration';
+        expect(hasValidGovernedHttpCompositionRoot(shared, generated, backendRegistration)).toBe(true);
+        expect(hasValidGovernedHttpCompositionRoot(shared, generated)).toBe(false);
+        expect(hasValidGovernedHttpCompositionRoot(shared, generated, 'foreignBackendRegistration')).toBe(false);
         expect(
           hasValidGovernedHttpCompositionRoot(
             shared,
             generated.replace('../vertical.runtime-declaration.ts', '../foreign/vertical.runtime-declaration.ts'),
+            backendRegistration,
           ),
         ).toBe(false);
       }),
@@ -524,7 +530,27 @@ it.live(
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer));
         const originalDocument = yield* Effect.promise(() => readFile(before.path, 'utf-8'));
-        const split = yield* splitFixtureOwner(root);
+        yield* runScaffoldEffect(
+          MODULE_CONTRACT_COMMAND,
+          [VERTICAL_FLAG, APP_ID, '--module', MODULE_ID, SPLIT_RUNTIME_FLAG],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        const split = {
+          backend: yield* Effect.promise(() =>
+            readFile(path.join(root, PROPERTY_DIRECTORY, RUNTIME_DECLARATION_FILE), 'utf-8'),
+          ),
+          fullManifest: yield* Effect.promise(() => readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8')),
+          fullRegistration: yield* Effect.promise(() =>
+            readFile(path.join(root, PROPERTY_DIRECTORY, MODULE_REGISTRATION_FILE), 'utf-8'),
+          ),
+        };
+        const splitSnapshot = yield* snapshotTree(root);
+        yield* runScaffoldEffect(
+          MODULE_CONTRACT_COMMAND,
+          [VERTICAL_FLAG, APP_ID, '--module', MODULE_ID, SPLIT_RUNTIME_FLAG],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        expect(yield* snapshotTree(root)).toEqual(splitSnapshot);
         const after = yield* generateOntosModuleContract({
           target: 'dist',
           vertical: APP_ID,
@@ -933,7 +959,10 @@ it.live(
             ],
           ],
           ['microvertical-action-boundary', [VERTICAL_FLAG, APP_ID]],
-          ['microvertical-page', [VERTICAL_FLAG, APP_ID, '--page', 'properties', AUTHORIZATION_FLAG, 'protected']],
+          [
+            MICROVERTICAL_PAGE_COMMAND,
+            [VERTICAL_FLAG, APP_ID, '--page', 'properties', AUTHORIZATION_FLAG, 'protected'],
+          ],
           ['outbox-message', [VERTICAL_FLAG, APP_ID, '--action', 'create-property', '--topic', 'property.created']],
           [
             OUTBOX_WORKER_COMMAND,
@@ -1743,6 +1772,83 @@ it.live(
           expect(String(error)).toMatch(/duplicate generated topology appId/u),
         );
         expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'explicitly splits an empty owner and preserves metadata authoring through page reruns',
+  Effect.fn(function* explicitSplitPageAuthoring() {
+    yield* withFixture(
+      Effect.fn(function* verifyExplicitSplitPageAuthoring(root) {
+        yield* scaffold(root);
+        yield* runScaffoldEffect(
+          MODULE_CONTRACT_COMMAND,
+          [VERTICAL_FLAG, APP_ID, '--module', MODULE_ID, SPLIT_RUNTIME_FLAG],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        const runtimePath = path.join(root, PROPERTY_DIRECTORY, RUNTIME_DECLARATION_FILE);
+        const runtime = yield* Effect.promise(() => readFile(runtimePath, 'utf-8'));
+        const manifest = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8'));
+        for (const helper of [
+          'navigationContribution',
+          'pageContribution',
+          'publicComponentContribution',
+          'reportContribution',
+          'searchContribution',
+        ]) {
+          expect(runtime).toContain(`const ${helper} =`);
+          expect(manifest).not.toContain(`const ${helper} =`);
+        }
+        expect(runtime).toContain('ShellPageContributionSchema');
+        expect(runtime).toContain('Schema.decodeUnknownResult');
+        expect(runtime).not.toContain('/src/routes/');
+        expect(runtime).not.toContain('/src/components/');
+        yield* patchOwnerFixtureJson(root, PROPERTY_PACKAGE_PATH, (value) => ({
+          ...value,
+          exports: {
+            ...asJsonObject(value['exports'], 'fixture package exports'),
+            './locales/cs': './locales/cs/property.json',
+            './locales/en': './locales/en/property.json',
+          },
+        }));
+        for (const locale of ['cs', 'en']) {
+          yield* write(root, `${PROPERTY_DIRECTORY}/locales/${locale}/property.json`, json({ property: {} }));
+        }
+        yield* write(
+          root,
+          `${PROPERTY_DIRECTORY}/src/i18n/resources.ts`,
+          'export const propertyRegistryI18nResources = {};\n',
+        );
+        yield* write(
+          root,
+          `${PROPERTY_DIRECTORY}/src/routes/ultramodern-route-head.tsx`,
+          'export const UltramodernRouteHead = () => null;\n',
+        );
+        yield* write(root, `${PROPERTY_DIRECTORY}/src/routes/index.css`, '/* Owner page fixture. */\n');
+        const pageFlags = [VERTICAL_FLAG, APP_ID, '--page', 'purchase-orders', AUTHORIZATION_FLAG, 'protected'];
+        yield* runScaffoldEffect(MICROVERTICAL_PAGE_COMMAND, pageFlags, {
+          routeRefresh: () => Effect.void,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        const authored = yield* snapshotTree(root);
+        expect(authored[`${PROPERTY_DIRECTORY}/${RUNTIME_DECLARATION_FILE}`]).toContain(
+          'property.registry.page.purchase-orders',
+        );
+        expect(authored[`${PROPERTY_DIRECTORY}/${MODULE_REGISTRATION_FILE}`]).toContain('page-purchase-orders');
+        expect(authored[PROPERTY_MANIFEST_PATH]).not.toContain('// <generated-module-shell-pages>');
+        expect(authored[`${PROPERTY_DIRECTORY}/${RUNTIME_DECLARATION_FILE}`]).not.toContain('/src/routes/');
+        yield* runScaffoldEffect(MICROVERTICAL_PAGE_COMMAND, pageFlags, {
+          routeRefresh: () => Effect.void,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        yield* runScaffoldEffect(
+          MODULE_CONTRACT_COMMAND,
+          [VERTICAL_FLAG, APP_ID, '--module', MODULE_ID, SPLIT_RUNTIME_FLAG],
+          { workspaceRoot: root },
+        ).pipe(Effect.provide(NodeServices.layer));
+        expect(yield* snapshotTree(root)).toEqual(authored);
       }),
     );
   }),

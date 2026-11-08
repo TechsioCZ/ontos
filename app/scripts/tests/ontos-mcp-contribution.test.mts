@@ -15,11 +15,66 @@ import { LeaseInvoicesApi } from '../../verticals/finance-billing/shared/apis/le
 import { RecordsApi as FinanceRecordsApi } from '../../verticals/finance-billing/shared/apis/records.ts';
 import { financeBillingMcpContribution } from '../../verticals/finance-billing/shared/mcp/contribution.ts';
 import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
+import { crmRuntimeManifest } from '../../verticals/crm/vertical.runtime-declaration.ts';
+import { crmMcpContribution } from '../../verticals/crm/shared/mcp/contribution.ts';
+import { facilityOperationsRuntimeManifest } from '../../verticals/facility-operations/vertical.runtime-declaration.ts';
+import { facilityOperationsMcpContribution } from '../../verticals/facility-operations/shared/mcp/contribution.ts';
 import { deriveOntosMcpContribution, OntosMcpContributionDerivationError } from '../ontos-mcp-contribution.mts';
 
 const APP_ID = 'party-registry';
 const MODULE_ID = 'party.registry';
 const DUPLICATE_CANDIDATE_LIST = 'duplicate-candidate-list';
+
+it.effect('keeps both CRM reconciliation operations internal while retaining its published tools', () =>
+  Effect.gen(function* crmReconciliationContribution() {
+    const derived = deriveOntosMcpContribution({
+      actions: crmRuntimeManifest.publicSurface.actions,
+      api: crmRuntimeManifest.publicSurface.api,
+      appId: 'crm',
+      authored: crmMcpContribution,
+      moduleId: 'demo.crm',
+    });
+    if (derived === undefined) {
+      expect.unreachable('Expected the CRM MCP contribution');
+    }
+    const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+    expect(crmMcpContribution.reads).toHaveProperty('pending-client-intake', OntosMcpHidden);
+    expect(crmMcpContribution.actions).toHaveProperty('intake-client-party', OntosMcpHidden);
+    expect(catalog.tools.some((tool) => tool.invoke.path === '/reads/pending-client-intake')).toBe(false);
+    expect(catalog.tools.some((tool) => tool.invoke.path === '/crm/actions/intake-client-party')).toBe(false);
+    expect(catalog.tools.some((tool) => tool.id === 'demo.crm/read/records')).toBe(true);
+    expect(catalog.tools.some((tool) => tool.id === 'demo.crm/command/CreateClient')).toBe(true);
+  }),
+);
+
+it.effect('routes the three personal Facility commands to their distinct Action and keeps other commands broad', () =>
+  Effect.gen(function* personalAgendaContribution() {
+    const derived = deriveOntosMcpContribution({
+      actions: facilityOperationsRuntimeManifest.publicSurface.actions,
+      api: facilityOperationsRuntimeManifest.publicSurface.api,
+      appId: 'facility-operations',
+      authored: facilityOperationsMcpContribution,
+      moduleId: 'facility.operations',
+    });
+    if (derived === undefined) {
+      expect.unreachable('Expected the Facility Operations MCP contribution');
+    }
+    const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+    for (const tag of ['AgendaNotificationsMarkRead', 'AgendaNotificationsMarkAllRead', 'AgendaPreferencesSet']) {
+      const matches = catalog.tools.filter((tool) => tool.id === `facility.operations/command/${tag}`);
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.invoke).toEqual({
+        commandTag: tag,
+        path: '/facility-operations/actions/update-personal-agenda',
+      });
+    }
+    expect(catalog.tools.find((tool) => tool.id === 'facility.operations/command/AgendaEventCreate')?.invoke).toEqual({
+      commandTag: 'AgendaEventCreate',
+      path: '/facility-operations/actions/apply-command',
+    });
+    expect(new Set(catalog.tools.map((tool) => tool.id)).size).toBe(catalog.tools.length);
+  }),
+);
 
 it.effect('keeps the lease detail preload read governed without adding an MCP tool', () =>
   Effect.gen(function* financePreloadContribution() {

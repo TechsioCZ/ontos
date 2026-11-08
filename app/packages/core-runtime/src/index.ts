@@ -1055,6 +1055,7 @@ export {
   defineOntosMcpContribution,
 } from './modules/mcp-contribution.ts';
 export type {
+  OntosMcpCommandInput,
   OntosMcpContribution,
   OntosMcpContributionInput,
   OntosMcpRevision,

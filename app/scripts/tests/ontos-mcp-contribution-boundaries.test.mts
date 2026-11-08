@@ -6,10 +6,14 @@ import { expect, it } from 'effect-rstest';
 
 import {
   ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
+  defineOntosMcpContribution,
   OntosMcpHidden,
   OntosMcpToolCatalogJsonSchema,
 } from '../../packages/core-runtime/src/modules/mcp-contribution.ts';
-import type { OntosMcpContributionInput } from '../../packages/core-runtime/src/modules/mcp-contribution.ts';
+import type {
+  OntosMcpCommandInput,
+  OntosMcpContributionInput,
+} from '../../packages/core-runtime/src/modules/mcp-contribution.ts';
 import {
   deriveOntosMcpContribution,
   mcpToolName,
@@ -20,6 +24,9 @@ import type { DeriveOntosMcpContributionInput } from '../ontos-mcp-contribution.
 const title = { cs: 'Změnit rezervaci', en: 'Change booking' };
 const READ_PATH = '/reads/state';
 const ACTION_KEY = 'booking.assign-code';
+const PREFERENCES_TAG = 'UpdatePreferences';
+const PERSONAL_ACTION = 'update-personal';
+const ACTION_SELECTOR = 'actionSlug';
 const authored = {
   approvals: true,
   description: title,
@@ -56,6 +63,108 @@ const readApi = (payload: Schema.Top) =>
       HttpApiEndpoint.post('internal', '/internal/state', { payload, success: Schema.Void }),
     ),
   );
+
+const commandAction = (slug: string, command: Schema.Top) => ({
+  descriptor: {
+    actionKey: `booking.${slug}`,
+    payloadSchema: Schema.Struct({ command, expectedRevision: Schema.optionalKey(Schema.Int) }),
+  },
+});
+const broadPreferencesAction = commandAction(
+  'execute',
+  Schema.Struct({ _tag: Schema.Literal(PREFERENCES_TAG), administratorScope: Schema.String }),
+);
+const personalPreferencesAction = commandAction(
+  PERSONAL_ACTION,
+  Schema.Struct({ _tag: Schema.Literal(PREFERENCES_TAG), personalNote: Schema.String }),
+);
+const preferencesContribution = (actionSlug?: string) => {
+  let command: OntosMcpCommandInput = { title };
+  if (actionSlug !== undefined) {
+    command = { ...command, actionSlug };
+  }
+  return { ...authored, commands: { [PREFERENCES_TAG]: command } };
+};
+
+it.each([
+  ['execute', 'administratorScope', 'personalNote'],
+  [PERSONAL_ACTION, 'personalNote', 'administratorScope'],
+])(
+  'selects the authored genuine command Action %s with its schema and stable tool identity',
+  (actionSlug, included, excluded) => {
+    const { catalog } = catalogOf({
+      actions: [broadPreferencesAction, personalPreferencesAction],
+      authored: preferencesContribution(actionSlug),
+    });
+    expect(catalog.tools).toHaveLength(1);
+    const [tool] = catalog.tools;
+    expect(tool?.id).toBe(`booking/command/${PREFERENCES_TAG}`);
+    expect(tool?.name).toBe('booking_app__update_preferences');
+    expect(tool?.invoke).toEqual({ commandTag: PREFERENCES_TAG, path: `/booking-app/actions/${actionSlug}` });
+    expect(tool?.inputSchema.properties).toHaveProperty(included);
+    expect(tool?.inputSchema.properties).not.toHaveProperty(excluded);
+    expect(tool).not.toHaveProperty(ACTION_SELECTOR);
+  },
+);
+
+it('requires an explicit Action selector when published Actions share a command', () => {
+  expect(() =>
+    derive({
+      actions: [broadPreferencesAction, personalPreferencesAction],
+      authored: preferencesContribution(),
+    }),
+  ).toThrow(ACTION_SELECTOR);
+});
+
+it.each(['foreign-action', 'different-command', 'assign-code'])(
+  'rejects a selector that cannot identify the published command variant: %s',
+  (actionSlug) => {
+    expect(() =>
+      derive({
+        actions: [
+          broadPreferencesAction,
+          personalPreferencesAction,
+          commandAction('different-command', Schema.Struct({ _tag: Schema.Literal('DifferentCommand') })),
+          { descriptor: { actionKey: ACTION_KEY, payloadSchema: readPayload } },
+        ],
+        authored: {
+          ...preferencesContribution(actionSlug),
+          actions: { 'assign-code': OntosMcpHidden },
+          commands: {
+            ...preferencesContribution(actionSlug).commands,
+            DifferentCommand: OntosMcpHidden,
+          },
+        },
+      }),
+    ).toThrow(ACTION_SELECTOR);
+  },
+);
+
+it('does not choose the first duplicate registration even when an Action selector is supplied', () => {
+  expect(() =>
+    derive({
+      actions: [personalPreferencesAction, personalPreferencesAction],
+      authored: preferencesContribution(PERSONAL_ACTION),
+    }),
+  ).toThrow(ACTION_SELECTOR);
+});
+
+it('keeps a unique command catalog byte-identical with or without its explicit Action selector', () => {
+  const unselected = catalogOf({ actions: [personalPreferencesAction], authored: preferencesContribution() });
+  const selected = catalogOf({
+    actions: [personalPreferencesAction],
+    authored: preferencesContribution(PERSONAL_ACTION),
+  });
+  expect(selected.toolCatalog).toBe(unselected.toolCatalog);
+  expect(selected.contribution).toEqual(unselected.contribution);
+});
+
+it.each(['', '../execute', 'apply_command', 'ApplyCommand', 'booking.execute'])(
+  'rejects a noncanonical command Action selector at authoring time: %s',
+  (actionSlug) => {
+    expect(() => defineOntosMcpContribution(preferencesContribution(actionSlug))).toThrow(ACTION_SELECTOR);
+  },
+);
 
 it('keeps catalog bytes, digest, command matching and optional contribution metadata', () => {
   const namedPayload = Schema.Struct({ code: Schema.String });

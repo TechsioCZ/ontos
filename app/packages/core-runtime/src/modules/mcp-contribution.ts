@@ -178,6 +178,11 @@ export interface OntosMcpWriteInput extends OntosMcpToolTextInput {
   readonly referenceAudiences?: readonly string[];
 }
 
+/** Selects an existing published Action when a command variant belongs to more than one Action. */
+export interface OntosMcpCommandInput extends OntosMcpWriteInput {
+  readonly actionSlug?: string;
+}
+
 /** Explicitly not offered to agents (approval plumbing, demo maintenance, internal recovery). */
 export const OntosMcpHidden = 'hidden' as const;
 
@@ -197,7 +202,7 @@ export interface OntosMcpContributionInput {
   readonly approvalsPage?: OntosMcpApprovalsPage;
   /** See {@link OntosMcpCommandFieldLabelsSchema}; needs `approvals`. */
   readonly commandFieldLabels?: OntosMcpCommandFieldLabels;
-  readonly commands?: Readonly<Record<string, OntosMcpWriteInput | typeof OntosMcpHidden>>;
+  readonly commands?: Readonly<Record<string, OntosMcpCommandInput | typeof OntosMcpHidden>>;
   readonly description: OntosMcpText;
   readonly keywords: string;
   readonly label: OntosMcpText;
@@ -219,6 +224,7 @@ export interface OntosMcpContributionInput {
 // Import-time authoring checks require nonempty text; the serialized codec applies its length limit.
 const RequiredMcpTextSchema = Schema.Struct({ cs: nonEmpty, en: nonEmpty });
 const isText = Schema.is(RequiredMcpTextSchema);
+const isActionSlug = Schema.is(nonEmpty.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u)));
 
 class OntosMcpContributionError extends Schema.TaggedError<OntosMcpContributionError>()('OntosMcpContributionError', {
   message: Schema.String,
@@ -241,6 +247,11 @@ const validateToolTexts = (input: OntosMcpContributionInput): void => {
       if (entry !== OntosMcpHidden && entry.description !== undefined && !isText(entry.description)) {
         fail(`MCP ${group}.${key} description needs Czech and English text`);
       }
+    }
+  }
+  for (const [tag, entry] of Object.entries(input.commands ?? {})) {
+    if (entry !== OntosMcpHidden && entry.actionSlug !== undefined && !isActionSlug(entry.actionSlug)) {
+      fail(`MCP commands.${tag} actionSlug must be a canonical Action slug`);
     }
   }
 };

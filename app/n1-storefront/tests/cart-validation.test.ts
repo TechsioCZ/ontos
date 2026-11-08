@@ -10,7 +10,7 @@ import {
   validCartQuantity,
 } from "../src/features/cart-validation";
 import type { QuantityDrafts } from "../src/features/cart-validation";
-import { cartLineKey } from "../src/features/cart-state";
+import { cartLineKey, cartQuantityStep } from "../src/features/cart-state";
 
 const entry = {
   expectedUnitPriceMinor: 12_100,
@@ -29,6 +29,19 @@ const blankDraft = (): QuantityDrafts => ({
 });
 
 describe("cart quantity draft lifecycle", () => {
+  it.each([undefined, null, 0, -2, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "keeps steppers usable without a positive finite owner package: %s",
+    (packageQuantity) => {
+      expect(cartQuantityStep(packageQuantity)).toBe(1);
+    },
+  );
+  it.each([2, 0.1, 6.21])("steps between valid owner packages of %s", (packageQuantity) => {
+    const quantity = packageQuantity * 2;
+    const step = cartQuantityStep(packageQuantity);
+    expect(step).toBe(packageQuantity);
+    expect(validCartQuantity(quantity + step, packageQuantity, packageQuantity)).toBe(true);
+    expect(validCartQuantity(quantity - step, packageQuantity, packageQuantity)).toBe(true);
+  });
   it("checks native zero-based package multiples separately from the minimum", () => {
     expect(validCartQuantity(3, 3, 2)).toBe(false);
     expect(validCartQuantity(4, 3, 2)).toBe(true);

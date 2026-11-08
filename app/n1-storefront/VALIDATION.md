@@ -1417,3 +1417,42 @@ PASS. Nutné opravy nových media souborů zachovávají route200/404/503 i cach
 kontrakt: pojmenované regex skupiny, optional výsledek a bezpečný pevný Effect
 log bez SDK error dumpu. Nezávislý source reviewer nenašel blocker; existující
 testy ověřují media paths, nikoli přímo všechny živé error response obrázků.
+
+## 8. 11. 2026 — PDP stavy a krok balení
+
+Aktuální Figma `39:1965`, `39:2430` a mobilní stav bez výběru `57:2916`
+byly znovu načtené včetně screenshotů. Porovnání používá stejný skutečný
+Fox Rwt Flag Ss Tech Tee ze Stage, samostatně bez varianty a s variantou M.
+
+Mobil bez výběru nyní zachovává návrhové pořadí cena → neznámá dostupnost →
+varianty → zakázaná nákupní akce. Vybraný mobilní stav i desktop zachovávají
+původní skladbu. Čtyři produktové akce mají pořadí a ikony podle návrhu;
+oblíbené a hlídání jsou skutečně zakázaná nativní ovládání přes veřejné
+`Link as="button"` API. Nemají href, callback ani náhradní úložiště. Dotaz
+a sdílení zůstávají napojené. Nedostupnost má lokalizovaný přístupný popis;
+vzhled Linku sám neodlišuje disabled stav ani nepřidává návrhové podtržení.
+
+Všechny čtyři vstupy množství používají skutečnou konečnou kladnou velikost
+balení jako krok. Nula, záporná či chybějící hodnota znamenají krok 1;
+neplatná nekonečná hodnota se rovněž nepředá stepperu. Nativní validace
+minima a balení zůstává samostatná, draft se nezaokrouhluje a sklad není
+vydávaný za maximální prodejné množství.
+
+Regrese nejprve prokázaly pět chyb normalizace a dvě chybějící zakázané akce.
+Po opravě prošlo **711 testů v 70 souborech**, bez skip/todo. Kontrola všech
+447 kanonických tokenů prošla. Root i nezávislý reviewer otevřeli skutečné
+before/after PNG pro desktop 1440 a mobil 390 a porovnali je s Figmou;
+vizuální GO platí pouze pro tyto změněné stavy a zachování ostatní skladby.
+Navíc byl otevřený EN320 screenshot bez vodorovného přetečení.
+
+Konkrétní mezery celého PDP: Figma má pro jednu fotografii redakční ořez,
+který současná média nepředávají; plošný cover by mohl oříznout boty.
+ETA, aktivní oblíbené/hlídání, tabulka velikostí a skutečné související
+vztahy nejsou tímto celkem implementované. Nejsou nahrazené fixtures.
+Celý PDP ani storefront nemají plošný vizuální PASS. Tento průchod
+neodeslal registraci, e-mail ani objednávku a nedokládá nový úspěšný deploy.
+
+N1 lint, typová kontrola a formát upravených souborů prošly. Globální
+`pnpm i18n:boundaries` zůstává neúspěšné se stejnými 28 nálezy
+`strict-effect-api-boundaries` v API vstupech ostatních verticalů; nejde
+o chybějící N1 překlady. Diagnostika se nepotlačuje a globální PASS se netvrdí.

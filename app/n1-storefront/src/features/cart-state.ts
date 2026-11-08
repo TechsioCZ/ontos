@@ -2,6 +2,15 @@ import { Effect, Schema } from "effect";
 import { CartQuoteLineSchema, CartScopeSchema } from "@/ontos/cart-quote";
 import type { CartScope } from "@/ontos/cart-quote";
 
+/** A package affects the stepper only when the owner declares a positive size. */
+export const cartQuantityStep = (packageQuantity?: number | null) =>
+  packageQuantity !== undefined &&
+  packageQuantity !== null &&
+  Number.isFinite(packageQuantity) &&
+  packageQuantity > 0
+    ? packageQuantity
+    : 1;
+
 /** Match the native minimum/package checks; never round a customer's draft. */
 export const validCartQuantity = (
   quantity: number,
