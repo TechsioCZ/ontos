@@ -91,6 +91,7 @@ import type {
   Mutation,
   ModuleContractScaffoldConfig,
   ModuleContractScaffoldResult,
+  OntosVerticalMetadata,
   ScaffoldPlan,
   ScaffoldFailure,
   VerticalMetadata,
@@ -159,7 +160,15 @@ ${source.slice(declarationStart, statementEnd)}
 export const governedHttpApi = ${apiValue};${source.slice(statementEnd + 1)}`;
 };
 
-const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMetadata): string => {
+type GovernedHandlerOwner = VerticalMetadata & Pick<OntosVerticalMetadata, 'runtimeDeclaration'>;
+
+const renderGovernedOwnerImport = (vertical: GovernedHandlerOwner): string => {
+  const registrationName = `${toCamelCase(vertical.slug)}${vertical.runtimeDeclaration === undefined ? 'Registration' : 'BackendRegistration'}`;
+  const registrationFile = vertical.runtimeDeclaration === undefined ? 'registration' : 'runtime-declaration';
+  return `import { ${registrationName} as governedOwnerRegistration } from '../vertical.${registrationFile}.ts';`;
+};
+
+export const initializeGovernedHttpHandlerRoot = (source: string, vertical: GovernedHandlerOwner): string => {
   for (const reserved of [
     'GovernedReadRuntime',
     'GovernedMakeReadRuntimeLive',
@@ -212,7 +221,7 @@ const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMet
   if (!assemblerMode && runtimeLayerStart === -1) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} API root must contain the pinned HttpApiBuilder layer`);
   }
-  const generatedRoot = `import { ${toCamelCase(vertical.slug)}Registration as governedOwnerRegistration } from '../vertical.registration.ts';
+  const generatedRoot = `${renderGovernedOwnerImport(vertical)}
 import { ultramodernDeliveryUnit as governedActionDeliveryUnit } from '../shared/ultramodern-build.ts';
 import {
   ContextAccessLive as GovernedContextAccessLive,

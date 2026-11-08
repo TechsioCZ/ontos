@@ -11,7 +11,13 @@ import { expect, it } from 'effect-rstest';
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
 import { getHelpText, runScaffoldEffect } from '../cli.mts';
-import { asJsonObject, bindSharedRuntimeWorkerEntry, readModuleRuntimeDeclarationEffect } from '../shared.mts';
+import {
+  asJsonObject,
+  bindSharedRuntimeWorkerEntry,
+  discoverOntosModuleEffect,
+  readModuleRuntimeDeclarationEffect,
+} from '../shared.mts';
+import { initializeGovernedHttpHandlerRoot } from '../module-contract/scaffold.mts';
 import type { JsonObject, JsonValue } from '../shared.mts';
 // Match the native module identity used by the generated fixture's owner bundle.
 import { snapshotTree, write } from './fixture-files.mts';
@@ -400,6 +406,39 @@ manifest: propertyRegistryManifest,
   yield* write(root, `${PROPERTY_DIRECTORY}/vertical.registration.ts`, fullRegistration);
   return { backend, fullManifest, fullRegistration };
 });
+
+it.live(
+  'generates governed handler roots from the actual backend owner view without importing UI registration',
+  Effect.fn(function* backendHandlerRoot() {
+    yield* withFixture(
+      Effect.fn(function* verifyBackendHandlerRoot(root) {
+        yield* scaffold(root);
+        yield* splitFixtureOwner(root);
+        const vertical = yield* discoverOntosModuleEffect(root, APP_ID).pipe(Effect.provide(NodeServices.layer));
+        const generated = initializeGovernedHttpHandlerRoot(
+          `const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+  Layer.provide(fixtureLayer),
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api: fixtureApi, layer });
+`,
+          vertical,
+        );
+        expect(generated).toContain(
+          "propertyRegistryBackendRegistration as governedOwnerRegistration } from '../vertical.runtime-declaration.ts'",
+        );
+        expect(generated).not.toContain("from '../vertical.registration.ts'");
+        const shared = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_API_PATH), 'utf-8'));
+        expect(hasValidGovernedHttpCompositionRoot(shared, generated)).toBe(true);
+        expect(
+          hasValidGovernedHttpCompositionRoot(
+            shared,
+            generated.replace('../vertical.runtime-declaration.ts', '../foreign/vertical.runtime-declaration.ts'),
+          ),
+        ).toBe(false);
+      }),
+    );
+  }),
+);
 
 it.live(
   'emits identical actual owner contracts across the shared backend split and routes new operations once',
