@@ -58,6 +58,33 @@ const accepts = (read: GovernedRead, input: ReadonlyMap<string, string> = source
 const withRead = (read: GovernedRead, source: string): ReadonlyMap<string, string> =>
   new Map([...sources, [readFile(read), source]]);
 
+const inventoryModuleId = 'commerce.inventory';
+const inventoryOwner = 'verticals/inventory';
+const positionSetRead: GovernedRead = {
+  moduleId: inventoryModuleId,
+  name: 'current-relevant-stock-position-set',
+  owner: inventoryOwner,
+};
+
+it('proves the real conditional Position-set load through its readonly owner Effect result', () => {
+  const diagnostics: string[] = [];
+  expect(accepts(positionSetRead, sources, diagnostics), diagnostics.join('\n')).toBe(true);
+});
+
+for (const [name, original, replacement] of [
+  ['foreign context', 'context.services.observe(input.scope)', 'foreign.services.observe(input.scope)'],
+  ['mutable result contract', 'readonly observe:', 'observe:'],
+  ['non-Effect branch', 'Effect.succeedNone', 'Option.none()'],
+  ['unknown Effect transform', 'Effect.asSome', 'Effect.unknownProperty'],
+  ['unbound observation', '../persistence/current-relevant-stock-position-set-repository.ts', '../foreign-owner.ts'],
+] as const) {
+  it(`rejects a conditional Position-set load with ${name}`, () => {
+    const source = sources.get(readFile(positionSetRead)) ?? '';
+    expect(source).toContain(original);
+    expect(accepts(positionSetRead, withRead(positionSetRead, source.replace(original, replacement)))).toBe(false);
+  });
+}
+
 for (const read of preparedServiceReads) {
   it(`proves the native prepared-service load of ${read.moduleId} ${read.name}`, () => {
     const diagnostics: string[] = [];
@@ -128,15 +155,15 @@ for (const read of preparedServiceReads) {
 // name matches a context projection (`input.scope`) is data. Whether these two Reads pass the seam is
 // owned by their own load families; only the projection classification is asserted here.
 const projectionRead: GovernedRead = {
-  moduleId: 'commerce.inventory',
+  moduleId: inventoryModuleId,
   name: 'current-relevant-stock-position-set',
-  owner: 'verticals/inventory',
+  owner: inventoryOwner,
 };
 
 const guardedBlockLoadRead: GovernedRead = {
-  moduleId: 'commerce.inventory',
+  moduleId: inventoryModuleId,
   name: 'stock-sharing-eligibility-resolution',
-  owner: 'verticals/inventory',
+  owner: inventoryOwner,
 };
 
 for (const read of [projectionRead, guardedBlockLoadRead]) {
@@ -155,5 +182,5 @@ it('still rejects a foreign context projection masquerading as the phase context
   expect(parseSync(readFile(projectionRead), invalid).errors).toEqual([]);
   const diagnostics: string[] = [];
   expect(accepts(projectionRead, withRead(projectionRead, invalid), diagnostics)).toBe(false);
-  expect(diagnostics).toContain('phase references: roots');
+  expect(diagnostics).toContain(`${projectionRead.name}: callbacks`);
 });

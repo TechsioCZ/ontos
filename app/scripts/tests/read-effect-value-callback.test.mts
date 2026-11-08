@@ -11,7 +11,7 @@ const load = 'load: (): Effect.Effect<Option.Option<PreloadedAssociation>> => Ef
 const readSource = `${header}import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 ${effectImport}
 const stockListEntrypoint = defineTenantModuleEntrypoint({
-  access: 'read', authorization: { kind: 'context_permission', permission: 'module.access' },
+  access: 'read', authorization: { kind: 'protected' },
   entrypointKey: 'inventory.stock.api.stock-list', moduleKey: 'inventory.stock', role: 'api',
 });
 export const stockListRead = defineRead(
@@ -111,9 +111,12 @@ export const stockListReadApiLive = HttpApiBuilder.group(api, 'stockList',
   [
     `${owner}/api/index.ts`,
     `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { makeReadRuntimeLive } from '@app/core-runtime';
 import { Layer, Layer as GovernedReadLayer } from 'effect';
+import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+import { inventoryStockRegistration } from '../vertical.registration.ts';
 import { stockListReadApiLive } from './stock-list-read-server.ts';
-const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));
+const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, inventoryStockRegistration).pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));
 const handlersLive = Layer.mergeAll(
   // <generated-governed-http-handler-layers>
   stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -181,7 +184,7 @@ const accepts = (source = readSource): boolean => {
     diagnostics,
   );
   if (!accepted) {
-    expect(diagnostics).toEqual(['stock-list read: callbacks', 'stock-list: read']);
+    expect(diagnostics).toEqual(['stock-list: read']);
   }
   return accepted;
 };
