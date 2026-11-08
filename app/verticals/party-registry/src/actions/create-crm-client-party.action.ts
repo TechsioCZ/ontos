@@ -5,10 +5,10 @@ import { Effect } from 'effect';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import {
-  crmClientEvidenceReference,
   CreateCrmClientPartyPayloadSchema,
   CreateCrmClientPartyResultSchema,
 } from '../../shared/actions/crm-client-party.ts';
+import { crmClientEvidenceReference } from '../../shared/domain/crm-client-evidence.ts';
 import { PartyEvidenceInsufficient } from '../../shared/domain/identity-contracts.ts';
 import {
   CreatePartyErrorSchema,

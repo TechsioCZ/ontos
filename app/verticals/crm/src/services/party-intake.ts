@@ -3,12 +3,12 @@
 // delegates for that same verified workload to Party Registry. Humans keep their ordinary CRM and
 // Party rights. Registry effects run before CRM's final CAS write, never inside its SQL transaction.
 import {
-  crmClientEvidenceReference,
   AddContactPointPayloadSchema,
   CounterpartyCustomerOnboardPayloadSchema,
   CreatePartyPayloadSchema,
   ResolveDuplicateCandidateCreatePayloadSchema,
 } from '@app/party-registry/api';
+import { crmClientEvidenceReference } from '@app/party-registry/crm-client-evidence';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import {
   addContactPointWithAuthorization,

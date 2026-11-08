@@ -683,5 +683,3 @@ export const partyRegistryApiContract = {
   ownerId: 'party-registry',
   readinessPath: '/party-registry-api/party-registry/readiness',
 } as const;
-
-export { crmClientEvidenceReference } from './actions/crm-client-party.ts';
