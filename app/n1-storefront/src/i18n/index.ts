@@ -59,6 +59,7 @@ const cs = {
   address: "Generála Šišky 1990/8, 143 00 Praha 4 – Modřany",
   addToCart: "DO KOŠÍKU",
   addToCartDetail: "Přidat do košíku",
+  addToFavorites: "Vložit do oblíbených",
   allResults: "Zobrazit všechny výsledky",
   auth: {
     acceptTerms: "Souhlasím s",
@@ -393,6 +394,7 @@ const cs = {
   terms: "Obchodní podmínky",
   unavailable: "Katalog je dočasně nedostupný",
   unavailableDescription: "Nabídku nyní nelze načíst. Zkuste to prosím později.",
+  watchProduct: "Hlídat produkt",
 };
 
 const en: typeof cs = {
@@ -454,6 +456,7 @@ const en: typeof cs = {
   address: "Generála Šišky 1990/8, 143 00 Praha 4 – Modřany",
   addToCart: "ADD TO CART",
   addToCartDetail: "Add to cart",
+  addToFavorites: "Add to favourites",
   allResults: "View all results",
   auth: {
     acceptTerms: "I agree to the",
@@ -790,6 +793,7 @@ const en: typeof cs = {
   terms: "Terms and conditions",
   unavailable: "The catalogue is temporarily unavailable",
   unavailableDescription: "We cannot load the catalogue right now. Please try again later.",
+  watchProduct: "Watch this product",
 };
 
 export const getDictionary = (locale: string) => {

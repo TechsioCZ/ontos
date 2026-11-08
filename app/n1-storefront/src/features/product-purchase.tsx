@@ -9,7 +9,7 @@ import type { Dictionary } from "@/i18n";
 import type { ProductDetailModel } from "@/ontos/catalog-model";
 import type { selectProductDetail } from "./product-selection";
 import { useCart } from "./cart-provider";
-import { validCartQuantity } from "./cart-state";
+import { cartQuantityStep, validCartQuantity } from "./cart-state";
 
 const purchaseGuidance = (d: Dictionary, purchasable: boolean) =>
   purchasable ? null : d.commerceUnavailable;
@@ -114,6 +114,7 @@ export const ProductPurchase = ({
             min={current.minimumQuantity}
             onValueChange={({ value }) => setDraft({ key: selectionKey, value })}
             size="md"
+            step={cartQuantityStep(current.packageQuantity)}
             value={quantity}
           >
             <div className="flex w-7 shrink-0">
@@ -168,6 +169,7 @@ export const ProductPurchase = ({
             min={current.minimumQuantity}
             onValueChange={({ value }) => setDraft({ key: selectionKey, value })}
             size="md"
+            step={cartQuantityStep(current.packageQuantity)}
             translations={{
               decrementLabel: d.shopping.decreaseQuantity,
               incrementLabel: d.shopping.increaseQuantity,

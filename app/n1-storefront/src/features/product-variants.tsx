@@ -21,7 +21,9 @@ export const ProductVariants = ({
   selectedVariant: ProductDetailModel["variants"][number] | undefined;
   variants: ProductDetailModel["variants"];
 }) => (
-  <fieldset className="order-1 md:mb-5">
+  <fieldset
+    className={`${selectedVariant === undefined ? "order-4" : "order-1"} md:order-1 md:mb-5`}
+  >
     <legend className="mb-6 font-semibold md:mb-2 md:font-bold">{d.selectVariant}</legend>
     <div className="flex flex-wrap gap-2 md:n1-product-variants">
       {variants.map((item) => {

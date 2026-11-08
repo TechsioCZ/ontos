@@ -19,7 +19,7 @@ import type { CartQuote } from "@/ontos/cart-quote";
 import { publicImage } from "@/ontos/catalog-model";
 import { useCart } from "./cart-provider";
 import { CartQuoteFeedback } from "./cart-quote-feedback";
-import { cartLineKey } from "./cart-state";
+import { cartLineKey, cartQuantityStep } from "./cart-state";
 import type { CartEntry } from "./cart-state";
 import {
   cartIssueText,
@@ -158,6 +158,7 @@ const MiniCartLine = ({
               });
             }}
             size="sm"
+            step={cartQuantityStep(entry.packageQuantity)}
             value={value}
           >
             <div className="flex w-7 shrink-0">
