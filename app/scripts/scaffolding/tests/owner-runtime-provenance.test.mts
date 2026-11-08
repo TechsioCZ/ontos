@@ -58,25 +58,27 @@ it('retains exact owner imports, module identity, declaration spreads and regist
   }
 });
 
-it('accepts current Merchandise manifest imports except the retained legacy permission declarations', () => {
+it('accepts exact owned business permissions in the current Merchandise manifest slot', () => {
   const imports = readGeneratedSlotEntries(
     readOwner('merchandise/vertical.manifest.ts'),
     MODULE_MANIFEST_IMPORT_SLOT_START,
     MODULE_MANIFEST_IMPORT_SLOT_END,
   );
-  const retiredPermissionImport =
-    /^import \{ merchandise(?:Read|Write)AllPermission \} from '\.\/shared\/permissions\/merchandise-(?:read|write)-all\.ts';$/u;
   expect(imports.length).toBeGreaterThan(0);
-  expect(imports.filter((entry) => !retiredPermissionImport.test(entry)).every(isModuleManifestImport)).toBe(true);
-  expect(
-    imports.filter((entry) => !isModuleManifestImport(entry)).every((entry) => retiredPermissionImport.test(entry)),
-  ).toBe(true);
-});
-
-it('does not accept legacy permission or foreign developer imports in the canonical manifest slot', () => {
+  expect(imports.every(isModuleManifestImport)).toBe(true);
   for (const entry of [
     "import { merchandiseReadAllPermission } from './shared/permissions/merchandise-read-all.ts';",
     "import { merchandiseWriteAllPermission } from './shared/permissions/merchandise-write-all.ts';",
+  ]) {
+    expect(isModuleManifestImport(entry)).toBe(true);
+  }
+});
+
+it('rejects mismatched permission identities and foreign developer imports in the canonical manifest slot', () => {
+  for (const entry of [
+    "import { merchandiseReadAllPermission } from './shared/permissions/merchandise-write-all.ts';",
+    "import { merchandiseWriteAllPermission } from './shared/permissions/merchandise-read-all.ts';",
+    "import { merchandiseReadAllPermission } from '../foreign/shared/permissions/merchandise-read-all.ts';",
     "import { fakeRead } from '../foreign/src/api/fake.read.ts';",
     "import { recordsRead } from './src/services/records.read.ts';",
     "import { fakeAction } from '../foreign/src/actions/fake.action.ts';",
@@ -96,25 +98,38 @@ it.effect('actual owner discovery reaches the legitimate shared MCP declaration 
 
 const crmApi = readOwner('crm/shared/api.ts');
 const crmRoot = readOwner('crm/api/index.ts');
+const crmBackendRegistration = 'crmBackendRegistration';
 const runtimeCall = 'const apiRuntime = makeCrmApiRuntime();';
 const factoryStart = 'export const makeCrmApiRuntime = () =>';
 const handlers = 'handlers: governedResolvedApiHandlersLive,';
 
 it('accepts the actual executed zero-argument CRM assembler factory and resolves bindings rather than names', () => {
+  expect(
+    validRuntimeDeclarationViews(
+      readOwner('crm/vertical.runtime-declaration.ts'),
+      readOwner('crm/vertical.manifest.ts'),
+      readOwner('crm/vertical.registration.ts'),
+      'crm',
+      'demo.crm',
+    ),
+  ).toBe(true);
+  expect(hasValidGovernedHttpCompositionRoot(crmApi, crmRoot)).toBe(false);
   expect(crmRoot).toContain(factoryStart);
   expect(crmRoot).toContain(runtimeCall);
-  expect(hasValidGovernedHttpCompositionRoot(crmApi, crmRoot)).toBe(true);
+  expect(hasValidGovernedHttpCompositionRoot(crmApi, crmRoot, crmBackendRegistration)).toBe(true);
   const typed = crmRoot.replace(
     factoryStart,
     'export const makeCrmApiRuntime = (): ReturnType<typeof assembleEffectBffRuntime> =>',
   );
-  expect(hasValidGovernedHttpCompositionRoot(crmApi, typed)).toBe(true);
+  expect(hasValidGovernedHttpCompositionRoot(crmApi, typed, crmBackendRegistration)).toBe(true);
   const renamed = crmRoot.replaceAll('makeCrmApiRuntime', 'buildOwnerRuntime');
-  expect(hasValidGovernedHttpCompositionRoot(crmApi, renamed)).toBe(true);
+  expect(hasValidGovernedHttpCompositionRoot(crmApi, renamed, crmBackendRegistration)).toBe(true);
 });
 
 it('rejects unused/wrong factories, wrong handlers, mismatched arguments and unbound default calls', () => {
   for (const invalid of [
+    crmRoot.replace('../vertical.runtime-declaration.ts', '../foreign.runtime-declaration.ts'),
+    crmRoot.replace('crmBackendRegistration as crmRegistration', 'foreignBackendRegistration as crmRegistration'),
     crmRoot.replace(runtimeCall, 'const apiRuntime = unrelatedRuntime;'),
     crmRoot.replace(
       runtimeCall,
@@ -136,6 +151,6 @@ it('rejects unused/wrong factories, wrong handlers, mismatched arguments and unb
     ),
   ]) {
     expect(invalid).not.toBe(crmRoot);
-    expect(hasValidGovernedHttpCompositionRoot(crmApi, invalid)).toBe(false);
+    expect(hasValidGovernedHttpCompositionRoot(crmApi, invalid, crmBackendRegistration)).toBe(false);
   }
 });

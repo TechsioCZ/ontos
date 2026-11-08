@@ -3,7 +3,7 @@ import {
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
-import { financeBillingRegistration } from '../vertical.registration.ts';
+import { financeBillingBackendRegistration as financeBillingRegistration } from '../vertical.runtime-declaration.ts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { Reactivity } from 'effect/reactivity';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';

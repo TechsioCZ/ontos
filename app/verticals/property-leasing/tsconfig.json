@@ -21,7 +21,8 @@
     "vertical.manifest.ts",
     "vertical.registration.ts",
     "scripts/**/*.mts",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "vertical.runtime-declaration.ts"
   ],
   "references": [
     {

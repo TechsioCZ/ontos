@@ -98,6 +98,7 @@ const ACCESS_SELECTORS_FLAG = 'access-selectors';
 const ACCESS_WORKLOAD_FLAG = 'access-workload';
 const ACCESS_WORKLOAD_KEYS_FLAG = 'access-workload-keys';
 const PROPOSAL_ONLY_FLAG = 'proposal-only';
+const SPLIT_RUNTIME_FLAG = 'split-runtime';
 
 export const ScaffoldCommandSchema = Schema.Literals(scaffoldCommandValues);
 export type ScaffoldCommand = typeof ScaffoldCommandSchema.Type;
@@ -188,6 +189,7 @@ interface ParsedScaffoldFlags {
   readonly schemaModule: string | undefined;
   readonly scope: string | undefined;
   readonly service: string | undefined;
+  readonly splitRuntime: boolean;
   readonly topic: string | undefined;
   readonly url: string | undefined;
   readonly vertical: string | undefined;
@@ -745,9 +747,9 @@ Options:
       }),
   }),
   'module-contract': defineCommand({
-    flags: ['module', 'vertical'],
+    flags: ['module', 'vertical', SPLIT_RUNTIME_FLAG],
     generator: moduleContractGenerator,
-    help: `Usage: pnpm scaffold:module-contract -- --vertical <vertical> --module <dotted.module-id>
+    help: `Usage: pnpm scaffold:module-contract -- --vertical <vertical> --module <dotted.module-id> [--split-runtime]
 
 Generate the mandatory typed OntOS Module Manifest and private owner-local runtime registration.
 
@@ -756,12 +758,14 @@ Required flags:
   --module <dotted.module-id> Stable dotted non-core OntOS business module ID
 
 Options:
+  --split-runtime             Migrate an existing owner to shared backend-only runtime declarations
   --help                      Show this help without writing
 `,
     requiredFlags: ['module', 'vertical'],
     toConfig: (flags) =>
       Effect.succeed({
         module: flags.module ?? '',
+        splitRuntime: flags.splitRuntime,
         vertical: flags.vertical ?? '',
       }),
   }),
@@ -1093,9 +1097,16 @@ const parseFlags = (
       return yield* failScaffolding(`flag --${PROPOSAL_ONLY_FLAG} may be supplied only once`);
     }
     const proposalOnly = command === ACTION_HTTP_COMMAND && proposalOnlyCount === 1;
-    const booleanArguments = [core ? '--core' : undefined, proposalOnly ? `--${PROPOSAL_ONLY_FLAG}` : undefined].filter(
-      (argument) => argument !== undefined,
-    );
+    const splitRuntimeCount = argumentsList.filter((argument) => argument === `--${SPLIT_RUNTIME_FLAG}`).length;
+    if (splitRuntimeCount > 1) {
+      return yield* failScaffolding(`flag --${SPLIT_RUNTIME_FLAG} may be supplied only once`);
+    }
+    const splitRuntime = command === 'module-contract' && splitRuntimeCount === 1;
+    const booleanArguments = [
+      core ? '--core' : undefined,
+      proposalOnly ? `--${PROPOSAL_ONLY_FLAG}` : undefined,
+      splitRuntime ? `--${SPLIT_RUNTIME_FLAG}` : undefined,
+    ].filter((argument) => argument !== undefined);
     const normalizedArguments =
       booleanArguments.length === 0
         ? argumentsList
@@ -1135,6 +1146,7 @@ const parseFlags = (
       schemaModule: parsed.get(SCHEMA_MODULE_FLAG),
       scope: parsed.get('scope'),
       service: parsed.get('service'),
+      splitRuntime,
       topic: parsed.get('topic'),
       url: parsed.get('url'),
       vertical: parsed.get('vertical'),

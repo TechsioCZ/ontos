@@ -3,7 +3,7 @@ import {
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
-import { workforceRegistration } from '../vertical.registration.ts';
+import { workforceBackendRegistration as workforceRegistration } from '../vertical.runtime-declaration.ts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   CoreSearchQueryRuntimeLive,

@@ -3,7 +3,7 @@ import {
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
-import { crmActivitiesRegistration } from '../vertical.registration.ts';
+import { crmActivitiesBackendRegistration as crmActivitiesRegistration } from '../vertical.runtime-declaration.ts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   defineDatabaseIdentityEnrollment,

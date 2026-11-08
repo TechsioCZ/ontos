@@ -23,7 +23,8 @@
     "scripts",
     "tests",
     "drizzle.config.ts",
-    "rstest.config.ts"
+    "rstest.config.ts",
+    "vertical.runtime-declaration.ts"
   ],
   "references": [
     {

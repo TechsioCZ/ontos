@@ -3,7 +3,7 @@ import {
   makeOwnerActionApprovalApiLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
-import { crmRegistration } from '../vertical.registration.ts';
+import { crmBackendRegistration as crmRegistration } from '../vertical.runtime-declaration.ts';
 import {
   CoreSearchQueryRuntimeLive,
   CoreSearchProjectionStoreLive,

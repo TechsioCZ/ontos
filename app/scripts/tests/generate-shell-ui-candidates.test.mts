@@ -87,6 +87,24 @@ it.live('checks unreleased availability and new/deleted verticals instead of tru
   }),
 );
 
+it.live('retains navigation utilities when owner metadata moves into a runtime declaration', () =>
+  fixture((root) => {
+    const manifest = 'verticals/alpha/vertical.manifest.ts';
+    const declaration = 'verticals/alpha/vertical.runtime-declaration.ts';
+    const metadata = "export const navigation = { icon: 'icon-[mdi--account-plus]', className: 'me-50' };\n";
+    write(root, manifest, metadata);
+    succeeds(root, ALL);
+    const before = readFileSync(path.join(root, candidates, ALPHA_PROJECTION), 'utf-8');
+    expect(before).toContain('icon-[mdi--account-plus]');
+    write(root, manifest, "export { navigation } from './vertical.runtime-declaration.ts';\n");
+    write(root, declaration, metadata);
+    succeeds(root, CHECK, ALL, GOLDEN);
+    expect(readFileSync(path.join(root, candidates, ALPHA_PROJECTION), 'utf-8')).toBe(before);
+    write(root, declaration, metadata.replace('account-plus', 'account-minus'));
+    expect(outputOf(run(root, CHECK, VERTICAL, 'alpha'))).toContain('Stale Shell UI candidates: alpha');
+  }),
+);
+
 it.live('fails closed when a vertical writes ui-kit token utilities with its own Tailwind prefix', () =>
   fixture((root) => {
     write(root, 'verticals/alpha/src/routes/index.css', "@import 'tailwindcss' prefix(alpha) source(none);\n");

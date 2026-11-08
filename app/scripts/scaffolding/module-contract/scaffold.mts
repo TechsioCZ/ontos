@@ -3,6 +3,7 @@ import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect
 import { matchingDelimiter, topLevelSeparators } from '../../boundary-source-structure.mts';
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
+import { bindBackendRuntimeApi, bindBackendRuntimeWorker, splitRuntimeOwnerSources } from './runtime-split.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
@@ -72,6 +73,8 @@ import {
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
   asJsonObject,
   createMutationEffect,
+  formatGeneratedMutationContent,
+  readModuleRuntimeDeclarationEffect,
   discoverVerticalEffect,
   ensureUniqueMutationPaths,
   maskNonCode,
@@ -98,6 +101,8 @@ import type {
 
 const moduleMarkerPattern = /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu;
 const MANIFEST_FILE_NAME = 'vertical.manifest.ts';
+const REGISTRATION_FILE_NAME = 'vertical.registration.ts';
+const RUNTIME_DECLARATION_FILE_NAME = 'vertical.runtime-declaration.ts';
 
 const renderGovernedHttpApiRoot = (vertical: VerticalMetadata): string => `${MODULE_CONTRACT_GENERATOR_HEADER}
 // @ontos-deployment-app-id ${vertical.appId}
@@ -627,6 +632,7 @@ const patchPackage = (
 
 const patchTsconfig = (
   vertical: VerticalMetadata,
+  includeRuntimeDeclaration = false,
 ): Effect.Effect<Option.Option<Mutation>, ModuleContractScaffoldError | ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* patchTsconfigEffect() {
     const tsconfigPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'tsconfig.json'));
@@ -638,13 +644,90 @@ const patchTsconfig = (
     );
     const nextInclude = [
       ...include,
-      ...[MANIFEST_FILE_NAME, 'vertical.registration.ts'].filter((entry) => !include.includes(entry)),
+      ...[
+        MANIFEST_FILE_NAME,
+        REGISTRATION_FILE_NAME,
+        ...(includeRuntimeDeclaration ? [RUNTIME_DECLARATION_FILE_NAME] : []),
+      ].filter((entry) => !include.includes(entry)),
     ];
     return yield* trySync(() =>
       Option.fromNullishOr(
         updateMutation(tsconfigPath, content, patchJsonObjectProperty(content, [], 'include', nextInclude)),
       ),
     );
+  });
+
+const planRuntimeSplit = (vertical: VerticalMetadata, moduleId: string) =>
+  Effect.gen(function* planRuntimeSplitEffect() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const manifestPath = yield* trySync(() => resolveContainedPath(vertical.directory, MANIFEST_FILE_NAME));
+    const registrationPath = yield* trySync(() => resolveContainedPath(vertical.directory, REGISTRATION_FILE_NAME));
+    const apiRootPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'api', 'index.ts'));
+    const declarationPath = yield* trySync(() =>
+      resolveContainedPath(vertical.directory, RUNTIME_DECLARATION_FILE_NAME),
+    );
+    const read = (path: string) =>
+      fileSystem
+        .readFileString(path)
+        .pipe(Effect.mapError((cause) => scaffoldError(`failed to read split runtime owner ${path}`, cause)));
+    const manifest = yield* read(manifestPath);
+    const registration = yield* read(registrationPath);
+    const apiRoot = yield* read(apiRootPath);
+    for (const source of [manifest, registration]) {
+      if (
+        !source.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\n`) ||
+        !source.includes(`// @ontos-deployment-app-id ${vertical.appId}\n`) ||
+        moduleMarkerPattern.exec(source)?.groups?.['moduleId'] !== moduleId
+      ) {
+        return yield* scaffoldError(`vertical ${vertical.slug} has inconsistent owner provenance`);
+      }
+    }
+    const existing = yield* readModuleRuntimeDeclarationEffect(
+      vertical.directory,
+      vertical.slug,
+      manifest,
+      registration,
+    );
+    const prefix = toCamelCase(vertical.slug);
+    const split = yield* trySync(() =>
+      existing === undefined
+        ? splitRuntimeOwnerSources({ apiRoot, appId: vertical.appId, manifest, moduleId, prefix, registration })
+        : { apiRoot: bindBackendRuntimeApi(apiRoot, prefix), declaration: existing.content, manifest, registration },
+    );
+    const outputs = [
+      { after: split.manifest, before: manifest, path: manifestPath },
+      { after: split.registration, before: registration, path: registrationPath },
+      { after: split.apiRoot, before: apiRoot, path: apiRootPath },
+    ];
+    const mutations: Mutation[] = [];
+    if (existing === undefined) {
+      mutations.push(yield* createMutationEffect(declarationPath, split.declaration));
+    }
+    const workerPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'src', 'worker-host', 'entry.ts'));
+    if (
+      yield* fileSystem
+        .exists(workerPath)
+        .pipe(Effect.mapError((cause) => scaffoldError('failed to inspect worker entry', cause)))
+    ) {
+      const worker = yield* read(workerPath);
+      const after = yield* trySync(() => bindBackendRuntimeWorker(worker, prefix));
+      if (after !== worker) {
+        outputs.push({ after, before: worker, path: workerPath });
+      }
+    }
+    for (const output of outputs) {
+      const formatted = yield* formatGeneratedMutationContent(output.path, output.after);
+      const mutation = yield* trySync(() => updateMutation(output.path, output.before, formatted));
+      if (mutation !== undefined) {
+        mutations.push(mutation);
+      }
+    }
+    const tsconfigMutation = yield* patchTsconfig(vertical, true);
+    if (Option.isSome(tsconfigMutation)) {
+      mutations.push(tsconfigMutation.value);
+    }
+    yield* trySync(() => ensureUniqueMutationPaths(mutations));
+    return { mutations, result: { appId: vertical.appId, manifestPath, moduleId, registrationPath } };
   });
 
 const planModuleContractScaffold = (
@@ -659,6 +742,9 @@ const planModuleContractScaffold = (
     const moduleId = yield* trySync(() => requireOntosModuleId(config.module));
     const vertical = yield* discoverVerticalEffect(workspaceRoot, config.vertical);
     yield* assertUniqueModuleId(workspaceRoot, vertical.slug, moduleId);
+    if (config.splitRuntime === true) {
+      return yield* planRuntimeSplit(vertical, moduleId);
+    }
     const manifestPath = yield* trySync(() => resolveContainedPath(vertical.directory, MANIFEST_FILE_NAME));
     const registrationPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'vertical.registration.ts'));
     const sharedApiPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'shared', 'api.ts'));

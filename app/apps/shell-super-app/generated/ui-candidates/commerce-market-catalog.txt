@@ -1,3 +1,6 @@
+--earth
+--handshake-outline
+--storefront-outline
 bg-base
 block
 border
@@ -19,6 +22,9 @@ grid
 grid-cols-1
 grid-cols-2
 hover:bg-surface
+icon-[mdi--earth]
+icon-[mdi--handshake-outline]
+icon-[mdi--storefront-outline]
 items-center
 items-start
 justify-between
