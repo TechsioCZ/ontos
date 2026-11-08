@@ -125,6 +125,10 @@ export const RetireMarketPayloadSchema = Schema.Struct(lifecyclePayloadFields).c
 );
 export type RetireMarketPayload = typeof RetireMarketPayloadSchema.Type;
 
+/**
+ * The lifecycle transitions share this result. A retirement whose Customer Context settlement stays pending
+ * fails with the typed `MarketRetirementSettlementPending` problem carrying the already-committed result.
+ */
 export const MarketLifecycleResultSchema = Schema.Struct({
   changed: Schema.Boolean,
   definitionRevisionRef: MarketDefinitionRevisionRefSchema,
@@ -140,16 +144,6 @@ export const MarketLifecycleResultSchema = Schema.Struct({
 );
 
 export type MarketLifecycleResult = typeof MarketLifecycleResultSchema.Type;
-
-/** Per-Action result contracts of the lifecycle transitions published under `shared/actions/`. */
-export const ActivateMarketResultSchema = MarketLifecycleResultSchema;
-export const SuspendMarketResultSchema = MarketLifecycleResultSchema;
-/**
- * Retirement returns the Market's new lifecycle state, exactly like activate- and suspend-market. A retirement
- * whose Customer Context settlement stays pending fails with the typed `MarketRetirementSettlementPending` problem
- * that carries the already-committed result instead of the plain success.
- */
-export const RetireMarketResultSchema = MarketLifecycleResultSchema;
 
 export const AssociateStorefrontPayloadSchema = Schema.Struct({
   associationId: StorefrontAssociationIdSchema,
@@ -218,11 +212,6 @@ export const StorefrontAssociationResultSchema = Schema.Struct({
       : 'Association and Market must belong to the same Tenant',
   ),
 );
-
-/** Per-Action result contracts of the Storefront association Actions published under `shared/actions/`. */
-export const AssociateStorefrontResultSchema = StorefrontAssociationResultSchema;
-export const ReviseStorefrontAssociationResultSchema = StorefrontAssociationResultSchema;
-export const RemoveStorefrontAssociationResultSchema = StorefrontAssociationResultSchema;
 
 export class MarketCommandRejected extends Schema.TaggedError<MarketCommandRejected>()('MarketCommandRejected', {
   code: Schema.Literals([

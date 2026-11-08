@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
+import { createModuleGraph } from '@modern-js/code-tools/microvertical-api-boundary';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -588,20 +589,24 @@ it.live(
 );
 
 it.live(
-  'actual commerce Action descriptors and generated APIs prove both retained public result alias groups',
-  Effect.fn(function* actualCommerceAliasProof() {
+  'actual commerce public Action results resolve to canonical schemas without unused alias calibration',
+  Effect.fn(function* actualCommerceResultProof() {
     const root = yield* fixture();
     const marketOwner = 'verticals/commerce-market-catalog';
+    const lifecycleResult = 'MarketLifecycleResultSchema';
+    const associationResult = 'StorefrontAssociationResultSchema';
+    const contracts = [
+      ['activate-market', 'ActivateMarketResultSchema', lifecycleResult],
+      ['suspend-market', 'SuspendMarketResultSchema', lifecycleResult],
+      ['retire-market', 'RetireMarketResultSchema', lifecycleResult],
+      ['associate-storefront', 'AssociateStorefrontResultSchema', associationResult],
+      ['revise-storefront-association', 'ReviseStorefrontAssociationResultSchema', associationResult],
+      ['remove-storefront-association', 'RemoveStorefrontAssociationResultSchema', associationResult],
+    ] as const;
     write(root, `${marketOwner}/package.json`, '{"name":"@app/commerce-market-catalog","type":"module"}');
     const files = [
       'shared/action-contracts.ts',
-      ...[
-        'activate-market',
-        'suspend-market',
-        'associate-storefront',
-        'revise-storefront-association',
-        'remove-storefront-association',
-      ].flatMap((slug) => [
+      ...contracts.flatMap(([slug]) => [
         `src/actions/${slug}.action.ts`,
         `shared/actions/${slug}.ts`,
         `shared/apis/${slug}-action.ts`,
@@ -610,14 +615,25 @@ it.live(
     for (const file of files) {
       write(root, `${marketOwner}/${file}`, readFileSync(path.join(appRoot, marketOwner, file), 'utf-8'));
     }
+    const graph = createModuleGraph();
+    const canonicalModule = graph.module(path.join(root, marketOwner, 'shared/action-contracts.ts'));
+    for (const [slug, exported, canonical] of contracts) {
+      const publicModule = graph.module(path.join(root, marketOwner, 'shared/actions', `${slug}.ts`));
+      const result = graph.resolve(publicModule, exported, 'export');
+      const original = graph.resolve(canonicalModule, canonical, 'export');
+      if (result?.kind !== 'declaration' || original?.kind !== 'declaration') {
+        expect.unreachable('Expected the original canonical Action result binding');
+      }
+      expect(result.module.path).toBe(original.module.path);
+      expect(result.expression).toBe(original.expression);
+      expect(graph.resolve(canonicalModule, exported, 'export')).toBeUndefined();
+    }
     const result = yield* model(root);
-    const aliases = result.evidence.filter(
-      (fact) => fact.kind === wireAliasKind && fact.source === `${marketOwner}/shared/action-contracts.ts`,
-    );
-    expect(aliases.map((fact) => fact.aliasMembers?.map((member) => member.name))).toEqual(
-      actionAliasGroups.map((names) => [...names]),
-    );
-    expect(aliases.every((fact) => fact.reason.includes('defineAction resultSchema consumer'))).toBe(true);
+    expect(
+      result.evidence.filter(
+        (fact) => fact.kind === wireAliasKind && fact.source === `${marketOwner}/shared/action-contracts.ts`,
+      ),
+    ).toEqual([]);
   }),
 );
 

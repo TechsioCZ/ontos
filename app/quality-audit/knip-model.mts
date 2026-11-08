@@ -6428,9 +6428,14 @@ export const buildKnipModel = Effect.fn('QualityAudit.buildKnipModel')(function*
           source,
         }));
   if (consumerFiles.length > 0 && workspaces['.'] !== undefined) {
+    // Knip resolves entry patterns against the workspace directory and reports an absolute
+    // pattern as `entry-empty`, so each consumer chunk is admitted by its root-relative path.
     workspaces['.'] = {
       ...workspaces['.'],
-      entry: [...(workspaces['.'].entry ?? []), ...consumerFiles.map((file) => file.path)],
+      entry: [
+        ...(workspaces['.'].entry ?? []),
+        ...consumerFiles.map((file) => path.relative(appRoot, file.path).replaceAll('\\', '/')),
+      ],
     };
   }
   // `consumerFiles` is what the audit writes and what `runPinnedKnip` reads; `consumerSource` keeps the
