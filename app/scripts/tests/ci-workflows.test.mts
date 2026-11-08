@@ -755,6 +755,24 @@ it('gives every CI database tool a separate login per runtime identity and audit
   // Identity URLs stay in each job's explicit environment, never a generated dotenv file.
   expect([...source.matchAll(IDENTITY_STEP_ENV_FILTER)]).toHaveLength(0);
   const { steps } = integration;
+  const start = steps.findIndex(({ name }) => name === 'Start fresh PostgreSQL and SpiceDB services');
+  const initialize = steps.findIndex(({ name }) => name === 'Initialize fresh local database login identities');
+  const removeRuntime = steps.findIndex(({ name }) => name.startsWith('Remove the pre-seeded runtime role'));
+  const stageMigrator = steps.findIndex(
+    ({ name }) => name === 'Run the assembled stage migrator artifact against the fresh database',
+  );
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(initialize).toBeGreaterThan(start);
+  expect(initialize).toBeLessThan(removeRuntime);
+  expect(removeRuntime).toBeLessThan(stageMigrator);
+  expect(steps[initialize]?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
+  expect(steps[initialize]?.env).toEqual({
+    DATABASE_LOGIN_ROLE_POLICY: 'initialize-local',
+    ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
+  });
+  expect(integration.env?.DATABASE_LOGIN_ROLE_POLICY).toBeUndefined();
+  expect(steps[stageMigrator]?.env?.DATABASE_LOGIN_ROLE_POLICY).toBeUndefined();
+  expect(steps[stageMigrator]?.env?.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT).toBe('stage');
   const migrations = steps.findIndex(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
   const audit = steps.findIndex(({ name }) => name === AUDIT_STEP);
   expect(migrations).toBeGreaterThanOrEqual(0);
@@ -783,7 +801,20 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     const provision = node.steps.findIndex(
       ({ name }) => name === 'Migrate the Node proof database and provision its runtime identities',
     );
+    const initialize = node.steps.findIndex(
+      ({ name }) => name === 'Initialize the fresh Node proof database login identities',
+    );
     const proof = node.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
+    expect(initialize).toBeGreaterThanOrEqual(0);
+    expect(initialize).toBeLessThan(provision);
+    expect(node.steps[initialize]?.if).toBe("matrix.proof == 'node'");
+    expect(node.steps[initialize]?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
+    expect(node.steps[initialize]?.env).toEqual({
+      DATABASE_LOGIN_ROLE_POLICY: 'initialize-local',
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
+    });
+    expect(environment.DATABASE_LOGIN_ROLE_POLICY).toBeUndefined();
+    expect(node.steps[provision]?.env).toBeUndefined();
     expect(provision).toBeGreaterThanOrEqual(0);
     expect(provision).toBeLessThan(proof);
     expect(node.steps[provision]?.if).toBe("matrix.proof == 'node'");

@@ -1,4 +1,4 @@
-import { PgClient as actualPgClient } from '@effect/sql-pg' with { rstest: 'importActual' };
+import { PgClient as actualPgClient, PgTypes as actualPgTypes } from '@effect/sql-pg' with { rstest: 'importActual' };
 import { Array as EffectArray, Effect, Exit, Order, Redacted, Stream } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { SqlClient, Statement } from 'effect/sql';
@@ -15,6 +15,7 @@ import type { ExplicitManifestEntry } from '../postgres/runtime-role-bootstrap.m
 
 rstest.mock('@effect/sql-pg', () => ({
   PgClient: { ...actualPgClient, makeClient: rstest.fn() },
+  PgTypes: actualPgTypes,
 }));
 const { PgClient } = await import('@effect/sql-pg');
 

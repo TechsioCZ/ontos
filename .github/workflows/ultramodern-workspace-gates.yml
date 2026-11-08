@@ -618,6 +618,13 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
+      - name: Initialize fresh local database login identities
+        working-directory: app
+        env:
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
+
       - name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering
         if: matrix.suite == 'integration'
         working-directory: app
@@ -894,6 +901,14 @@ jobs:
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
           mise exec -- pnpm mf:types
           mise exec -- pnpm performance:readiness
+
+      - name: Initialize the fresh Node proof database login identities
+        if: matrix.proof == 'node'
+        working-directory: app
+        env:
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
 
       - name: Migrate the Node proof database and provision its runtime identities
         if: matrix.proof == 'node'
