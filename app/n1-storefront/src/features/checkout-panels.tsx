@@ -5,6 +5,7 @@ import NextLink from "next/link";
 import type { ReactNode } from "react";
 import { Image } from "@techsio/ui-kit/atoms/image";
 import { Link } from "@techsio/ui-kit/atoms/link";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { RadioCard } from "@techsio/ui-kit/molecules/radio-card";
 import { TotalsSummary } from "@techsio/ui-kit/molecules/totals-summary";
 import type { Dictionary } from "@/i18n";
@@ -34,40 +35,45 @@ export const CheckoutShipping = ({
 }) => (
   <section className="min-w-0 rounded-xs border border-border-secondary bg-fill-surface p-4">
     <h2 className="mb-4 text-lg font-semibold">{d.checkout.shipping}</h2>
-    <RadioCard
-      disabled={disabled}
-      name="shippingMethod"
-      onValueChange={onChange}
-      required
-      size="sm"
-      value={value}
-      variant="outline"
-    >
-      <div className="sr-only">
-        <RadioCard.Label>{d.checkout.shipping}</RadioCard.Label>
-      </div>
-      <div className="grid min-w-0 gap-2 md:grid-cols-2">
-        {options.shippingMethods.map((method) => (
-          <RadioCard.Item key={method.id} value={method.id}>
-            <RadioCard.ItemHiddenInput />
-            <RadioCard.ItemControl>
-              <RadioCard.ItemContent>
-                <div className="flex w-full min-w-0 justify-between gap-2">
-                  <RadioCard.ItemText>{method.title}</RadioCard.ItemText>
-                  <p className="shrink-0 text-sm">
-                    {formatMarketAmount(method.priceMinor, locale, options.scope.currency)}
-                  </p>
-                </div>
-                <RadioCard.ItemDescription>
-                  {d.fulfillment.shippingDescriptions[method.id]}
-                </RadioCard.ItemDescription>
-              </RadioCard.ItemContent>
-            </RadioCard.ItemControl>
-          </RadioCard.Item>
-        ))}
-      </div>
-    </RadioCard>
-    {options.shippingMethods.length === 0 && <p>{d.fulfillment.noShipping}</p>}
+    {options.shippingMethods.length === 0 ? (
+      <StatusText showIcon size="md" status="error">
+        {d.fulfillment.noShipping}
+      </StatusText>
+    ) : (
+      <RadioCard
+        disabled={disabled}
+        name="shippingMethod"
+        onValueChange={onChange}
+        required
+        size="sm"
+        value={value}
+        variant="outline"
+      >
+        <div className="sr-only">
+          <RadioCard.Label>{d.checkout.shipping}</RadioCard.Label>
+        </div>
+        <div className="grid min-w-0 gap-2 md:grid-cols-2">
+          {options.shippingMethods.map((method) => (
+            <RadioCard.Item key={method.id} value={method.id}>
+              <RadioCard.ItemHiddenInput />
+              <RadioCard.ItemControl>
+                <RadioCard.ItemContent>
+                  <div className="flex w-full min-w-0 justify-between gap-2">
+                    <RadioCard.ItemText>{method.title}</RadioCard.ItemText>
+                    <p className="shrink-0 text-sm">
+                      {formatMarketAmount(method.priceMinor, locale, options.scope.currency)}
+                    </p>
+                  </div>
+                  <RadioCard.ItemDescription>
+                    {d.fulfillment.shippingDescriptions[method.id]}
+                  </RadioCard.ItemDescription>
+                </RadioCard.ItemContent>
+              </RadioCard.ItemControl>
+            </RadioCard.Item>
+          ))}
+        </div>
+      </RadioCard>
+    )}
   </section>
 );
 

@@ -43,6 +43,19 @@ describe("truthful product read loading", () => {
     expect(html).not.toContain("Načítání ceny");
     expect(html).not.toContain('disabled=""');
   });
+  it("uses the product error from Figma instead of the catalogue failure", () => {
+    const html = renderState("product", false);
+    expect(html).toContain("Produkt se nepodařilo načíst.");
+    expect(html).not.toContain(getDictionary("cs").unavailableDescription);
+    expect(renderState("category", false)).toContain(getDictionary("cs").unavailableDescription);
+  });
+  it("localizes the product failure separately from the catalogue failure", () => {
+    navigation.locale = "en";
+    const html = renderState("product", false);
+    expect(html).toContain("The product could not be loaded.");
+    expect(html).not.toContain(getDictionary("en").unavailableDescription);
+    expect(renderState("category", false)).toContain(getDictionary("en").unavailableDescription);
+  });
   it("does not replace the distinct category-loading state with product purchase placeholders", () => {
     const html = renderState("category", true);
     expect(html).toContain(getDictionary("cs").loadingCatalog);

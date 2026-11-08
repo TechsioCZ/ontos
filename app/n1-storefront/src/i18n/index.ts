@@ -142,6 +142,10 @@ const cs = {
     country: "Země",
     countryPlaceholder: "Vyberte zemi",
     email: "E-mail",
+    errors: {
+      email: "Zadejte platnou e-mailovou adresu",
+      firstName: "Jméno je povinné",
+    },
     firstName: "Jméno",
     forbidden: "Objednávku nyní nelze odeslat. Kontaktujte nás prosím.",
     guest: "Objednáváte bez přihlášení; adresa se neukládá do zákaznického účtu.",
@@ -178,6 +182,7 @@ const cs = {
     uncertain:
       "Výsledek objednávky zatím není potvrzený. Neodesílejte ji znovu; ověřte výsledek nebo nás kontaktujte.",
     verify: "Ověřit objednávku",
+    verifyShort: "Ověřit",
   },
   closeMenu: "Zavřít nabídku kategorií",
   commerceUnavailable: "Nákup zatím není dostupný.",
@@ -229,7 +234,7 @@ const cs = {
   from: "od",
   fulfillment: {
     noPayment: "Platební možnosti nyní nejsou dostupné. Kontaktujte nás prosím.",
-    noShipping: "Pro tento trh nyní nejsou dostupné žádné způsoby dopravy.",
+    noShipping: "Žádné způsoby dopravy nejsou momentálně k dispozici. Zkuste to prosím později.",
     paymentDetailsUnavailable:
       "Podrobnosti o konkrétních způsobech platby zatím nejsou dostupné. Kontaktujte nás prosím.",
     shippingDescriptions: {
@@ -296,6 +301,7 @@ const cs = {
   priceUnavailable: "Cena není dostupná",
   privacy: "Zásady ochrany osobních údajů",
   productCode: "Kód produktu",
+  productLoadFailed: "Produkt se nepodařilo načíst.",
   productParameters: "PRODUKTOVÉ PARAMETRY",
   productParametersTitle: "Produktové parametry",
   productsFound: "Nalezeno",
@@ -535,6 +541,10 @@ const en: typeof cs = {
     country: "Country",
     countryPlaceholder: "Choose a country",
     email: "Email",
+    errors: {
+      email: "Enter a valid email address",
+      firstName: "First name is required",
+    },
     firstName: "First name",
     forbidden: "Your order cannot be submitted at the moment. Please contact us.",
     guest: "You are ordering as a guest; this address will not be saved to a customer account.",
@@ -571,6 +581,7 @@ const en: typeof cs = {
     uncertain:
       "Your order result is not confirmed yet. Do not submit it again; check the result or contact us.",
     verify: "Check order",
+    verifyShort: "Check",
   },
   closeMenu: "Close category menu",
   commerceUnavailable: "Purchasing is not available yet.",
@@ -619,7 +630,7 @@ const en: typeof cs = {
   from: "from",
   fulfillment: {
     noPayment: "Payment options are currently unavailable. Please contact us.",
-    noShipping: "No shipping methods are currently available for this market.",
+    noShipping: "No shipping methods are currently available. Please try again later.",
     paymentDetailsUnavailable:
       "Details of specific payment methods are not available yet. Please contact us.",
     shippingDescriptions: {
@@ -687,6 +698,7 @@ const en: typeof cs = {
   priceUnavailable: "Price unavailable",
   privacy: "Privacy policy",
   productCode: "Product code",
+  productLoadFailed: "The product could not be loaded.",
   productParameters: "PRODUCT PARAMETERS",
   productParametersTitle: "Product parameters",
   productsFound: "Found",

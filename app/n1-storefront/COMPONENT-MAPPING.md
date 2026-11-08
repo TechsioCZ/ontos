@@ -422,6 +422,26 @@ potvrzení o odeslání e-mailu se nepředstírají. Souhrn zobrazuje owner celk
 až druhé potvrzuje objednávku. Obnova používá stabilní nonce a veřejný read.
 Guest potvrzení neodkazuje na neimplementované zákaznické objednávky.
 
+### Checkout field errors after blur
+
+Fresh Figma `323:1813`, field compositions `324:1700`, `324:1714` and
+`324:1708`: keep the connected FormInput md and a sibling StatusText sm/error
+with its supported icon. A plain layout wrapper supplies the source 4px gap;
+no appearance classes or styles are passed to either kit component. The
+stable error id is linked through FormInput aria-describedby, and its native
+validateStatus supplies aria-invalid. Editing clears both the message and
+association; blur and native invalid events recompute them.
+
+Required/blank first name and invalid email use the exact Czech design copy
+and an English translation. Email also requires the dotted domain already
+required by the public checkout schema. Other errors retain the generic
+validation message. Figma's postal example `123` conflicts with the native
+address contract (trimmed length 3–12); this slice preserves that contract
+for every market country rather than adding a Czech-only admission rule or
+misleading format message. The postal fixture is an unresolved design/contract
+difference, not a fully reproduced state. No schema, country, shipping or order
+write behavior changes.
+
 ## C8 — zákaznický účet
 
 Profil54:1417/54:1629: max1024,p16,gap16; desktop navigace vlevo,
@@ -578,3 +598,94 @@ The same component-state configuration pass removes the menu's redundant
 color-scope div: its token-only utility configures the existing NavItem
 directly. Header still owns all visual CSS; no appearance declarations,
 descendant selectors, new primitive or basic theme overrides are introduced.
+
+### Product loading and failure — 57:3009 / 57:3028
+
+The current loading composition already uses the connected PriceBlock pending,
+AvailabilityStatus pending and native md/primary/solid loading Button. Its
+extra loading announcement is screen-reader-only. The unknown product title
+stays generic rather than copying fixture data or deriving a title from a slug.
+The product failure body now uses the exact Figma57:3030 Czech message and
+its English translation; category failure copy stays independent. The native
+retry still refreshes the route. No toast replaces this persistent failure.
+Two failing-then-passing localized regression cases cover this distinction.
+
+### Confirmation banner — 372:3126 / 372:3357
+
+The existing application status surface keeps its canonical N1 success color
+at the exact15% paint opacity recorded in the Figma instance. The design
+context omits that paint opacity; the direct paint/binding inspection confirms
+it. No palette override or new alert component is required. The existing
+wrapper now uses a column with4px gap, and the20px semibold title uses28px
+line height. Payment status copy remains truthful; a fixture claim of email
+delivery is not evidence that an email was sent.
+
+An isolated test-only SSR render of the actual CheckoutView with shipped CSS
+was inspected at320/390/1440. It uses explicit visual fixture data outside
+the application; no order, backend call or runtime mock was introduced.
+
+### Unavailable shipping — 57:3088 / 322:1665
+
+An owner-ready response with no shipping methods renders the connected native
+StatusText md/error with its supported showIcon prop, using the exact Figma
+Czech copy and its English translation. It replaces the empty required
+RadioCard group; available methods still use the existing native choices.
+The shared no-shipping text also remains suitable for the shipping information
+page. Parent action disabling and the submit guard still require a real method.
+The fixture's cash-on-delivery payment is not evidence of an available provider;
+the actual payment state is preserved. No ad-hoc component styles or backend changes.
+
+The installed kit exports line-height-status-text-md but does not pair it
+with its text utility. The app's @theme initialization bridges the supported
+Tailwind typography companion to that existing role, yielding the Figma16/30
+without per-instance classes or a new theme value. This applies to all N1
+StatusText md messages; sm messages retain their existing typography.
+
+### Checkout operation feedback
+
+The persistent failure pattern in57:3088/322:1665 uses the native StatusText
+md/error. Checkout operation failures now use that same component; unresolved
+orders and a preserved cart use its warning state. The specific owner rejection
+replaces the simultaneous generic form instruction. A fresh quote hides the
+previous rejection, while a confirmed receipt suppresses stale quote/guard
+fallbacks. Explicit storage, recovery and preserved-cart notices remain visible.
+This is application state mapping, not a claim that Figma defines each backend
+failure. No new copy, component styles, price calculations, transport or intent
+guard changes are introduced. Persistent recovery instructions stay on screen.
+
+An isolated SSR render of the actual CheckoutView was inspected at320/390/1440,
+including English recovery. No Stage rejection/order was manufactured for the
+screenshots. The320px action-label overflow found during that pass is addressed
+by the responsive action composition below; it was excluded from the earlier
+notice-only visual approval.
+
+Price semantics remain owner unit amounts. Although fixture319:1787 displays
+950 Kč with quantity2, the layer is named Unit price including tax, and the
+historical N1 CartItemRow also renders the unit amount. Its sample arithmetic
+does not justify changing checkout to derived line totals. Recovered native
+orders deliberately expose no lineTotalMinor; unit price times quantity is not
+used as a substitute for an owner total.
+
+### Responsive checkout action labels — 319:1803 / 319:2032
+
+Fresh desktop/mobile Code Connect preserves Button md/primary/solid, the
+two-column action row and its8px gap. The existing native Button loading branch
+accepts ReactNode children when loadingText is omitted, so the pending label is
+an accessible child span: sr-only below the canonical xl breakpoint, visible
+from xl. The kit still renders and animates its own spinner. No custom spinner,
+appearance CSS, viewport JavaScript, kit/token change or duplicate submit is
+introduced. The button exposes aria-busy and the full localized operation name.
+
+The initial verification action also clipped vertically at320px. Below xl its
+visible label is the localized Ověřit/Check, while aria-label retains the full
+verification purpose. Wide layouts keep the full label. The previously approved
+Objednat/Order confirmation label is unchanged. The same Button, ref, click
+handler, disabled logic and form submission remain in place.
+
+Actual-component SSR browser checks cover56 CS/EN combinations: idle,
+verified, quoting and placing at320/390/768/1024/1279/1280/1440px. Geometry,
+effective visibility, busy/name/disabled semantics and eight320px AX snapshots
+passed; the real local checkout idle action was also inspected. Native spinner
+frames vary through its ring-resize animation, and its own margin remains.
+This verifies layout and accessible names, not an unsolicited screen-reader
+announcement or a new Stage order end-to-end test.

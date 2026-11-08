@@ -20,6 +20,8 @@ export const CatalogState = ({
   const d = getDictionary(params.locale);
   const message = kind === "product" ? d.loadingProduct : d.loadingCatalog;
   const unavailableTitle = kind === "product" ? d.productUnavailable : d.unavailable;
+  const unavailableDescription =
+    kind === "product" ? d.productLoadFailed : d.unavailableDescription;
   const loadingTitle = kind === "product" ? d.detail : d.catalog;
   const title = pending ? loadingTitle : unavailableTitle;
   return (
@@ -37,7 +39,7 @@ export const CatalogState = ({
         {title}
       </h1>
       <output className={pending && kind === "product" ? "sr-only" : ""}>
-        {pending ? message : d.unavailableDescription}
+        {pending ? message : unavailableDescription}
       </output>
       {pending && kind === "product" && (
         <>
