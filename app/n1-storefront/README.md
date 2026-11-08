@@ -5,7 +5,8 @@
 > převod všech obrazovek Figmy. Detail nyní rozlišuje desktopový NumericInput
 > a mobilní QuantityField; karty používají contain a vypnutý stín přes knihovní API.
 > Guest i přihlášený checkout, profil, vlastní objednávky a čtení uložených adres
-> mají nativní integraci. Úpravy adres a jejich výběr do checkoutu ještě chybí.
+> mají nativní integraci. Výslovné použití uložené poštovní adresy je implementované;
+> šířka jejího rozbalovacího seznamu čeká na opravu UI kitu. Úpravy adres zatím chybí.
 > Portal registrace/přihlášení mají implementaci a testy; celý pozitivní živý
 > průchod ještě není doložený. Lokální data ani přístupové údaje nejsou součástí aplikace.
 
@@ -252,7 +253,8 @@ ověřit ve workflow a release receipt odděleně od lokální aplikace.
    Filtry používat podle návrhu a podporovaného owner kontraktu; nefiltrovat
    náhradně jednu stránku ve FE ani nevymýšlet produktové vztahy.
 3. Doložit pozitivní Portal průchod od registrace přes e-mail po vlastní objednávky;
-   dokončit MFA, úpravy adres a použití uložené adresy v checkoutu.
+   dokončit MFA a úpravy adres. U výběru uložené adresy dořešit knihovní
+   šířku seznamu a doložit použití se skutečnou Portal session.
 4. Doplnit skutečný právní/CMS obsah a chybějící owner schopnosti pro produktové
    ETA, tabulky velikostí, související zboží, oblíbené, hlídání a online platby.
 5. Pokračovat v porovnávání všech obrazovek a stavů Figmy na desktopu i mobilu.
@@ -269,8 +271,17 @@ z browseru se nepřijímají, ceny používají uloženou měnu objednávky. Gue
 objednávky se automaticky nepřiřazují podle emailu.
 
 Záložka účtu čte skutečné uložené adresy přes `/api/customer-addresses`.
-Úpravy adres ani jejich výběr do checkoutu nejsou implementované; nerozřešené
-Party-backed adresy mají explicitní stav. Agregovaná útrata/statistiky nejsou
+Checkout dovoluje výslovně zkopírovat reprezentovatelnou uloženou poštovní adresu
+do společných fakturačních a doručovacích polí. Jméno, telefon a e-mail zachová;
+příchod dat nic automaticky nevybere. Adresy s dalším neprázdným řádkem, krajem,
+nepodporovanou zemí, neplatnými hodnotami nebo nerozřešenou Party lokací nelze
+vybrat, protože současná objednávka jejich údaje neumí beze ztráty přijmout.
+Změna přihlášení zneplatní zkopírované údaje i původní přepočet; výběr neposílá
+do backendu zákaznické ID ani neukládá osobní údaje do browserového úložiště.
+Rozbalený seznam dlouhých adres má známý problém šířky instalovaného Selectu;
+potřebné předání jeho veřejného `positioning` API zatím není součástí knihovny.
+Tento stav není vizuálním ani živým E2E schválením přihlášeného checkoutu.
+Úpravy adres nejsou implementované. Agregovaná útrata/statistiky nejsou
 doplněné odvozenými součty jedné stránky historie.
 
 Výsledky kontrol a jejich konkrétní datum/rozsah zaznamenává `VALIDATION.md`;

@@ -1456,3 +1456,45 @@ N1 lint, typová kontrola a formát upravených souborů prošly. Globální
 `pnpm i18n:boundaries` zůstává neúspěšné se stejnými 28 nálezy
 `strict-effect-api-boundaries` v API vstupech ostatních verticalů; nejde
 o chybějící N1 překlady. Diagnostika se nepotlačuje a globální PASS se netvrdí.
+
+## 8. 11. 2026 — výslovná kopie uložené adresy do checkoutu
+
+Figma guest checkout `44:1226` a adresy účtu `54:1759` byly znovu načtené.
+Guest návrh uložený výběr neobsahuje; interakční předloha pochází z uživatelem
+určeného historického N1 `billing-address-section.tsx` a `address-picker.tsx`.
+Použitý Select, FormInput, validace objednávkové adresy a zákaznický GET jsou
+současné veřejné kontrakty; historické API ani styly se nepřebírají.
+
+Uložená adresa se kopíruje až výslovným výběrem. Kontakty zůstávají ruční.
+Adresy s nereprezentovatelnými údaji jsou nevolitelné s lokalizovaným důvodem.
+Přesná instance přihlášení, monotónní generace a aktuální seznam zemí chrání
+proti pozdním odpovědím, A→B→A i novému přihlášení stejného e-mailu. Provenience
+zkopírovaných polí přežije ruční editaci. Checkout controller zneplatní quote
+při změně session nebo zemí; explicitní editace používají stávající `onEdit`.
+
+Celá sada prošla: **738 testů v 72 souborech**, bez skip/todo. N1 lint, typová
+kontrola a formát osmi zdrojových/testovacích souborů prošly. Nezávislé zdrojové
+review nenašlo další blokátor v tomto rozsahu. Po fast-forward načtení šesti
+upstream commitů do `0de1c421e` znovu prošlo všech 738 testů i N1 lint.
+Produkční Next build po aktualizaci rovněž prošel včetně TypeScriptu,
+statických stránek a trasování standalone výstupu. Tento výsledek není
+globálním repository PASS.
+
+Skutečný Chrome v izolovaném komponentovém harnessu ověřil nativní FormData,
+výslovnou kopii CZ/SK, zachování kontaktů, žádný automatický výběr při načtení,
+vyprázdnění zkopírovaných polí po odebrání země i novém přihlášení stejného
+e-mailu, pending→ready bez oživení staré kopie a ignorování pozdního výsledku A
+po výběru B. Disabled stav zakazuje formulář i selector. Konzole bez chyb a
+varování, žádné skutečné zákaznické/quote/order požadavky. Testovací autentizace
+a odpovědi jsou pouze v ignorovaném harnessu; produkční kód je nepoužívá.
+
+Vizuální kontrola našla problém skutečného knihovního popupu: dlouhá položka
+roztáhne seznam na 1597 px při 570px triggeru a způsobí horizontální přetečení.
+Veřejný typ `Select.positioning` existuje, ale runtime jej nepředává Zag stroji.
+Přesná dvouřádková oprava byla ověřena pouze privátní simulací; se
+`sameWidth: true` měl seznam 570 px na desktopu a 356 px na mobilu. Obyčejný
+country Select si zachoval výchozích 279 px. Root i reviewer otevřeli vadný
+a oba simulované PNG. Sdílený patch ani lockfile zatím nejsou změněné;
+produkční vizuální GO pro tento selector se proto **neuděluje**. Živý pozitivní
+Portal průchod, zákaznické adresy na Stage a přihlášená objednávka zůstávají
+neověřené. Nebyl odeslán registrační, e-mailový ani objednávkový zápis.

@@ -22,6 +22,7 @@ import type { CartEntry } from "./cart-state";
 import { advanceQuoteSelection } from "./cart-quote-state";
 import type { QuoteSelection } from "./cart-quote-state";
 import { usePortalAuth } from "./auth-view";
+import { observeCheckoutSession } from "./checkout-session-observation";
 
 type ReadyOptions = Extract<CheckoutOptions, { state: "ready" }>;
 type Notice =
@@ -189,20 +190,13 @@ const observeGuard = (scope: CartScope, accept: (value: GuardObservation) => voi
 /** Observe only the in-memory shared Portal session; credentials never enter durable intent state. */
 const useCheckoutSession = () => {
   const auth = usePortalAuth({ mode: "login" });
-  // Presentation outcomes may be fresh objects on every render; keep the observation stable.
-  // This only invalidates local UI. Server admission remains the authority for every request.
-  const sessionKey = JSON.stringify([auth.loaded, auth.pending, auth.outcome]);
-  const [previousSession, setPreviousSession] = useState({
-    generation: 0,
-    key: sessionKey,
-  });
-  const sessionChanged = previousSession.key !== sessionKey;
-  const sessionGeneration = previousSession.generation + (sessionChanged ? 1 : 0);
-  if (sessionChanged) {
-    setPreviousSession({
-      generation: sessionGeneration,
-      key: sessionKey,
-    });
+  // A new admission invalidates local work even when its serialized customer data is identical.
+  // Server admission remains the authority for every request.
+  const [previousSession, setPreviousSession] = useState(() => observeCheckoutSession(null, auth));
+  const observed = observeCheckoutSession(previousSession, auth);
+  const { generation: sessionGeneration } = observed;
+  if (observed !== previousSession) {
+    setPreviousSession(observed);
   }
   const currentSession = useRef(sessionGeneration);
   useLayoutEffect(() => {
