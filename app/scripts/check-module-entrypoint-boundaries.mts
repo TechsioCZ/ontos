@@ -58,6 +58,7 @@ import { isAllowedCompositionSeam } from './check-lean-core-dependencies.mts';
 import { isProblemDetailsFactory } from './api-contract-schema-rules.mts';
 import { closedCalendarSchemaNodes } from './native-calendar-schema-boundary.mts';
 import { hasPublishedUiSupport } from './published-ui-support.mts';
+import { hasPublishedNativeClientComposition } from './published-native-client-composition.mts';
 import {
   PublicContractOwnerAppIdSchema,
   PublicContractOwnerModuleIdSchema,
@@ -2396,7 +2397,7 @@ const hasClosedNativeContractCall = (
 // Prove small schema-building programs by their native bindings. A factory may
 // bind const intermediates and return schemas/data; it cannot execute callbacks,
 // read globals, mutate inputs, or obtain authority from private source modules.
-const hasClosedNativeContractExpression = (
+export const hasClosedNativeContractExpression = (
   state: BoundaryCheckState,
   module: SourceModule,
   expression: SchemaNode,
@@ -2925,10 +2926,52 @@ const contractRoutineNonreferences = (routine: SchemaNode): ReadonlySet<SchemaNo
   return excluded;
 };
 
+const contractMutationRoot = (mutation: SchemaNode): SchemaNode => {
+  let target: SchemaNode = mutation;
+  if (mutation.type === 'AssignmentExpression') {
+    target = mutation.left;
+  } else if (mutation.type === 'UpdateExpression') {
+    target = mutation.argument;
+  }
+  while (target.type === 'MemberExpression') {
+    target = target.object;
+  }
+  return target;
+};
+
+const isOwnConstantScalarCapture = (module: SourceModule, reference: SchemaNode, value: GraphValue): boolean => {
+  if (
+    reference.type !== 'Identifier' ||
+    (value.kind !== 'node' && value.kind !== 'unresolved') ||
+    value.module !== module ||
+    !['StringLiteral', 'NumericLiteral', 'BooleanLiteral', 'NullLiteral', 'BigIntLiteral'].includes(value.node.type)
+  ) {
+    return false;
+  }
+  const declared = module.file.program.body.some((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    return (
+      declaration?.type === 'VariableDeclaration' &&
+      declaration.kind === 'const' &&
+      declaration.declarations.some(
+        (local) => local.id.type === 'Identifier' && local.id.name === reference.name && local.init === value.node,
+      )
+    );
+  });
+  return (
+    declared &&
+    module.mutations.every((mutation) => {
+      const target = contractMutationRoot(mutation);
+      return target.type !== 'Identifier' || target.name !== reference.name;
+    })
+  );
+};
+
 const hasImmutableContractRoutineCaptures = (
   state: BoundaryCheckState,
   module: SourceModule,
   expression: SchemaNode,
+  enrolledOperation?: (module: SourceModule, node: SchemaNode) => boolean,
 ): boolean => {
   const pending = [{ expression, module }];
   const visited = new Set<SchemaNode>();
@@ -2947,11 +2990,21 @@ const hasImmutableContractRoutineCaptures = (
       if (node.type !== 'Identifier' || excluded.has(node)) {
         return;
       }
+      const binding = state.graph.resolveReference(current.module, node);
+      if (binding?.kind === 'declaration' && enrolledOperation?.(binding.module, binding.expression) === true) {
+        return;
+      }
       for (const value of state.graph.evaluate(current.module, node)) {
-        if (value.kind !== 'node' && value.kind !== 'unresolved') {
+        if (
+          (value.kind !== 'node' && value.kind !== 'unresolved') ||
+          enrolledOperation?.(value.module, value.node) === true
+        ) {
           continue;
         }
-        if (mutableContractCaptureEvidence(state, value.module).has(value.node)) {
+        if (
+          mutableContractCaptureEvidence(state, value.module).has(value.node) &&
+          !isOwnConstantScalarCapture(current.module, node, value)
+        ) {
           immutable = false;
         }
         if (value.kind === 'node' && isFunction(value.node)) {
@@ -4057,6 +4110,54 @@ const hasNativeSelectedOwnerClientApi = (
   );
 };
 
+const nativeClientSchemaProofs = new WeakMap<SourceModule, WeakMap<SchemaNode, boolean>>();
+
+const hasClientCompositionSchema = (state: BoundaryCheckState, module: SourceModule, node: SchemaNode): boolean => {
+  if (node.type !== 'CallExpression') {
+    return false;
+  }
+  let proofs = nativeClientSchemaProofs.get(module);
+  if (proofs === undefined) {
+    proofs = new WeakMap();
+    nativeClientSchemaProofs.set(module, proofs);
+  }
+  const cached = proofs.get(node);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const valid =
+    closedCalendarSchemaNodes(state.graph, module).has(node) || hasClosedNativeContractExpression(state, module, node);
+  proofs.set(node, valid);
+  return valid;
+};
+
+const hasPublishedOwnerClientComposition = (
+  selection: SelectedOwnerContract,
+  binding: SelectedContractDeclaration,
+): boolean => {
+  const { clientModules, owner, state } = selection;
+  if (clientModules === undefined) {
+    return false;
+  }
+  const moduleFile = (module: SourceModule) => nodePath.relative(state.root, module.path).replaceAll('\\', '/');
+  return hasPublishedNativeClientComposition({
+    graph: state.graph,
+    hasImmutableCapture: (module, expression) =>
+      hasImmutableContractRoutineCaptures(state, module, expression, (candidate) =>
+        clientModules.has(moduleFile(candidate)),
+      ),
+    isEnrolledOperation: (module) => clientModules.has(moduleFile(module)),
+    isNativeSchemaNode: (module, node) => hasClientCompositionSchema(state, module, node),
+    isOwnerLocalNonPrivate: (module) =>
+      deploymentOwner(state, moduleFile(module)) === owner &&
+      !privateImplementationPath.test(moduleFile(module)) &&
+      ![...nativeOwnershipOrigins(state, moduleFile(module)).values()].some((paths) =>
+        paths.some((path) => privateImplementationPath.test(path)),
+      ),
+    selected: binding,
+  });
+};
+
 const hasSelectedOwnerImport = (
   selection: SelectedOwnerContract,
   statement: ImportDeclaration,
@@ -4075,6 +4176,9 @@ const hasSelectedOwnerImport = (
     return true;
   }
   if (selection.clientModules?.has(nodePath.relative(state.root, binding.module.path).replaceAll('\\', '/')) === true) {
+    return true;
+  }
+  if (hasPublishedOwnerClientComposition(selection, binding)) {
     return true;
   }
   const exportedName = imported.imported.type === 'Identifier' ? imported.imported.name : imported.imported.value;

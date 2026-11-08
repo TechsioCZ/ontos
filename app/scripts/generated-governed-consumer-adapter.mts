@@ -1,5 +1,5 @@
 import type { createModuleGraph, SourceModule } from '@modern-js/code-tools/microvertical-api-boundary';
-import { isFunction, traverseFast } from '@babel/types';
+import { hasInvocationOwnedData } from './native-invocation-ownership.mts';
 import type {
   ArrowFunctionExpression,
   CallExpression,
@@ -776,68 +776,6 @@ const pureNativeArguments = (
 
 const mutatingNativeMethods = new Set(['add', 'pop', 'push', 'splice']);
 
-const enclosingNativeRoutine = (context: AdapterContext, node: Node): Node | undefined => {
-  const { end, start } = node;
-  if (start === null || start === undefined || end === null || end === undefined) {
-    return undefined;
-  }
-  let owner: Node | undefined;
-  let smallest = Number.POSITIVE_INFINITY;
-  traverseFast(context.module.file, (candidate) => {
-    if (
-      !isFunction(candidate) ||
-      candidate.start === null ||
-      candidate.start === undefined ||
-      candidate.end === null ||
-      candidate.end === undefined
-    ) {
-      return;
-    }
-    const width = candidate.end - candidate.start;
-    if (candidate.start <= start && candidate.end >= end && width < smallest) {
-      owner = candidate;
-      smallest = width;
-    }
-  });
-  return owner;
-};
-
-// Mutating methods are local algorithms only when the collection is allocated
-// by this very invocation, never a caller parameter or captured module value.
-const hasInvocationOwnedCollection = (context: AdapterContext, receiver: Node, call: CallExpression): boolean => {
-  if (receiver.type !== 'Identifier') {
-    return false;
-  }
-  const binding = context.graph.resolveReference(context.module, receiver);
-  if (
-    binding?.kind !== 'declaration' ||
-    binding.module.path !== context.module.path ||
-    (binding.expression.type !== 'ArrayExpression' &&
-      !(
-        binding.expression.type === 'NewExpression' &&
-        binding.expression.callee.type === 'Identifier' &&
-        binding.expression.callee.name === 'Set' &&
-        context.graph.isUnboundReference(context.module, binding.expression.callee)
-      ))
-  ) {
-    return false;
-  }
-  let allocated = false;
-  traverseFast(context.module.file, (node) => {
-    if (
-      node.type === 'VariableDeclaration' &&
-      node.kind === 'const' &&
-      node.declarations.some(
-        (declaration) => declaration.id.type === 'Identifier' && declaration.init === binding.expression,
-      )
-    ) {
-      allocated = true;
-    }
-  });
-  const owner = enclosingNativeRoutine(context, binding.expression);
-  return allocated && owner !== undefined && owner === enclosingNativeRoutine(context, call);
-};
-
 /** A native method call on one of the routine's own values, or a call to a pure same-module routine. */
 const pureNativeCall = (
   context: AdapterContext,
@@ -863,7 +801,7 @@ const pureNativeCall = (
     !callee.computed &&
     callee.property.type === 'Identifier' &&
     pureNativeMethods.has(callee.property.name) &&
-    (!mutatingNativeMethods.has(callee.property.name) || hasInvocationOwnedCollection(context, callee.object, node)) &&
+    (!mutatingNativeMethods.has(callee.property.name) || hasInvocationOwnedData(context, callee.object, node)) &&
     check(context, callee.object, bindings, visited) &&
     pureNativeArguments(context, node.arguments, bindings, visited, check)
   );

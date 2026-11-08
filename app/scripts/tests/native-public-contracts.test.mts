@@ -18,6 +18,7 @@ const opportunityEvent = 'verticals/sales-pipeline/shared/outbox/sales-pipeline-
 const factoryResult = 'return { change, slice };';
 const nonzeroFilter = '/[1-9]/u.test(value)';
 const secretSource = 'export const secret = () => true;';
+const evidenceImport = '{ evidence }';
 const midnightTemplate = `\`\${value}T00:00:00.000Z\``;
 const calendarDecode = `DateTime.makeUnsafe(${midnightTemplate})`;
 const calendarParse = `DateTime.make(${midnightTemplate})`;
@@ -341,7 +342,36 @@ for (const [name, provider, body, accepted] of [
               `import { sha256 } from '${provider}';\nimport { utf8ToBytes } from '@noble/hashes/utils.js';\nimport { Hex } from 'effect/encoding';\nimport { Effect } from 'effect';\nexport const evidence = (value: string) => ${body};\n`,
             );
           },
-          '{ evidence }',
+          evidenceImport,
+        ),
+      ).toBe(accepted);
+    }),
+  );
+}
+
+for (const [name, source, accepted] of [
+  ['constant scalar', "const label = 'scope:'; export const evidence = (value: string) => label + value;", true],
+  ['mutable scalar', "let label = 'scope:'; export const evidence = (value: string) => label + value;", false],
+  [
+    'mutable scalar alias',
+    "const label = 'scope:'; let alias = label; export const evidence = (value: string) => alias + value;",
+    false,
+  ],
+  [
+    'mutable object',
+    "const label = { text: 'scope:' }; export const evidence = (value: string) => { label.text = value; return label.text; };",
+    false,
+  ],
+] as const) {
+  it.live(`checks published routine captured ${name}`, () =>
+    Effect.gen(function* capturedContractValue() {
+      expect(
+        yield* withContract(
+          opportunityEvent,
+          (sources) => {
+            sources.set(opportunityEvent, source);
+          },
+          evidenceImport,
         ),
       ).toBe(accepted);
     }),
@@ -359,7 +389,7 @@ it.live('rejects a deterministic identity routine with a transitive global captu
             'const encode = (value: string) => globalThis.encode(value);\nexport const evidence = (value: string) => encode(value);\n',
           );
         },
-        '{ evidence }',
+        evidenceImport,
       ),
     ).toBe(false);
   }),

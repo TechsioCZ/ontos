@@ -5214,6 +5214,8 @@ const copyCoreIdentityManifestContract = Effect.fn(function* copyCoreIdentityMan
   for (const file of [
     'packages/core-runtime/package.json',
     'packages/core-runtime/src/db/database-identity-manifest.ts',
+    'packages/core-runtime/src/resources/legal-entity.ts',
+    'packages/core-runtime/src/modules/manifest.ts',
   ]) {
     yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
   }
@@ -5257,6 +5259,9 @@ const makeActualPartyClientFixture = Effect.fn(function* actualPartyClientFixtur
   yield* write(root, SHELL_TSCONFIG_PATH, JSON.stringify({ references: [] }));
   yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
   yield* Effect.promise(() =>
+    symlink(path.join(root, 'packages/core-runtime'), path.join(root, 'node_modules/@app/core-runtime'), 'dir'),
+  );
+  yield* Effect.promise(() =>
     symlink(path.join(root, PARTY_VERTICAL_PATH), path.join(root, 'node_modules/@app/party-registry'), 'dir'),
   );
   yield* Effect.promise(() =>
@@ -5274,6 +5279,11 @@ for (const [name, source, allowed] of [
   [
     'enrollment exact operations and erased types',
     `import { createPartyWithAuthorization, executePartyMatchWithAuthorization, recoverPartyCreateWithAuthorization } from '${PARTY_API_CLIENT_SPECIFIER}';\nimport type { createParty, executePartyMatch, recoverPartyCreate } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
+    true,
+  ],
+  [
+    'public authored customer workflows',
+    `import { listCustomers, createCustomer } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
     true,
   ],
   [
