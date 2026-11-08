@@ -36,8 +36,10 @@ cenu a vytváří objednávku s dohledáním výsledku podle stabilního požada
 Profil, seznam/detail vlastních objednávek a čtení uložených adres mají implementaci
 a testy; pozitivní živý Portal průchod ještě není doložený. Přihlášený checkout
 určuje zákazníka z čerstvé serverové Portal admission; nepoužitelnou přítomnou
-session nezmění na guest nákup. Doprava a platby čtou skutečné market checkout možnosti; právní
-texty a ostatní obsahové stránky kromě kontaktů čekají na skutečný obsah.
+session nezmění na guest nákup. Doprava a platby čtou skutečné market checkout možnosti.
+Právní stránky zobrazují dodanou českou statickou kopii z Figmy a historického N1;
+nejde o CMS odpověď ani nativní verzovaný policy záznam. Novinky a CMS šablony
+čekají na skutečný redakční zdroj.
 
 Úplný seznam všech aktuálních rámců a stavů je v `FIGMA-INVENTORY.md`. Kategorie nyní
 obsahuje skutečný strom, breadcrumb, podkategorie, počet a serverové stránkování;
@@ -262,7 +264,7 @@ ověřit ve workflow a release receipt odděleně od lokální aplikace.
 3. Doložit pozitivní Portal průchod od registrace přes e-mail po vlastní objednávky;
    živě ověřit dokončení MFA a doplnit úpravy adres. U výběru uložené adresy dořešit knihovní
    šířku seznamu a doložit použití se skutečnou Portal session.
-4. Doplnit skutečný právní/CMS obsah a chybějící owner schopnosti pro produktové
+4. Doplnit skutečné novinky/CMS a chybějící owner schopnosti pro produktové
    ETA, tabulky velikostí, související zboží, oblíbené, hlídání a online platby.
 5. Pokračovat v porovnávání všech obrazovek a stavů Figmy na desktopu i mobilu.
    Průchod jednoho bloku ani automatické testy nejsou vizuální schválení celého webu.

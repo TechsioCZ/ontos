@@ -1546,3 +1546,33 @@ zmizelo. Konzole kontrolovaných stavů byla bez chyb a varování.
 Source i vymezené layout review mají GO. Skutečný zákaznický MFA účet,
 doručení OTP a živý pozitivní Portal průchod zůstávají neověřené. Nastavení/
 vypnutí MFA, backup kódy a trust-device nejsou součástí této implementace.
+
+## 8. 11. 2026 — aktuální inventář a ověření právních článků
+
+Fresh metadata všech pěti Figma stránek obsahují 87 top-level rámců
+(3/6/10/26/42). Nová úvodní tabulka FIGMA-INVENTORY rozlišuje současnou
+implementaci od původních historických stavů. Strukturní inventář není
+87 čerstvých pixelových review ani seznam 87 routes.
+
+Zdrojová kontrola nalezla staré nepřesné tvrzení README: obě právní routes
+již renderují dodanou statickou českou kopii. Jejich article lang=cs je
+výslovný i pod anglickým chrome. Nejde o CMS, nativní policy/verzi ani tvrzení
+právní správnosti. Novinky nadále zobrazují unavailable, vlastní CMS route chybí.
+
+Oba články byly skutečně otevřené na localhost3071 při 1440 a 390 px.
+Fresh Figma main370:2679/2870/3084/3264 i všechny čtyři actual PNG otevřel
+root a nezávislý reviewer. P40, Privacy extra48, vnitřní1120/310, nadpisy,
+obsahové bloky a hierarchie odpovídají. Žádný článek není oříznutý a mobil
+nepřetéká. Kompozice článků má dílčí GO; jejich zdroj se neměnil.
+
+Pixelová shoda zůstává otevřená. Terms desktop má958px stejně jako návrh,
+mobil1300 oproti1324. Privacy desktop1022 oproti1046, mobil1750 oproti1774.
+Konkrétní odstavec370:3125 má při shodných1120px šířky a16/24 typografii
+v návrhu72px, v DOM48px. Aktuální system-ui a návrhový Inter jinak zalamují
+text. Rozdíl se neobchází24px spacerem ani novou fontovou výjimkou. Hlavička,
+patička a již odložené typografické rozdíly nejsou tímto dílčím GO uzavřené.
+Konzole kontrolovaných reálných právních stránek byla bez chyb/varování.
+
+Tato navazující změna opravuje dokumentaci a inventář, nikoli runtime.
+Předcházející770testů, lint/type/build zůstávají datovanou evidencí stejného
+runtime snapshotu; kvůli dokumentaci se znovu nespouštějí jako nový důkaz.

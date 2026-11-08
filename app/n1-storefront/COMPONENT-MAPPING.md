@@ -721,3 +721,13 @@ passed; the real local checkout idle action was also inspected. Native spinner
 frames vary through its ring-resize animation, and its own margin remains.
 This verifies layout and accessible names, not an unsolicited screen-reader
 announcement or a new Stage order end-to-end test.
+
+### Právní články — 370:2679/2870/3084/3264
+
+Existující LegalView převádí dodaný český redakční dokument, ne runtime CMS
+nebo přepočítanou policy. Figma výslovně používá p40 i na mobilu, Privacy
+navíc pt48. Vnitřní šířky1120/310, mezery24/16/8, nadpisy a96×4 underline
+jsou v současné kompozici přítomné. Obsah ponechává lang=cs pod EN chrome.
+Nové actual desktop/mobile PNG potvrzují strukturu bez přetékání. Zalamování
+system-ui vs Inter způsobuje známou24px odchylku výšky vybraných sestav;
+padding se kvůli tomu nemění. Nejde o nové vzhledové přepisy ani pixelové GO.
