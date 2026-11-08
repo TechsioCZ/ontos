@@ -73,6 +73,7 @@ import {
   toPascalCase,
   generatedApiGroup,
   generatedProviderIdentities,
+  generatedProviderOwnerProjection,
   hasExactGeneratedProviderIdentityTopology,
   hasGeneratedGovernedClientContract,
   hasEngagementLifecycleRegistrationContract,
@@ -4678,20 +4679,6 @@ const providerObjectProperty = (object: Expression | undefined, key: string): Ex
   return properties.length === 1 && property?.type === 'Property' ? property.value : undefined;
 };
 
-const providerOwnerInitializer = (source: string, name: string): Expression | undefined => {
-  const parsed = parseSync('provider-owner.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  if (parsed.errors.length !== 0) {
-    return undefined;
-  }
-  const bindings = parsed.program.body.flatMap((statement) => {
-    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
-    return declaration?.type === 'VariableDeclaration'
-      ? declaration.declarations.filter((binding) => binding.id.type === 'Identifier' && binding.id.name === name)
-      : [];
-  });
-  return bindings.length === 1 ? (bindings[0]?.init ?? undefined) : undefined;
-};
-
 const providerOwnerSources = (sourceMap: ReadonlyMap<string, string>, vertical: string, deploymentAppId: string) =>
   Effect.gen(function* providerOwnerSourcesEffect() {
     const manifest = sourceOrEmpty(sourceMap, `${vertical}/vertical.manifest.ts`);
@@ -4726,18 +4713,9 @@ const providerOwnerSources = (sourceMap: ReadonlyMap<string, string>, vertical: 
     if (!validDeclaration) {
       return yield* fail(vertical, 'generated providers require their canonical same-owner runtime declaration');
     }
-    const fullManifest = providerOwnerInitializer(manifest, `${prefix}Manifest`);
-    const manifestArgument = fullManifest?.type === 'CallExpression' ? fullManifest.arguments[0] : undefined;
-    const surface =
-      manifestArgument?.type === 'SpreadElement'
-        ? undefined
-        : providerObjectProperty(manifestArgument, 'publicSurface');
-    const backendSurface = providerObjectProperty(
-      providerOwnerInitializer(declaration, `${prefix}RuntimeManifest`),
-      'publicSurface',
-    );
-    const shell = providerObjectProperty(backendSurface, 'shellContributions');
-    if (surface?.type !== 'ObjectExpression' || shell?.type !== 'ObjectExpression') {
+    const manifestSources = { manifestSource: manifest, runtimeDeclarationSource: declaration };
+    const projected = generatedProviderOwnerProjection(manifestSources);
+    if (projected === undefined) {
       return yield* fail(
         vertical,
         'generated providers require their authored descriptor and shell contribution objects',
@@ -4745,8 +4723,8 @@ const providerOwnerSources = (sourceMap: ReadonlyMap<string, string>, vertical: 
     }
     // Inspect original owning expressions only: unused or displaced marker pairs cannot supply contributions.
     return {
-      manifest: `${manifest.slice(surface.start, surface.end)}\n${declaration.slice(shell.start, shell.end)}`,
-      manifestSources: Option.some({ manifestSource: manifest, runtimeDeclarationSource: declaration }),
+      manifest: projected,
+      manifestSources: Option.some<GeneratedProviderManifestSources>(manifestSources),
       moduleId,
       registration,
     };
@@ -4800,7 +4778,14 @@ const validateGeneratedProviderClient = (
     const expectedGroups = new Set([kindDetails.endpointGroup, `${camel}${kindDetails.apiSuffix}`]);
     const providerChecks = {
       apiContract: hasGeneratedProviderApiContract(contractSource, ownerApiValue, moduleId, name, kind),
-      authorization: hasMatchingGeneratedProviderAuthorization(providerSource, manifest, moduleId, name, kind),
+      authorization: hasMatchingGeneratedProviderAuthorization(
+        providerSource,
+        manifest,
+        moduleId,
+        name,
+        kind,
+        Option.getOrUndefined(manifestSources),
+      ),
       clientContract: hasGeneratedGovernedClientContract(clientSource, {
         authorizedOperation: `load${type}ClientWithAuthorization`,
         defaultApiPrefix: `/${deploymentAppId}-api`,
@@ -4854,18 +4839,19 @@ const validatePublishedProviderIdentities = (
       return;
     }
     const deploymentAppId = state.owners.get(verticalPath) ?? file.split('/')[1] ?? '';
-    const { manifest, moduleId, registration } = yield* providerOwnerSources(
+    const { manifest, manifestSources, moduleId, registration } = yield* providerOwnerSources(
       state.sourceMap,
       verticalPath,
       deploymentAppId,
     );
-    if (!hasExactGeneratedProviderIdentityTopology(manifest, registration, moduleId)) {
+    const ownerSources = Option.getOrUndefined(manifestSources);
+    if (!hasExactGeneratedProviderIdentityTopology(manifest, registration, moduleId, ownerSources)) {
       yield* fail(
         file,
         'generated search and report clients require the shared client runtime and exact manifest and registration identity topology',
       );
     }
-    for (const provider of generatedProviderIdentities(manifest, registration, moduleId)) {
+    for (const provider of generatedProviderIdentities(manifest, registration, moduleId, ownerSources)) {
       yield* validateGeneratedProviderClient(state.sourceMap, file, deploymentAppId, {
         ...provider,
         vertical: verticalPath,

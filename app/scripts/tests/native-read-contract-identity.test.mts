@@ -18,13 +18,17 @@ import { parseSync } from 'oxc-parser';
 import { toCamelCase } from '../boundary-source-structure.mts';
 import {
   generatedModuleApiEntrypointReference,
+  generatedProviderOwnerProjection,
   hasExactGeneratedProviderIdentityTopology,
   hasGeneratedModuleApiReadContract,
   hasGeneratedProviderManifest,
   hasGeneratedProviderReadContract,
   hasMatchingGeneratedProviderAuthorization,
 } from '../generated-module-api-boundary.mts';
-import type { GeneratedReadAuthorization } from '../generated-module-api-boundary.mts';
+import type {
+  GeneratedProviderManifestSources,
+  GeneratedReadAuthorization,
+} from '../generated-module-api-boundary.mts';
 
 const readSource = (file: string): string => readFileSync(path.resolve(import.meta.dirname, '../..', file), 'utf-8');
 
@@ -36,6 +40,11 @@ const crmName = 'records';
 const pricingFile = 'verticals/pricing/src/api/commitment-confirmation-verification.read.ts';
 const pricingModuleId = 'commerce.pricing';
 const pricingName = 'commitment-confirmation-verification';
+const FACILITY_MODULE_ID = 'facility.operations';
+const PROTECTED_AUTHORIZATION = "authorization: { kind: 'protected' }";
+const PUBLIC_AUTHORIZATION = "authorization: { kind: 'public' }";
+const SEARCH_ENTRYPOINT_CONSTANT = 'const searchEntrypointKey =';
+const MUTABLE_SEARCH_ENTRYPOINT = 'let searchEntrypointKey =';
 const protectedAuthorization: GeneratedReadAuthorization = { kind: 'protected' };
 
 /** Prove the read the way the governed-http seam does: through the entrypoint its descriptor actually binds. */
@@ -53,7 +62,7 @@ const accepts = (
 
 const nativeReads = [
   [crmActivitiesFile, crmModuleId, crmName],
-  ['verticals/facility-operations/src/api/records.read.ts', 'facility.operations', 'records'],
+  ['verticals/facility-operations/src/api/records.read.ts', FACILITY_MODULE_ID, 'records'],
   [
     'verticals/commerce-market-catalog/src/api/current-market-catalog.read.ts',
     'commerce.market-catalog',
@@ -133,16 +142,13 @@ const forgedReads: readonly (readonly [string, (source: string) => string])[] = 
   ],
   [
     'a non-protected entrypoint classification',
-    (source) => source.replace("authorization: { kind: 'protected' }", "authorization: { kind: 'public' }"),
+    (source) => source.replace(PROTECTED_AUTHORIZATION, PUBLIC_AUTHORIZATION),
   ],
   ['an entrypoint that is not a read', (source) => source.replace("access: 'read'", "access: 'write'")],
   [
     'a classification carrying an extra capability',
     (source) =>
-      source.replace(
-        "authorization: { kind: 'protected' }",
-        "authorization: { kind: 'protected', permission: 'module.access' }",
-      ),
+      source.replace(PROTECTED_AUTHORIZATION, "authorization: { kind: 'protected', permission: 'module.access' }"),
   ],
 ];
 
@@ -171,40 +177,67 @@ it('keeps the legitimate native identity spellings', () => {
 });
 
 /**
- * The generated search providers whose owner carries no runtime declaration: the manifest is its own proof
- * surface, and it names the module id, the search entrypoint key, and the read key through immutable
- * module-local constants. The proof follows those constants to the same identity a literal would carry.
+ * The generated search providers whose owner splits its declaration: the manifest root spreads the owner's
+ * runtime manifest from its sibling `vertical.runtime-declaration.ts`, which names the module id, the search
+ * entrypoint key, and the authorization through immutable module-local constants. The proof projects the
+ * original owning objects and binds every alias back to those same programs, never to a synthetic text.
  */
 const aliasedSearchProviders = [
   ['verticals/work-tasks', 'work.tasks', 'tasks'],
   ['verticals/sales-pipeline', 'demo.sales-pipeline', 'opportunities'],
 ] as const;
 
-const providerManifest = (ownerPath: string): string => readSource(`${ownerPath}/vertical.manifest.ts`);
-const providerRegistration = (ownerPath: string): string => readSource(`${ownerPath}/vertical.registration.ts`);
+const RUNTIME_DECLARATION_FILE = 'vertical.runtime-declaration.ts';
+
+interface ProviderOwner {
+  readonly manifest: string;
+  readonly registration: string;
+  readonly sources?: GeneratedProviderManifestSources;
+}
+
+/** The checker's view of an owner: the projected original objects for a split owner, the manifest otherwise. */
+const providerOwnerView = (
+  manifestSource: string,
+  registration: string,
+  runtimeDeclarationSource?: string,
+): ProviderOwner => {
+  if (runtimeDeclarationSource === undefined) {
+    return { manifest: manifestSource, registration };
+  }
+  const sources = { manifestSource, runtimeDeclarationSource };
+  return { manifest: generatedProviderOwnerProjection(sources) ?? '', registration, sources };
+};
+
+const providerOwner = (ownerPath: string): ProviderOwner =>
+  providerOwnerView(
+    readSource(`${ownerPath}/vertical.manifest.ts`),
+    readSource(`${ownerPath}/vertical.registration.ts`),
+    sourceExists(`${ownerPath}/${RUNTIME_DECLARATION_FILE}`)
+      ? readSource(`${ownerPath}/${RUNTIME_DECLARATION_FILE}`)
+      : undefined,
+  );
 const providerRead = (ownerPath: string, name: string): string =>
   readSource(`${ownerPath}/src/search/${name}.provider.ts`);
 
+const ownerAccepts = (owner: ProviderOwner, provider: string, moduleId: string, name: string): boolean =>
+  hasGeneratedProviderManifest(owner.manifest, moduleId, name, 'search', owner.sources) &&
+  hasMatchingGeneratedProviderAuthorization(provider, owner.manifest, moduleId, name, 'search', owner.sources) &&
+  hasExactGeneratedProviderIdentityTopology(owner.manifest, owner.registration, moduleId, owner.sources);
+
 const providerAccepted = (ownerPath: string, moduleId: string, name: string): boolean =>
-  hasGeneratedProviderManifest(providerManifest(ownerPath), moduleId, name, 'search') &&
-  hasMatchingGeneratedProviderAuthorization(
-    providerRead(ownerPath, name),
-    providerManifest(ownerPath),
-    moduleId,
-    name,
-    'search',
-  ) &&
-  hasExactGeneratedProviderIdentityTopology(providerManifest(ownerPath), providerRegistration(ownerPath), moduleId);
+  ownerAccepts(providerOwner(ownerPath), providerRead(ownerPath, name), moduleId, name);
 
 it('proves native provider metadata that shares immutable authorization objects and identity templates', () => {
   for (const { moduleId, names, ownerPath } of [
     {
-      moduleId: 'facility.operations',
+      moduleId: FACILITY_MODULE_ID,
       names: ['assets', 'devices', 'documents', 'meters'],
       ownerPath: 'verticals/facility-operations',
     },
     { moduleId: 'demo.merchandise', names: ['orders', 'products'], ownerPath: 'verticals/merchandise' },
+    { moduleId: 'demo.crm', names: ['clients', 'contacts'], ownerPath: 'verticals/crm' },
   ]) {
+    expect(sourceExists(`${ownerPath}/${RUNTIME_DECLARATION_FILE}`), ownerPath).toBe(true);
     for (const name of names) {
       expect(providerAccepted(ownerPath, moduleId, name), `${ownerPath}/${name}`).toBe(true);
     }
@@ -219,14 +252,45 @@ it('proves native provider metadata that shares immutable authorization objects 
   ).toBe(true);
 });
 
-it('proves the actual declaration-less search providers that name their identity through immutable constants', () => {
+it('refuses shared authorization objects that are mutable, mutated, or widened in the split declaration', () => {
+  const ownerPath = 'verticals/facility-operations';
+  const moduleId = FACILITY_MODULE_ID;
+  const manifest = readSource(`${ownerPath}/vertical.manifest.ts`);
+  const registration = readSource(`${ownerPath}/vertical.registration.ts`);
+  const declaration = readSource(`${ownerPath}/${RUNTIME_DECLARATION_FILE}`);
+  const provider = providerRead(ownerPath, 'assets');
+  const original = "const restrictedAccess = { kind: 'protected' } as const;";
+  expect(declaration).toContain(original);
+  const forged = [
+    ['a mutable shared authorization object', original.replace('const restrictedAccess', 'let restrictedAccess')],
+    ['a public shared authorization object', original.replace("kind: 'protected'", "kind: 'public'")],
+    ['a mutated shared authorization object', `${original}\nrestrictedAccess.kind = 'public';`],
+    ['an escaped shared authorization object', `${original}\nexport const leakedAccess = [restrictedAccess];`],
+  ] as const;
+  for (const [defect, replacement] of forged) {
+    const forgedDeclaration = declaration.replace(original, replacement);
+    expect(forgedDeclaration, defect).not.toBe(declaration);
+    expect(
+      ownerAccepts(providerOwnerView(manifest, registration, forgedDeclaration), provider, moduleId, 'assets'),
+      defect,
+    ).toBe(false);
+  }
+});
+
+it('proves the actual split search providers that name their identity through immutable runtime constants', () => {
   for (const [ownerPath, moduleId, name] of aliasedSearchProviders) {
-    // The proof these owners need is the manifest itself: they publish no runtime declaration.
-    expect(sourceExists(`${ownerPath}/vertical.runtime-declaration.ts`), ownerPath).toBe(false);
-    const manifest = providerManifest(ownerPath);
-    expect(manifest, ownerPath).toContain('const searchEntrypointKey =');
-    expect(manifest, ownerPath).toContain('const moduleKey =');
+    const declaration = readSource(`${ownerPath}/${RUNTIME_DECLARATION_FILE}`);
+    const manifest = readSource(`${ownerPath}/vertical.manifest.ts`);
+    expect(declaration, ownerPath).toContain(SEARCH_ENTRYPOINT_CONSTANT);
+    expect(declaration, ownerPath).toContain('const moduleKey =');
+    expect(manifest, ownerPath).toContain(`from './${RUNTIME_DECLARATION_FILE}';`);
     expect(providerAccepted(ownerPath, moduleId, name), ownerPath).toBe(true);
+    // The projection alone proves nothing: its constants live in the original declaration program.
+    const owner = providerOwner(ownerPath);
+    expect(hasGeneratedProviderManifest(owner.manifest, moduleId, name, 'search'), ownerPath).toBe(false);
+    expect(hasExactGeneratedProviderIdentityTopology(owner.manifest, owner.registration, moduleId), ownerPath).toBe(
+      false,
+    );
     // The provider read itself still binds its own immutable `searchKey` and stays on the v2 protected read.
     expect(hasGeneratedProviderReadContract(providerRead(ownerPath, name), moduleId, name, 'search'), ownerPath).toBe(
       true,
@@ -234,52 +298,99 @@ it('proves the actual declaration-less search providers that name their identity
   }
 });
 
-it('refuses a forged, mutable, or mismatched provider identity behind those constants', () => {
+it('refuses a forged, mutable, foreign, or mismatched provider identity behind those constants', () => {
   const [[ownerPath, moduleId, name]] = aliasedSearchProviders;
-  const manifest = providerManifest(ownerPath);
-  const registration = providerRegistration(ownerPath);
+  const manifest = readSource(`${ownerPath}/vertical.manifest.ts`);
+  const declaration = readSource(`${ownerPath}/${RUNTIME_DECLARATION_FILE}`);
+  const registration = readSource(`${ownerPath}/vertical.registration.ts`);
   const provider = providerRead(ownerPath, name);
-  const forged = [
+  const forgedDeclarations = [
     [
       'a search entrypoint constant that names another read',
-      manifest.replace(
+      declaration.replace(
         "const searchEntrypointKey = 'work.tasks.search.tasks';",
         "const searchEntrypointKey = 'work.tasks.search.other';",
       ),
     ],
     [
       'a module constant that names another owner',
-      manifest.replace("const moduleKey = 'work.tasks';", "const moduleKey = 'other.owner';"),
+      declaration.replace("const moduleKey = 'work.tasks';", "const moduleKey = 'other.owner';"),
     ],
     [
       'a mutable search entrypoint constant',
-      manifest.replace('const searchEntrypointKey =', 'let searchEntrypointKey ='),
+      declaration.replace(SEARCH_ENTRYPOINT_CONSTANT, MUTABLE_SEARCH_ENTRYPOINT),
+    ],
+    [
+      'a rebound search entrypoint constant',
+      `${declaration.replace(SEARCH_ENTRYPOINT_CONSTANT, MUTABLE_SEARCH_ENTRYPOINT)}\nsearchEntrypointKey = 'work.tasks.search.tasks';\n`,
     ],
     [
       'a second binding for the search entrypoint constant',
-      `${manifest}\nconst searchEntrypointKey = 'work.tasks.search.tasks';\n`,
+      `${declaration}\nconst searchEntrypointKey = 'work.tasks.search.tasks';\n`,
     ],
     [
       'a search key that names another read',
-      manifest.replace("searchKey: 'work.tasks.tasks'", "searchKey: 'work.tasks.other'"),
+      declaration.replace("searchKey: 'work.tasks.tasks'", "searchKey: 'work.tasks.other'"),
     ],
+    [
+      'a widened search authorization',
+      declaration.replace(
+        "authorization: { kind: 'protected' },\n            entrypointKey: searchEntrypointKey,",
+        "authorization: { kind: 'public' },\n            entrypointKey: searchEntrypointKey,",
+      ),
+    ],
+  ] as const;
+  for (const [defect, forgedDeclaration] of forgedDeclarations) {
+    expect(forgedDeclaration, defect).not.toBe(declaration);
+    expect(
+      parseSync(RUNTIME_DECLARATION_FILE, forgedDeclaration, { astType: 'ts', lang: 'ts', sourceType: 'module' })
+        .errors,
+      defect,
+    ).toEqual([]);
+    expect(
+      ownerAccepts(providerOwnerView(manifest, registration, forgedDeclaration), provider, moduleId, name),
+      defect,
+    ).toBe(false);
+  }
+  const forgedManifests = [
     [
       'a descriptor key that names another read',
       manifest.replace("key: 'work.tasks.tasks'", "key: 'work.tasks.other'"),
     ],
+    [
+      'a runtime manifest imported from a foreign owner',
+      manifest.replace(`from './${RUNTIME_DECLARATION_FILE}';`, `from '../crm/${RUNTIME_DECLARATION_FILE}';`),
+    ],
+    [
+      'a module id borrowed from a private implementation module',
+      manifest
+        .replace(
+          "import { defineOntosModuleManifest } from '@app/core-runtime';",
+          "import { defineOntosModuleManifest } from '@app/core-runtime';\nimport { privateModuleKey } from './src/private/module-key.ts';",
+        )
+        .replace('owningModuleId: moduleKey,', 'owningModuleId: privateModuleKey,'),
+    ],
   ] as const;
-  for (const [defect, forgedManifest] of forged) {
+  for (const [defect, forgedManifest] of forgedManifests) {
     expect(forgedManifest, defect).not.toBe(manifest);
     expect(
-      parseSync('manifest.ts', forgedManifest, { astType: 'ts', lang: 'ts', sourceType: 'module' }).errors,
+      ownerAccepts(providerOwnerView(forgedManifest, registration, declaration), provider, moduleId, name),
       defect,
-    ).toEqual([]);
-    expect(hasGeneratedProviderManifest(forgedManifest, moduleId, name, 'search'), defect).toBe(false);
+    ).toBe(false);
   }
+  // A projection that is not the exact text of the original owning objects cannot borrow their bindings.
+  const owner = providerOwner(ownerPath);
+  const displaced = {
+    ...owner,
+    manifest: owner.manifest.replace("key: 'work.tasks.tasks'", "key: 'work.tasks.other'"),
+  };
+  expect(ownerAccepts(displaced, provider, moduleId, name)).toBe(false);
   // The registration is the third leg of the topology: a renamed entry proves nothing about this read.
   const renamedRegistration = registration.replace('tasks: () =>', 'other: () =>');
   expect(renamedRegistration).not.toBe(registration);
-  expect(hasExactGeneratedProviderIdentityTopology(manifest, renamedRegistration, moduleId)).toBe(false);
+  expect(hasExactGeneratedProviderIdentityTopology(owner.manifest, renamedRegistration, moduleId, owner.sources)).toBe(
+    false,
+  );
   // The provider read binds its own constant; a different read key is not this provider.
   const forgedProvider = provider.replace(
     "const searchKey = 'work.tasks.search.tasks';",
@@ -287,4 +398,65 @@ it('refuses a forged, mutable, or mismatched provider identity behind those cons
   );
   expect(forgedProvider).not.toBe(provider);
   expect(hasGeneratedProviderReadContract(forgedProvider, moduleId, name, 'search')).toBe(false);
+  expect(ownerAccepts(owner, provider.replace(PROTECTED_AUTHORIZATION, PUBLIC_AUTHORIZATION), moduleId, name)).toBe(
+    false,
+  );
+});
+
+it('keeps an unsplit owner manifest as its own binding program', () => {
+  // An owner without a runtime declaration proves its constants against the manifest it authored.
+  const unsplit = `const moduleKey = 'work.tasks';
+const searchEntrypointKey = 'work.tasks.search.tasks';
+export const workTasksManifest = defineOntosModuleManifest({
+  publicSurface: {
+    reports: [
+      // <generated-module-manifest-reports>
+      // </generated-module-manifest-reports>
+    ],
+    search: [
+      // <generated-module-manifest-search>
+      { key: 'work.tasks.tasks', owningModuleId: moduleKey, resourceType: 'work.tasks.task' },
+      // </generated-module-manifest-search>
+    ],
+    shellContributions: {
+      reports: [
+        // <generated-module-shell-reports>
+        // </generated-module-shell-reports>
+      ],
+      search: [
+        // <generated-module-shell-search>
+        searchContribution({
+          contributionKey: searchEntrypointKey,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: searchEntrypointKey,
+            moduleKey,
+            role: 'search',
+            scope: 'tenant',
+          },
+          searchKey: 'work.tasks.tasks',
+        }),
+        // </generated-module-shell-search>
+      ],
+    },
+  },
+});
+`;
+  const [[ownerPath, moduleId, name]] = aliasedSearchProviders;
+  const registration = readSource(`${ownerPath}/vertical.registration.ts`);
+  const owner = providerOwnerView(unsplit, registration);
+  expect(ownerAccepts(owner, providerRead(ownerPath, name), moduleId, name)).toBe(true);
+  for (const [defect, forged] of [
+    ['a mutable constant', unsplit.replace(SEARCH_ENTRYPOINT_CONSTANT, MUTABLE_SEARCH_ENTRYPOINT)],
+    [
+      'a foreign module constant',
+      unsplit.replace("const moduleKey = 'work.tasks';", "const moduleKey = 'other.owner';"),
+    ],
+  ] as const) {
+    expect(
+      ownerAccepts(providerOwnerView(forged, registration), providerRead(ownerPath, name), moduleId, name),
+      defect,
+    ).toBe(false);
+  }
 });

@@ -2257,15 +2257,18 @@ const hasConstructorOwnerPair = (
   }
   const deployment = namedSourceImport(source, pair.deployment ?? '');
   const registration = namedSourceImport(source, pair.registration ?? '');
+  // Owner-agnostic callers get the same sibling-file proof for the backend view as for the full registration
+  // view; the executed checker always supplies the exact owner backend registration name.
   if (
     deployment?.modulePath !== '../shared/ultramodern-build.ts' ||
     deployment.imported !== 'ultramodernDeliveryUnit' ||
     !(
       (registration?.modulePath === '../vertical.registration.ts' &&
         /^[a-z][A-Za-z0-9]*Registration$/u.test(registration.imported)) ||
-      (backendRegistration !== undefined &&
-        registration?.modulePath === '../vertical.runtime-declaration.ts' &&
-        registration.imported === backendRegistration)
+      (registration?.modulePath === '../vertical.runtime-declaration.ts' &&
+        (backendRegistration === undefined
+          ? /^[a-z][A-Za-z0-9]*BackendRegistration$/u.test(registration.imported)
+          : registration.imported === backendRegistration))
     )
   ) {
     return false;

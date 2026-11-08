@@ -1030,7 +1030,12 @@ const isModuleBusinessPermissionImport = (candidate: string): boolean => {
       candidate,
     );
   const slug = match?.groups?.['slug'];
-  return slug !== undefined && match?.groups?.['binding'] === `${toCamelCase(slug)}Permission`;
+  // V2 access declarations replace the retired module-wide read-all/write-all carriers.
+  return (
+    slug !== undefined &&
+    !/(?:^|-)(?:read|write)-all$/u.test(slug) &&
+    match?.groups?.['binding'] === `${toCamelCase(slug)}Permission`
+  );
 };
 
 export const isModuleManifestImport = (candidate: string): boolean =>

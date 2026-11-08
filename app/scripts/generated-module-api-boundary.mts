@@ -2638,13 +2638,48 @@ const isNativeProviderMember = (expression: Expression, object: string, property
   expression.property.type === 'Identifier' &&
   expression.property.name === property;
 
+const nativeProviderValue = (expression: Expression | null | undefined): Expression | undefined => {
+  if (expression === undefined || expression === null) {
+    return undefined;
+  }
+  if (
+    expression.type === 'TSAsExpression' ||
+    expression.type === 'TSSatisfiesExpression' ||
+    expression.type === 'ParenthesizedExpression' ||
+    expression.type === 'TSNonNullExpression' ||
+    expression.type === 'TSTypeAssertion'
+  ) {
+    return nativeProviderValue(expression.expression);
+  }
+  return expression;
+};
+
+const nativeProviderInitializerIsStringLiteral = (initializer: Expression | null | undefined): boolean => {
+  const expression = nativeProviderValue(initializer);
+  return expression?.type === 'Literal' && Predicate.isString(expression.value);
+};
+
 const nativeProviderAliasInitializer = (program: Program, name: string): Expression | null | undefined => {
   const binding = directReadBinding(program, name);
   if (binding === undefined) {
     return undefined;
   }
   const permitted: Span[] = [binding.id];
+  // A string constant cannot be mutated through a container, so listing it as an array element (for example
+  // `requiresModules: [moduleKey]`) is a plain read. Object aliases such as shared authorization objects stay
+  // confined to property and operand reads, because an array element could carry them to a mutating site.
+  const immutablePrimitive = nativeProviderInitializerIsStringLiteral(binding.expression);
   new Visitor({
+    ArrayExpression: (expression) => {
+      if (!immutablePrimitive) {
+        return;
+      }
+      for (const element of expression.elements) {
+        if (element?.type === 'Identifier' && element.name === name) {
+          permitted.push(element);
+        }
+      }
+    },
     BinaryExpression: (expression) => {
       for (const operand of [expression.left, expression.right]) {
         if (operand.type === 'Identifier' && operand.name === name) {
@@ -2676,22 +2711,6 @@ const nativeProviderAliasInitializer = (program: Program, name: string): Express
     },
   }).visit(program);
   return hasOnlyConnectedReadReferences(program, name, permitted) ? binding.expression : undefined;
-};
-
-const nativeProviderValue = (expression: Expression | null | undefined): Expression | undefined => {
-  if (expression === undefined || expression === null) {
-    return undefined;
-  }
-  if (
-    expression.type === 'TSAsExpression' ||
-    expression.type === 'TSSatisfiesExpression' ||
-    expression.type === 'ParenthesizedExpression' ||
-    expression.type === 'TSNonNullExpression' ||
-    expression.type === 'TSTypeAssertion'
-  ) {
-    return nativeProviderValue(expression.expression);
-  }
-  return expression;
 };
 
 /** Resolve immutable identity values without evaluating owner code. */
@@ -3174,12 +3193,192 @@ const nativeProviderAuthorization = (
   return kind === 'authenticated_principal' || kind === 'protected' || kind === 'public' ? { kind } : undefined;
 };
 
+export interface GeneratedProviderManifestSources {
+  readonly manifestSource: string;
+  readonly runtimeDeclarationSource: string;
+}
+
+const nativeProviderManifestRoot = (program: Program): ObjectExpression | undefined => {
+  if (!hasDirectCoreReadImport(program, 'defineOntosModuleManifest')) {
+    return undefined;
+  }
+  const roots = program.body.flatMap((statement) => {
+    if (statement.type !== 'ExportNamedDeclaration' || statement.declaration?.type !== 'VariableDeclaration') {
+      return [];
+    }
+    return statement.declaration.kind === 'const'
+      ? statement.declaration.declarations.flatMap(({ init }) =>
+          init?.type === 'CallExpression' &&
+          init.callee.type === 'Identifier' &&
+          init.callee.name === 'defineOntosModuleManifest' &&
+          init.arguments.length === 1 &&
+          init.arguments[0]?.type === 'ObjectExpression'
+            ? [init.arguments[0]]
+            : [],
+        )
+      : [];
+  });
+  return roots.length === 1 ? roots[0] : undefined;
+};
+
+const nativeProviderRuntimeImport = (program: Program, localName: string): string | undefined => {
+  const imports = program.body.flatMap((statement) =>
+    statement.type === 'ImportDeclaration' &&
+    statement.importKind !== 'type' &&
+    statement.source.value === './vertical.runtime-declaration.ts'
+      ? statement.specifiers.flatMap((specifier) =>
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind !== 'type' &&
+          specifier.local.name === localName &&
+          specifier.imported.type === 'Identifier'
+            ? [specifier.imported.name]
+            : [],
+        )
+      : [],
+  );
+  return imports.length === 1 ? imports[0] : undefined;
+};
+
+interface NativeProviderManifestObjects {
+  readonly localName: string;
+  readonly runtime: ObjectExpression;
+  readonly surface: ObjectExpression;
+}
+
+const nativeProviderManifestObjects = (
+  manifest: Program,
+  declaration: Program,
+): NativeProviderManifestObjects | undefined => {
+  const root = nativeProviderManifestRoot(manifest);
+  const spreads = root?.properties.filter((property) => property.type === 'SpreadElement');
+  const spread = spreads?.length === 1 ? spreads[0] : undefined;
+  if (root === undefined || spread?.type !== 'SpreadElement' || spread.argument.type !== 'Identifier') {
+    return undefined;
+  }
+  const localName = spread.argument.name;
+  const imported = nativeProviderRuntimeImport(manifest, localName);
+  const runtime = imported === undefined ? undefined : directReadBinding(declaration, imported)?.expression;
+  const surface = nativeProviderProperty(root, 'publicSurface', true);
+  return runtime?.type === 'ObjectExpression' && surface?.type === 'ObjectExpression'
+    ? { localName, runtime, surface }
+    : undefined;
+};
+
+/**
+ * Project a split owner's provider proof surface from its original owning objects: the manifest root's own
+ * `publicSurface` and the imported runtime manifest's `shellContributions`. Displaced or unused marker pairs
+ * are never consulted, and the projection is bound back to these same programs before any alias is followed.
+ */
+export const generatedProviderOwnerProjection = (sources: GeneratedProviderManifestSources): string | undefined => {
+  const manifest = parseSync(PROVIDER_MANIFEST_FILE, sources.manifestSource, {
+    astType: 'ts',
+    lang: 'ts',
+    sourceType: 'module',
+  });
+  const declaration = parseSync('provider-runtime.ts', sources.runtimeDeclarationSource, {
+    astType: 'ts',
+    lang: 'ts',
+    sourceType: 'module',
+  });
+  const objects =
+    manifest.errors.length > 0 || declaration.errors.length > 0
+      ? undefined
+      : nativeProviderManifestObjects(manifest.program, declaration.program);
+  const runtimeSurface = objects === undefined ? undefined : nativeProviderProperty(objects.runtime, 'publicSurface');
+  const shell =
+    runtimeSurface?.type === 'ObjectExpression'
+      ? nativeProviderProperty(runtimeSurface, 'shellContributions')
+      : undefined;
+  return objects === undefined || shell?.type !== 'ObjectExpression'
+    ? undefined
+    : `${sources.manifestSource.slice(objects.surface.start, objects.surface.end)}\n${sources.runtimeDeclarationSource.slice(shell.start, shell.end)}`;
+};
+
+interface NativeProviderManifestBindings {
+  readonly descriptor: NativeProviderBindings;
+  readonly shell: NativeProviderBindings;
+}
+
+/** Bind projected slots back to the actual same-owner module objects before following their aliases. */
+const nativeProviderManifestBindings = (
+  projected: string,
+  sources: GeneratedProviderManifestSources,
+  moduleId: string,
+  descriptorMarkers: readonly (readonly [string, string])[],
+  shellMarkers: readonly (readonly [string, string])[],
+): NativeProviderManifestBindings | undefined => {
+  const manifest = parseSync(PROVIDER_MANIFEST_FILE, sources.manifestSource, {
+    astType: 'ts',
+    lang: 'ts',
+    sourceType: 'module',
+  });
+  const declaration = parseSync('provider-runtime.ts', sources.runtimeDeclarationSource, {
+    astType: 'ts',
+    lang: 'ts',
+    sourceType: 'module',
+  });
+  if (manifest.errors.length > 0 || declaration.errors.length > 0) {
+    return undefined;
+  }
+  const objects = nativeProviderManifestObjects(manifest.program, declaration.program);
+  if (objects === undefined) {
+    return undefined;
+  }
+  const { localName, runtime, surface } = objects;
+  const runtimeModule = nativeProviderProperty(runtime, 'module');
+  const runtimeSurface = nativeProviderProperty(runtime, 'publicSurface');
+  const shell =
+    runtimeSurface?.type === 'ObjectExpression'
+      ? nativeProviderProperty(runtimeSurface, 'shellContributions')
+      : undefined;
+  const surfaceSpreads = surface.properties.filter((property) => property.type === 'SpreadElement');
+  const surfaceSpread = surfaceSpreads.length === 1 ? surfaceSpreads[0] : undefined;
+  const shellBindings = { program: declaration.program };
+  if (
+    runtimeModule?.type !== 'ObjectExpression' ||
+    shell?.type !== 'ObjectExpression' ||
+    nativeProviderString(nativeProviderProperty(runtimeModule, 'id'), shellBindings) !== moduleId ||
+    surfaceSpread?.type !== 'SpreadElement' ||
+    !isNativeProviderMember(surfaceSpread.argument, localName, 'publicSurface') ||
+    descriptorMarkers.some(
+      (markers) =>
+        generatedSlotSource(sources.manifestSource.slice(surface.start, surface.end), markers) !==
+        generatedSlotSource(projected, markers),
+    ) ||
+    shellMarkers.some(
+      (markers) =>
+        generatedSlotSource(sources.runtimeDeclarationSource.slice(shell.start, shell.end), markers) !==
+        generatedSlotSource(projected, markers),
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    descriptor: { program: manifest.program, runtimeModule: { localName, moduleId } },
+    shell: shellBindings,
+  };
+};
+
+const providerShellBindings = (
+  manifest: string,
+  moduleId: string,
+  sources: GeneratedProviderManifestSources | undefined,
+  shellMarkers: readonly (readonly [string, string])[],
+): NativeProviderBindings | undefined => {
+  if (sources !== undefined) {
+    return nativeProviderManifestBindings(manifest, sources, moduleId, [], shellMarkers)?.shell;
+  }
+  const parsed = parseSync(PROVIDER_MANIFEST_FILE, manifest, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  return parsed.errors.length === 0 ? { program: parsed.program } : undefined;
+};
+
 export const hasMatchingGeneratedProviderAuthorization = (
   providerSource: string,
   manifest: string,
   moduleId: string,
   name: string,
   kind: 'report' | 'search',
+  sources?: GeneratedProviderManifestSources,
 ): boolean => {
   const connected = generatedModuleApiEntrypointReference(providerSource, `${toCamelCase(name)}Read`);
   if (connected === undefined) {
@@ -3199,12 +3398,12 @@ export const hasMatchingGeneratedProviderAuthorization = (
     return false;
   }
   const shellTokens = tokenizeGovernedClient(shellSlot);
-  const parsedManifest = parseSync(PROVIDER_MANIFEST_FILE, manifest, {
-    astType: 'ts',
-    lang: 'ts',
-    sourceType: 'module',
-  });
-  const manifestBindings = parsedManifest.errors.length === 0 ? { program: parsedManifest.program } : undefined;
+  const manifestBindings = providerShellBindings(manifest, moduleId, sources, [
+    kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
+  ]);
+  if (sources !== undefined && manifestBindings === undefined) {
+    return false;
+  }
   const identity = findIdentityPropertyAtBraceDepth(
     shellTokens,
     'contributionKey',
@@ -3287,131 +3486,6 @@ export const hasGeneratedProviderRegistration = (
   );
 };
 
-export interface GeneratedProviderManifestSources {
-  readonly manifestSource: string;
-  readonly runtimeDeclarationSource: string;
-}
-
-const nativeProviderManifestRoot = (program: Program): ObjectExpression | undefined => {
-  if (!hasDirectCoreReadImport(program, 'defineOntosModuleManifest')) {
-    return undefined;
-  }
-  const roots = program.body.flatMap((statement) => {
-    if (statement.type !== 'ExportNamedDeclaration' || statement.declaration?.type !== 'VariableDeclaration') {
-      return [];
-    }
-    return statement.declaration.kind === 'const'
-      ? statement.declaration.declarations.flatMap(({ init }) =>
-          init?.type === 'CallExpression' &&
-          init.callee.type === 'Identifier' &&
-          init.callee.name === 'defineOntosModuleManifest' &&
-          init.arguments.length === 1 &&
-          init.arguments[0]?.type === 'ObjectExpression'
-            ? [init.arguments[0]]
-            : [],
-        )
-      : [];
-  });
-  return roots.length === 1 ? roots[0] : undefined;
-};
-
-const nativeProviderRuntimeImport = (program: Program, localName: string): string | undefined => {
-  const imports = program.body.flatMap((statement) =>
-    statement.type === 'ImportDeclaration' &&
-    statement.importKind !== 'type' &&
-    statement.source.value === './vertical.runtime-declaration.ts'
-      ? statement.specifiers.flatMap((specifier) =>
-          specifier.type === 'ImportSpecifier' &&
-          specifier.importKind !== 'type' &&
-          specifier.local.name === localName &&
-          specifier.imported.type === 'Identifier'
-            ? [specifier.imported.name]
-            : [],
-        )
-      : [],
-  );
-  return imports.length === 1 ? imports[0] : undefined;
-};
-
-interface NativeProviderManifestObjects {
-  readonly localName: string;
-  readonly runtime: ObjectExpression;
-  readonly surface: ObjectExpression;
-}
-
-const nativeProviderManifestObjects = (
-  manifest: Program,
-  declaration: Program,
-): NativeProviderManifestObjects | undefined => {
-  const root = nativeProviderManifestRoot(manifest);
-  const spreads = root?.properties.filter((property) => property.type === 'SpreadElement');
-  const spread = spreads?.length === 1 ? spreads[0] : undefined;
-  if (root === undefined || spread?.type !== 'SpreadElement' || spread.argument.type !== 'Identifier') {
-    return undefined;
-  }
-  const localName = spread.argument.name;
-  const imported = nativeProviderRuntimeImport(manifest, localName);
-  const runtime = imported === undefined ? undefined : directReadBinding(declaration, imported)?.expression;
-  const surface = nativeProviderProperty(root, 'publicSurface', true);
-  return runtime?.type === 'ObjectExpression' && surface?.type === 'ObjectExpression'
-    ? { localName, runtime, surface }
-    : undefined;
-};
-
-/** Bind projected slots back to the actual same-owner module objects before following their aliases. */
-const nativeProviderManifestBindings = (
-  projected: string,
-  sources: GeneratedProviderManifestSources,
-  moduleId: string,
-  descriptorMarkers: readonly [string, string],
-  shellMarkers: readonly [string, string],
-): { readonly descriptor: NativeProviderBindings; readonly shell: NativeProviderBindings } | undefined => {
-  const manifest = parseSync(PROVIDER_MANIFEST_FILE, sources.manifestSource, {
-    astType: 'ts',
-    lang: 'ts',
-    sourceType: 'module',
-  });
-  const declaration = parseSync('provider-runtime.ts', sources.runtimeDeclarationSource, {
-    astType: 'ts',
-    lang: 'ts',
-    sourceType: 'module',
-  });
-  if (manifest.errors.length > 0 || declaration.errors.length > 0) {
-    return undefined;
-  }
-  const objects = nativeProviderManifestObjects(manifest.program, declaration.program);
-  if (objects === undefined) {
-    return undefined;
-  }
-  const { localName, runtime, surface } = objects;
-  const runtimeModule = nativeProviderProperty(runtime, 'module');
-  const runtimeSurface = nativeProviderProperty(runtime, 'publicSurface');
-  const shell =
-    runtimeSurface?.type === 'ObjectExpression'
-      ? nativeProviderProperty(runtimeSurface, 'shellContributions')
-      : undefined;
-  const surfaceSpreads = surface.properties.filter((property) => property.type === 'SpreadElement');
-  const surfaceSpread = surfaceSpreads.length === 1 ? surfaceSpreads[0] : undefined;
-  const shellBindings = { program: declaration.program };
-  if (
-    runtimeModule?.type !== 'ObjectExpression' ||
-    shell?.type !== 'ObjectExpression' ||
-    nativeProviderString(nativeProviderProperty(runtimeModule, 'id'), shellBindings) !== moduleId ||
-    surfaceSpread?.type !== 'SpreadElement' ||
-    !isNativeProviderMember(surfaceSpread.argument, localName, 'publicSurface') ||
-    generatedSlotSource(sources.manifestSource.slice(surface.start, surface.end), descriptorMarkers) !==
-      generatedSlotSource(projected, descriptorMarkers) ||
-    generatedSlotSource(sources.runtimeDeclarationSource.slice(shell.start, shell.end), shellMarkers) !==
-      generatedSlotSource(projected, shellMarkers)
-  ) {
-    return undefined;
-  }
-  return {
-    descriptor: { program: manifest.program, runtimeModule: { localName, moduleId } },
-    shell: shellBindings,
-  };
-};
-
 const hasProviderShellEntrypoint = (
   contribution: ObjectExpression | undefined,
   bindings: NativeProviderBindings | undefined,
@@ -3491,7 +3565,7 @@ export const hasGeneratedProviderManifest = (
   const bindings =
     sources === undefined
       ? undefined
-      : nativeProviderManifestBindings(manifest, sources, moduleId, descriptorMarkers, shellMarkers);
+      : nativeProviderManifestBindings(manifest, sources, moduleId, [descriptorMarkers], [shellMarkers]);
   if (sources !== undefined && bindings === undefined) {
     return false;
   }
@@ -3583,10 +3657,32 @@ const sameUniqueNames = (...collections: readonly (readonly string[])[]): boolea
   );
 };
 
+const PROVIDER_DESCRIPTOR_SLOTS = [MANIFEST_REPORT_SLOT, MANIFEST_SEARCH_SLOT] as const;
+const PROVIDER_SHELL_SLOTS = [MANIFEST_SHELL_REPORT_SLOT, MANIFEST_SHELL_SEARCH_SLOT] as const;
+
+/**
+ * Bindings for every provider slot of a (possibly projected) manifest. A projection over a split owner is bound
+ * back to the same-owner manifest and runtime declaration programs, and fails closed when it is not the exact
+ * text of those original owning objects; an unsplit manifest is its own binding program.
+ */
+const providerTopologyBindings = (
+  manifest: string,
+  moduleId: string,
+  sources: GeneratedProviderManifestSources | undefined,
+): Partial<NativeProviderManifestBindings> | undefined => {
+  if (sources !== undefined) {
+    return nativeProviderManifestBindings(manifest, sources, moduleId, PROVIDER_DESCRIPTOR_SLOTS, PROVIDER_SHELL_SLOTS);
+  }
+  const parsed = parseSync('provider-topology.ts', manifest, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  const local = parsed.errors.length === 0 ? { program: parsed.program } : undefined;
+  return { descriptor: local, shell: local };
+};
+
 export const hasExactGeneratedProviderIdentityTopology = (
   manifest: string,
   registration: string,
   moduleId: string,
+  sources?: GeneratedProviderManifestSources,
 ): boolean => {
   const slotsPresent =
     [MANIFEST_REPORT_SLOT, MANIFEST_SEARCH_SLOT, MANIFEST_SHELL_REPORT_SLOT, MANIFEST_SHELL_SEARCH_SLOT].some(
@@ -3598,8 +3694,10 @@ export const hasExactGeneratedProviderIdentityTopology = (
   if (!slotsPresent) {
     return true;
   }
-  const parsed = parseSync('provider-topology.ts', manifest, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  const bindings = parsed.errors.length === 0 ? { program: parsed.program } : undefined;
+  const bindings = providerTopologyBindings(manifest, moduleId, sources);
+  if (bindings === undefined) {
+    return false;
+  }
   return (['report', 'search'] as const).every((kind) => {
     const descriptorSlot = generatedSlotSource(
       manifest,
@@ -3613,15 +3711,15 @@ export const hasExactGeneratedProviderIdentityTopology = (
       registration,
       kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT,
     );
-    const descriptorNames = slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1, bindings);
-    const shellNames = slotProviderNames(shellSlot, moduleId, kind, 'contributionKey', 1, bindings);
+    const descriptorNames = slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1, bindings.descriptor);
+    const shellNames = slotProviderNames(shellSlot, moduleId, kind, 'contributionKey', 1, bindings.shell);
     const directRegistrationNames = directSlotPropertyNames(registrationSlot);
     const registrationNames = registrationProviderNames(registrationSlot);
     return (
       directRegistrationNames !== undefined &&
       directRegistrationNames.length === registrationNames.length &&
-      providerIdentitySlotIsExact(descriptorSlot, descriptorNames, 'key', 1, bindings) &&
-      providerIdentitySlotIsExact(shellSlot, shellNames, 'contributionKey', 1, bindings) &&
+      providerIdentitySlotIsExact(descriptorSlot, descriptorNames, 'key', 1, bindings.descriptor) &&
+      providerIdentitySlotIsExact(shellSlot, shellNames, 'contributionKey', 1, bindings.shell) &&
       sameUniqueNames(descriptorNames, shellNames, registrationNames)
     );
   });
@@ -3631,10 +3729,10 @@ export const generatedProviderIdentities = (
   manifest: string,
   registration: string,
   moduleId: string,
+  sources?: GeneratedProviderManifestSources,
 ): readonly GeneratedProviderIdentity[] => {
   const identities = new Map<string, GeneratedProviderIdentity>();
-  const parsed = parseSync('provider-topology.ts', manifest, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  const bindings = parsed.errors.length === 0 ? { program: parsed.program } : undefined;
+  const bindings = providerTopologyBindings(manifest, moduleId, sources);
   for (const kind of ['report', 'search'] as const) {
     const descriptorSlot = generatedSlotSource(
       manifest,
@@ -3649,8 +3747,8 @@ export const generatedProviderIdentities = (
       kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT,
     );
     const names = [
-      ...slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1, bindings),
-      ...slotProviderNames(shellSlot, moduleId, kind, 'contributionKey', 1, bindings),
+      ...slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1, bindings?.descriptor),
+      ...slotProviderNames(shellSlot, moduleId, kind, 'contributionKey', 1, bindings?.shell),
       ...registrationProviderNames(registrationSlot),
     ];
     for (const name of names) {

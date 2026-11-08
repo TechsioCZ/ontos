@@ -658,11 +658,12 @@ it.effect('proves shorthand read identities only through immutable, unshadowed l
   }),
 );
 
-it.effect('rejects mutable, shadowed, or wrong contribution-key aliases in the owner manifest', () =>
+it.effect('rejects mutable, shadowed, or wrong contribution-key aliases in the owner runtime declaration', () =>
   Effect.gen(function* strictManifestIdentityBindings() {
     const owner = workTasksOwner;
     const sources = yield* loadOwnerSources(owner);
-    const file = `verticals/${owner}/vertical.manifest.ts`;
+    // The split owner authors its shell contributions and their identity constants in the runtime declaration.
+    const file = `verticals/${owner}/vertical.runtime-declaration.ts`;
     const declaration = "const searchEntrypointKey = 'work.tasks.search.tasks';";
     expectValidOwner(sources, owner);
     expectValidOwner(
