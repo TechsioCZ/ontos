@@ -1255,6 +1255,40 @@ it('proves the actual enrollment, identity-policy and migration-schema graphs', 
   ).toBe(true);
 });
 
+it('proves destructured module data, local helper closures, Set spreads and filters only while they stay data-only', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const labelExpression = `(prefix: string) => \`\${prefix}:\${roles.length}\``;
+    const exportedBindings = 'export const { first, second: renamed }';
+    const declaration = [
+      'const defineData = (input: { readonly roles: readonly string[] }) => {',
+      '  const roles = [...new Set(input.roles)].filter((role) => role.length > 0).toSorted();',
+      `  const label = ${labelExpression};`,
+      '  return { tables: { first: label("a"), second: label("b") }, roles };',
+      '};',
+      'const defined = defineData({ roles: ["reader", "reader", "writer"] });',
+      `${exportedBindings} = defined.tables;`,
+      'export const makeData = () => Object.freeze({ first, renamed, roles: defined.roles });',
+    ].join('\n');
+    writeFileSync(factory, declaration);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    for (const [before, after] of [
+      [labelExpression, '(prefix: string) => fetch(prefix)'],
+      ['first: label("a")', 'first: label'],
+      [exportedBindings, 'export const { first = fetch("runtime"), second: renamed }'],
+      [exportedBindings, 'export const { first, ...renamed }'],
+      [exportedBindings, 'export const { first, [fetch("runtime")]: renamed }'],
+      ['.filter((role) => role.length > 0)', '.filter((role) => fetch(role))'],
+      ['new Set(input.roles)', 'new Set(fetch("runtime"))'],
+    ]) {
+      writeFileSync(factory, declaration.replace(before, after));
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(false);
+    }
+  });
+});
+
 it('proves branded Result and Option construction only through native data-only operations', () => {
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
@@ -1553,6 +1587,16 @@ describe('accepts only deployment-bound native Layer composition and preserves c
     ),
   );
   write(nodePath.join(directory, 'mutated-factory.ts'), `${layerFactory}\nLayer.effect = counterfeit;`);
+  // Only the deployment is required; later parameters must stay plain optional identifiers.
+  for (const [file, parameters] of [
+    ['optional-parameter-factory.ts', '(deployment, registration?) =>'],
+    ['required-parameter-factory.ts', '(deployment, registration) =>'],
+    ['defaulted-parameter-factory.ts', '(deployment, registration = fetch("runtime")) =>'],
+    ['optional-deployment-factory.ts', '(deployment?) =>'],
+    ['tag-parameter-factory.ts', '(deployment, Tag?) =>'],
+  ]) {
+    write(nodePath.join(directory, file), layerFactory.replace('(deployment) =>', parameters));
+  }
   write(
     nodePath.join(directory, 'escaped-factory-namespace.ts'),
     `${layerFactory}\nObject.assign(Layer, counterfeit);`,
@@ -1571,8 +1615,10 @@ describe('accepts only deployment-bound native Layer composition and preserves c
       .replace('makeRuntime as makeBoundRuntime', 'makeActionRuntimeLive as makeBoundRuntime')
       .replace(layerFactorySource, actualRuntime),
     'native-layer.ts': source,
+    'optional-parameter-layer.ts': source.replace(layerFactorySource, './optional-parameter-factory.ts'),
   };
   const invalid = {
+    'defaulted-parameter-consumer.ts': source.replace(layerFactorySource, './defaulted-parameter-factory.ts'),
     'eager-factory-consumer.ts': source.replace(layerFactorySource, './eager-factory.ts'),
     'effect-factory-consumer.ts': source.replace(layerFactorySource, './effect-factory.ts'),
     'escaped-factory-namespace-consumer.ts': source.replace(layerFactorySource, './escaped-factory-namespace.ts'),
@@ -1602,6 +1648,8 @@ describe('accepts only deployment-bound native Layer composition and preserves c
     'mutated-factory-consumer.ts': source.replace(layerFactorySource, './mutated-factory.ts'),
     'mutated-layer.ts': `${source}\nLayers.unwrap = counterfeit;`,
     'nested-business.ts': source.replace('const runtime =', 'function business() { return').replace('}));', '})); }'),
+    'optional-deployment-consumer.ts': source.replace(layerFactorySource, './optional-deployment-factory.ts'),
+    'required-parameter-consumer.ts': source.replace(layerFactorySource, './required-parameter-factory.ts'),
     'shadowed-composition.ts': source.replace(
       '  const snapshot',
       '  const Composition = fakeService;\n  const snapshot',
@@ -1609,6 +1657,7 @@ describe('accepts only deployment-bound native Layer composition and preserves c
     'shadowed-layer.ts': source
       .replace('const runtime =', 'function business(Layers) { return')
       .replace('}));', '})); }'),
+    'tag-parameter-consumer.ts': source.replace(layerFactorySource, './tag-parameter-factory.ts'),
     'wrong-deployment.ts': source.replace(
       'snapshot.composition.shell.deployment',
       'snapshot.composition.other.deployment',
@@ -1869,6 +1918,20 @@ describe('recognizes canonical Effect.result observation without permitting capa
     { before: 'Effect.result = replacement;', expected: 1, name: 'result-write-before' },
     { after: 'Effect.result = replacement;', expected: 1, name: 'result-write-after' },
     { before: 'const alias = Effect; program.pipe(alias.result);', expected: 1, name: 'result-object-alias' },
+  ]);
+});
+
+describe('recognizes canonical Effect.option observation without permitting capability escape', () => {
+  inspectProcessCapabilityCases([
+    {
+      before: "const outcome = Effect.fail('typed').pipe(Effect.option); void outcome;",
+      expected: 0,
+      name: 'option-pipe-direct',
+    },
+    { before: 'consume(Effect.option);', expected: 1, name: 'option-argument-escape' },
+    { before: 'program.pipe?.(Effect.option);', expected: 1, name: 'option-optional-pipe' },
+    { before: 'const observe = Effect.option; void observe;', expected: 1, name: 'option-extraction' },
+    { after: 'Effect.option = replacement;', expected: 1, name: 'option-write-after' },
   ]);
 });
 

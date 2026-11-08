@@ -318,6 +318,34 @@ const key = (node: Node | undefined): string | undefined =>
   named(node) ?? (node?.type === 'Literal' && typeof node.value === 'string' ? node.value : undefined);
 const fnNode = (node: Node): boolean =>
   ['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(node.type);
+/**
+ * A module `const { a, b: c } = source` binds each name to one ordinary property read of `source`,
+ * so each binding is modelled as that member read. Defaults, rest, computed keys and nested
+ * patterns execute or construct more than a read and keep the module unproven.
+ */
+const declarationBindings = (pattern: Node, init: Node): Array<readonly [string, Node]> | null => {
+  const name = named(pattern);
+  if (name !== undefined) return [[name, init]];
+  if (pattern.type !== 'ObjectPattern' || pattern.properties.length === 0) return null;
+  const bindings: Array<readonly [string, Node]> = [];
+  for (const property of pattern.properties) {
+    if (property.type !== 'Property' || property.computed || property.kind !== 'init') return null;
+    const field = key(property.key);
+    const local = named(property.value);
+    if (field === undefined || local === undefined) return null;
+    const read: Node = {
+      type: 'MemberExpression',
+      object: init,
+      property: { type: 'Literal', value: field, raw: JSON.stringify(field), start: property.key.start, end: property.key.end },
+      computed: true,
+      optional: false,
+      start: property.start,
+      end: property.end,
+    };
+    bindings.push([local, read]);
+  }
+  return bindings;
+};
 const merge = (values: readonly Value[]): Value => {
   if (values.length === 0) return DATA;
   if (values.some((value) => value.kind === 'bad')) return BAD;
@@ -479,10 +507,13 @@ class DataFactoryProof {
         if (node.type === 'VariableDeclaration') {
           if (node.kind !== 'const') return null;
           for (const declaration of node.declarations) {
-            const name = named(declaration.id);
-            if (name === undefined || declaration.init === null || model.values.has(name)) return null;
-            model.values.set(name, declaration.init);
-            if (exported) model.exports.set(name, name);
+            const bindings = declaration.init === null ? null : declarationBindings(declaration.id, declaration.init);
+            if (bindings === null) return null;
+            for (const [name, value] of bindings) {
+              if (model.values.has(name)) return null;
+              model.values.set(name, value);
+              if (exported) model.exports.set(name, name);
+            }
           }
         } else if (node.type === 'FunctionDeclaration') {
           model.values.set(node.id.name, node);
@@ -570,7 +601,11 @@ class DataFactoryProof {
               safe(property.value),
         );
       if (node.type === 'ArrayExpression')
-        return node.elements.every((element: Node | null) => element === null || safe(element));
+        // Spreading iterates its argument; only a spread the data model itself admits is inert.
+        return node.elements.every((element: Node | null) =>
+          element === null || (element.type === 'SpreadElement' ? safe(element.argument) : safe(element)),
+        ) && (!node.elements.some((element: Node | null) => element?.type === 'SpreadElement') ||
+          this.expression(node, model, new Map()).kind !== 'bad');
       if (node.type === 'ClassDeclaration') {
         if (node.decorators?.length || (node.superClass !== null && !safe(node.superClass))) return false;
         for (const member of node.body.body) {
@@ -950,9 +985,33 @@ class DataFactoryProof {
   ): { returns: Value[]; fallsThrough: boolean } | null {
     const returns: Value[] = [];
     let fallsThrough = true;
+    // Names this block declares. A local helper closure sees them only once they are initialized,
+    // so a not-yet-bound sibling stays unknown rather than resolving to an outer binding.
+    const declared = statements.flatMap((node) =>
+      node.type === 'VariableDeclaration'
+        ? node.declarations.flatMap((declaration: Node) =>
+            declaration.id.type === 'Identifier'
+              ? [declaration.id.name]
+              : declaration.id.type === 'ObjectPattern'
+                ? declaration.id.properties.map((property: Node) => named(property.value)).filter(Boolean)
+                : [],
+          )
+        : [],
+    ) as string[];
     for (const node of statements) {
       if (node.type === 'VariableDeclaration' && node.kind === 'const') {
         for (const declaration of node.declarations) {
+          const init = declaration.init === null ? null : unwrap(declaration.init);
+          if (declaration.id.type === 'Identifier' && init !== null && fnNode(init)) {
+            // A const helper closure is checked wherever it is invoked, exactly like an inline callback.
+            // It never becomes a factory value itself: returning or storing it still fails closed.
+            const captured = new Map(env);
+            for (const name of declared) if (!captured.has(name)) captured.set(name, BAD);
+            const helper: Value = { kind: 'function', node: init, model, env: captured };
+            captured.set(declaration.id.name, helper);
+            env.set(declaration.id.name, helper);
+            continue;
+          }
           const value = this.expression(declaration.init, model, env);
           if (!this.bind(declaration.id, value, model, env)) return null;
         }
@@ -1069,7 +1128,13 @@ class DataFactoryProof {
         const value = this.expression(part.type === 'SpreadElement' ? part.argument : part, model, env);
         if (value.kind === 'bad') return BAD;
         if (part.type !== 'SpreadElement') elements.push(value);
-        else {
+        else if (value.kind === 'set') {
+          // A Set built from closed data iterates a subset of those values; its count and order are not tracked.
+          if (value.payload !== undefined) {
+            elements.push(value.payload);
+            exact = false;
+          }
+        } else {
           if (value.kind !== 'array' || !isFactoryData(value)) return BAD;
           if (value.items !== undefined) elements.push(...value.items);
           else { elements.push(value.element ?? BAD); exact = false; }
@@ -1150,8 +1215,10 @@ class DataFactoryProof {
       !env.has('Set')
     ) {
       const args = node.arguments.map((part: Node) => this.expression(part, model, env));
-      return args.length === 0 || (args.length === 1 && args[0].kind === 'array' && isClosedData(args[0]))
-        ? { kind: 'set' }
+      if (args.length === 0) return { kind: 'set' };
+      // The payload is the closed element of the source array; it is absent when the Set is empty.
+      return args.length === 1 && args[0].kind === 'array' && isClosedData(args[0])
+        ? { kind: 'set', payload: args[0].empty === true ? undefined : args[0].element }
         : BAD;
     }
     if (node.type === 'NewExpression') {
@@ -1306,7 +1373,9 @@ class DataFactoryProof {
         return reference.kind === 'column' && (args.length === 1 || isClosedData(args[1])) ? callee.payload ?? BAD : BAD;
       }
       return (['notNull', 'primaryKey', 'unique', '$type', 'defaultNow', 'defaultRandom'].includes(operation) && args.length === 0) ||
-        (operation === 'default' && args.length === 1 && (isClosedData(args[0]) || args[0].kind === 'sql'))
+        (operation === 'default' && args.length === 1 && (isClosedData(args[0]) || args[0].kind === 'sql')) ||
+        // `.array(size?)` wraps the fresh builder in Drizzle's pure array column builder.
+        (operation === 'array' && args.length <= 1 && args.every(isClosedData))
         ? callee.payload ?? BAD : BAD;
     }
     if (name === 'global:Symbol')
@@ -1376,6 +1445,11 @@ class DataFactoryProof {
         return isClosedData(this.invoke(args[0], [owner.element ?? BAD, NUMBER, owner])) ? DATA : BAD;
       if (operation === 'every' && owner.kind === 'array' && isFactoryData(owner) && args.length === 1)
         return isClosedData(this.invoke(args[0], [owner.element ?? BAD, NUMBER, owner])) ? DATA : BAD;
+      // Filtering keeps a subset of the same elements; which ones and how many is not tracked.
+      if (operation === 'filter' && owner.kind === 'array' && isFactoryData(owner) && args.length === 1)
+        return isClosedData(this.invoke(args[0], [owner.element ?? BAD, NUMBER, owner]))
+          ? { ...array(owner.element ?? BAD, owner.empty), open: owner.open }
+          : BAD;
       if (operation === 'toSorted' && owner.kind === 'array')
         return owner.empty ||
           args.length === 0 ||

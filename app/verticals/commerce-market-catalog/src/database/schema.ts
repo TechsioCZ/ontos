@@ -3,7 +3,6 @@ import type {
   ManageMarketRetirementAdmissionPayload,
   MarketRetirementCommittedResult,
 } from '../../shared/market-retirement-admission.ts';
-/* oxlint-disable perfectionist/sort-objects -- Drizzle declaration order is the physical database contract; expires: 2027-03-31. */
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import {
@@ -399,8 +398,8 @@ const commerceMarketCatalogDatabaseSchema = {
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
-  marketRetirementIntents,
   marketRetirementAdmissions,
+  marketRetirementIntents,
   markets,
   storefrontAssociationRevisions,
   storefrontAssociations,

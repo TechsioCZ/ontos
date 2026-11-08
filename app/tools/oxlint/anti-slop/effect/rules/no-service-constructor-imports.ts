@@ -640,7 +640,9 @@ const EFFECT_PROCESS_CALLS = new Set([
   "runPromise", "runPromiseWith", "scoped", "succeed", "suspend", "sync", "tap", "tapCause", "tapError", "tapErrorTag", "timeoutOrElse", "try", "tryPromise",
 ]);
 const EFFECT_PROCESS_VALUES = new Set(["void", "never"]);
-const EFFECT_PIPE_TRANSFORMS = new Set(["asVoid", "orDie", "result"]);
+/** Pure combinators admitted as values; `option` and `result` only as a direct `.pipe` step. */
+const EFFECT_PIPE_TRANSFORMS = new Set(["asVoid", "option", "orDie", "result"]);
+const EFFECT_PIPE_ONLY_TRANSFORMS = new Set(["option", "result"]);
 
 function processChildren(node: Syntax): Syntax[] {
   return Object.entries(node).flatMap(([key, value]) => {
@@ -893,7 +895,7 @@ function effectProcessUse(node: Syntax, source: ProcessSource): boolean {
   if (EFFECT_PIPE_TRANSFORMS.has(slot)) {
     const parent = source.parents.get(liftedProcessNode(member, source));
     if (parent?.type !== "CallExpression" || !(parent.arguments as Syntax[]).includes(liftedProcessNode(member, source))) return false;
-    if (slot !== "result") return true;
+    if (!EFFECT_PIPE_ONLY_TRANSFORMS.has(slot)) return true;
     const callee = asNode(parent.callee);
     return !parent.optional && callee?.type === "MemberExpression" && !callee.optional && !callee.computed &&
       nameOf(asNode(callee.property)) === "pipe";
@@ -1738,12 +1740,18 @@ function isNativeLayerFactoryImport(filename: string, source: string, name: stri
       for (const declaration of statement.declaration.declarations) {
         if (declaration.id.type !== "Identifier" || declaration.id.name !== name || declaration.init === null) continue;
         const factory = unwrap(declaration.init as Syntax);
-        if (factory.type !== "ArrowFunctionExpression" || factory.async || factory.params.length !== 1 ||
-          factory.params[0]?.type !== "Identifier" || namespaces.has(factory.params[0].name)) return false;
+        // The deployment is the one required parameter. Later parameters must be plain optional
+        // identifiers: a proven composition passes only the deployment, so they stay undefined and
+        // no default initializer runs.
+        if (factory.type !== "ArrowFunctionExpression" || factory.async || factory.params.length === 0 ||
+          factory.params.some((parameter, index) => parameter.type !== "Identifier" ||
+            namespaces.has(parameter.name) || (index === 0) === (parameter.optional === true))) return false;
         const layer = unwrap(factory.body);
         if (layer.type !== "CallExpression" || !method(layer.callee, "Layer", "effect") ||
-          layer.arguments.length !== 2 || layer.arguments[0]?.type !== "Identifier" ||
-          layer.arguments[0].name === factory.params[0].name) return false;
+          layer.arguments.length !== 2) return false;
+        const tag = asNode(layer.arguments[0]);
+        if (tag?.type !== "Identifier" ||
+          factory.params.some((parameter) => parameter.type === "Identifier" && parameter.name === tag.name)) return false;
         const effect = asNode(layer.arguments[1]);
         if (effect?.type !== "CallExpression" || !method(effect.callee, "Effect", "gen") ||
           effect.arguments.length !== 1) return false;
