@@ -121,7 +121,7 @@ export const readInquiryProduct = (locale: string, selector: InquiryProduct) =>
         : Effect.fail(new InquiryFailure({ reason: "unavailable" })),
     ),
     Effect.mapError((problem) =>
-      problem._tag === "InquiryFailure" ? problem : new InquiryFailure({ reason: "unavailable" }),
+      Schema.is(InquiryFailure)(problem) ? problem : new InquiryFailure({ reason: "unavailable" }),
     ),
   );
 
