@@ -5277,6 +5277,11 @@ for (const [name, source, allowed] of [
     true,
   ],
   [
+    're-exported generated command options',
+    `import type { PartyCommandOptions } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
+    true,
+  ],
+  [
     PRIVATE_COLOCATED_CALLABLE_CASE,
     `import { privatePartyClientCallable } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
     false,
@@ -5323,6 +5328,27 @@ for (const [name, imported, allowed] of [
     }),
   );
 }
+
+it.live('rejects a re-exported command client with a foreign generated owner', () =>
+  Effect.gen(function* foreignCommandReexport() {
+    const root = yield* makeActualPartyClientFixture();
+    const file = `${PARTY_VERTICAL_PATH}/src/api/party-command-client.ts`;
+    const source = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
+    expect(source).toContain('// @ontos-command-client-owner party-registry');
+    yield* write(
+      root,
+      file,
+      source.replace('// @ontos-command-client-owner party-registry', '// @ontos-command-client-owner foreign-owner'),
+    );
+    yield* write(
+      root,
+      'apps/shell-super-app/src/party-command-options.ts',
+      `import type { PartyCommandOptions } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
+    );
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+  }),
+);
 
 it.live('checks actual Party typed client foreign API contamination', () =>
   Effect.gen(function* foreignApiInPartyDelegate() {

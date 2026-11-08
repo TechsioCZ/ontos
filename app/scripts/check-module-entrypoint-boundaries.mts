@@ -57,6 +57,7 @@ import {
 import { isAllowedCompositionSeam } from './check-lean-core-dependencies.mts';
 import { isProblemDetailsFactory } from './api-contract-schema-rules.mts';
 import { closedCalendarSchemaNodes } from './native-calendar-schema-boundary.mts';
+import { hasPublishedUiSupport } from './published-ui-support.mts';
 import {
   PublicContractOwnerAppIdSchema,
   PublicContractOwnerModuleIdSchema,
@@ -3324,6 +3325,36 @@ const readOwnerClientImport = (
   return nativeDelegate ? { delegated: true } : undefined;
 };
 
+const generatedOwnerClientReexport = (
+  state: BoundaryCheckState,
+  owner: string,
+  target: string,
+  statement: SchemaNode,
+  appId: string,
+  moduleId: string,
+): string | undefined => {
+  if (
+    (statement.type !== 'ExportNamedDeclaration' && statement.type !== 'ExportAllDeclaration') ||
+    statement.source === null ||
+    statement.source === undefined ||
+    !/^\.\/.+-client\.ts$/u.test(statement.source.value)
+  ) {
+    return undefined;
+  }
+  const file = ownershipDeclarationTarget(state, target, statement.source.value);
+  return file !== undefined &&
+    deploymentOwner(state, file) === owner &&
+    !privateImplementationPath.test(file) &&
+    isGeneratedEffectClientLeaf({
+      appId,
+      localClient: statement.source.value,
+      moduleId,
+      source: state.sourceMap.get(file) ?? '',
+    })
+    ? file
+    : undefined;
+};
+
 const delegatedClientModules = (
   state: BoundaryCheckState,
   owner: string,
@@ -3345,6 +3376,10 @@ const delegatedClientModules = (
   const generated = new Set<string>();
   let delegated = hasDeclaredOwnerClient(state, aggregate, api);
   for (const statement of aggregate.file.program.body) {
+    const reexported = generatedOwnerClientReexport(state, owner, target, statement, appId, moduleId);
+    if (reexported !== undefined) {
+      generated.add(reexported);
+    }
     if (statement.type !== 'ImportDeclaration' || !isRuntimeOwnerClientImport(statement)) {
       continue;
     }
@@ -3796,6 +3831,61 @@ const hasSelectedContractConstructor = (
   );
 };
 
+const hasClosedContractRoutineReferences = (
+  state: BoundaryCheckState,
+  selected: SelectedContractDeclaration,
+): boolean => {
+  const pending = [selected];
+  const visited = new Set<SchemaNode>();
+  for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
+    if (visited.has(current.expression)) {
+      continue;
+    }
+    visited.add(current.expression);
+    const { expression, module } = current;
+    const excluded = new Set(contractRoutineNonreferences(expression));
+    traverseFast(expression, (node) => {
+      if (
+        (node.type === 'NewExpression' || node.type === 'CallExpression') &&
+        node.callee.type === 'Identifier' &&
+        ((node.type === 'NewExpression' && node.callee.name === 'Set') ||
+          (node.type === 'CallExpression' && node.callee.name === 'BigInt' && node.arguments.length === 1)) &&
+        state.graph.isUnboundReference(module, node.callee)
+      ) {
+        excluded.add(node.callee);
+      }
+    });
+    let valid = true;
+    traverseFast(expression, (node) => {
+      if (excluded.has(node)) {
+        return;
+      }
+      if (!hasAllowedUnboundContractReference(state, module, node, excluded)) {
+        valid = false;
+      }
+      if (node.type !== 'Identifier' && node.type !== 'MemberExpression') {
+        return;
+      }
+      const binding = state.graph.resolveReference(module, node);
+      if (binding?.kind === 'declaration' && isFunction(binding.expression)) {
+        pending.push(binding);
+      }
+    });
+    if (!valid) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const isNativeContractDataUtility = (value: GraphValue): boolean =>
+  value.kind === 'external' &&
+  ((value.specifier === '@noble/hashes/sha2.js' && value.name === 'sha256' && value.members.length === 0) ||
+    (value.specifier === '@noble/hashes/utils.js' && value.name === 'utf8ToBytes' && value.members.length === 0) ||
+    (value.specifier === 'effect/encoding' &&
+      value.name === 'Hex' &&
+      (value.members.length === 0 || value.members.join('.') === 'encode')));
+
 // Publication and closure origins establish a contract routine boundary, not
 // arbitrary body purity. Captured owner state must remain immutable; mutation
 // confined to an invocation's local algorithm state does not grant authority.
@@ -3811,31 +3901,8 @@ const hasPublishedContractRoutine = (
   if (file !== selection.target || !isImmutablePublicContract(state, file, new Set(), false, binding.expression)) {
     return false;
   }
-  const callableReferences = new Set<SchemaNode>();
-  const erased = new Set<SchemaNode>();
-  traverseFast(binding.expression, (node) => {
-    if (
-      node.type === 'NewExpression' &&
-      node.callee.type === 'Identifier' &&
-      node.callee.name === 'Set' &&
-      state.graph.isUnboundReference(binding.module, node.callee)
-    ) {
-      callableReferences.add(node.callee);
-    }
-    if ('typeAnnotation' in node && node.typeAnnotation !== null && node.typeAnnotation !== undefined) {
-      traverseFast(node.typeAnnotation, (typeNode) => {
-        erased.add(typeNode);
-      });
-    }
-  });
-  let valid = true;
-  traverseFast(binding.expression, (node) => {
-    if (!callableReferences.has(node) && !hasAllowedUnboundContractReference(state, binding.module, node, erased)) {
-      valid = false;
-    }
-  });
   return (
-    valid &&
+    hasClosedContractRoutineReferences(state, binding) &&
     hasImmutableContractRoutineCaptures(state, binding.module, binding.expression) &&
     !state.graph
       .reachable(binding.module, binding.expression)
@@ -3843,6 +3910,7 @@ const hasPublishedContractRoutine = (
         value.kind === 'node' || value.kind === 'unresolved'
           ? privateImplementationPath.test(nodePath.relative(state.root, value.module.path))
           : value.kind === 'external' &&
+            !isNativeContractDataUtility(value) &&
             (!nativeContractProviders.has(value.specifier) ||
               isNativeEffectClientConstructor(value) ||
               value.specifier === 'effect/Effect' ||
@@ -3896,6 +3964,19 @@ const publicComponentConsumerImport = (
     ownerPackageExports: exports,
     selectedExportName,
     selectedModulePath: nodePath.relative(state.root, binding.module.path).replaceAll('\\', '/'),
+    selectedUiSupport: () =>
+      hasImmutableContractRoutineCaptures(state, binding.module, binding.expression) &&
+      ![
+        ...nativeOwnershipOrigins(
+          state,
+          nodePath.relative(state.root, binding.module.path).replaceAll('\\', '/'),
+        ).values(),
+      ].some((paths) => paths.some((path) => privateImplementationPath.test(path))) &&
+      hasPublishedUiSupport({
+        artifact: state.graph.module(nodePath.join(state.root, target)),
+        graph: state.graph,
+        selected: binding,
+      }),
     sources: state.sourceMap,
     target,
   };

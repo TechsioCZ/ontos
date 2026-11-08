@@ -41,8 +41,9 @@ import { hasGeneratedSourceHeader } from './generated-module-api-boundary.mts';
  *
  * Anything else is rejected: an absent or foreign manifest factory, a missing or mismatched reserved
  * slot, a foreign owner identity, a missing generator header, a backend/private re-export, and an
- * arbitrary co-located callable that is neither a React component nor a React hook. A plain owner
- * helper function is deliberately not a UI export: it stays on the pure-contract path.
+ * arbitrary co-located callable that is neither a React component nor a React hook. A support
+ * function must additionally resolve as an actual dependency of a published component or native
+ * React hook; mere co-location or a re-export is not enough.
  */
 
 /** The generator header every Codesmith public-component artifact carries. */
@@ -88,6 +89,8 @@ export interface PublicComponentConsumerImport {
   readonly selectedExportName: string;
   /** File that declares the selected symbol, resolved by the checker's module graph. */
   readonly selectedModulePath: string;
+  /** Native graph proof of a selected function's use by the artifact's UI, with owner-origin and capture checks. */
+  readonly selectedUiSupport?: () => boolean;
   /** Every workspace source by repository-relative path. */
   readonly sources: ReadonlyMap<string, string>;
   /** Resolved export target of `exportKey`, for example `verticals/tagging/src/components/tag-controls.tsx`. */
@@ -576,7 +579,10 @@ const hasPublishedComponentSymbol = (consumerImport: PublicComponentConsumerImpo
       return false;
     }
   }
-  return publishedExportKind(selectedModulePath, declaringSource, selectedExportName) !== undefined;
+  return (
+    publishedExportKind(selectedModulePath, declaringSource, selectedExportName) !== undefined ||
+    consumerImport.selectedUiSupport?.() === true
+  );
 };
 
 /**

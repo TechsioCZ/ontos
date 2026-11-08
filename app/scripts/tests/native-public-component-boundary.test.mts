@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createModuleGraph } from '@modern-js/code-tools/microvertical-api-boundary';
+import { hasPublishedUiSupport } from '../published-ui-support.mts';
 
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -39,6 +41,7 @@ const FACILITY_SPECIFIER = '@app/facility-operations/ui/record-discussion';
 
 const TAGGING_PUBLICATION = [
   TAGGING_ARTIFACT,
+  `${TAGGING_OWNER}/src/tags/tag-access.ts`,
   TAGGING_FEDERATION,
   TAGGING_MANIFEST,
   TAGGING_PACKAGE,
@@ -176,6 +179,27 @@ it.live('approves the real Tagging public component for every symbol another ver
       expect.arrayContaining([BULK_TAG_DIALOG, TAG_CELL, TAG_FILTER, USE_TAGS_FOR]),
     );
     expect(approvedTaggingSymbols(sources)).toEqual([BULK_TAG_DIALOG, TAG_CELL, TAG_FILTER, USE_TAGS_FOR]);
+  }),
+);
+
+it.live('approves only the actual published UI dependencies of the Tagging controls', () =>
+  Effect.gen(function* taggingUiDependencies() {
+    const sources = yield* workspaceSources(WORKSPACE_FILES);
+    const graph = createModuleGraph();
+    const artifact = graph.module(path.join(WORKSPACE_ROOT, TAGGING_ARTIFACT));
+    for (const name of ['tagsReadable', 'tagsFailureStatus', 'isTagReadForbidden']) {
+      const selected = graph.resolve(artifact, name, 'export');
+      const base = taggingImport(sources, name, `${TAGGING_OWNER}/src/tags/tag-access.ts`);
+      expect(hasPublishedPublicComponent(base)).toBe(false);
+      expect(
+        hasPublishedPublicComponent({
+          ...base,
+          selectedUiSupport: () =>
+            selected?.kind === 'declaration' && hasPublishedUiSupport({ artifact, graph, selected }),
+        }),
+        name,
+      ).toBe(true);
+    }
   }),
 );
 

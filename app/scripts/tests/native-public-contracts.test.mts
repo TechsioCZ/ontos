@@ -322,6 +322,49 @@ for (const selectedImport of ['type { MissingPayload }', '{ OutboxPayload }']) {
   );
 }
 
+const hashProvider = '@noble/hashes/sha2.js';
+
+for (const [name, provider, body, accepted] of [
+  ['native hash and encoding', hashProvider, 'Hex.encode(sha256(utf8ToBytes(value)))', true],
+  ['forged hash provider', 'forged-hashes', 'Hex.encode(sha256(utf8ToBytes(value)))', false],
+  ['global hash replacement', hashProvider, 'globalThis.encode(value)', false],
+  ['Effect authority', hashProvider, 'Effect.succeed(value)', false],
+] as const) {
+  it.live(`checks published deterministic identity utility ${name}`, () =>
+    Effect.gen(function* selectedIdentityRoutine() {
+      expect(
+        yield* withContract(
+          opportunityEvent,
+          (sources) => {
+            sources.set(
+              opportunityEvent,
+              `import { sha256 } from '${provider}';\nimport { utf8ToBytes } from '@noble/hashes/utils.js';\nimport { Hex } from 'effect/encoding';\nimport { Effect } from 'effect';\nexport const evidence = (value: string) => ${body};\n`,
+            );
+          },
+          '{ evidence }',
+        ),
+      ).toBe(accepted);
+    }),
+  );
+}
+
+it.live('rejects a deterministic identity routine with a transitive global capture', () =>
+  Effect.gen(function* transitiveIdentityAuthority() {
+    expect(
+      yield* withContract(
+        opportunityEvent,
+        (sources) => {
+          sources.set(
+            opportunityEvent,
+            'const encode = (value: string) => globalThis.encode(value);\nexport const evidence = (value: string) => encode(value);\n',
+          );
+        },
+        '{ evidence }',
+      ),
+    ).toBe(false);
+  }),
+);
+
 it.live('does not classify ordinary contract routines as a schema-only whole module', () =>
   Effect.gen(function* mixedOpportunityContract() {
     expect(yield* withContract(opportunityEvent)).toBe(false);
